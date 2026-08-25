@@ -4,6 +4,7 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { getAdapterMode } from "@/adapters/adapter-mode";
 import type { EmailProvider } from "@/adapters/email";
 import { auditLog, customers, orderItems, orders, settings } from "@/db/schema";
 import {
@@ -32,7 +33,7 @@ export type SendOrderEmailInput = z.input<typeof sendOrderEmailSchema>;
 
 export type SendOrderEmailResult =
   | { sent: true }
-  | { skipped: "sem_email" | "ja_enviado" };
+  | { skipped: "sem_email" | "ja_enviado" | "email_nao_configurado" };
 
 /**
  * Envia o e-mail do marco `kind` para o cliente do pedido. Cliente sem e-mail
@@ -45,6 +46,13 @@ export async function sendOrderEmail(
   input: SendOrderEmailInput,
 ): Promise<SendOrderEmailResult> {
   const parsed = sendOrderEmailSchema.parse(input);
+
+  // Em modo real SEM Resend configurado, e-mail fica desativado de forma
+  // silenciosa (skip) — o WhatsApp/fluxo do pedido nunca pode travar por
+  // falta de um canal opcional.
+  if (getAdapterMode() === "real" && !process.env.RESEND_API_KEY) {
+    return { skipped: "email_nao_configurado" };
+  }
 
   const [order] = await db
     .select({
