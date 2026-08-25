@@ -1,0 +1,47 @@
+# Backup diário do banco (pg_dump) publicado como artifact do GitHub Actions.
+#
+# Requisitos: o secret DATABASE_URL precisa estar cadastrado no repositório
+# (Settings → Secrets and variables → Actions).
+#
+# O artifact é o MÍNIMO da Fase 0 — migrar para R2/repo privado conforme README.
+# Teste de RESTORE real (restaurar o dump em um banco vazio) é critério de
+# pronto da Fase 1: backup que nunca foi restaurado não é backup.
+name: Backup
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # diário às 03:00 UTC (00:00 em America/Sao_Paulo)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Gerar dump do banco
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "ERRO: secret DATABASE_URL não cadastrado no repositório." >&2
+            exit 1
+          fi
+          pg_dump "$DATABASE_URL" --no-owner --format=custom \
+            --file="trive-backup-$(date +%F).dump"
+
+      - name: Verificar legibilidade do dump
+        # Backup ilegível = job vermelho: pg_restore --list falha se o arquivo
+        # estiver corrompido ou vazio.
+        run: pg_restore --list "trive-backup-$(date +%F).dump" > /dev/null
+
+      - name: Publicar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trive-backup
+          path: trive-backup-*.dump
+          retention-days: 30
+          if-no-files-found: error

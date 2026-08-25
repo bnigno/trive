@@ -1,3 +1,5 @@
+Leia CLAUDE.md — é o guia único para agentes neste repositório.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

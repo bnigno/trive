@@ -1,0 +1,47 @@
+# CI verde é a rede de segurança que permite aceitar mudanças de IA com confiança;
+# deploy da Vercel deve exigir CI verde (Settings → Git → Require CI).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      # Placeholders para o build passar sem infra real (nenhum segredo aqui).
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+      ADAPTER_MODE: fake
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Verificar migrações destrutivas
+        run: pnpm check:migrations
+
+      - name: Verificar segredos em código de cliente
+        run: pnpm check:client-secrets
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Testes
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
