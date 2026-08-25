@@ -444,3 +444,35 @@ describe("recoverUnpaidOrders", () => {
     expect(provider.sentMessages).toHaveLength(1);
   });
 });
+
+
+describe("phoneExists (número sem WhatsApp)", () => {
+  it("número sem WhatsApp → skipped numero_sem_whatsapp, linha failed visível, sem throw", async () => {
+    const { db, close } = await createTestDb();
+    try {
+      const sdb = db as unknown as DbOrTx;
+      await db.insert(schema.settings).values({ key: "wa_enabled", value: true }).onConflictDoNothing();
+      await db
+        .update(schema.settings)
+        .set({ value: true })
+        .where(eq(schema.settings.key, "wa_enabled"));
+      const provider = new FakeMessagingProvider();
+      provider.setPhoneExists("+5511900009999", false);
+
+      const result = await sendTemplateMessage(sdb, provider, {
+        bodyOverride: "Teste para número inexistente",
+        phoneE164: "+5511900009999",
+        dedupeKey: "wa.teste_inexistente:1",
+        requireOptIn: false,
+      });
+
+      expect(result).toEqual({ skipped: "numero_sem_whatsapp" });
+      expect(provider.sentMessages).toHaveLength(0);
+      const [msg] = await db.select().from(schema.waMessages);
+      expect(msg.status).toBe("failed");
+      expect(msg.errorDetail).toContain("sem WhatsApp");
+    } finally {
+      await close();
+    }
+  });
+});

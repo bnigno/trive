@@ -44,7 +44,19 @@ export class FakeMessagingProvider implements MessagingProvider {
     return { imageBase64: FAKE_QR_CODE_PNG_BASE64 };
   }
 
+  private readonly nonexistentPhones = new Set<string>();
+
+  async phoneExists(toE164: string): Promise<boolean> {
+    return !this.nonexistentPhones.has(toE164);
+  }
+
   // --- Helpers de teste (não fazem parte da interface MessagingProvider) ---
+
+  /** Marca um número como SEM WhatsApp (phoneExists passa a responder false). */
+  setPhoneExists(toE164: string, exists: boolean): void {
+    if (exists) this.nonexistentPhones.delete(toE164);
+    else this.nonexistentPhones.add(toE164);
+  }
 
   simulateDisconnect(): void {
     this.connected = false;
@@ -58,5 +70,6 @@ export class FakeMessagingProvider implements MessagingProvider {
     this.sentMessages.length = 0;
     this.connected = true;
     this.sequence = 0;
+    this.nonexistentPhones.clear();
   }
 }

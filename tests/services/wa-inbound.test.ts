@@ -230,22 +230,61 @@ describe("processZapiInbound", () => {
     expect(messages.every((m) => m.conversationId === conversations[0].id)).toBe(true);
   });
 
-  it("evento sem texto (status/ack) é ignorado sem registrar inbound", async () => {
-    const result = await processZapiInbound(sdb, {
-      providedSecret: SECRET,
-      body: {
-        type: "MessageStatusCallback",
-        instanceId: "instancia-x",
-        messageId: "MSG-STATUS",
-        phone: PHONE_ZAPI,
-        status: "DELIVERED",
-        ids: ["MSG-STATUS"],
-      },
+  it("callback de status atualiza a mensagem (sent → delivered → read, monotônico)", async () => {
+    // Mensagem outbound existente com zapi_message_id, status 'sent'.
+    const [conv] = await db
+      .insert(schema.waConversations)
+      .values({ phoneE164: "+5511977776666" })
+      .returning({ id: schema.waConversations.id });
+    const [msg] = await db
+      .insert(schema.waMessages)
+      .values({
+        conversationId: conv.id,
+        direction: "outbound",
+        body: "Olá!",
+        status: "sent",
+        zapiMessageId: "MSG-STATUS",
+      })
+      .returning({ id: schema.waMessages.id });
+
+    const statusBody = (status: string) => ({
+      type: "MessageStatusCallback",
+      phone: PHONE_ZAPI,
+      status,
+      ids: ["MSG-STATUS"],
     });
 
-    expect(result).toEqual({ action: "ignored", ignored: true });
-    expect(await db.select().from(schema.inboundEvents)).toHaveLength(0);
-    expect(await db.select().from(schema.waMessages)).toHaveLength(0);
+    const delivered = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: statusBody("RECEIVED"),
+    });
+    expect(delivered).toEqual({ action: "status", updated: 1 });
+
+    const read = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: statusBody("READ"),
+    });
+    expect(read).toEqual({ action: "status", updated: 1 });
+
+    // Monotônico: um DELIVERED atrasado não regride a mensagem lida.
+    const late = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: statusBody("RECEIVED"),
+    });
+    expect(late).toEqual({ action: "status", updated: 0 });
+
+    const [finalMsg] = await db
+      .select()
+      .from(schema.waMessages)
+      .where(eq(schema.waMessages.id, msg.id));
+    expect(finalMsg.status).toBe("read");
+    expect(finalMsg.deliveredAt).not.toBeNull();
+    expect(finalMsg.readAt).not.toBeNull();
+    // Callbacks de status não registram inbound_events (sem dedupe a consumir).
+    const statusInbound = (await db.select().from(schema.inboundEvents)).filter(
+      (e) => e.externalEventId.includes("MSG-STATUS"),
+    );
+    expect(statusInbound).toHaveLength(0);
     expect(await db.select().from(schema.outboxEvents)).toHaveLength(0);
   });
 

@@ -30,6 +30,12 @@ export interface MessagingProvider {
   getSessionStatus(): Promise<SessionStatus>;
   /** QR code de pareamento (png em base64) — null quando a sessão já está conectada. */
   getQrCode(): Promise<QrCode | null>;
+  /**
+   * O número TEM WhatsApp? A Z-API aceita envios para números inexistentes
+   * em silêncio (caso real: pedido #1000) — o serviço consulta isto antes
+   * de enviar. Indisponibilidade da consulta deve responder true (fail-open).
+   */
+  phoneExists(toE164: string): Promise<boolean>;
 }
 
 let instance: MessagingProvider | undefined;

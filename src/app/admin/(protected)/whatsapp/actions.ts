@@ -69,6 +69,8 @@ export async function saveWaSettingsAction(
 // ---------------------------------------------------------------------------
 
 const SKIP_REASON_MESSAGES: Record<WaSkipReason, string> = {
+  numero_sem_whatsapp:
+    "Este número não tem WhatsApp ativo — confira se digitou certo (com DDD).",
   desabilitado:
     "O envio está desativado — ative o WhatsApp acima (em modo real, confira também as credenciais Z-API na hospedagem) e salve antes de testar.",
   sem_telefone_dono:

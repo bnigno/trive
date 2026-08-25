@@ -136,7 +136,8 @@ export type WaSkipReason =
   | "sem_opt_in"
   | "sem_template"
   | "ja_enviado"
-  | "sem_telefone_dono";
+  | "sem_telefone_dono"
+  | "numero_sem_whatsapp";
 
 export type SendWaMessageResult =
   | { sent: true; waMessageId: string }
@@ -315,6 +316,28 @@ export async function sendTemplateMessage(
       .values(messageValues)
       .returning({ id: waMessages.id });
     waMessageId = inserted.id;
+  }
+
+  // A Z-API aceita envio para número SEM WhatsApp em silêncio (caso real do
+  // pedido #1000): consultamos antes. Falha PERMANENTE — a linha fica visível
+  // como 'failed' no admin e o evento da fila conclui sem retry (skip).
+  if (!(await provider.phoneExists(parsed.phoneE164))) {
+    await db
+      .update(waMessages)
+      .set({
+        status: "failed",
+        errorDetail: "Número sem WhatsApp — confira o telefone do cliente.",
+      })
+      .where(eq(waMessages.id, waMessageId));
+    await db.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "wa.send_failed",
+      entityType: "wa_message",
+      entityId: waMessageId,
+      after: { phoneE164: parsed.phoneE164, reason: "numero_sem_whatsapp" },
+    });
+    return { skipped: "numero_sem_whatsapp" };
   }
 
   try {

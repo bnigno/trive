@@ -29,6 +29,10 @@ export const zapiStatusResponseSchema = z.looseObject({
   status: z.string().optional(),
 });
 
+export const zapiPhoneExistsResponseSchema = z.looseObject({
+  exists: z.boolean().optional(),
+});
+
 export const zapiQrCodeResponseSchema = z.looseObject({
   value: z.string().optional(),
   image: z.string().optional(),
@@ -126,6 +130,20 @@ export class ZapiMessagingProvider implements MessagingProvider {
     const raw = await this.request("/status");
     const parsed = zapiStatusResponseSchema.parse(raw);
     return { connected: isConnectedPayload(parsed) };
+  }
+
+  async phoneExists(toE164: string): Promise<boolean> {
+    // Fail-open: se a CONSULTA falhar (rede/HTTP), não bloqueamos um envio
+    // legítimo — só a resposta explícita "exists: false" impede o envio.
+    try {
+      const raw = await this.request(
+        `/phone-exists/${toE164.replace(/^\+/, "")}`,
+      );
+      const parsed = zapiPhoneExistsResponseSchema.parse(raw);
+      return parsed.exists !== false;
+    } catch {
+      return true;
+    }
   }
 
   async getQrCode(): Promise<QrCode | null> {

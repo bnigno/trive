@@ -5,7 +5,7 @@
 // por inbound_events (source 'zapi' + messageId). SEM chatbot: comando
 // SAIR/PARAR desliga o opt-in (LGPD) e confirma; qualquer outro texto é
 // encaminhado ao DONO via outbox — humano responde.
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -36,6 +36,11 @@ const zapiInboundBodySchema = z
     chatName: z.string().optional(),
     text: z.object({ message: z.string().optional() }).optional(),
     body: z.object({ message: z.string().optional() }).optional(),
+    // Callback de status de mensagem (webhook update-webhook-message-status):
+    // status SENT/RECEIVED/READ/PLAYED + ids das mensagens afetadas.
+    status: z.string().optional(),
+    ids: z.array(z.union([z.string(), z.number()])).optional(),
+    type: z.string().optional(),
   })
   .or(z.unknown().transform(() => ({}) as Record<string, never>));
 
@@ -52,6 +57,7 @@ export type ProcessZapiInboundResult =
   | { action: "rejected"; rejected: "secret" | "client_token" }
   | { action: "ignored"; ignored: true }
   | { action: "duplicate"; duplicate: true }
+  | { action: "status"; updated: number }
   | {
       action: "opt_out";
       conversationId: string;
@@ -102,6 +108,41 @@ export async function processZapiInbound(
     parsed.messageId !== undefined ? String(parsed.messageId) : undefined;
   const rawPhone = parsed.phone !== undefined ? String(parsed.phone) : undefined;
   const text = parsed.text?.message ?? parsed.body?.message;
+
+  // Callback de STATUS de mensagem (entregue/lida): atualiza wa_messages
+  // pelo zapi_message_id de forma MONOTÔNICA (nunca regride) — é o que torna
+  // visível uma mensagem "aceita mas nunca entregue" (número sem WhatsApp).
+  const statusUpper = parsed.status?.toUpperCase();
+  const statusTarget =
+    statusUpper === "RECEIVED" || statusUpper === "DELIVERED"
+      ? "delivered"
+      : statusUpper === "READ" || statusUpper === "PLAYED"
+        ? "read"
+        : null;
+  const statusIds = (parsed.ids ?? (messageId ? [messageId] : [])).map(String);
+  if (statusTarget && statusIds.length > 0 && !text) {
+    let updated = 0;
+    for (const id of statusIds) {
+      const res = await db
+        .update(waMessages)
+        .set(
+          statusTarget === "read"
+            ? { status: "read", readAt: new Date() }
+            : { status: "delivered", deliveredAt: new Date() },
+        )
+        .where(
+          and(
+            eq(waMessages.zapiMessageId, id),
+            statusTarget === "read"
+              ? inArray(waMessages.status, ["sent", "delivered"])
+              : eq(waMessages.status, "sent"),
+          ),
+        )
+        .returning({ id: waMessages.id });
+      updated += res.length;
+    }
+    return { action: "status", updated };
+  }
 
   // Sem texto = status/ack/mídia — por ora ignorados (não registram inbound,
   // senão o DELIVERED consumiria o dedupe do messageId). Ecos das nossas

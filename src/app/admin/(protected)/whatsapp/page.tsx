@@ -311,6 +311,14 @@ export default async function WhatsappPage() {
             })}
           </Table>
         )}
+        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+          Como ler os status: <strong>enviada</strong> = aceita pelo WhatsApp;{" "}
+          <strong>entregue</strong>/<strong>lida</strong> = confirmada no
+          aparelho do destinatário; <strong>falhou</strong> = veja o motivo
+          (ex.: número sem WhatsApp). Mensagem parada em &quot;enviada&quot; por
+          horas geralmente indica número errado ou sem WhatsApp — confira o
+          telefone do cliente.
+        </p>
       </Card>
 
       <details className="rounded-lg border border-zinc-200 dark:border-zinc-800">
