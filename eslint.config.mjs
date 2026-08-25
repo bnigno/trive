@@ -7,7 +7,7 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
-    files: ["src/**/*.{js,jsx,ts,tsx}"],
+    files: ["src/**/*.{js,jsx,ts,tsx}", "tests/**/*.ts", "scripts/**/*.{ts,mjs}"],
     plugins: { boundaries },
     settings: {
       "boundaries/elements": [
