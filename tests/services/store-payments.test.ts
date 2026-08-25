@@ -217,25 +217,19 @@ describe("ensurePaymentPreference", () => {
     expect(gateway.calls).toBe(0);
   });
 
-  it("pedido de canal não-loja → erro (pagamento online é só da loja)", async () => {
-    const [customer] = await db
-      .insert(schema.customers)
-      .values({ fullName: "Cliente Manual", phoneE164: "+5511988887777" })
-      .returning({ id: schema.customers.id });
-    const [manualOrder] = await db
-      .insert(schema.orders)
-      .values({
-        customerId: customer.id,
-        status: "pending_payment",
-        channel: "manual",
-      })
-      .returning({ id: schema.orders.id });
+  it("pedido de canal manual (venda pelo WhatsApp) TAMBÉM paga online", async () => {
+    // A venda assistida pelo WhatsApp usa o mesmo link público de pagamento:
+    // canal deixou de ser restrição (apenas o status pending_payment importa).
+    const { orderId } = await createPendingStoreOrder();
+    await db
+      .update(schema.orders)
+      .set({ channel: "manual" })
+      .where(eq(schema.orders.id, orderId));
 
-    await expect(
-      ensurePaymentPreference(sdb, new RecordingGateway(), {
-        orderId: manualOrder.id,
-      }),
-    ).rejects.toMatchObject({ code: "ORDER_NOT_STORE" });
+    const gateway = new RecordingGateway();
+    const result = await ensurePaymentPreference(sdb, gateway, { orderId });
+    expect(result.preferenceId).toBeTruthy();
+    expect(gateway.calls).toBe(1);
   });
 
   it("pedido inexistente → ORDER_NOT_FOUND", async () => {
