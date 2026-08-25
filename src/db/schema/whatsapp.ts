@@ -26,6 +26,10 @@ export const waConversations = pgTable(
     }),
     // open: fluxo normal; human: dono assumiu a conversa; closed: encerrada.
     status: text("status").notNull().default("open"),
+    // Contexto compacto do bot de vendas (endereço parcial, carrinho, etc.).
+    botState: jsonb("bot_state"),
+    // Silêncio do bot após transferir para atendente humano.
+    botDisabledUntil: timestamp("bot_disabled_until", { withTimezone: true }),
     lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
     lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

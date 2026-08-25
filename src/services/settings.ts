@@ -452,6 +452,20 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .int("Informe um número inteiro de minutos.")
     .min(15, "O lembrete deve esperar pelo menos 15 minutos.")
     .max(720, "O lembrete deve sair em até 720 minutos (12 horas)."),
+  // --- Bot de vendas com IA (Fase 5) ---
+  /**
+   * Como wa_enabled: o toggle sozinho não basta — o bot também exige a chave
+   * da Anthropic no ambiente (ou ADAPTER_MODE fake) e wa_enabled ativo.
+   */
+  bot_enabled: z.boolean(),
+  bot_model: z.enum(["claude-sonnet-5", "claude-haiku-4-5"], {
+    error: "Modelo inválido. Escolha entre claude-sonnet-5 e claude-haiku-4-5.",
+  }),
+  /** Instruções extras do dono anexadas ao prompt do bot (pode ficar vazio). */
+  bot_extra_instructions: z
+    .string()
+    .trim()
+    .max(2000, "As instruções extras devem ter no máximo 2000 caracteres."),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

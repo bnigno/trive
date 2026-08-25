@@ -31,6 +31,10 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   // sessão; recuperação de pedido não pago dispara após N minutos (UMA vez).
   { key: "wa_enabled", value: false },
   { key: "wa_recovery_after_minutes", value: 60 },
+  // Fase 5 — Bot de vendas com IA. Desligado até o dono ativar no admin.
+  { key: "bot_enabled", value: false },
+  { key: "bot_model", value: "claude-sonnet-5" },
+  { key: "bot_extra_instructions", value: "" },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca
