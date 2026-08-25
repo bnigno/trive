@@ -22,6 +22,8 @@ const token = loadEnv(".env.vercel.local").VERCEL_TOKEN;
 const prodEnv = loadEnv(".env.prod.local");
 const devEnv = loadEnv(".env.local");
 
+// Resposta da API tratada como any: script operacional de uso pontual, campos validados no uso.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function api(pathname: string, init?: RequestInit): Promise<{ status: number; body: any }> {
   const res = await fetch(`https://api.vercel.com${pathname}`, {
     ...init,
