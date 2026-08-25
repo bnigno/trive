@@ -388,6 +388,12 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .number()
     .int()
     .positive("O tempo de reserva deve ser maior que zero."),
+  /**
+   * Pagamento automático via Mercado Pago na loja. O toggle sozinho não basta:
+   * isMpEnabled (store-payments) também exige credenciais (ou ADAPTER_MODE
+   * fake) — sem elas a loja segue no modo manual, sem quebrar nada.
+   */
+  mp_enabled: z.boolean(),
   // --- Dados da loja (rodapé e páginas legais — Decreto 7.962/2013) ---
   store_name: z.string().trim().max(120, "O nome da loja é longo demais."),
   store_cnpj: z.string().trim().max(20, "CNPJ longo demais."),

@@ -50,6 +50,11 @@ export const orders = pgTable(
       .default(0),
     totalCents: bigint("total_cents", { mode: "number" }).notNull().default(0),
     paymentMethod: text("payment_method"),
+    // Última preference do Checkout Pro criada para este pedido. O init_point
+    // NÃO é recuperável depois — recriamos a preference a cada "Pagar agora"
+    // e este campo guarda apenas a mais recente (idempotência de pagamento
+    // vem do external_reference = orders.id, não da preference).
+    mpPreferenceId: text("mp_preference_id"),
     mpPaymentId: text("mp_payment_id"),
     mpFeeCents: bigint("mp_fee_cents", { mode: "number" }),
     installments: integer("installments"),

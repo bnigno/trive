@@ -185,9 +185,16 @@ export function CheckoutClient({
       startSubmit(async () => {
         const result = await placeOrderAction(payload);
         if (result.ok) {
-          // Sucesso: o cliente limpa a sacola e vai para a página do pedido.
           setPlaced(true);
           clear();
+          if (result.initPointUrl) {
+            // Mercado Pago habilitado: vai DIRETO para o Checkout Pro pagar
+            // agora. O back_url do MP traz o cliente de volta para
+            // /pedido/[token], que mostra o status real do banco.
+            window.location.assign(result.initPointUrl);
+            return;
+          }
+          // Fluxo manual: página do pedido (pagamento combinado no WhatsApp).
           router.replace(`/pedido/${result.publicToken}?novo=1`);
           return;
         }

@@ -15,9 +15,11 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Money } from "@/components/ui/money";
 import { Table, Td, Tr } from "@/components/ui/table";
+import { getSiteUrl } from "@/services/store-payments";
 import {
   ApprovalRulesForm,
   FeeRuleForm,
+  MercadoPagoForm,
   PolicyForm,
   StockSettingsForm,
   StoreDataForm,
@@ -64,6 +66,7 @@ type SettingsData = {
     email: string;
     whatsapp: string;
   };
+  mpEnabled: boolean;
 };
 
 function asString(value: unknown): string {
@@ -86,11 +89,13 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_address",
         "store_email",
         "store_whatsapp",
+        "mp_enabled",
       ]),
     ]);
     return {
       feeRules,
       policy,
+      mpEnabled: map.mp_enabled === true,
       store: {
         name: asString(map.store_name),
         cnpj: asString(map.store_cnpj),
@@ -144,6 +149,11 @@ export default async function ConfiguracoesPage() {
   const currentByMethod = new Map(
     data.feeRules.current.map((rule) => [rule.paymentMethod, rule]),
   );
+
+  // Presença das credenciais (✓/pendente) — NUNCA exibimos os valores.
+  const hasAccessToken = Boolean(process.env.MP_ACCESS_TOKEN?.trim());
+  const hasWebhookSecret = Boolean(process.env.MP_WEBHOOK_SECRET?.trim());
+  const webhookUrl = `${getSiteUrl()}/api/webhooks/mercadopago`;
 
   return (
     <div className="flex flex-col gap-8">
@@ -294,6 +304,67 @@ export default async function ConfiguracoesPage() {
               </div>
             </details>
           ) : null}
+        </div>
+      </Card>
+
+      <Card title="Mercado Pago">
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Pagamento automático na loja: o cliente paga na hora com Pix ou
+            cartão pelo Checkout Pro, e o pedido é confirmado sozinho quando o
+            Mercado Pago avisa.
+          </p>
+
+          <div className="flex flex-col gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-zinc-700 dark:text-zinc-300">
+                Credencial de acesso (MP_ACCESS_TOKEN)
+              </span>
+              {hasAccessToken ? (
+                <Badge tone="success">✓ configurada</Badge>
+              ) : (
+                <Badge tone="warning">pendente</Badge>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-zinc-700 dark:text-zinc-300">
+                Assinatura do webhook (MP_WEBHOOK_SECRET)
+              </span>
+              {hasWebhookSecret ? (
+                <Badge tone="success">✓ configurada</Badge>
+              ) : (
+                <Badge tone="warning">pendente</Badge>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+            <p className="font-medium text-zinc-800 dark:text-zinc-200">
+              Como configurar
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>
+                Pegue as credenciais de produção no painel de desenvolvedores
+                do Mercado Pago (mercadopago.com.br/developers → Suas
+                integrações) e cadastre-as como variáveis de ambiente do site.
+              </li>
+              <li>
+                No mesmo painel, em Webhooks, cadastre a URL{" "}
+                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                  {webhookUrl}
+                </code>{" "}
+                e marque os eventos de <strong>Pagamentos</strong>.
+              </li>
+              <li>Ligue o toggle abaixo e salve.</li>
+            </ol>
+          </div>
+
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            Sem credenciais, a loja segue no modo manual (WhatsApp/Pix) — nada
+            quebra: o toggle só passa a valer quando as credenciais existirem.
+          </p>
+
+          <MercadoPagoForm defaults={{ mpEnabled: data.mpEnabled }} />
         </div>
       </Card>
 

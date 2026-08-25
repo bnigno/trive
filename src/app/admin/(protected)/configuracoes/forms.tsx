@@ -13,6 +13,7 @@ import {
 import {
   replaceFeeRuleAction,
   updateApprovalRulesAction,
+  updateMercadoPagoAction,
   updatePolicyAction,
   updateStockSettingsAction,
   updateStoreDataAction,
@@ -395,6 +396,48 @@ export function ApprovalRulesForm({
 
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar regras</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mercado Pago — pagamento automático da loja
+// ---------------------------------------------------------------------------
+
+export function MercadoPagoForm({
+  defaults,
+}: {
+  defaults: { mpEnabled: boolean };
+}) {
+  const [state, formAction] = useActionState(
+    updateMercadoPagoAction,
+    INITIAL_STATE,
+  );
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          name="mpEnabled"
+          defaultChecked={defaults.mpEnabled}
+          className="mt-0.5 h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+        />
+        <span>
+          Ativar pagamento automático pelo Mercado Pago
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+            Com o toggle ligado E as credenciais configuradas, o cliente paga
+            na hora (Pix ou cartão) pelo Checkout Pro.
+          </span>
+        </span>
+      </label>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar Mercado Pago</SubmitButton>
       </div>
     </form>
   );

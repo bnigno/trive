@@ -6,7 +6,12 @@
 
 import { ZodError } from "zod";
 
+import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getDb } from "@/db/client";
+import {
+  ensurePaymentPreference,
+  isMpEnabled,
+} from "@/services/store-payments";
 import {
   createStoreOrder,
   PriceChangedError,
@@ -17,7 +22,17 @@ import {
 } from "@/services/store-orders";
 
 export type PlaceOrderResult =
-  | { ok: true; publicToken: string; orderNumber: number }
+  | {
+      ok: true;
+      publicToken: string;
+      orderNumber: number;
+      /**
+       * Quando o Mercado Pago está habilitado: URL do Checkout Pro para o
+       * client redirecionar DIRETO (pagamento imediato). Null → fluxo manual
+       * (página do pedido + WhatsApp), que continua funcionando sempre.
+       */
+      initPointUrl: string | null;
+    }
   | { ok: false; kind: "price_changed"; changes: PriceChange[] }
   | { ok: false; kind: "shipping_changed"; newShippingCents: number }
   | { ok: false; kind: "error"; code: string; message: string };
@@ -30,10 +45,32 @@ export async function placeOrderAction(
     // createStoreOrder valida TUDO com Zod internamente (documento, telefone,
     // endereço, itens) — nenhuma confiança no payload do cliente.
     const result = await createStoreOrder(db, input);
+
+    // Pagamento automático: se o MP está habilitado, já cria a preference e
+    // devolve o link do Checkout Pro. QUALQUER falha aqui NÃO derruba o
+    // pedido (ele já existe e está reservado) — apenas cai no fluxo manual.
+    let initPointUrl: string | null = null;
+    try {
+      if (await isMpEnabled(db)) {
+        const preference = await ensurePaymentPreference(
+          db,
+          getPaymentGateway(),
+          { orderId: result.orderId },
+        );
+        initPointUrl = preference.initPointUrl;
+      }
+    } catch (mpError) {
+      console.error(
+        "placeOrderAction: falha ao criar preference do Mercado Pago — seguindo no fluxo manual.",
+        mpError,
+      );
+    }
+
     return {
       ok: true,
       publicToken: result.publicToken,
       orderNumber: result.orderNumber,
+      initPointUrl,
     };
   } catch (error) {
     if (error instanceof PriceChangedError) {

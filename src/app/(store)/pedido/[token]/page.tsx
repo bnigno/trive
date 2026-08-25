@@ -10,8 +10,10 @@ import { OrderStatusSteps } from "@/components/store/order-status-steps";
 import { Money } from "@/components/ui/money";
 import { getDb } from "@/db/client";
 import { getPublicOrder } from "@/services/store-orders";
+import { isMpEnabled } from "@/services/store-payments";
 import { getSettingsMap } from "@/services/settings";
 
+import { payNowAction } from "./actions";
 import { CopyCode } from "./copy-code";
 
 export const dynamic = "force-dynamic";
@@ -55,9 +57,17 @@ export default async function OrderPage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ novo?: string }>;
+  searchParams: Promise<{
+    novo?: string;
+    /** back_urls do Mercado Pago: ?collection_status=approved&status=approved… */
+    collection_status?: string;
+    status?: string;
+    /** ?pagamento=indisponivel — payNowAction não conseguiu iniciar o MP. */
+    pagamento?: string;
+  }>;
 }) {
-  const [{ token }, { novo }] = await Promise.all([params, searchParams]);
+  const [{ token }, query] = await Promise.all([params, searchParams]);
+  const { novo } = query;
 
   const db = getDb();
   const order = await getPublicOrder(db, token);
@@ -68,6 +78,14 @@ export default async function OrderPage({
   const reservationExpired =
     order.status === "canceled" &&
     (order.canceledReason ?? "").includes("Reserva expirada");
+
+  // Volta do Checkout Pro com aprovação: banner otimista — a confirmação REAL
+  // vem do webhook (a página sempre mostra o status do banco, nunca da query).
+  const mpApproved =
+    isPendingPayment &&
+    (query.collection_status === "approved" || query.status === "approved");
+  const mpUnavailable = isPendingPayment && query.pagamento === "indisponivel";
+  const mpEnabled = isPendingPayment ? await isMpEnabled(db) : false;
 
   const settings = isPendingPayment
     ? await getSettingsMap(db, ["store_whatsapp"])
@@ -149,30 +167,93 @@ export default async function OrderPage({
         </section>
       )}
 
-      {isPendingPayment && order.paymentDueAt ? (
-        <section className="mb-8 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-5 dark:border-amber-800 dark:bg-amber-950/40">
-          <h2 className="text-lg font-semibold text-amber-900 dark:text-amber-300">
-            Como pagar
-          </h2>
-          <p className="mt-2 text-base leading-relaxed text-amber-900/90 dark:text-amber-200/90">
-            Vamos te chamar no WhatsApp para combinar o pagamento via Pix.
-            Reserva válida até{" "}
-            <strong className="whitespace-nowrap">
-              {formatDueAt(order.paymentDueAt)}
-            </strong>
-            .
+      {mpApproved ? (
+        <div
+          role="status"
+          className="mb-8 rounded-2xl border-2 border-emerald-300 bg-emerald-50 px-5 py-5 dark:border-emerald-800 dark:bg-emerald-950/40"
+        >
+          <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-300">
+            Pagamento recebido! Processando confirmação…
           </p>
-          {whatsappLink ? (
-            <a
-              href={whatsappLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-block rounded-full bg-amber-700 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
-            >
-              Chamar no WhatsApp agora
-            </a>
-          ) : null}
-        </section>
+          <p className="mt-1 text-sm leading-relaxed text-emerald-800 dark:text-emerald-400">
+            O Mercado Pago aprovou o seu pagamento. Em instantes o pedido
+            aparece como pago aqui — pode atualizar a página para conferir.
+          </p>
+        </div>
+      ) : null}
+
+      {isPendingPayment && !mpApproved && order.paymentDueAt ? (
+        mpEnabled ? (
+          <section className="mb-8 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-5 dark:border-amber-800 dark:bg-amber-950/40">
+            <h2 className="text-lg font-semibold text-amber-900 dark:text-amber-300">
+              Como pagar
+            </h2>
+            <p className="mt-2 text-base leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+              Pague com segurança pelo Mercado Pago. Reserva válida até{" "}
+              <strong className="whitespace-nowrap">
+                {formatDueAt(order.paymentDueAt)}
+              </strong>
+              .
+            </p>
+            {mpUnavailable ? (
+              <p
+                role="alert"
+                className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200"
+              >
+                Não foi possível iniciar o pagamento online agora. Tente de
+                novo em instantes — ou combine pelo WhatsApp aqui embaixo.
+              </p>
+            ) : null}
+            <form action={payNowAction.bind(null, token)} className="mt-4">
+              <button
+                type="submit"
+                className="flex w-full items-center justify-center rounded-full bg-amber-700 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-amber-800 sm:w-auto sm:min-w-72"
+              >
+                Pagar agora (Pix ou cartão)
+              </button>
+            </form>
+            <p className="mt-4 text-sm text-amber-900/90 dark:text-amber-200/90">
+              Prefere combinar pelo WhatsApp?{" "}
+              {whatsappLink ? (
+                <a
+                  href={whatsappLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline"
+                >
+                  Fale com a gente
+                </a>
+              ) : (
+                "Fale com a gente"
+              )}{" "}
+              e pague via Pix manual, como preferir.
+            </p>
+          </section>
+        ) : (
+          <section className="mb-8 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-5 dark:border-amber-800 dark:bg-amber-950/40">
+            <h2 className="text-lg font-semibold text-amber-900 dark:text-amber-300">
+              Como pagar
+            </h2>
+            <p className="mt-2 text-base leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+              Vamos te chamar no WhatsApp para combinar o pagamento via Pix.
+              Reserva válida até{" "}
+              <strong className="whitespace-nowrap">
+                {formatDueAt(order.paymentDueAt)}
+              </strong>
+              .
+            </p>
+            {whatsappLink ? (
+              <a
+                href={whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-block rounded-full bg-amber-700 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
+              >
+                Chamar no WhatsApp agora
+              </a>
+            ) : null}
+          </section>
+        )
       ) : null}
 
       {(order.status === "shipped" || order.status === "delivered") &&

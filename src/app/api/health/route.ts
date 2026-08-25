@@ -30,7 +30,7 @@ export async function GET(): Promise<NextResponse<HealthBody>> {
     const db = getDb();
     await db.execute(sql`SELECT 1`);
 
-    const rows = (await db.execute(sql`
+    const result = (await db.execute(sql`
       SELECT
         COALESCE(
           EXTRACT(EPOCH FROM (now() - MIN(created_at) FILTER (
@@ -40,11 +40,12 @@ export async function GET(): Promise<NextResponse<HealthBody>> {
         ) AS oldest_pending_age_seconds,
         COUNT(*) FILTER (WHERE status = 'dead')::int AS dead_count
       FROM outbox_events
-    `)) as unknown as {
-      oldest_pending_age_seconds: number;
-      dead_count: number;
-    }[];
+    `)) as unknown as
+      | { rows: { oldest_pending_age_seconds: number; dead_count: number }[] }
+      | { oldest_pending_age_seconds: number; dead_count: number }[];
 
+    // pg/PGlite retornam { rows }; postgres.js retorna array — normalize.
+    const rows = Array.isArray(result) ? result : result.rows;
     const stats = rows[0];
     return NextResponse.json({
       status: "ok",

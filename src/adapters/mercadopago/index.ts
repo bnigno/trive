@@ -8,10 +8,16 @@ export type CheckoutItem = {
   unitPriceCents: number;
 };
 
-export type CheckoutOrder = {
+export type CreateCheckoutPreferenceInput = {
   orderId: string;
+  orderNumber: number;
+  /** Referência externa enviada ao MP (= orderId); volta em getPayment. */
+  externalReference: string;
   items: CheckoutItem[];
   payerEmail?: string;
+  /** Página do pedido para onde o comprador retorna após o checkout. */
+  backUrl: string;
+  notificationUrl?: string;
 };
 
 export type CheckoutPreference = {
@@ -24,19 +30,27 @@ export type PaymentStatus =
   | "approved"
   | "rejected"
   | "refunded"
-  | "cancelled";
+  | "cancelled"
+  | "charged_back"
+  | "in_mediation";
+
+export type PaymentMethod = "pix" | "credit_card" | "boleto" | "other";
 
 export type Payment = {
   paymentId: string;
   status: PaymentStatus;
-  orderId?: string;
+  externalReference: string | null;
   amountCents: number;
-  feeCents?: number;
-  installments?: number;
+  /** Taxa REAL cobrada pelo MP, em centavos; null quando ainda desconhecida. */
+  feeCents: number | null;
+  installments: number | null;
+  paymentMethod: PaymentMethod;
 };
 
 export interface PaymentGateway {
-  createCheckoutPreference(order: CheckoutOrder): Promise<CheckoutPreference>;
+  createCheckoutPreference(
+    input: CreateCheckoutPreferenceInput,
+  ): Promise<CheckoutPreference>;
   getPayment(paymentId: string): Promise<Payment>;
   refundPayment(paymentId: string): Promise<void>;
 }

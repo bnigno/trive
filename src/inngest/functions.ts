@@ -1,6 +1,8 @@
+import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
+import { reconcilePendingMpOrders } from "@/services/payments";
 import { expireOverdueReservations } from "@/services/store-orders";
 
 const SWEEP_BATCH_LIMIT = 25;
@@ -47,4 +49,20 @@ export const reservationExpiry = inngest.createFunction(
   },
 );
 
-export const functions = [outboxSweep, outboxKick, reservationExpiry];
+// Conciliação diária com o Mercado Pago (03:00 BRT = 06:00 UTC): rede de
+// segurança contra webhook perdido — reprocessa pedidos da loja parados em
+// pending_payment que já têm pagamento conhecido. Em ADAPTER_MODE=fake (ou
+// sem credenciais) não faz chamada externa alguma além do gateway injetado.
+export const mpReconciliation = inngest.createFunction(
+  { id: "mp-reconciliation", triggers: [{ cron: "0 6 * * *" }] },
+  async () => {
+    return reconcilePendingMpOrders(getDb(), getPaymentGateway(), {});
+  },
+);
+
+export const functions = [
+  outboxSweep,
+  outboxKick,
+  reservationExpiry,
+  mpReconciliation,
+];

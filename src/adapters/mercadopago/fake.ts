@@ -1,6 +1,6 @@
 import type {
-  CheckoutOrder,
   CheckoutPreference,
+  CreateCheckoutPreferenceInput,
   Payment,
   PaymentGateway,
 } from "./index";
@@ -9,19 +9,24 @@ export class FakePaymentGateway implements PaymentGateway {
   private readonly payments = new Map<string, Payment>();
   private sequence = 0;
 
-  async createCheckoutPreference(order: CheckoutOrder): Promise<CheckoutPreference> {
+  async createCheckoutPreference(
+    input: CreateCheckoutPreferenceInput,
+  ): Promise<CheckoutPreference> {
     this.sequence += 1;
     const preferenceId = `fake-pref-${this.sequence}`;
     const paymentId = `fake-payment-${this.sequence}`;
-    const amountCents = order.items.reduce(
+    const amountCents = input.items.reduce(
       (total, item) => total + item.quantity * item.unitPriceCents,
       0,
     );
     this.payments.set(paymentId, {
       paymentId,
       status: "pending",
-      orderId: order.orderId,
+      externalReference: input.externalReference,
       amountCents,
+      feeCents: null,
+      installments: null,
+      paymentMethod: "pix",
     });
     return {
       preferenceId,
@@ -30,11 +35,7 @@ export class FakePaymentGateway implements PaymentGateway {
   }
 
   async getPayment(paymentId: string): Promise<Payment> {
-    const payment = this.payments.get(paymentId);
-    if (!payment) {
-      throw new Error(`FakePaymentGateway: unknown payment ${paymentId}`);
-    }
-    return { ...payment };
+    return { ...this.requirePayment(paymentId) };
   }
 
   async refundPayment(paymentId: string): Promise<void> {
@@ -55,7 +56,10 @@ export class FakePaymentGateway implements PaymentGateway {
     return paymentId;
   }
 
-  approvePayment(paymentId: string, options?: { installments?: number }): void {
+  approvePayment(
+    paymentId: string,
+    options?: { installments?: number; paymentMethod?: Payment["paymentMethod"] },
+  ): void {
     const payment = this.requirePayment(paymentId);
     if (payment.status !== "pending") {
       throw new Error(
@@ -63,8 +67,11 @@ export class FakePaymentGateway implements PaymentGateway {
       );
     }
     payment.status = "approved";
+    // Taxa fake de 5% arredondada, espelhando a taxa REAL que o adapter de
+    // produção extrai de fee_details.
     payment.feeCents = Math.round(payment.amountCents * 0.05);
     payment.installments = options?.installments ?? 1;
+    if (options?.paymentMethod) payment.paymentMethod = options.paymentMethod;
   }
 
   rejectPayment(paymentId: string): void {

@@ -1,11 +1,21 @@
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import * as schema from "./schema";
 
-export type Db = PostgresJsDatabase<typeof schema>;
+export type Db = NodePgDatabase<typeof schema>;
 
 let db: Db | undefined;
 
+/**
+ * Driver do app: node-postgres (pg), NUNCA postgres.js.
+ * Motivo (bug reproduzido em produção): o postgres.js "empilha" consultas
+ * paralelas numa mesma conexão (pipelining) e o Supavisor do Supabase em
+ * transaction mode congela a conexão para sempre nesse cenário — o admin
+ * inteiro travava. Desligar o pipelining (max_pipeline: 0) quebra as
+ * transações do Drizzle. O pg envia uma consulta por vez por conexão e é o
+ * driver canônico com poolers; também serializa Date em parâmetros.
+ * (postgres.js segue em uso apenas nos scripts sequenciais: migrate/seed.)
+ */
 export function getDb(): Db {
   if (!db) {
     const url = process.env.DATABASE_URL;
@@ -14,25 +24,13 @@ export function getDb(): Db {
         "DATABASE_URL ausente. Defina a variável de ambiente antes de acessar o banco.",
       );
     }
-    // prepare: false — obrigatório com pooler Supabase em transaction mode.
-    // max: 5 (NUNCA 1): com max: 1, consultas paralelas (Promise.all) são
-    // "pipelined" numa única conexão, e o Supavisor trava a conexão para
-    // sempre quando isso acontece após uma consulta anterior concluída —
-    // bug reproduzido em produção (páginas do admin congelavam). Com pool > 1,
-    // consultas concorrentes usam conexões separadas e o problema some.
-    // max_pipeline: 0 é a parte ESSENCIAL: proíbe enviar uma consulta numa
-    // conexão que ainda espera resposta de outra (pipelining) — o Supavisor
-    // congela a conexão nesse cenário.
-    const client = postgres(url, {
-      prepare: false,
+    const pool = new Pool({
+      connectionString: url,
       max: 5,
-      // @ts-expect-error -- max_pipeline é aceito em runtime (lista `ints` em
-      // postgres/src/index.js) mas não está declarado nos types do driver.
-      max_pipeline: 0,
-      idle_timeout: 20,
-      connect_timeout: 15,
+      idleTimeoutMillis: 20_000,
+      connectionTimeoutMillis: 15_000,
     });
-    db = drizzle(client, { schema });
+    db = drizzle(pool, { schema });
   }
   return db;
 }

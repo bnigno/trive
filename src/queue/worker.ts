@@ -55,8 +55,12 @@ export async function drainOutbox(
     dead: 0,
   };
 
+  // db.execute retorna { rows } no pg/PGlite e array no postgres.js — normalize.
+  const rowsOf = <T,>(res: unknown): T[] =>
+    Array.isArray(res) ? (res as T[]) : ((res as { rows?: T[] }).rows ?? []);
+
   const leaseCutoff = new Date(now.getTime() - LEASE_TIMEOUT_MS);
-  const recoveredRows = (await db.execute(sql`
+  const recoveredRows = rowsOf<{ id: string }>(await db.execute(sql`
     UPDATE outbox_events
     SET status = 'failed',
         locked_at = NULL,
@@ -65,10 +69,10 @@ export async function drainOutbox(
     WHERE status = 'processing'
       AND locked_at < ${leaseCutoff}
     RETURNING id
-  `)) as unknown as { id: string }[];
+  `));
   result.recovered = recoveredRows.length;
 
-  const claimedRows = (await db.execute(sql`
+  const claimedRows = rowsOf<ClaimedRow>(await db.execute(sql`
     UPDATE outbox_events
     SET status = 'processing',
         locked_at = ${now},
@@ -84,7 +88,7 @@ export async function drainOutbox(
     )
     RETURNING id, event_type, aggregate_type, aggregate_id, payload,
               attempts, max_attempts
-  `)) as unknown as ClaimedRow[];
+  `));
   result.claimed = claimedRows.length;
 
   for (const row of claimedRows) {

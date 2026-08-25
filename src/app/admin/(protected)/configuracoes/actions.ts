@@ -242,6 +242,32 @@ export async function updateStockSettingsAction(
 }
 
 // ---------------------------------------------------------------------------
+// Mercado Pago — pagamento automático da loja
+// ---------------------------------------------------------------------------
+
+export async function updateMercadoPagoAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    await updateSetting(getDb(), {
+      key: "mp_enabled",
+      value: formData.get("mpEnabled") === "on",
+      userId: user.id,
+    });
+
+    revalidatePath("/admin/configuracoes");
+    return {
+      success:
+        "Configuração do Mercado Pago salva. Sem credenciais, a loja segue no modo manual (WhatsApp/Pix).",
+    };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dados da loja (rodapé e páginas legais — Decreto 7.962/2013)
 // ---------------------------------------------------------------------------
 
