@@ -15,11 +15,16 @@ export const metadata: Metadata = {
 export default async function CheckoutPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cep?: string; frete?: string }>;
+  searchParams: Promise<{ cep?: string; frete?: string; cupom?: string }>;
 }) {
   const params = await searchParams;
   const cepDigits = (params.cep ?? "").replace(/\D/g, "").slice(0, 8);
+  const couponCode = (params.cupom ?? "").trim().toUpperCase().slice(0, 40);
   return (
-    <CheckoutClient initialCepDigits={cepDigits} initialRateId={params.frete ?? ""} />
+    <CheckoutClient
+      initialCepDigits={cepDigits}
+      initialRateId={params.frete ?? ""}
+      initialCouponCode={couponCode}
+    />
   );
 }

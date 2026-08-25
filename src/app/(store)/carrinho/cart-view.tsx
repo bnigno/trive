@@ -17,7 +17,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Money } from "@/components/ui/money";
 import type { ShippingQuote } from "@/services/store-catalog";
 
-import { quoteShippingAction } from "./actions";
+import { quoteCouponAction, quoteShippingAction } from "./actions";
 
 /** Máscara 00000-000 conforme o usuário digita. */
 function formatCep(value: string): string {
@@ -41,6 +41,11 @@ type QuoteState =
       whatsappUrl: string | null;
     };
 
+type CouponState =
+  | { status: "idle" }
+  | { status: "error"; message: string }
+  | { status: "applied"; code: string; discountCents: number };
+
 export function CartView() {
   const { items, count, subtotalCents, setQuantity, removeItem } = useCart();
 
@@ -54,6 +59,47 @@ export function CartView() {
   const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
   const [selectedRateId, setSelectedRateId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // ----- Cupom de desconto -------------------------------------------------
+  const [couponInput, setCouponInput] = useState("");
+  const [coupon, setCoupon] = useState<CouponState>({ status: "idle" });
+  const [couponPending, startCouponTransition] = useTransition();
+
+  const applyCoupon = useCallback(
+    (code: string, lines: CartLine[]) => {
+      startCouponTransition(async () => {
+        const result = await quoteCouponAction({
+          code,
+          items: lines.map((line) => ({
+            variantId: line.variantId,
+            quantity: line.quantity,
+          })),
+        });
+        if (!result.ok) {
+          setCoupon({ status: "error", message: result.error });
+          return;
+        }
+        setCoupon({
+          status: "applied",
+          code: result.code,
+          discountCents: result.discountCents,
+        });
+      });
+    },
+    [startCouponTransition],
+  );
+
+  function handleCouponSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const code = couponInput.trim();
+    if (!code || items.length === 0) return;
+    applyCoupon(code, items);
+  }
+
+  function removeCoupon() {
+    setCoupon({ status: "idle" });
+    setCouponInput("");
+  }
 
   const runQuote = useCallback(
     (cepDigits: string, lines: CartLine[]) => {
@@ -130,14 +176,42 @@ export function CartView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemsKey, quote.status]);
 
+  // Mudou a sacola com cupom aplicado? O subtotal mudou — re-cota o cupom
+  // (o desconto percentual muda e o pedido mínimo pode deixar de valer).
+  const lastCouponKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (coupon.status !== "applied") {
+      lastCouponKeyRef.current = null;
+      return;
+    }
+    if (lastCouponKeyRef.current === null) {
+      lastCouponKeyRef.current = itemsKey;
+      return;
+    }
+    if (lastCouponKeyRef.current === itemsKey) return;
+    lastCouponKeyRef.current = itemsKey;
+    if (items.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset do cupom quando a sacola esvazia (pós-hidratação)
+      setCoupon({ status: "idle" });
+      return;
+    }
+    applyCoupon(coupon.code, items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsKey, coupon.status]);
+
   const selectedQuote =
     quote.status === "done"
       ? (quote.quotes.find((q) => q.rateId === selectedRateId) ?? null)
       : null;
-  const totalCents = subtotalCents + (selectedQuote?.priceCents ?? 0);
+  const appliedCoupon = coupon.status === "applied" ? coupon : null;
+  const discountCents = appliedCoupon?.discountCents ?? 0;
+  const totalCents =
+    subtotalCents - discountCents + (selectedQuote?.priceCents ?? 0);
   const checkoutHref =
     quote.status === "done" && selectedQuote
-      ? `/checkout?cep=${quote.cepDigits}&frete=${selectedQuote.rateId}`
+      ? `/checkout?cep=${quote.cepDigits}&frete=${selectedQuote.rateId}${
+          appliedCoupon ? `&cupom=${encodeURIComponent(appliedCoupon.code)}` : ""
+        }`
       : null;
 
   if (!mounted) {
@@ -439,6 +513,59 @@ export function CartView() {
             aria-label="Resumo do pedido"
             className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
           >
+            {/* Cupom de desconto */}
+            <div className="mb-3 border-b border-zinc-200 pb-3 dark:border-zinc-700">
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                Cupom de desconto
+              </h2>
+              {appliedCoupon ? (
+                <div className="mt-2 flex items-center justify-between gap-2 text-sm">
+                  <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                    {appliedCoupon.code} aplicado
+                  </span>
+                  <button
+                    type="button"
+                    onClick={removeCoupon}
+                    className="text-xs text-zinc-500 underline hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400"
+                  >
+                    remover cupom
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleCouponSubmit} className="mt-2 flex gap-2">
+                  <label htmlFor="cart-coupon" className="sr-only">
+                    Código do cupom
+                  </label>
+                  <input
+                    id="cart-coupon"
+                    name="coupon"
+                    autoComplete="off"
+                    placeholder="Ex.: BEMVINDA10"
+                    value={couponInput}
+                    onChange={(event) =>
+                      setCouponInput(event.target.value.toUpperCase())
+                    }
+                    className="w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm uppercase text-zinc-900 placeholder:normal-case placeholder:text-zinc-400 focus:border-amber-700 focus:ring-2 focus:ring-amber-700/25 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                  <button
+                    type="submit"
+                    disabled={couponPending || couponInput.trim() === ""}
+                    className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                  >
+                    {couponPending ? "Aplicando…" : "Aplicar"}
+                  </button>
+                </form>
+              )}
+              {coupon.status === "error" ? (
+                <p
+                  role="alert"
+                  className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+                >
+                  {coupon.message}
+                </p>
+              ) : null}
+            </div>
+
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
                 <dt>Subtotal</dt>
@@ -446,6 +573,15 @@ export function CartView() {
                   <Money cents={subtotalCents} />
                 </dd>
               </div>
+              {appliedCoupon ? (
+                <div className="flex justify-between font-medium text-emerald-700 dark:text-emerald-400">
+                  <dt>Desconto</dt>
+                  <dd>
+                    − <Money cents={appliedCoupon.discountCents} /> (
+                    {appliedCoupon.code})
+                  </dd>
+                </div>
+              ) : null}
               <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
                 <dt>Frete</dt>
                 <dd>

@@ -12,6 +12,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { coupons } from "./coupons";
 import { customers } from "./customers";
 import { productVariants } from "./catalog";
 import { priceVersions } from "./pricing";
@@ -45,6 +46,13 @@ export const orders = pgTable(
     discountCents: bigint("discount_cents", { mode: "number" })
       .notNull()
       .default(0),
+    // Cupom aplicado no checkout. coupon_code é SNAPSHOT (sobrevive à exclusão
+    // do cupom — FK SET NULL); o valor efetivo do desconto fica em
+    // discount_cents, calculado no momento do pedido.
+    couponId: uuid("coupon_id").references(() => coupons.id, {
+      onDelete: "set null",
+    }),
+    couponCode: text("coupon_code"),
     shippingCents: bigint("shipping_cents", { mode: "number" })
       .notNull()
       .default(0),

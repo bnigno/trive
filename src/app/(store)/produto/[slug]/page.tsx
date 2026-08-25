@@ -40,6 +40,55 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+/**
+ * JSON-LD Product para buscadores (Google Shopping/rich results), montado com
+ * os dados já carregados. Serializado com escape de `<` (<) para nunca
+ * fechar a tag <script> mesmo que nome/descrição contenham HTML.
+ */
+function buildProductJsonLd(product: {
+  name: string;
+  slug: string;
+  description: string | null;
+  brand: string | null;
+  images: string[];
+  variants: { priceCents: number; availableQty: number }[];
+}): string {
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL || "https://trive-lime.vercel.app";
+  const prices = product.variants.map((variant) => variant.priceCents);
+  const cheapestCents = prices.length > 0 ? Math.min(...prices) : null;
+  const inStock = product.variants.some((variant) => variant.availableQty > 0);
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: product.name,
+    ...(product.images.length > 0
+      ? { image: product.images.map((path) => publicImageUrl(path)) }
+      : {}),
+    ...(product.description?.trim()
+      ? { description: product.description.trim() }
+      : {}),
+    ...(product.brand
+      ? { brand: { "@type": "Brand", name: product.brand } }
+      : {}),
+    ...(cheapestCents !== null
+      ? {
+          offers: {
+            "@type": "Offer",
+            url: `${siteUrl}/produto/${product.slug}`,
+            priceCurrency: "BRL",
+            price: (cheapestCents / 100).toFixed(2),
+            availability: inStock
+              ? "https://schema.org/InStock"
+              : "https://schema.org/OutOfStock",
+          },
+        }
+      : {}),
+  };
+  return JSON.stringify(jsonLd).replace(/</g, "\\u003c");
+}
+
 export default async function ProdutoPage({ params }: Props) {
   const { slug } = await params;
   const product = await getPublicProductBySlug(getDb(), slug);
@@ -55,6 +104,10 @@ export default async function ProdutoPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: buildProductJsonLd(product) }}
+      />
       <nav aria-label="Navegação" className="mb-6 text-sm">
         <Link
           href="/produtos"

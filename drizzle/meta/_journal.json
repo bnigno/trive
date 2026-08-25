@@ -43,6 +43,13 @@
       "when": 1787661796316,
       "tag": "0005_first_echo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787666302979,
+      "tag": "0006_clean_spot",
+      "breakpoints": true
     }
   ]
 }

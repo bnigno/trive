@@ -6,6 +6,7 @@ export {
   products,
   productVariants,
 } from "./catalog";
+export { coupons } from "./coupons";
 export { customerAddresses, customers } from "./customers";
 export {
   paymentFeeRules,

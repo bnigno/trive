@@ -23,6 +23,12 @@ import {
 import { normalizeDocument } from "@/lib/document";
 import { toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import {
+  quoteCoupon,
+  redeemCouponInTx,
+  ServiceError as CouponServiceError,
+  type CouponQuote,
+} from "@/services/coupons";
 import { ServiceError, transitionOrder } from "@/services/orders";
 
 export { ServiceError };
@@ -131,6 +137,8 @@ const createStoreOrderSchema = z.object({
   shippingRateId: z.uuid(),
   /** Frete que o cliente VIU no carrinho (em centavos). */
   expectedShippingCents: z.number().int().nonnegative(),
+  /** Código de cupom digitado no checkout (opcional; normalizado no serviço). */
+  couponCode: z.string().trim().optional(),
 });
 
 export type CreateStoreOrderInput = z.input<typeof createStoreOrderSchema>;
@@ -280,6 +288,27 @@ export async function createStoreOrder(
       throw new ShippingChangedError(shippingCents);
     }
 
+    // (b2) Cupom: cotação ANTES de qualquer escrita — cupom inválido derruba
+    // o checkout com mensagem clara sem criar nada. O CONSUMO (used_count)
+    // acontece só depois do insert do pedido, nesta MESMA transação, com
+    // guard atômico contra corrida no último uso.
+    const subtotalCents = itemRows.reduce((sum, r) => sum + r.totalCents, 0);
+    let coupon: CouponQuote | null = null;
+    if (parsed.couponCode !== undefined && parsed.couponCode !== "") {
+      try {
+        coupon = await quoteCoupon(tx, {
+          code: parsed.couponCode,
+          subtotalCents,
+        });
+      } catch (error) {
+        if (error instanceof CouponServiceError) {
+          // Reempacota na classe de erro da loja para a UI tratar uniforme.
+          throw new ServiceError(error.code, error.message);
+        }
+        throw error;
+      }
+    }
+
     // Pré-checagem de estoque com mensagem amigável ANTES de qualquer escrita
     // (a reserva na transição ainda revalida com lock — corrida segura).
     for (const row of itemRows) {
@@ -406,12 +435,14 @@ export async function createStoreOrder(
 
     // (d) Pedido channel 'store' em draft, com snapshots (sku/nome/custo/
     // price_version) e snapshot jsonb do endereço de entrega.
+    // quoteCoupon já garante desconto <= subtotal (clamp/percent),
+    // condição que computeOrderTotals revalida.
     const totals = computeOrderTotals(
       itemRows.map((r) => ({
         unitPriceCents: r.unitPriceCents,
         quantity: r.quantity,
       })),
-      0,
+      coupon?.discountCents ?? 0,
       shippingCents,
     );
 
@@ -422,7 +453,9 @@ export async function createStoreOrder(
         status: "draft",
         channel: "store",
         subtotalCents: totals.subtotalCents,
-        discountCents: 0,
+        discountCents: coupon?.discountCents ?? 0,
+        couponId: coupon?.couponId ?? null,
+        couponCode: coupon?.code ?? null,
         shippingCents,
         totalCents: totals.totalCents,
         shippingAddress: addressValues,
@@ -438,6 +471,19 @@ export async function createStoreOrder(
     await tx
       .insert(orderItems)
       .values(itemRows.map((r) => ({ ...r, orderId: order.id })));
+
+    // Consome 1 uso do cupom na MESMA transação do pedido: se o guard falhar
+    // (último uso perdido para um pedido simultâneo), TUDO desfaz.
+    if (coupon) {
+      try {
+        await redeemCouponInTx(tx, coupon.couponId);
+      } catch (error) {
+        if (error instanceof CouponServiceError) {
+          throw new ServiceError(error.code, error.message);
+        }
+        throw error;
+      }
+    }
 
     await tx.insert(orderStatusHistory).values({
       orderId: order.id,
@@ -506,6 +552,8 @@ export async function createStoreOrder(
         channel: "store",
         customerId,
         subtotalCents: totals.subtotalCents,
+        discountCents: coupon?.discountCents ?? 0,
+        couponCode: coupon?.code ?? null,
         shippingCents,
         totalCents: totals.totalCents,
         paymentDueAt: paymentDueAt.toISOString(),

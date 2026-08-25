@@ -24,7 +24,7 @@ import { toE164BR } from "@/lib/phone";
 import type { ShippingQuote } from "@/services/store-catalog";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
-import { quoteShippingAction } from "../carrinho/actions";
+import { quoteCouponAction, quoteShippingAction } from "../carrinho/actions";
 import { placeOrderAction } from "./actions";
 
 const UFS = [
@@ -83,9 +83,11 @@ type QuoteState =
 export function CheckoutClient({
   initialCepDigits,
   initialRateId,
+  initialCouponCode,
 }: {
   initialCepDigits: string;
   initialRateId: string;
+  initialCouponCode: string;
 }) {
   const router = useRouter();
   const { items, subtotalCents, clear, updatePrices } = useCart();
@@ -159,12 +161,66 @@ export function CheckoutClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, cepDigits, itemsKey]);
 
+  // ----- Cupom: re-cotado no servidor ao montar e quando a sacola muda -----
+  const [couponCode, setCouponCode] = useState<string | null>(
+    initialCouponCode.trim() ? initialCouponCode.trim().toUpperCase() : null,
+  );
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    discountCents: number;
+  } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [, startCouponQuote] = useTransition();
+  const lastCouponKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!mounted || items.length === 0) return;
+    if (!couponCode) {
+      lastCouponKeyRef.current = null;
+      return;
+    }
+    const key = `${couponCode}|${itemsKey}`;
+    if (lastCouponKeyRef.current === key) return;
+    lastCouponKeyRef.current = key;
+    startCouponQuote(async () => {
+      const result = await quoteCouponAction({
+        code: couponCode,
+        items: items.map((line) => ({
+          variantId: line.variantId,
+          quantity: line.quantity,
+        })),
+      });
+      if (result.ok) {
+        setAppliedCoupon({
+          code: result.code,
+          discountCents: result.discountCents,
+        });
+        setCouponError(null);
+        return;
+      }
+      // Cupom inválido AGORA (expirou/esgotou entre carrinho e checkout):
+      // some com o desconto do resumo e mostra o motivo. O código continua no
+      // payload — se o cliente insistir em fechar, o servidor rejeita com a
+      // mesma mensagem SEM criar pedido.
+      setAppliedCoupon(null);
+      setCouponError(result.error);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, couponCode, itemsKey]);
+
+  function removeCoupon() {
+    setCouponCode(null);
+    setAppliedCoupon(null);
+    setCouponError(null);
+  }
+
   const quotes = quote.status === "done" ? quote.quotes : [];
   const selectedQuote =
     quotes.find((q) => q.rateId === selectedRateId) ?? null;
   const shippingCents =
     shippingCentsOverride ?? selectedQuote?.priceCents ?? null;
-  const totalCents = subtotalCents + (shippingCents ?? 0);
+  const discountCents = appliedCoupon?.discountCents ?? 0;
+  const totalCents = subtotalCents - discountCents + (shippingCents ?? 0);
 
   // ----- Envio do pedido ---------------------------------------------------
   const [submitting, startSubmit] = useTransition();
@@ -265,6 +321,7 @@ export function CheckoutClient({
       })),
       shippingRateId: selectedQuote.rateId,
       expectedShippingCents: shippingCents,
+      ...(couponCode ? { couponCode } : {}),
     };
     submitPayload(payload);
   }
@@ -488,6 +545,23 @@ export function CheckoutClient({
           ) : null}
         </div>
 
+        {/* Cupom aplicado / problema com o cupom */}
+        {couponError ? (
+          <div
+            role="alert"
+            className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+          >
+            <p>{couponError}</p>
+            <button
+              type="button"
+              onClick={removeCoupon}
+              className="mt-1 text-xs font-semibold underline"
+            >
+              remover cupom
+            </button>
+          </div>
+        ) : null}
+
         <dl className="mt-3 space-y-1.5 border-t border-zinc-200 pt-3 text-sm dark:border-zinc-700">
           <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
             <dt>Subtotal</dt>
@@ -495,6 +569,24 @@ export function CheckoutClient({
               <Money cents={subtotalCents} />
             </dd>
           </div>
+          {appliedCoupon ? (
+            <div className="flex justify-between font-medium text-emerald-700 dark:text-emerald-400">
+              <dt className="flex items-center gap-2">
+                Desconto
+                <button
+                  type="button"
+                  onClick={removeCoupon}
+                  className="text-xs font-normal text-zinc-500 underline hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400"
+                >
+                  remover
+                </button>
+              </dt>
+              <dd>
+                − <Money cents={appliedCoupon.discountCents} /> (
+                {appliedCoupon.code})
+              </dd>
+            </div>
+          ) : null}
           <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
             <dt>Frete</dt>
             <dd>
@@ -766,6 +858,18 @@ export function CheckoutClient({
             className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
           >
             <p>{submitError.message}</p>
+            {submitError.code.startsWith("COUPON_") ? (
+              <button
+                type="button"
+                onClick={() => {
+                  removeCoupon();
+                  setSubmitError(null);
+                }}
+                className="mt-2 inline-block font-semibold underline"
+              >
+                Remover o cupom e continuar sem desconto
+              </button>
+            ) : null}
             {submitError.code === "OUT_OF_STOCK" ||
             submitError.code === "VARIANT_UNAVAILABLE" ||
             submitError.code === "NO_ACTIVE_PRICE" ? (
