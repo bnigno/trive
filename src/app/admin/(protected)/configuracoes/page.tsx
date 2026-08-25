@@ -1,0 +1,306 @@
+import type { Metadata } from "next";
+import { getDb } from "@/db/client";
+import { requireUser } from "@/services/auth";
+import {
+  getDefaultPolicy,
+  getFeeRules,
+  getSettingsMap,
+  PAYMENT_METHODS,
+  type DefaultPolicy,
+  type FeeRule,
+} from "@/services/settings";
+import { PageHeader } from "@/components/ui/page-header";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Money } from "@/components/ui/money";
+import { Table, Td, Tr } from "@/components/ui/table";
+import {
+  ApprovalRulesForm,
+  FeeRuleForm,
+  PolicyForm,
+  StockSettingsForm,
+} from "./forms";
+
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Configurações",
+};
+
+const METHOD_LABELS: Record<string, string> = {
+  pix: "Pix",
+  credit_card: "Cartão de crédito",
+  boleto: "Boleto",
+};
+
+const whenFormatter = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "America/Sao_Paulo",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function formatRatePercent(rate: number): string {
+  return `${(rate * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+}
+
+type SettingsData = {
+  feeRules: { current: FeeRule[]; history: FeeRule[] };
+  policy: DefaultPolicy | null;
+  settings: {
+    changeThresholdRate: number;
+    firstPriceRequiresApproval: boolean;
+    lowStockThreshold: number;
+    reservationTtlMinutes: number;
+  };
+};
+
+async function loadSettings(): Promise<SettingsData | null> {
+  try {
+    const db = getDb();
+    const [feeRules, policy, map] = await Promise.all([
+      getFeeRules(db),
+      getDefaultPolicy(db),
+      getSettingsMap(db, [
+        "price_change_pct_threshold",
+        "first_price_requires_approval",
+        "default_low_stock_threshold",
+        "stock_reservation_ttl_minutes",
+      ]),
+    ]);
+    return {
+      feeRules,
+      policy,
+      settings: {
+        changeThresholdRate:
+          map.price_change_pct_threshold === undefined
+            ? 0.1
+            : Number(map.price_change_pct_threshold),
+        firstPriceRequiresApproval:
+          map.first_price_requires_approval === undefined
+            ? true
+            : map.first_price_requires_approval === true,
+        lowStockThreshold:
+          map.default_low_stock_threshold === undefined
+            ? 3
+            : Number(map.default_low_stock_threshold),
+        reservationTtlMinutes:
+          map.stock_reservation_ttl_minutes === undefined
+            ? 120
+            : Number(map.stock_reservation_ttl_minutes),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export default async function ConfiguracoesPage() {
+  await requireUser();
+  const data = await loadSettings();
+
+  if (!data) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Configurações"
+          subtitle="Taxas, precificação, aprovações e estoque."
+        />
+        <EmptyState
+          title="Não foi possível carregar as configurações"
+          hint="O banco de dados está indisponível no momento. Tente recarregar a página."
+        />
+      </div>
+    );
+  }
+
+  const currentByMethod = new Map(
+    data.feeRules.current.map((rule) => [rule.paymentMethod, rule]),
+  );
+
+  return (
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Configurações"
+        subtitle="Taxas do Mercado Pago, política de preços, aprovações e estoque."
+      />
+
+      <Card title="Taxas do Mercado Pago">
+        <div className="flex flex-col gap-5">
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            Confira as taxas reais no painel do Mercado Pago — elas mudam por
+            plano e prazo de repasse.
+          </p>
+
+          <Table
+            headers={[
+              "Método",
+              "Taxa %",
+              "Tarifa fixa",
+              "Prazo de repasse",
+              "Referência",
+              "Vigente desde",
+            ]}
+          >
+            {PAYMENT_METHODS.map((method) => {
+              const rule = currentByMethod.get(method);
+              return (
+                <Tr key={method}>
+                  <Td className="font-medium">{METHOD_LABELS[method]}</Td>
+                  {rule ? (
+                    <>
+                      <Td>{formatRatePercent(rule.percentRate)}</Td>
+                      <Td>
+                        <Money cents={rule.fixedFeeCents} />
+                      </Td>
+                      <Td>
+                        {rule.settlementDays === 0
+                          ? "Na hora"
+                          : `${rule.settlementDays} dias`}
+                      </Td>
+                      <Td>
+                        {rule.isReferenceForPricing ? (
+                          <Badge tone="info">Referência</Badge>
+                        ) : (
+                          <span className="text-zinc-400 dark:text-zinc-500">
+                            —
+                          </span>
+                        )}
+                      </Td>
+                      <Td>{whenFormatter.format(rule.effectiveFrom)}</Td>
+                    </>
+                  ) : (
+                    <Td colSpan={5} className="text-zinc-500 dark:text-zinc-400">
+                      Sem taxa cadastrada — preencha a primeira vigência abaixo.
+                    </Td>
+                  )}
+                </Tr>
+              );
+            })}
+          </Table>
+
+          <div className="flex flex-col gap-3">
+            {PAYMENT_METHODS.map((method) => {
+              const rule = currentByMethod.get(method);
+              return (
+                <details
+                  key={method}
+                  className="rounded-lg border border-zinc-200 dark:border-zinc-800"
+                >
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    Nova vigência — {METHOD_LABELS[method]}
+                  </summary>
+                  <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
+                    <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+                      A taxa atual não é editada: ela entra para o histórico e a
+                      nova passa a valer a partir de agora.
+                    </p>
+                    <FeeRuleForm
+                      paymentMethod={method}
+                      methodLabel={METHOD_LABELS[method]}
+                      defaults={
+                        rule
+                          ? {
+                              percentRate: rule.percentRate,
+                              fixedFeeCents: rule.fixedFeeCents,
+                              settlementDays: rule.settlementDays,
+                              installmentsMax: rule.installmentsMax,
+                              isReferenceForPricing: rule.isReferenceForPricing,
+                            }
+                          : null
+                      }
+                    />
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+
+          {data.feeRules.history.length > 0 ? (
+            <details className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                Histórico de taxas ({data.feeRules.history.length})
+              </summary>
+              <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
+                <Table
+                  headers={["Método", "Taxa %", "Tarifa fixa", "Valeu de", "Até"]}
+                >
+                  {data.feeRules.history.map((rule) => (
+                    <Tr key={rule.id}>
+                      <Td>{METHOD_LABELS[rule.paymentMethod]}</Td>
+                      <Td>{formatRatePercent(rule.percentRate)}</Td>
+                      <Td>
+                        <Money cents={rule.fixedFeeCents} />
+                      </Td>
+                      <Td>{whenFormatter.format(rule.effectiveFrom)}</Td>
+                      <Td>
+                        {rule.effectiveTo
+                          ? whenFormatter.format(rule.effectiveTo)
+                          : "—"}
+                      </Td>
+                    </Tr>
+                  ))}
+                </Table>
+              </div>
+            </details>
+          ) : null}
+        </div>
+      </Card>
+
+      <Card title="Política de precificação">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Estes valores alimentam a calculadora de preços de todos os
+            produtos.
+          </p>
+          <PolicyForm
+            defaults={
+              data.policy
+                ? {
+                    targetMarginRate: data.policy.targetMarginRate,
+                    minMarginRate: data.policy.minMarginRate,
+                    roundingMode: data.policy.roundingMode,
+                    roundingDirection: data.policy.roundingDirection,
+                    otherCostsFixedCents: data.policy.otherCostsFixedCents,
+                  }
+                : null
+            }
+          />
+        </div>
+      </Card>
+
+      <Card title="Regras de aprovação">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Definem quando uma mudança de preço precisa passar por você antes
+            de valer na loja.
+          </p>
+          <ApprovalRulesForm
+            defaults={{
+              changeThresholdRate: data.settings.changeThresholdRate,
+              firstPriceRequiresApproval:
+                data.settings.firstPriceRequiresApproval,
+            }}
+          />
+        </div>
+      </Card>
+
+      <Card title="Estoque">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Regras gerais de alerta e reserva de estoque.
+          </p>
+          <StockSettingsForm
+            defaults={{
+              lowStockThreshold: data.settings.lowStockThreshold,
+              reservationTtlMinutes: data.settings.reservationTtlMinutes,
+            }}
+          />
+        </div>
+      </Card>
+    </div>
+  );
+}

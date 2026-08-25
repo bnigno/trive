@@ -378,6 +378,62 @@ export async function transitionOrder(
 }
 
 // ---------------------------------------------------------------------------
+// updateOrderTracking
+// ---------------------------------------------------------------------------
+
+const updateOrderTrackingSchema = z.object({
+  orderId: z.uuid(),
+  trackingCode: z
+    .string()
+    .trim()
+    .min(1, "Informe o código de rastreio.")
+    .max(100),
+  userId: z.uuid(),
+});
+
+export type UpdateOrderTrackingInput = z.input<
+  typeof updateOrderTrackingSchema
+>;
+
+export async function updateOrderTracking(
+  db: DbOrTx,
+  input: UpdateOrderTrackingInput,
+): Promise<{ orderId: string; trackingCode: string }> {
+  const parsed = updateOrderTrackingSchema.parse(input);
+
+  return db.transaction(async (tx) => {
+    const [order] = await tx
+      .select({
+        id: orders.id,
+        shippingTrackingCode: orders.shippingTrackingCode,
+      })
+      .from(orders)
+      .where(eq(orders.id, parsed.orderId))
+      .for("update");
+    if (!order) {
+      throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
+    }
+
+    await tx
+      .update(orders)
+      .set({ shippingTrackingCode: parsed.trackingCode, updatedAt: new Date() })
+      .where(eq(orders.id, order.id));
+
+    await tx.insert(auditLog).values({
+      actorType: "user",
+      actorId: parsed.userId,
+      action: "order.tracking",
+      entityType: "order",
+      entityId: order.id,
+      before: { shippingTrackingCode: order.shippingTrackingCode },
+      after: { shippingTrackingCode: parsed.trackingCode },
+    });
+
+    return { orderId: order.id, trackingCode: parsed.trackingCode };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Consultas
 // ---------------------------------------------------------------------------
 

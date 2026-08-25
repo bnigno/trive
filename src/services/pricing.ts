@@ -935,3 +935,331 @@ export async function listPricesOverview(
       row.activeMarginRate === null ? null : Number(row.activeMarginRate),
   }));
 }
+
+// ---------------------------------------------------------------------------
+// 8. Operações em lote: recálculo geral + aprovação/rejeição por lote
+// ---------------------------------------------------------------------------
+
+const recalculateAllPricesSchema = z.object({
+  userId: uuidSchema,
+  origin: z.enum(["bulk_update", "auto_fee_change"]).default("bulk_update"),
+  note: z.string().trim().min(1).optional(),
+});
+
+export type RecalculateAllPricesInput = z.input<
+  typeof recalculateAllPricesSchema
+>;
+
+export interface RecalculateAllPricesResult {
+  batchId: string;
+  created: number;
+  autoActivated: number;
+  pendingApproval: number;
+  unchanged: number;
+}
+
+/**
+ * Recalcula o preço de TODAS as variantes ativas que já têm preço ativo,
+ * usando custos, taxas e política vigentes. Variantes cujo recálculo resulta
+ * no MESMO preço ativo são puladas sem erro (nenhuma versão criada). As novas
+ * versões compartilham um batchId único, para aprovação/rejeição em lote.
+ *
+ * Deliberado: o batchId é gravado APÓS criar a versão, para que o recálculo
+ * geral não force aprovação de tudo (regra bulk_change do evaluateApproval).
+ * Assim, só mudanças críticas (queda de preço, variação acima do limiar,
+ * margem abaixo do mínimo etc.) ficam pendentes; as demais ativam sozinhas.
+ */
+export async function recalculateAllPrices(
+  db: PricingDb,
+  input: RecalculateAllPricesInput,
+): Promise<RecalculateAllPricesResult> {
+  const parsed = recalculateAllPricesSchema.parse(input);
+  const batchId = crypto.randomUUID();
+
+  return await db.transaction(async (tx) => {
+    const targets = await tx
+      .select({
+        variantId: productVariants.id,
+        activePriceCents: priceVersions.priceCents,
+      })
+      .from(productVariants)
+      .innerJoin(
+        priceVersions,
+        and(
+          eq(priceVersions.productVariantId, productVariants.id),
+          eq(priceVersions.status, "active"),
+        ),
+      )
+      .where(
+        and(
+          eq(productVariants.isActive, true),
+          isNull(productVariants.deletedAt),
+        ),
+      )
+      .orderBy(productVariants.sku);
+
+    let created = 0;
+    let autoActivated = 0;
+    let pendingApproval = 0;
+    let unchanged = 0;
+
+    for (const target of targets) {
+      const ctx = await getPricingContext(tx, target.variantId);
+      const calc = calculatePrice(buildPricingInputs(ctx));
+      if (calc.priceCents === target.activePriceCents) {
+        unchanged += 1;
+        continue;
+      }
+
+      const version = await createPriceVersionInTx(tx, {
+        variantId: target.variantId,
+        userId: parsed.userId,
+        origin: parsed.origin,
+        overrides: undefined,
+        priceCentsManual: undefined,
+        batchId: undefined,
+      });
+      await tx
+        .update(priceVersions)
+        .set({ batchId })
+        .where(eq(priceVersions.id, version.id));
+
+      created += 1;
+      if (version.status === "active") autoActivated += 1;
+      else pendingApproval += 1;
+    }
+
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "price.bulk_recalculate",
+      entityType: "price_batch",
+      entityId: batchId,
+      after: {
+        origin: parsed.origin,
+        created,
+        autoActivated,
+        pendingApproval,
+        unchanged,
+      },
+      reason: parsed.note ?? null,
+    });
+
+    return { batchId, created, autoActivated, pendingApproval, unchanged };
+  });
+}
+
+export interface BatchSummaryItem {
+  versionId: string;
+  variantId: string;
+  sku: string;
+  productName: string;
+  currentPriceCents: number | null;
+  newPriceCents: number;
+  /** Variação relativa (ex.: 0.032 = +3,2%); null sem preço de referência. */
+  changePct: number | null;
+  computedMarginRate: number;
+  minMarginRate: number | null;
+  approvalReasons: ApprovalReason[];
+  createdAt: Date;
+}
+
+export interface BatchSummary {
+  batchId: string;
+  items: BatchSummaryItem[];
+  aggregate: {
+    count: number;
+    avgChangePct: number | null;
+    marginPreserved: boolean;
+  };
+}
+
+/** Itens ainda pendentes de um lote + agregado para decisão rápida. */
+export async function listBatchSummary(
+  db: PricingDb,
+  batchId: string,
+): Promise<BatchSummary> {
+  const parsedBatchId = uuidSchema.parse(batchId);
+  const activePrice = alias(priceVersions, "active_price");
+  const rows = await db
+    .select({
+      versionId: priceVersions.id,
+      variantId: priceVersions.productVariantId,
+      sku: productVariants.sku,
+      productName: products.name,
+      newPriceCents: priceVersions.priceCents,
+      previousPriceCents: priceVersions.previousPriceCents,
+      computedMarginRate: priceVersions.computedMarginRate,
+      approvalReasons: priceVersions.approvalReasons,
+      createdAt: priceVersions.createdAt,
+      activePriceCents: activePrice.priceCents,
+      minMarginRate: pricingPolicies.minMarginRate,
+    })
+    .from(priceVersions)
+    .innerJoin(
+      productVariants,
+      eq(productVariants.id, priceVersions.productVariantId),
+    )
+    .innerJoin(products, eq(products.id, productVariants.productId))
+    .leftJoin(
+      activePrice,
+      and(
+        eq(activePrice.productVariantId, priceVersions.productVariantId),
+        eq(activePrice.status, "active"),
+      ),
+    )
+    .leftJoin(pricingPolicies, eq(pricingPolicies.id, priceVersions.policyId))
+    .where(
+      and(
+        eq(priceVersions.batchId, parsedBatchId),
+        eq(priceVersions.status, "pending_approval"),
+      ),
+    )
+    .orderBy(productVariants.sku);
+
+  const items: BatchSummaryItem[] = rows.map((row) => {
+    const currentPriceCents =
+      row.activePriceCents ?? row.previousPriceCents ?? null;
+    const changePct =
+      currentPriceCents !== null && currentPriceCents > 0
+        ? (row.newPriceCents - currentPriceCents) / currentPriceCents
+        : null;
+    return {
+      versionId: row.versionId,
+      variantId: row.variantId,
+      sku: row.sku,
+      productName: row.productName,
+      currentPriceCents,
+      newPriceCents: row.newPriceCents,
+      changePct,
+      computedMarginRate: Number(row.computedMarginRate),
+      minMarginRate:
+        row.minMarginRate === null ? null : Number(row.minMarginRate),
+      approvalReasons: (row.approvalReasons ?? []) as ApprovalReason[],
+      createdAt: row.createdAt,
+    };
+  });
+
+  const changes = items.flatMap((i) =>
+    i.changePct === null ? [] : [i.changePct],
+  );
+  const avgChangePct =
+    changes.length === 0
+      ? null
+      : changes.reduce((sum, c) => sum + c, 0) / changes.length;
+  const marginPreserved = items.every(
+    (i) => i.minMarginRate === null || i.computedMarginRate >= i.minMarginRate,
+  );
+
+  return {
+    batchId: parsedBatchId,
+    items,
+    aggregate: { count: items.length, avgChangePct, marginPreserved },
+  };
+}
+
+const approveBatchSchema = z.object({
+  batchId: uuidSchema,
+  userId: uuidSchema,
+});
+
+/** Aprova e ativa TODAS as versões pendentes do lote em uma única transação. */
+export async function approveBatch(
+  db: PricingDb,
+  input: z.input<typeof approveBatchSchema>,
+): Promise<{ batchId: string; approvedCount: number }> {
+  const parsed = approveBatchSchema.parse(input);
+  return await db.transaction(async (tx) => {
+    const pending = await tx
+      .select({ id: priceVersions.id, priceCents: priceVersions.priceCents })
+      .from(priceVersions)
+      .where(
+        and(
+          eq(priceVersions.batchId, parsed.batchId),
+          eq(priceVersions.status, "pending_approval"),
+        ),
+      );
+
+    if (pending.length === 0) {
+      throw new ServiceError(
+        "batch_empty",
+        "Nenhuma versão pendente de aprovação neste lote.",
+      );
+    }
+
+    const now = new Date();
+    for (const version of pending) {
+      await tx
+        .update(priceVersions)
+        .set({ status: "approved", approvedBy: parsed.userId, approvedAt: now })
+        .where(eq(priceVersions.id, version.id));
+      await activateVersionTx(tx, version.id, parsed.userId);
+    }
+
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "price.approve_batch",
+      entityType: "price_batch",
+      entityId: parsed.batchId,
+      after: {
+        approvedCount: pending.length,
+        versionIds: pending.map((v) => v.id),
+      },
+    });
+
+    return { batchId: parsed.batchId, approvedCount: pending.length };
+  });
+}
+
+const rejectBatchSchema = z.object({
+  batchId: uuidSchema,
+  userId: uuidSchema,
+  reason: z
+    .string({ error: "Motivo da rejeição é obrigatório." })
+    .trim()
+    .min(1, "Motivo da rejeição é obrigatório."),
+});
+
+/** Rejeita TODAS as versões pendentes do lote; preços ativos são mantidos. */
+export async function rejectBatch(
+  db: PricingDb,
+  input: z.input<typeof rejectBatchSchema>,
+): Promise<{ batchId: string; rejectedCount: number }> {
+  const parsed = rejectBatchSchema.parse(input);
+  return await db.transaction(async (tx) => {
+    const rejected = await tx
+      .update(priceVersions)
+      .set({
+        status: "rejected",
+        rejectedAt: new Date(),
+        rejectionReason: parsed.reason,
+      })
+      .where(
+        and(
+          eq(priceVersions.batchId, parsed.batchId),
+          eq(priceVersions.status, "pending_approval"),
+        ),
+      )
+      .returning({ id: priceVersions.id });
+
+    if (rejected.length === 0) {
+      throw new ServiceError(
+        "batch_empty",
+        "Nenhuma versão pendente de aprovação neste lote.",
+      );
+    }
+
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "price.reject_batch",
+      entityType: "price_batch",
+      entityId: parsed.batchId,
+      after: {
+        rejectedCount: rejected.length,
+        versionIds: rejected.map((v) => v.id),
+      },
+      reason: parsed.reason,
+    });
+
+    return { batchId: parsed.batchId, rejectedCount: rejected.length };
+  });
+}
