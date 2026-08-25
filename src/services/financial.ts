@@ -217,8 +217,9 @@ export async function monthOverview(
 ): Promise<MonthOverview> {
   const parsed = monthOverviewSchema.parse(input);
 
-  const start = new Date(Date.UTC(parsed.year, parsed.month - 1, 1));
-  const end = new Date(Date.UTC(parsed.year, parsed.month, 1));
+  // ISO strings (não Date): em sql`` cru o postgres.js não serializa Date.
+  const start = new Date(Date.UTC(parsed.year, parsed.month - 1, 1)).toISOString();
+  const end = new Date(Date.UTC(parsed.year, parsed.month, 1)).toISOString();
 
   const settledInMonth = (direction: string) => sql`
     ${financialEntries.direction} = ${direction}
@@ -290,8 +291,8 @@ export async function listEntries(db: DbOrTx, input: ListEntriesInput = {}) {
     const [yearStr, monthStr] = parsed.month.split("-");
     const year = Number(yearStr);
     const month = Number(monthStr);
-    const start = new Date(Date.UTC(year, month - 1, 1));
-    const end = new Date(Date.UTC(year, month, 1));
+    const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+    const end = new Date(Date.UTC(year, month, 1)).toISOString();
     conditions.push(sql`
       coalesce(
         ${financialEntries.settledAt},
