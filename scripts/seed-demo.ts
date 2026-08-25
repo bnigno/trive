@@ -15,7 +15,7 @@ import { createCoupon } from "@/services/coupons";
 import { formatCentsBRL } from "@/lib/money";
 
 function validCpf(seed: number): string {
-  const d = [];
+  const d: number[] = [];
   let s = seed;
   for (let i = 0; i < 9; i++) { d.push(s % 10); s = Math.floor(s / 7) + i * 3 + 1; }
   if (d.every((x) => x === d[0])) d[8] = (d[8] + 1) % 10;
