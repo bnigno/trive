@@ -75,9 +75,19 @@ export async function processInboundMpWebhook(
     });
   }
 
+  // A identidade da NOTIFICAÇÃO (não do pagamento!): o MP envia vários
+  // webhooks para o MESMO payment id ao longo do ciclo (Pix criado → pago).
+  // Deduplicar só por payment id engolia o aviso de "pagou" — bug real visto
+  // em produção no pedido #1000. body.id é o id único da notificação; o
+  // x-request-id cobre reenvios da MESMA entrega.
+  const rawBody = (input.body ?? {}) as Record<string, unknown>;
+  const notificationId =
+    rawBody.id !== undefined && rawBody.id !== null
+      ? String(rawBody.id)
+      : (input.xRequestId ?? randomUUID());
   const externalEventId =
     dataId !== undefined
-      ? `${eventType ?? "unknown"}:${dataId}`
+      ? `${eventType ?? "unknown"}:${dataId}:${notificationId}`
       : (input.xRequestId ?? `unknown:${randomUUID()}`);
 
   const shouldEnqueue =
@@ -110,9 +120,12 @@ export async function processInboundMpWebhook(
       return { duplicate: false, enqueued: false, signatureValid };
     }
 
+    // Dedupe por ENTREGA (inbound), não por pagamento: cada notificação nova
+    // do mesmo pagamento reprocessa — processPaymentEvent é idempotente
+    // (transição guardada por estado; pedido já pago vira no-op).
     await enqueueOutboxEvent(tx, {
       eventType: "mp.payment_event",
-      dedupeKey: `mp.payment_event:${dataId}`,
+      dedupeKey: `mp.payment_event:${inboundId}`,
       payload: { mpPaymentId: dataId },
     });
 

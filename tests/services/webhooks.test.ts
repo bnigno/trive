@@ -59,7 +59,7 @@ describe("processInboundMpWebhook", () => {
     expect(inbound).toHaveLength(1);
     expect(inbound[0]).toMatchObject({
       source: "mercadopago",
-      externalEventId: "payment:111",
+      externalEventId: expect.stringMatching(/^payment:111:/),
       eventType: "payment",
       signatureValid: true,
       status: "done",
@@ -70,7 +70,7 @@ describe("processInboundMpWebhook", () => {
     expect(outbox).toHaveLength(1);
     expect(outbox[0]).toMatchObject({
       eventType: "mp.payment_event",
-      dedupeKey: "mp.payment_event:111",
+      dedupeKey: expect.stringMatching(/^mp\.payment_event:/),
       payload: { mpPaymentId: "111" },
     });
   });
@@ -160,7 +160,7 @@ describe("processInboundMpWebhook", () => {
 
     const inbound = await db.select().from(schema.inboundEvents);
     expect(inbound[0]).toMatchObject({
-      externalEventId: "merchant_order:666",
+      externalEventId: expect.stringMatching(/^merchant_order:666/),
       status: "ignored",
     });
     expect(await db.select().from(schema.outboxEvents)).toHaveLength(0);
@@ -180,9 +180,28 @@ describe("processInboundMpWebhook", () => {
     expect(result.enqueued).toBe(true);
     const outbox = await db.select().from(schema.outboxEvents);
     expect(outbox[0]).toMatchObject({
-      dedupeKey: "mp.payment_event:777",
+      dedupeKey: expect.stringMatching(/^mp\.payment_event:/),
       payload: { mpPaymentId: "777" },
     });
+  });
+
+  it("notificações DIFERENTES do mesmo pagamento (Pix criado → pago) são AMBAS processadas", async () => {
+    // Regressão do pedido #1000: o MP envia vários webhooks para o mesmo
+    // payment id; deduplicar por payment id engolia o aviso de pagamento.
+    const first = await processInboundMpWebhook(sdb, {
+      ...signedHeaders("999"),
+      body: { ...paymentBody("999"), id: "notif-1" },
+      rawDataId: "999",
+    });
+    const second = await processInboundMpWebhook(sdb, {
+      ...signedHeaders("999"),
+      body: { ...paymentBody("999"), id: "notif-2" },
+      rawDataId: "999",
+    });
+    expect(first).toMatchObject({ duplicate: false, enqueued: true });
+    expect(second).toMatchObject({ duplicate: false, enqueued: true });
+    const outbox = await db.select().from(schema.outboxEvents);
+    expect(outbox).toHaveLength(2);
   });
 
   it("payment sem dataId nenhum: ignored, externalEventId cai no x-request-id", async () => {
