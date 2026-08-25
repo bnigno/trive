@@ -2,7 +2,7 @@ import "dotenv/config";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { settings } from "./schema";
+import { settings, waTemplates } from "./schema";
 
 // JSON.stringify + cast garante jsonb 'null' (JSON null) em vez de NULL SQL,
 // que violaria o NOT NULL da coluna value.
@@ -27,6 +27,96 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "store_address", value: "" },
   { key: "store_email", value: "" },
   { key: "store_whatsapp", value: "" },
+  // Fase 4 — WhatsApp (Z-API). wa_enabled fica false até o dono conectar a
+  // sessão; recuperação de pedido não pago dispara após N minutos (UMA vez).
+  { key: "wa_enabled", value: false },
+  { key: "wa_recovery_after_minutes", value: 60 },
+];
+
+// Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca
+// sobrescreve edições (onConflictDoNothing por key). Mensagens transacionais
+// ao CLIENTE terminam com a instrução SAIR (opt-out LGPD); as [interno] vão
+// só para o dono e dispensam isso.
+const initialWaTemplates: Array<{
+  key: string;
+  label: string;
+  bodyTemplate: string;
+  variables: string[];
+}> = [
+  {
+    key: "order_confirmed",
+    label: "Pedido recebido",
+    bodyTemplate:
+      "Oi, {{nome}}! Recebemos seu pedido #{{pedido}} no valor de {{total}}. 💛\n" +
+      "Sua reserva fica garantida até {{prazo}} — é só concluir o pagamento.\n" +
+      "Acompanhe por aqui: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "total", "link", "prazo"],
+  },
+  {
+    key: "payment_approved",
+    label: "Pagamento aprovado",
+    bodyTemplate:
+      "{{nome}}, seu pagamento do pedido #{{pedido}} foi aprovado! 🎉\n" +
+      "Já estamos preparando tudo com carinho. Acompanhe: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "link"],
+  },
+  {
+    key: "order_shipped",
+    label: "Pedido enviado",
+    bodyTemplate:
+      "Boa notícia, {{nome}}! Seu pedido #{{pedido}} está a caminho. 📦\n" +
+      "Código de rastreio: {{rastreio}}\n" +
+      "Acompanhe por aqui: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "rastreio", "link"],
+  },
+  {
+    key: "order_recovery",
+    label: "Lembrete de pagamento",
+    bodyTemplate:
+      "Oi, {{nome}}! Vimos que o pagamento do pedido #{{pedido}} ({{total}}) ainda não foi concluído — sua reserva vale até {{prazo}}.\n" +
+      "Se quiser finalizar, é por aqui: {{link}}\n" +
+      "Este é o único lembrete que enviaremos, prometido. 😊\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "total", "link", "prazo"],
+  },
+  {
+    key: "owner_new_order",
+    label: "[interno] Novo pedido",
+    bodyTemplate:
+      "Novo pedido na loja! 🛍️\n" +
+      "Pedido #{{pedido}} — {{total}}\n" +
+      "Cliente: {{cliente}}",
+    variables: ["pedido", "total", "cliente"],
+  },
+  {
+    key: "owner_payment_approved",
+    label: "[interno] Pagamento aprovado",
+    bodyTemplate:
+      "Pagamento aprovado! 💰\n" +
+      "Pedido #{{pedido}} — {{total}}\n" +
+      "Forma de pagamento: {{metodo}}",
+    variables: ["pedido", "total", "metodo"],
+  },
+  {
+    key: "owner_low_stock",
+    label: "[interno] Estoque baixo",
+    bodyTemplate:
+      "Atenção: estoque baixo. ⚠️\n" +
+      "{{produto}} (SKU {{sku}})\n" +
+      "Disponível: {{disponivel}}",
+    variables: ["produto", "sku", "disponivel"],
+  },
+  {
+    key: "owner_queue_dead",
+    label: "[interno] Fila com problemas",
+    bodyTemplate:
+      "Atenção: {{quantidade}} evento(s) na fila esgotaram as tentativas. ⚠️\n" +
+      "Confira em /admin/fila.",
+    variables: ["quantidade"],
+  },
 ];
 
 async function main(): Promise<void> {
@@ -46,6 +136,18 @@ async function main(): Promise<void> {
         .insert(settings)
         .values({ key, value: toJsonb(value) })
         .onConflictDoNothing({ target: settings.key });
+    }
+
+    for (const template of initialWaTemplates) {
+      await db
+        .insert(waTemplates)
+        .values({
+          key: template.key,
+          label: template.label,
+          bodyTemplate: template.bodyTemplate,
+          variables: toJsonb(template.variables),
+        })
+        .onConflictDoNothing({ target: waTemplates.key });
     }
 
     // Taxas por forma de pagamento. Não há chave natural única (vigências
@@ -121,7 +223,7 @@ async function main(): Promise<void> {
     `);
 
     console.log(
-      "Seed concluído: settings, payment_fee_rules, pricing_policies e shipping_rates garantidos.",
+      "Seed concluído: settings, wa_templates, payment_fee_rules, pricing_policies e shipping_rates garantidos.",
     );
   } finally {
     await client.end();

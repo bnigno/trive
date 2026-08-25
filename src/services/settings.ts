@@ -422,6 +422,36 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
       }
       return e164;
     }),
+  // --- WhatsApp automático (Fase 4) ---
+  /**
+   * Mensageria WhatsApp via Z-API. Como mp_enabled: o toggle sozinho não
+   * basta — isWaEnabled (wa-messaging) também exige as credenciais Z-API no
+   * ambiente (ou ADAPTER_MODE fake, que só atende testes).
+   */
+  wa_enabled: z.boolean(),
+  /** Número do dono para avisos internos — E.164 (vazio desliga os avisos). */
+  owner_whatsapp_phone: z
+    .string()
+    .trim()
+    .transform((value, ctx) => {
+      if (value === "") return "";
+      const e164 = toE164BR(value);
+      if (!e164) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "WhatsApp inválido. Informe DDD + número, ex.: (11) 99999-8888.",
+        });
+        return z.NEVER;
+      }
+      return e164;
+    }),
+  /** Minutos após o pedido para o ÚNICO lembrete de pagamento (15 min a 12 h). */
+  wa_recovery_after_minutes: z
+    .number()
+    .int("Informe um número inteiro de minutos.")
+    .min(15, "O lembrete deve esperar pelo menos 15 minutos.")
+    .max(720, "O lembrete deve sair em até 720 minutos (12 horas)."),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

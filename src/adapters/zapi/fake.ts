@@ -1,6 +1,7 @@
 import type {
   MessagingProvider,
   OutboundTextMessage,
+  QrCode,
   SentMessage,
   SessionStatus,
 } from "./index";
@@ -9,24 +10,20 @@ export type FakeSentMessage = {
   providerMessageId: string;
   toE164: string;
   body: string;
-  dedupeKey?: string;
 };
+
+// PNG 1x1 transparente — QR code fake para os fluxos de pareamento no admin.
+export const FAKE_QR_CODE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 export class FakeMessagingProvider implements MessagingProvider {
   readonly sentMessages: FakeSentMessage[] = [];
-  private readonly messageIdByDedupeKey = new Map<string, string>();
   private connected = true;
   private sequence = 0;
 
   async sendText(message: OutboundTextMessage): Promise<SentMessage> {
     if (!this.connected) {
-      throw new Error("FakeMessagingProvider: WhatsApp session is disconnected");
-    }
-    if (message.dedupeKey) {
-      const existingId = this.messageIdByDedupeKey.get(message.dedupeKey);
-      if (existingId) {
-        return { providerMessageId: existingId };
-      }
+      throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
     }
     this.sequence += 1;
     const providerMessageId = `fake-zapi-msg-${this.sequence}`;
@@ -34,22 +31,17 @@ export class FakeMessagingProvider implements MessagingProvider {
       providerMessageId,
       toE164: message.toE164,
       body: message.body,
-      dedupeKey: message.dedupeKey,
     });
-    if (message.dedupeKey) {
-      this.messageIdByDedupeKey.set(message.dedupeKey, providerMessageId);
-    }
     return { providerMessageId };
   }
 
   async getSessionStatus(): Promise<SessionStatus> {
-    if (this.connected) {
-      return { connected: true };
-    }
-    return {
-      connected: false,
-      qrCodeUrl: "https://fake.zapi.local/qr-code.png",
-    };
+    return { connected: this.connected };
+  }
+
+  async getQrCode(): Promise<QrCode | null> {
+    if (this.connected) return null;
+    return { imageBase64: FAKE_QR_CODE_PNG_BASE64 };
   }
 
   // --- Helpers de teste (não fazem parte da interface MessagingProvider) ---
@@ -64,7 +56,6 @@ export class FakeMessagingProvider implements MessagingProvider {
 
   reset(): void {
     this.sentMessages.length = 0;
-    this.messageIdByDedupeKey.clear();
     this.connected = true;
     this.sequence = 0;
   }

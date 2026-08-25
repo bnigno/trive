@@ -1,14 +1,103 @@
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { getEmailProvider } from "@/adapters/email";
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
+import { products, productVariants, stockLevels } from "@/db/schema";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
+import {
+  isWaEnabled,
+  sendTemplateMessage,
+  sendToOwner,
+} from "@/services/wa-messaging";
+import { loadOrderWaContext } from "./wa-helpers";
 
 // Payload mínimo do evento de pagamento (Zod na fronteira da fila).
 const mpPaymentEventPayloadSchema = z.object({
   mpPaymentId: z.string().min(1),
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp dos marcos do pedido (Fase 4). REGRA: skip (desabilitado, sem
+// opt-in, sem template, já enviado) NUNCA lança — só falha REAL do provedor
+// lança, e aí o retry da fila reprocessa TUDO com idempotência: e-mail pula
+// via audit, WhatsApp retoma/pula via dedupe_key.
+// ---------------------------------------------------------------------------
+
+const ORDER_WA_MILESTONES = {
+  store_created: {
+    clientTemplate: "order_confirmed",
+    clientDedupePrefix: "wa.order_confirmed:",
+    ownerTemplate: "owner_new_order",
+    ownerDedupePrefix: "wa.owner_new:",
+  },
+  paid: {
+    clientTemplate: "payment_approved",
+    clientDedupePrefix: "wa.payment_approved:",
+    ownerTemplate: "owner_payment_approved",
+    ownerDedupePrefix: "wa.owner_paid:",
+  },
+  shipped: {
+    clientTemplate: "order_shipped",
+    clientDedupePrefix: "wa.order_shipped:",
+    ownerTemplate: null,
+    ownerDedupePrefix: null,
+  },
+} as const;
+
+async function sendOrderWa(
+  orderId: string,
+  milestone: keyof typeof ORDER_WA_MILESTONES,
+): Promise<void> {
+  const db = getDb();
+  if (!(await isWaEnabled(db))) return;
+  const provider = getMessagingProvider();
+  const ctx = await loadOrderWaContext(db, orderId);
+  if (!ctx) return;
+
+  const spec = ORDER_WA_MILESTONES[milestone];
+  // Cliente sem telefone não é erro: o e-mail (quando houver) já cobriu.
+  if (ctx.customer.phoneE164) {
+    await sendTemplateMessage(db, provider, {
+      templateKey: spec.clientTemplate,
+      phoneE164: ctx.customer.phoneE164,
+      vars: ctx.vars,
+      customerId: ctx.customer.id,
+      orderId,
+      dedupeKey: `${spec.clientDedupePrefix}${orderId}`,
+      requireOptIn: true,
+    });
+  }
+  if (spec.ownerTemplate && spec.ownerDedupePrefix) {
+    await sendToOwner(db, provider, {
+      templateKey: spec.ownerTemplate,
+      vars: ctx.vars,
+      dedupeKey: `${spec.ownerDedupePrefix}${orderId}`,
+    });
+  }
+}
+
+// Envio avulso (ex.: resposta manual do dono no admin) — corpo pronto no
+// payload, sem opt-in (transacional/resposta a contato do cliente).
+const waSendPayloadSchema = z.object({
+  phoneE164: z
+    .string()
+    .regex(/^\+[1-9]\d{7,14}$/, "Telefone deve estar em E.164."),
+  body: z.string().min(1),
+  customerId: z.uuid().optional(),
+  orderId: z.uuid().optional(),
+  dedupeKey: z.string().min(1).optional(),
+});
+
+// Resposta de cliente encaminhada ao dono (sem chatbot: humano responde).
+const waOwnerForwardPayloadSchema = z.object({
+  phoneE164: z.string().optional(),
+  customerName: z.string().optional(),
+  body: z.string().min(1),
+  dedupeKey: z.string().min(1).optional(),
 });
 
 export type OutboxEvent = {
@@ -40,25 +129,53 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       );
     }
   },
-  // E-mails dos marcos do pedido (Fase 3). Falha do provedor LANÇA de
-  // propósito: retry/backoff/DLQ da fila cuidam da reentrega. O payload é
-  // validado com Zod dentro de sendOrderEmail.
+  // Marcos do pedido: e-mail (Fase 3) + WhatsApp (Fase 4) no MESMO evento.
+  // Falha de qualquer provedor LANÇA de propósito: retry/backoff/DLQ da fila
+  // reentregam, e a idempotência de cada canal (audit no e-mail, dedupe_key
+  // no WhatsApp) evita duplicar o que já saiu. O payload é validado com Zod
+  // dentro de sendOrderEmail.
   "order.store_created": async (event) => {
     await sendOrderEmail(getDb(), getEmailProvider(), {
       orderId: String(event.payload.orderId),
       kind: "confirmed",
     });
+    await sendOrderWa(String(event.payload.orderId), "store_created");
   },
   "order.paid": async (event) => {
     await sendOrderEmail(getDb(), getEmailProvider(), {
       orderId: String(event.payload.orderId),
       kind: "paid",
     });
+    await sendOrderWa(String(event.payload.orderId), "paid");
   },
   "order.shipped": async (event) => {
     await sendOrderEmail(getDb(), getEmailProvider(), {
       orderId: String(event.payload.orderId),
       kind: "shipped",
+    });
+    await sendOrderWa(String(event.payload.orderId), "shipped");
+  },
+  // Envio avulso pelo WhatsApp (corpo pronto no payload) — sempre via fila,
+  // nunca inline: se a sessão Z-API cair, acumula e sai na reconexão.
+  "wa.send": async (event) => {
+    const parsed = waSendPayloadSchema.parse(event.payload);
+    await sendTemplateMessage(getDb(), getMessagingProvider(), {
+      bodyOverride: parsed.body,
+      phoneE164: parsed.phoneE164,
+      customerId: parsed.customerId,
+      orderId: parsed.orderId,
+      dedupeKey: parsed.dedupeKey ?? `wa.send:${event.id}`,
+      requireOptIn: false,
+    });
+  },
+  // Resposta de cliente → encaminha ao dono (humano responde; sem chatbot).
+  "wa.owner_forward": async (event) => {
+    const parsed = waOwnerForwardPayloadSchema.parse(event.payload);
+    const who =
+      parsed.customerName?.trim() || parsed.phoneE164?.trim() || "Cliente";
+    await sendToOwner(getDb(), getMessagingProvider(), {
+      bodyOverride: `💬 ${who} respondeu: "${parsed.body}"`,
+      dedupeKey: parsed.dedupeKey ?? `wa.owner_forward:${event.id}`,
     });
   },
   // Webhook do MP validado → o processador reconsulta a API (nunca confia no
@@ -84,7 +201,39 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "order.preparing": async () => {},
   "order.delivered": async () => {},
   "order.canceled": async () => {},
-  "stock.low": async () => {},
+  // Estoque cruzou o limiar para baixo → aviso interno ao dono (sem opt-in).
+  // Busca nome/SKU/disponível na hora do envio (o payload pode estar velho).
+  "stock.low": async (event) => {
+    const db = getDb();
+    if (!(await isWaEnabled(db))) return;
+    const variantId = String(event.payload.variantId);
+    const [variant] = await db
+      .select({
+        name: products.name,
+        sku: productVariants.sku,
+        onHand: stockLevels.onHand,
+        reserved: stockLevels.reserved,
+      })
+      .from(productVariants)
+      .innerJoin(products, eq(products.id, productVariants.productId))
+      .leftJoin(
+        stockLevels,
+        eq(stockLevels.productVariantId, productVariants.id),
+      )
+      .where(eq(productVariants.id, variantId))
+      .limit(1);
+    if (!variant) return;
+    const available = (variant.onHand ?? 0) - (variant.reserved ?? 0);
+    await sendToOwner(db, getMessagingProvider(), {
+      templateKey: "owner_low_stock",
+      vars: {
+        produto: variant.name,
+        sku: variant.sku,
+        disponivel: String(available),
+      },
+      dedupeKey: `wa.low:${variantId}`,
+    });
+  },
 };
 
 export class UnknownEventTypeError extends Error {

@@ -1,9 +1,12 @@
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { reconcilePendingMpOrders } from "@/services/payments";
 import { expireOverdueReservations } from "@/services/store-orders";
+import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
+import { checkSessionAndAlert } from "@/services/wa-session";
 
 const SWEEP_BATCH_LIMIT = 25;
 const SWEEP_MAX_BATCHES = 10;
@@ -60,9 +63,33 @@ export const mpReconciliation = inngest.createFunction(
   },
 );
 
+// Monitor da sessão Z-API (Fase 4): sessão caída não perde mensagem (tudo
+// acumula na fila outbox), mas o dono precisa saber para reescanear o QR.
+// Alerta por E-MAIL (o WhatsApp está fora do ar), no máximo 1x por hora.
+export const waSessionMonitor = inngest.createFunction(
+  { id: "wa-session-monitor", triggers: [{ cron: "*/5 * * * *" }] },
+  async () => {
+    const db = getDb();
+    if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
+    return checkSessionAndAlert(db, getMessagingProvider());
+  },
+);
+
+// Recuperação de pedido não pago (Fase 4): UMA única mensagem por pedido,
+// para sempre (dedupe 'wa.recovery:<orderId>' UNIQUE em wa_messages) —
+// jamais uma segunda cobrança. Só com opt-in e com a reserva ainda válida.
+export const waRecovery = inngest.createFunction(
+  { id: "wa-recovery", triggers: [{ cron: "*/15 * * * *" }] },
+  async () => {
+    return recoverUnpaidOrders(getDb(), getMessagingProvider());
+  },
+);
+
 export const functions = [
   outboxSweep,
   outboxKick,
   reservationExpiry,
   mpReconciliation,
+  waSessionMonitor,
+  waRecovery,
 ];

@@ -17,3 +17,4 @@ export { orderItems, orders, orderStatusHistory } from "./orders";
 export { stockLevels, stockMovements } from "./stock";
 export { financialEntries } from "./financial";
 export { shippingRates } from "./shipping";
+export { waConversations, waMessages, waTemplates } from "./whatsapp";

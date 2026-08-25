@@ -8,7 +8,6 @@ import {
 import type { Db } from "@/db/client";
 import { resolveOutboxHandler, type OutboxEvent } from "@/queue/handlers";
 
-const LEASE_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_ERROR_LENGTH = 2000;
 
 type ClaimedRow = {
@@ -59,7 +58,6 @@ export async function drainOutbox(
   const rowsOf = <T,>(res: unknown): T[] =>
     Array.isArray(res) ? (res as T[]) : ((res as { rows?: T[] }).rows ?? []);
 
-  const leaseCutoff = new Date(now.getTime() - LEASE_TIMEOUT_MS);
   const recoveredRows = rowsOf<{ id: string }>(await db.execute(sql`
     UPDATE outbox_events
     SET status = 'failed',
@@ -67,7 +65,7 @@ export async function drainOutbox(
         locked_by = NULL,
         last_error = 'lease expired: worker did not finish within 5 minutes'
     WHERE status = 'processing'
-      AND locked_at < ${leaseCutoff}
+      AND locked_at < now() - interval '5 minutes'
     RETURNING id
   `));
   result.recovered = recoveredRows.length;
@@ -75,13 +73,13 @@ export async function drainOutbox(
   const claimedRows = rowsOf<ClaimedRow>(await db.execute(sql`
     UPDATE outbox_events
     SET status = 'processing',
-        locked_at = ${now},
+        locked_at = now(),
         locked_by = ${workerId}
     WHERE id IN (
       SELECT id
       FROM outbox_events
       WHERE status IN ('pending', 'failed')
-        AND next_attempt_at <= ${now}
+        AND next_attempt_at <= now()
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
