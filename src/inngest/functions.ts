@@ -1,6 +1,7 @@
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
+import { expireOverdueReservations } from "@/services/store-orders";
 
 const SWEEP_BATCH_LIMIT = 25;
 const SWEEP_MAX_BATCHES = 10;
@@ -36,4 +37,14 @@ export const outboxKick = inngest.createFunction(
   },
 );
 
-export const functions = [outboxSweep, outboxKick];
+// Expira reservas de estoque vencidas (pedidos da loja aguardando pagamento
+// manual além do prazo). A página pública também expira lazy; o cron garante
+// que a reserva volte ao estoque mesmo sem ninguém abrir a página.
+export const reservationExpiry = inngest.createFunction(
+  { id: "reservation-expiry", triggers: [{ cron: "*/10 * * * *" }] },
+  async () => {
+    return expireOverdueReservations(getDb());
+  },
+);
+
+export const functions = [outboxSweep, outboxKick, reservationExpiry];

@@ -196,7 +196,8 @@ export async function createManualOrder(
 const transitionOrderSchema = z.object({
   orderId: z.uuid(),
   to: z.enum(ORDER_STATUSES),
-  userId: z.uuid(),
+  /** uuid do usuário, ou null para ações do SISTEMA (ex.: expiração de reserva). */
+  userId: z.uuid().nullable(),
   reason: z.string().min(1).max(2000).optional(),
   /** Só para canceled/refunded pós-consumo: devolver fisicamente ao estoque. */
   restock: z.boolean().optional(),
@@ -293,7 +294,7 @@ export async function transitionOrder(
           quantity: item.quantity,
           referenceType: "order",
           referenceId: order.id,
-          createdBy: parsed.userId,
+          createdBy: parsed.userId ?? undefined,
         });
       }
     }
@@ -357,7 +358,7 @@ export async function transitionOrder(
     });
 
     await tx.insert(auditLog).values({
-      actorType: "user",
+      actorType: parsed.userId === null ? "system" : "user",
       actorId: parsed.userId,
       action: "order.transition",
       entityType: "order",

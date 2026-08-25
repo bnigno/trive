@@ -19,6 +19,14 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "price_change_pct_threshold", value: 0.1 },
   { key: "first_price_requires_approval", value: true },
   { key: "default_low_stock_threshold", value: 3 },
+  // Fase 2 — dados da loja. PREENCHER em /admin/configuracoes: identificação
+  // do fornecedor (nome, CNPJ, endereço e contato) no rodapé da loja é
+  // obrigatória por lei no e-commerce (Decreto 7.962/2013, art. 2º).
+  { key: "store_name", value: "TRIVË" },
+  { key: "store_cnpj", value: "" },
+  { key: "store_address", value: "" },
+  { key: "store_email", value: "" },
+  { key: "store_whatsapp", value: "" },
 ];
 
 async function main(): Promise<void> {
@@ -97,8 +105,23 @@ async function main(): Promise<void> {
       )
     `);
 
+    // Frete padrão da loja (Fase 2): uma regra única para todo o Brasil.
+    // Ajustar valores/faixas em /admin.
+    await db.execute(sql`
+      INSERT INTO shipping_rates
+        (name, cep_start, cep_end, weight_min_grams, weight_max_grams,
+         price_cents, delivery_days_min, delivery_days_max, is_active,
+         sort_order)
+      SELECT 'Entrega padrão (todo o Brasil)', '00000000', '99999999',
+        0, 30000, 2000, 4, 10, true, 0
+      WHERE NOT EXISTS (
+        SELECT 1 FROM shipping_rates
+        WHERE name = 'Entrega padrão (todo o Brasil)'
+      )
+    `);
+
     console.log(
-      "Seed concluído: settings, payment_fee_rules e pricing_policies garantidos.",
+      "Seed concluído: settings, payment_fee_rules, pricing_policies e shipping_rates garantidos.",
     );
   } finally {
     await client.end();

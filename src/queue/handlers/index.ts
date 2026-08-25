@@ -13,6 +13,23 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "system.ping": async (event) => {
     console.log(`[outbox] system.ping received (event ${event.id})`);
   },
+  // Preço ativado → revalida a vitrine pública. Fora do runtime do Next
+  // (worker standalone, testes) revalidatePath pode lançar: capturamos e
+  // logamos — o cache expira sozinho e o evento não deve ir para a DLQ.
+  "price.activated": async (event) => {
+    try {
+      const { revalidatePath } = await import("next/cache");
+      revalidatePath("/", "layout");
+    } catch (error) {
+      console.warn(
+        `[outbox] price.activated (event ${event.id}): revalidatePath indisponível neste contexto.`,
+        error,
+      );
+    }
+  },
+  // Pedido criado pela loja. Fase 4: notificar o dono via WhatsApp.
+  // Por enquanto é no-op de propósito — o registro evita UnknownEventTypeError.
+  "order.store_created": async () => {},
 };
 
 export class UnknownEventTypeError extends Error {

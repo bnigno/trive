@@ -30,6 +30,15 @@ export const orders = pgTable(
       .references(() => customers.id, { onDelete: "restrict" }),
     status: text("status").notNull().default("draft"),
     channel: text("channel").notNull().default("manual"),
+    // Rastreio público da loja: a página /pedido/[token] mostra status SEM
+    // dados pessoais (o link pode vazar em encaminhamento de WhatsApp).
+    publicToken: uuid("public_token")
+      .notNull()
+      .unique()
+      .default(sql`gen_random_uuid()`),
+    // Prazo da reserva de estoque em pending_payment; expiração cancela e
+    // devolve a reserva (setting stock_reservation_ttl_minutes).
+    paymentDueAt: timestamp("payment_due_at", { withTimezone: true }),
     subtotalCents: bigint("subtotal_cents", { mode: "number" })
       .notNull()
       .default(0),
@@ -65,6 +74,7 @@ export const orders = pgTable(
     index("orders_status_idx").on(table.status),
     index("orders_customer_id_idx").on(table.customerId),
     index("orders_created_at_idx").on(table.createdAt),
+    index("orders_payment_due_at_idx").on(table.paymentDueAt),
     uniqueIndex("orders_mp_payment_id_unique_idx")
       .on(table.mpPaymentId)
       .where(sql`${table.mpPaymentId} IS NOT NULL`),
