@@ -23,6 +23,10 @@ const eslintConfig = defineConfig([
       ],
     },
     rules: {
+      // Decisão de projeto: <img> nativo na loja — as imagens já são
+      // redimensionadas no upload (sharp) e o otimizador da Vercel tem
+      // limites/custo no plano atual.
+      "@next/next/no-img-element": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         {

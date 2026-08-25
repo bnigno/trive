@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
+import { toE164BR } from "@/lib/phone";
 
 /** Base estrutural comum ao Db de produção, transações e o TestDb (PGlite). */
 export type ServiceDb = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -387,6 +388,34 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .number()
     .int()
     .positive("O tempo de reserva deve ser maior que zero."),
+  // --- Dados da loja (rodapé e páginas legais — Decreto 7.962/2013) ---
+  store_name: z.string().trim().max(120, "O nome da loja é longo demais."),
+  store_cnpj: z.string().trim().max(20, "CNPJ longo demais."),
+  store_address: z.string().trim().max(300, "O endereço é longo demais."),
+  store_email: z
+    .string()
+    .trim()
+    .max(200, "O e-mail é longo demais.")
+    .refine(
+      (value) => value === "" || z.email().safeParse(value).success,
+      "E-mail inválido.",
+    ),
+  store_whatsapp: z
+    .string()
+    .trim()
+    .transform((value, ctx) => {
+      if (value === "") return "";
+      const e164 = toE164BR(value);
+      if (!e164) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "WhatsApp inválido. Informe DDD + número, ex.: (11) 99999-8888.",
+        });
+        return z.NEVER;
+      }
+      return e164;
+    }),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

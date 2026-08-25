@@ -20,6 +20,7 @@ import {
   FeeRuleForm,
   PolicyForm,
   StockSettingsForm,
+  StoreDataForm,
 } from "./forms";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +57,18 @@ type SettingsData = {
     lowStockThreshold: number;
     reservationTtlMinutes: number;
   };
+  store: {
+    name: string;
+    cnpj: string;
+    address: string;
+    email: string;
+    whatsapp: string;
+  };
 };
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
 
 async function loadSettings(): Promise<SettingsData | null> {
   try {
@@ -69,11 +81,23 @@ async function loadSettings(): Promise<SettingsData | null> {
         "first_price_requires_approval",
         "default_low_stock_threshold",
         "stock_reservation_ttl_minutes",
+        "store_name",
+        "store_cnpj",
+        "store_address",
+        "store_email",
+        "store_whatsapp",
       ]),
     ]);
     return {
       feeRules,
       policy,
+      store: {
+        name: asString(map.store_name),
+        cnpj: asString(map.store_cnpj),
+        address: asString(map.store_address),
+        email: asString(map.store_email),
+        whatsapp: asString(map.store_whatsapp),
+      },
       settings: {
         changeThresholdRate:
           map.price_change_pct_threshold === undefined
@@ -125,8 +149,31 @@ export default async function ConfiguracoesPage() {
     <div className="flex flex-col gap-8">
       <PageHeader
         title="Configurações"
-        subtitle="Taxas do Mercado Pago, política de preços, aprovações e estoque."
+        subtitle="Dados da loja, taxas do Mercado Pago, política de preços, aprovações e estoque."
       />
+
+      <Card title="Dados da loja">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Aparecem no rodapé e nas páginas legais da loja — exigidos pelo
+              Decreto 7.962/2013 (Lei do E-commerce).
+            </p>
+            {data.store.cnpj === "" || data.store.address === "" ? (
+              <Badge tone="warning">pendente — obrigatório para vender</Badge>
+            ) : null}
+          </div>
+          <StoreDataForm
+            defaults={{
+              name: data.store.name,
+              cnpj: data.store.cnpj,
+              address: data.store.address,
+              email: data.store.email,
+              whatsapp: data.store.whatsapp,
+            }}
+          />
+        </div>
+      </Card>
 
       <Card title="Taxas do Mercado Pago">
         <div className="flex flex-col gap-5">

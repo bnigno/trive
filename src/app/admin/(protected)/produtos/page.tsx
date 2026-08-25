@@ -255,7 +255,7 @@ export default async function ProdutosPage({
               <Tr key={item.id}>
                 <Td className="w-14">
                   {thumbUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
+                     
                     <img
                       src={thumbUrl}
                       alt=""

@@ -12,6 +12,7 @@ import {
   updateSetting,
 } from "@/services/settings";
 import { parseBRLToCents } from "@/lib/money";
+import { isValidCnpj } from "@/lib/document";
 
 export type FormState = { error?: string; success?: string };
 
@@ -235,6 +236,53 @@ export async function updateStockSettingsAction(
 
     revalidatePath("/admin/configuracoes");
     return { success: "Configurações de estoque salvas." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dados da loja (rodapé e páginas legais — Decreto 7.962/2013)
+// ---------------------------------------------------------------------------
+
+/** '11222333000181' -> '11.222.333/0001-81' (formato canônico gravado). */
+function formatCnpjBR(digits: string): string {
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12, 14)}`;
+}
+
+export async function updateStoreDataAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const name = String(formData.get("storeName") ?? "").trim();
+    const cnpjDigits = String(formData.get("storeCnpj") ?? "").replace(/\D/g, "");
+    if (cnpjDigits !== "" && !isValidCnpj(cnpjDigits)) {
+      return {
+        error: "CNPJ inválido. Confira os dígitos, ex.: 11.222.333/0001-81.",
+      };
+    }
+    const cnpj = cnpjDigits === "" ? "" : formatCnpjBR(cnpjDigits);
+    const address = String(formData.get("storeAddress") ?? "").trim();
+    const email = String(formData.get("storeEmail") ?? "").trim();
+    const whatsapp = String(formData.get("storeWhatsapp") ?? "").trim();
+
+    const db = getDb();
+    const entries: Array<[string, string]> = [
+      ["store_name", name],
+      ["store_cnpj", cnpj],
+      ["store_address", address],
+      ["store_email", email],
+      // O serviço normaliza o WhatsApp para E.164 (+55…) quando não vazio.
+      ["store_whatsapp", whatsapp],
+    ];
+    for (const [key, value] of entries) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+
+    revalidatePath("/admin/configuracoes");
+    return { success: "Dados da loja salvos. Eles já aparecem no rodapé da loja." };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }

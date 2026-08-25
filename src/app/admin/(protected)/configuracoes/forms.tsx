@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import {
   Field,
   FormError,
@@ -15,6 +15,7 @@ import {
   updateApprovalRulesAction,
   updatePolicyAction,
   updateStockSettingsAction,
+  updateStoreDataAction,
   type FormState,
 } from "./actions";
 
@@ -33,6 +34,108 @@ function centsToInput(cents: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Dados da loja (rodapé e páginas legais)
+// ---------------------------------------------------------------------------
+
+/** Máscara progressiva de CNPJ: '11222333000181' -> '11.222.333/0001-81'. */
+function maskCnpj(raw: string): string {
+  const d = raw.replace(/\D/g, "").slice(0, 14);
+  let out = d.slice(0, 2);
+  if (d.length > 2) out += `.${d.slice(2, 5)}`;
+  if (d.length > 5) out += `.${d.slice(5, 8)}`;
+  if (d.length > 8) out += `/${d.slice(8, 12)}`;
+  if (d.length > 12) out += `-${d.slice(12, 14)}`;
+  return out;
+}
+
+export function StoreDataForm({
+  defaults,
+}: {
+  defaults: {
+    name: string;
+    cnpj: string;
+    address: string;
+    email: string;
+    whatsapp: string;
+  };
+}) {
+  const [state, formAction] = useActionState(updateStoreDataAction, INITIAL_STATE);
+  const [cnpj, setCnpj] = useState(maskCnpj(defaults.cnpj));
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label="Nome da loja"
+          hint="Aparece no cabeçalho, no rodapé e nos e-mails da loja."
+        >
+          <Input
+            name="storeName"
+            maxLength={120}
+            defaultValue={defaults.name}
+            placeholder="TRIVË"
+          />
+        </Field>
+        <Field
+          label="CNPJ"
+          hint="Obrigatório para vender online (Decreto 7.962/2013)."
+        >
+          <Input
+            name="storeCnpj"
+            inputMode="numeric"
+            value={cnpj}
+            onChange={(event) => setCnpj(maskCnpj(event.target.value))}
+            placeholder="00.000.000/0000-00"
+          />
+        </Field>
+        <Field
+          label="Endereço da loja"
+          hint="Endereço físico completo, com cidade, UF e CEP."
+          className="sm:col-span-2"
+        >
+          <Input
+            name="storeAddress"
+            maxLength={300}
+            defaultValue={defaults.address}
+            placeholder="Rua Exemplo, 123 — Centro, São Paulo/SP, 01000-000"
+          />
+        </Field>
+        <Field
+          label="E-mail de contato"
+          hint="Canal de atendimento exibido nas páginas legais."
+        >
+          <Input
+            name="storeEmail"
+            type="email"
+            maxLength={200}
+            defaultValue={defaults.email}
+            placeholder="contato@sualoja.com.br"
+          />
+        </Field>
+        <Field
+          label="WhatsApp"
+          hint="Número com DDD que receberá os clientes. Ex.: (11) 99999-8888."
+        >
+          <Input
+            name="storeWhatsapp"
+            inputMode="tel"
+            defaultValue={defaults.whatsapp}
+            placeholder="(11) 99999-8888"
+          />
+        </Field>
+      </div>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar dados da loja</SubmitButton>
+      </div>
+    </form>
+  );
 }
 
 // ---------------------------------------------------------------------------

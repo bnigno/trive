@@ -190,7 +190,7 @@ export default async function ProdutoDetalhePage({
                     rel="noreferrer"
                     title="Abrir imagem em tamanho grande"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    { }
                     <img
                       src={storage.publicUrl(thumbPathFor(image.storagePath))}
                       alt={image.altText ?? ""}

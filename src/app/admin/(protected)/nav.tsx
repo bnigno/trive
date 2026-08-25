@@ -22,6 +22,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Produtos", href: "/admin/produtos" },
       { label: "Estoque", href: "/admin/estoque" },
       { label: "Preços", href: "/admin/precos" },
+      { label: "Frete", href: "/admin/frete" },
     ],
   },
   {
