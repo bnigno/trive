@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import { getDb } from "@/db/client";
+import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
 
 export const revalidate = 3600;
@@ -35,13 +36,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export default async function TermsPage() {
-  const s = await getSettingsMap(getDb(), [
-    "store_name",
-    "store_cnpj",
-    "store_address",
-    "store_email",
-    "store_whatsapp",
-  ]);
+  const s = await tryOrBuildFallback({}, () =>
+    getSettingsMap(getDb(), [
+      "store_name",
+      "store_cnpj",
+      "store_address",
+      "store_email",
+      "store_whatsapp",
+    ]),
+  );
   const storeName = settingText(s, "store_name");
   const cnpj = settingText(s, "store_cnpj");
   const address = settingText(s, "store_address");

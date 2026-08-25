@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { ProductCard } from "@/components/store/product-card";
 import { getDb } from "@/db/client";
+import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
 import {
   listPublicCategories,
@@ -13,12 +14,17 @@ import {
 export const revalidate = 300;
 
 export default async function HomePage() {
-  const db = getDb();
-  const [products, categories, settings] = await Promise.all([
-    listPublicProducts(db, { limit: 8 }),
-    listPublicCategories(db),
-    getSettingsMap(db, ["store_name"]),
-  ]);
+  const [products, categories, settings] = await tryOrBuildFallback(
+    [[], [], {}],
+    () => {
+      const db = getDb();
+      return Promise.all([
+        listPublicProducts(db, { limit: 8 }),
+        listPublicCategories(db),
+        getSettingsMap(db, ["store_name"]),
+      ]);
+    },
+  );
   const storeName =
     typeof settings.store_name === "string" && settings.store_name.trim()
       ? settings.store_name.trim()

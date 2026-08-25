@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CartButton } from "@/components/store/cart/cart-button";
 import { CartProvider } from "@/components/store/cart/cart-context";
 import { getDb } from "@/db/client";
+import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
 
 const STORE_SETTING_KEYS = [
@@ -24,7 +25,9 @@ export default async function StoreLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const settings = await getSettingsMap(getDb(), [...STORE_SETTING_KEYS]);
+  const settings = await tryOrBuildFallback({}, () =>
+    getSettingsMap(getDb(), [...STORE_SETTING_KEYS]),
+  );
   const storeName = asText(settings.store_name) || "TRIVË";
   const cnpj = asText(settings.store_cnpj);
   const address = asText(settings.store_address);

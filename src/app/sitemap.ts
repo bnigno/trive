@@ -2,6 +2,7 @@
 import type { MetadataRoute } from "next";
 
 import { getDb } from "@/db/client";
+import { tryOrBuildFallback } from "@/lib/build-safe";
 import { listPublicProducts } from "@/services/store-catalog";
 
 const BASE_URL = (
@@ -9,7 +10,9 @@ const BASE_URL = (
 ).replace(/\/+$/, "");
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const products = await listPublicProducts(getDb(), { limit: 200 });
+  const products = await tryOrBuildFallback([], () =>
+    listPublicProducts(getDb(), { limit: 200 }),
+  );
   const now = new Date();
 
   return [
