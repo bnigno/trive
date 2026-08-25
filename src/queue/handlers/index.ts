@@ -5,7 +5,7 @@ import { getEmailProvider } from "@/adapters/email";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
-import { products, productVariants, stockLevels } from "@/db/schema";
+import { orders, products, productVariants, stockLevels } from "@/db/schema";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
 import {
@@ -197,7 +197,22 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // Eventos de ciclo de vida emitidos por transitionOrder/estoque que ainda
   // não têm efeito externo — no-op explícito para não poluir a DLQ.
   // A Fase 4 (WhatsApp) substitui vários deles por notificações reais.
-  "order.pending_payment": async () => {},
+  // Pedido manual/WhatsApp confirmado: o cliente ganha o e-mail e o
+  // WhatsApp de confirmação COM O LINK de pagamento. Pedidos da loja não
+  // repetem aqui (já foram avisados em order.store_created) — e mesmo que
+  // repetissem, a idempotência de cada canal segura (audit / dedupe_key).
+  "order.pending_payment": async (event) => {
+    const db = getDb();
+    const orderId = String(event.payload.orderId ?? event.aggregateId ?? "");
+    if (!orderId) return;
+    const [row] = await db
+      .select({ channel: orders.channel })
+      .from(orders)
+      .where(eq(orders.id, orderId));
+    if (!row || row.channel === "store") return;
+    await sendOrderEmail(db, getEmailProvider(), { orderId, kind: "confirmed" });
+    await sendOrderWa(orderId, "store_created");
+  },
   "order.preparing": async () => {},
   "order.delivered": async () => {},
   "order.canceled": async () => {},

@@ -13,6 +13,9 @@ import { financialEntries, paymentFeeRules } from "@/db/schema";
 import { requireUser } from "@/services/auth";
 import { getOrderDetail } from "@/services/orders";
 import { OrderTimeline } from "@/components/admin/order-timeline";
+import { orderPublicUrl } from "@/services/wa-messaging";
+
+import { CopyOrderLink } from "./copy-link";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
@@ -143,6 +146,17 @@ export default async function PedidoDetalhePage({
           </Link>
         }
       />
+
+      <Card title="Link do pedido — envie ao cliente pelo WhatsApp">
+        <div className="flex flex-col gap-2">
+          <CopyOrderLink url={orderPublicUrl(order.publicToken)} />
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Por esse link o cliente acompanha o pedido e, quando estiver
+            aguardando pagamento, paga com Pix ou cartão pelo Mercado Pago —
+            o pedido vira &quot;Pago&quot; sozinho.
+          </p>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-6 lg:col-span-2">

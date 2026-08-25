@@ -120,12 +120,8 @@ export async function ensurePaymentPreference(
   if (!order) {
     throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
   }
-  if (order.channel !== "store") {
-    throw new ServiceError(
-      "ORDER_NOT_STORE",
-      "Pagamento online só está disponível para pedidos feitos pela loja.",
-    );
-  }
+  // Qualquer canal pode pagar online: pedidos manuais/WhatsApp recebem o
+  // link público (/pedido/{token}) e pagam pelo mesmo botão da loja.
   if (order.status !== "pending_payment") {
     throw new ServiceError(
       "ORDER_NOT_PAYABLE",
