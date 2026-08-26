@@ -6,11 +6,25 @@ import path from "node:path";
 const ROOT = process.cwd();
 const PROJECT_NAME = "trive";
 
+// Tira as aspas que envolvem o valor. SEM isto, um valor escrito como
+// EMAIL_FROM="TRIVË <contato@…>" chega à Vercel COM as aspas literais e o
+// vendor recusa — foi exatamente assim que a confirmação do pedido #1007
+// morreu na fila com "Invalid `from` field" enquanto o dev local funcionava
+// (o Node tira as aspas ao ler .env, a Vercel não tem .env nenhum).
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  const aspas = trimmed.startsWith('"') && trimmed.endsWith('"');
+  const apostrofos = trimmed.startsWith("'") && trimmed.endsWith("'");
+  return trimmed.length >= 2 && (aspas || apostrofos)
+    ? trimmed.slice(1, -1)
+    : trimmed;
+}
+
 function loadEnv(file: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of readFileSync(path.join(ROOT, file), "utf8").split("\n")) {
     const m = line.match(/^([A-Z_]+)=(.*)$/);
-    if (m) out[m[1]] = m[2];
+    if (m) out[m[1]] = unquote(m[2]);
   }
   return out;
 }
