@@ -44,6 +44,14 @@ const OWNER_ONLY_DIRS: Array<{ dir: string; skipDirs?: string[] }> = [
 ];
 
 /**
+ * O contrário da lista acima: áreas de atendimento que a equipe PRECISA
+ * enxergar. Um `requireOwner` aqui dentro não quebra nada visivelmente — o
+ * funcionário simplesmente é mandado para "sem acesso" e o cliente fica
+ * esperando. Este alarme existe para essa mudança nunca passar calada.
+ */
+const SHARED_DIRS = [path.join("whatsapp", "conversas"), "emails"];
+
+/**
  * Páginas sem guard próprio, por motivo declarado. Qualquer outra página sob
  * (protected) precisa chamar requireUser ou requireOwner.
  */
@@ -95,6 +103,10 @@ const ownerOnlyFiles = OWNER_ONLY_DIRS.flatMap(({ dir, skipDirs }) =>
 );
 
 const allProtectedFiles = walk(PROTECTED_ROOT, new Set());
+
+const sharedFiles = SHARED_DIRS.flatMap((dir) =>
+  walk(path.join(PROTECTED_ROOT, dir), new Set()),
+);
 
 describe("guards de papel no painel (varredura de arquivos)", () => {
   it("encontra os diretórios do proprietário no lugar esperado", () => {
@@ -162,6 +174,54 @@ describe("guards de papel no painel (varredura de arquivos)", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("todo route handler sob (protected) confere a sessão", () => {
+    // Route handler NÃO herda o guard do layout: sem uma destas três chamadas
+    // o endereço responde a qualquer um que digite a URL. `getAuthUserOrNull`
+    // é a variante dos endpoints JSON, que devolvem 401 em vez de redirect.
+    const offenders: string[] = [];
+    for (const file of allProtectedFiles) {
+      if (path.basename(file) !== "route.ts") continue;
+      const source = read(file);
+      if (
+        !source.includes("requireUser(") &&
+        !source.includes("requireOwner(") &&
+        !source.includes("getAuthUserOrNull(")
+      ) {
+        offenders.push(`${rel(file)}: route handler sem conferir a sessão`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    // Alarme contra falso positivo: se ninguém achar route handler nenhum,
+    // o teste acima passaria vazio para sempre.
+    expect(
+      allProtectedFiles.filter((file) => path.basename(file) === "route.ts")
+        .length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("as áreas de atendimento continuam abertas para a equipe", () => {
+    const offenders: string[] = [];
+    for (const dir of SHARED_DIRS) {
+      expect(
+        fs.existsSync(path.join(PROTECTED_ROOT, dir)),
+        `diretório compartilhado sumiu: ${dir}`,
+      ).toBe(true);
+    }
+    for (const file of sharedFiles) {
+      if (!read(file).includes("requireOwner(")) continue;
+      offenders.push(`${rel(file)}: requireOwner() em área compartilhada`);
+    }
+    expect(offenders).toEqual([]);
+    // E cada uma delas tem, sim, guard de sessão em pelo menos uma página.
+    expect(
+      sharedFiles.some(
+        (file) =>
+          path.basename(file) === "page.tsx" &&
+          read(file).includes("requireUser("),
+      ),
+    ).toBe(true);
   });
 
   it("as exceções da whitelist continuam sendo o que dizem ser", () => {

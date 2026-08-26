@@ -8,6 +8,7 @@ export {
 } from "./catalog";
 export { coupons } from "./coupons";
 export { customerAddresses, customers } from "./customers";
+export { emailMessages, emailThreads } from "./email";
 export {
   paymentFeeRules,
   priceVersions,

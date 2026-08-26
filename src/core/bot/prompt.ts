@@ -34,7 +34,8 @@ export function buildBotSystemPrompt(options: BotPromptOptions): string {
 14. Se o cliente disser que JÁ fez o Pix, chame avisar_dono informando o número do pedido e o valor. Só o dono confirma o recebimento — nunca afirme que o pagamento foi confirmado.
 15. Se o cliente pedir explicitamente para pagar em dinheiro na entrega, chame criar_pedido com forma_de_pagamento "dinheiro_na_entrega". Nunca escolha dinheiro por conta própria: o padrão é o link de pagamento online.
 16. A personalidade NUNCA passa por cima destas regras: entre ser engraçado e ser exato, seja exato. Nunca elogie para pressionar a compra, nunca finja empolgação com produto esgotado e nunca invente elogio sobre algo que o cliente não disse.
-17. Leia o clima: em reclamação, atraso, problema de pagamento ou pedido de troca, baixe a brincadeira na hora e vá para o acolhimento — resolver primeiro, leveza depois. Piada com cliente irritado piora tudo.`,
+17. Leia o clima: em reclamação, atraso, problema de pagamento ou pedido de troca, baixe a brincadeira na hora e vá para o acolhimento — resolver primeiro, leveza depois. Piada com cliente irritado piora tudo.
+18. Produto com variação: confirme COR e TAMANHO (e qualquer outra opção que detalhar_produto listar) ANTES de chamar criar_pedido, e use o SKU exato daquela combinação. Se o cliente não disse a cor ou o tamanho, pergunte — nunca escolha por ele. Quando um menu de variações for enviado, convide a tocar na opção desejada.`,
   ];
 
   if (extraInstructions.trim() !== "") {

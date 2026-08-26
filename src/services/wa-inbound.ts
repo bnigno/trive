@@ -97,15 +97,23 @@ function normalizeKeyword(text: string): string {
 
 // Toque numa lista de opções vira texto normal para o fluxo: option id
 // 'produto:{slug}' vira um pedido explícito de detalhe (detalhar_produto
-// resolve o slug com match exato); outra opção usa o título visível.
+// resolve o slug com match exato); 'variante:{sku}' vira a escolha daquela
+// combinação de cor/tamanho, pelo SKU exato (ambos os ids são montados em
+// src/services/wa-bot.ts); outra opção usa o título visível.
 function listResponseText(
   list:
     | { message?: string; title?: string; selectedRowId?: string }
     | undefined,
 ): string | undefined {
   if (!list) return undefined;
-  if (list.selectedRowId?.startsWith("produto:")) {
-    return `Quero ver o produto ${list.selectedRowId.slice("produto:".length)}`;
+  const rowId = list.selectedRowId;
+  if (rowId?.startsWith("produto:")) {
+    return `Quero ver o produto ${rowId.slice("produto:".length)}`;
+  }
+  if (rowId?.startsWith("variante:")) {
+    const sku = rowId.slice("variante:".length);
+    const escolha = list.title ? `${list.title} ` : "";
+    return `Escolhi esta opção: ${escolha}(SKU ${sku}). Confirme comigo essa combinação.`;
   }
   return list.title ?? list.message;
 }

@@ -20,6 +20,7 @@ import {
   formatPercent,
   rateToInputPercent,
 } from "../labels";
+import { ApplyPriceToProduct } from "./apply-to-product";
 import { CalculatorForm } from "./calculator-form";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +53,20 @@ async function listActiveVariants(query: string) {
           row.productName.toLowerCase().includes(needle),
       )
     : rows;
+}
+
+async function countActiveVariants(productId: string): Promise<number> {
+  const rows = await getDb()
+    .select({ id: productVariants.id })
+    .from(productVariants)
+    .where(
+      and(
+        eq(productVariants.productId, productId),
+        eq(productVariants.isActive, true),
+        isNull(productVariants.deletedAt),
+      ),
+    );
+  return rows.length;
 }
 
 function VariantPicker({
@@ -193,6 +208,10 @@ export default async function CalculatorPage({
         : "Algo deu errado, tente novamente.";
   }
 
+  const siblingCount = context
+    ? await countActiveVariants(context.variant.productId)
+    : 0;
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -256,6 +275,18 @@ export default async function CalculatorPage({
               arredondamento: context.policy.roundingMode,
             }}
           />
+
+          {siblingCount > 1 ? (
+            <ApplyPriceToProduct
+              productId={context.variant.productId}
+              variantCount={siblingCount}
+              defaultPrice={
+                context.previousActive
+                  ? centsToInputBRL(context.previousActive.priceCents)
+                  : ""
+              }
+            />
+          ) : null}
         </>
       )}
     </div>

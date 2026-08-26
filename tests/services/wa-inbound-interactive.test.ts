@@ -84,6 +84,26 @@ describe("processZapiInbound → respostas interativas (lista e botão)", () => 
     });
   });
 
+  it("toque em 'variante:{sku}' vira a escolha daquela combinação, com o SKU", async () => {
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: interactiveMessage("MSG-LIST-VAR", {
+        listResponseMessage: {
+          selectedRowId: "variante:POLO-VD-P",
+          title: "Verde · P",
+        },
+      }),
+    });
+
+    expect(result.action).toBe("forwarded");
+    const messages = await db.select().from(schema.waMessages);
+    expect(messages).toHaveLength(1);
+    // O SKU exato é o que permite ao bot confirmar preço, estoque e pedido.
+    expect(messages[0].body).toBe(
+      "Escolhi esta opção: Verde · P (SKU POLO-VD-P). Confirme comigo essa combinação.",
+    );
+  });
+
   it("lista sem selectedRowId usa title; sem title usa message", async () => {
     const byTitle = await processZapiInbound(sdb, {
       providedSecret: SECRET,

@@ -18,13 +18,14 @@ const SHARED_AREAS: AdminArea[] = [
   "produtos",
   "estoque",
   "conversas",
+  "emails",
   "ajuda",
 ];
 
 describe("core/auth/access", () => {
-  it("lista as 17 áreas do painel sem repetição", () => {
+  it("lista as 18 áreas do painel sem repetição", () => {
     expect(new Set(ADMIN_AREAS).size).toBe(ADMIN_AREAS.length);
-    expect(ADMIN_AREAS).toHaveLength(17);
+    expect(ADMIN_AREAS).toHaveLength(18);
   });
 
   it("owner-only é exatamente o mapa aprovado", () => {
@@ -66,6 +67,7 @@ describe("core/auth/access", () => {
     expect(AREA_LABELS.relatorios).toBe("Relatórios");
     expect(AREA_LABELS.usuarios).toBe("Usuários");
     expect(AREA_LABELS.conversas).toBe("Conversas");
+    expect(AREA_LABELS.emails).toBe("E-mails");
   });
 
   it("proprietário entra em todas as áreas", () => {
@@ -97,6 +99,12 @@ describe("core/auth/access", () => {
   it("WhatsApp é do dono, mas Conversas é compartilhada", () => {
     expect(canAccess("staff", "whatsapp")).toBe(false);
     expect(canAccess("staff", "conversas")).toBe(true);
+  });
+
+  it("a caixa de e-mail é compartilhada com a equipe", () => {
+    // Mesmo motivo de Conversas: é canal de atendimento. Fechar no dono
+    // deixaria cliente esperando sempre que ele não estivesse na loja.
+    expect(canAccess("staff", "emails")).toBe(true);
   });
 
   it("isOwnerOnlyArea concorda com canAccess", () => {

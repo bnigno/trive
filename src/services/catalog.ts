@@ -16,8 +16,13 @@ import {
   products,
   productVariants,
   stockLevels,
+  stockMovements,
   variantCosts,
 } from "@/db/schema";
+import { normalizeAxisValue } from "@/core/catalog/attributes";
+import { findColorAxis } from "@/core/catalog/product-images";
+import { suggestMarginForPrice } from "@/core/pricing";
+import { applyMovement } from "@/core/stock/ledger";
 import type { FileStorage } from "@/adapters/storage";
 
 /**
@@ -149,6 +154,43 @@ function canonicalAttributes(attributes: Record<string, string>): string {
   return JSON.stringify(sorted);
 }
 
+/**
+ * Valores dos eixos na forma canônica do catálogo. Eixo que ficou sem valor
+ * sai do objeto: ele não faz parte da identidade da variante, e um "" gravado
+ * seria uma combinação diferente aos olhos do UNIQUE (product_id, attributes).
+ */
+function normalizeAttributeValues(
+  attributes: Record<string, string>,
+): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [axis, value] of Object.entries(attributes)) {
+    const normalizedValue = normalizeAxisValue(value);
+    if (normalizedValue) normalized[axis] = normalizedValue;
+  }
+  return normalized;
+}
+
+/**
+ * Margem do preço digitado no cadastro, pelo inverso da calculadora de preços.
+ * Taxa de pagamento e política de precificação ficam de fora: no cadastro elas
+ * podem nem existir ainda, e quem as conhece é o serviço de pricing — que
+ * recalcula a margem na primeira reprecificação.
+ */
+function initialMarginRate(costCents: number, priceCents: number): number {
+  return suggestMarginForPrice(
+    {
+      costCents,
+      otherFixedCents: 0,
+      otherRate: 0,
+      feePercentRate: 0,
+      feeFixedCents: 0,
+      shippingSubsidyCents: 0,
+      rounding: { mode: "none", direction: "up" },
+    },
+    priceCents,
+  );
+}
+
 async function requireProduct(db: ServiceDb, productId: string) {
   const [product] = await db
     .select()
@@ -204,6 +246,18 @@ const variantInputSchema = z.object({
   sku: z.string().trim().min(1, "Informe o SKU da variação."),
   attributes: z.record(z.string(), z.string()).default({}),
   costCents: z.number().int().min(0).optional(),
+  // Quantidade em mãos no dia do cadastro; vira movimento 'purchase_in'.
+  initialQuantity: z
+    .number()
+    .int()
+    .min(0, "A quantidade inicial não pode ser negativa.")
+    .optional(),
+  // Preço de venda inicial; vira a versão de preço ativa da variação.
+  priceCents: z
+    .number()
+    .int()
+    .positive("O preço da variação deve ser maior que zero.")
+    .optional(),
   barcodeEan: z.string().trim().min(1).optional(),
   weightGrams: z.number().int().positive().optional(),
   lengthMm: z.number().int().positive().optional(),
@@ -228,9 +282,16 @@ export type CreateProductInput = z.input<typeof createProductSchema>;
 export async function createProduct(db: ServiceDb, input: CreateProductInput) {
   const parsed = createProductSchema.parse(input);
 
+  // Normalizar ANTES da pré-checagem: "verde" e "Verde" são a mesma variação,
+  // e é assim, já normalizado, que o UNIQUE do banco vai compará-los.
+  const variants = parsed.variants.map((variant) => ({
+    ...variant,
+    attributes: normalizeAttributeValues(variant.attributes),
+  }));
+
   const skus = new Set<string>();
   const attributeKeys = new Set<string>();
-  for (const variant of parsed.variants) {
+  for (const variant of variants) {
     if (skus.has(variant.sku)) {
       throw new ServiceError(
         "sku_duplicado",
@@ -266,7 +327,7 @@ export async function createProduct(db: ServiceDb, input: CreateProductInput) {
       const insertedVariants = await tx
         .insert(productVariants)
         .values(
-          parsed.variants.map((variant) => ({
+          variants.map((variant) => ({
             productId: product.id,
             sku: variant.sku,
             attributes: variant.attributes,
@@ -289,7 +350,7 @@ export async function createProduct(db: ServiceDb, input: CreateProductInput) {
       );
 
       // Custo inicial vai também para o ledger append-only de custos.
-      const initialCosts = parsed.variants
+      const initialCosts = variants
         .map((variant, index) => ({ variant, id: insertedVariants[index].id }))
         .filter(({ variant }) => variant.costCents !== undefined);
       if (initialCosts.length > 0) {
@@ -302,6 +363,71 @@ export async function createProduct(db: ServiceDb, input: CreateProductInput) {
             createdBy: parsed.userId,
           })),
         );
+      }
+
+      const now = new Date();
+      for (const [index, variant] of variants.entries()) {
+        const variantId = insertedVariants[index].id;
+
+        const initialQuantity = variant.initialQuantity ?? 0;
+        if (initialQuantity > 0) {
+          // Saldo derivado do ledger, como em receiveStock. Sem SELECT ... FOR
+          // UPDATE: a variação nasceu nesta transação, nenhuma outra a enxerga.
+          const level = applyMovement(
+            { onHand: 0, reserved: 0 },
+            { type: "purchase_in", quantityDelta: initialQuantity },
+          );
+          await tx.insert(stockMovements).values({
+            productVariantId: variantId,
+            type: "purchase_in",
+            quantityDelta: initialQuantity,
+            unitCostCents: variant.costCents ?? null,
+            referenceType: "product",
+            referenceId: product.id,
+            idempotencyKey: `purchase_in:${product.id}:${variantId}`,
+            note: "Estoque inicial no cadastro do produto",
+            createdBy: parsed.userId,
+          });
+          await tx
+            .update(stockLevels)
+            .set({
+              onHand: level.onHand,
+              reserved: level.reserved,
+              updatedAt: sql`now()`,
+            })
+            .where(eq(stockLevels.productVariantId, variantId));
+        }
+
+        if (variant.priceCents !== undefined) {
+          // Preço do cadastro entra ativo direto: é a decisão do dono, não há
+          // preço anterior a proteger e a variação acabou de nascer (v1, sem
+          // conflito com o índice de um ativo por variação). O fluxo de
+          // aprovação do pricing cuida das mudanças daqui em diante.
+          const costCents = variant.costCents ?? 0;
+          await tx.insert(priceVersions).values({
+            productVariantId: variantId,
+            versionNumber: 1,
+            status: "active",
+            priceCents: variant.priceCents,
+            origin: "initial",
+            breakdown: {
+              note: "Preço informado no cadastro do produto, sem passar pela calculadora.",
+              manualPriceCents: variant.priceCents,
+              costSnapshotCents: costCents,
+            },
+            costSnapshotCents: costCents,
+            // numeric(7,4) em modo string: gravar com exatamente 4 casas.
+            computedMarginRate: initialMarginRate(
+              costCents,
+              variant.priceCents,
+            ).toFixed(4),
+            requiresApproval: false,
+            createdBy: parsed.userId,
+            approvedBy: parsed.userId,
+            approvedAt: now,
+            activatedAt: now,
+          });
+        }
       }
 
       await writeAudit(tx, {
@@ -633,7 +759,18 @@ export async function getProductDetail(db: ServiceDb, productId: string) {
     .orderBy(productVariants.createdAt);
 
   const images = await db
-    .select()
+    // Projeção explícita: a tela de produto do painel depende deste formato,
+    // inclusive de `color` (null = foto do produto inteiro).
+    .select({
+      id: productImages.id,
+      productId: productImages.productId,
+      variantId: productImages.variantId,
+      storagePath: productImages.storagePath,
+      altText: productImages.altText,
+      color: productImages.color,
+      sortOrder: productImages.sortOrder,
+      createdAt: productImages.createdAt,
+    })
     .from(productImages)
     .where(eq(productImages.productId, parsedId))
     .orderBy(productImages.sortOrder, productImages.createdAt);
@@ -680,6 +817,42 @@ export function thumbPathFor(storagePath: string): string {
   return storagePath.replace(/-full\.webp$/, THUMB_SUFFIX);
 }
 
+/**
+ * Normaliza a cor da foto e recusa cor que nenhuma variação tem — foto etiquetada
+ * com uma cor inexistente sumiria da vitrine sem ninguém entender por quê.
+ * Produto sem eixo de cor não passa por essa conferência: a etiqueta é livre.
+ */
+async function resolveImageColor(
+  db: ServiceDb,
+  product: { id: string; attributesSchema: unknown },
+  rawColor: string | null | undefined,
+): Promise<string | null> {
+  const color = rawColor ? normalizeAxisValue(rawColor) : null;
+  const colorAxis = findColorAxis(product.attributesSchema);
+  if (!color || !colorAxis) return color;
+
+  const rows = await db
+    .select({ attributes: productVariants.attributes })
+    .from(productVariants)
+    .where(
+      and(
+        eq(productVariants.productId, product.id),
+        isNull(productVariants.deletedAt),
+      ),
+    );
+  const known = rows.some(
+    (row) =>
+      ((row.attributes ?? {}) as Record<string, string>)[colorAxis] === color,
+  );
+  if (!known) {
+    throw new ServiceError(
+      "cor_invalida",
+      `Nenhuma variação deste produto tem a cor "${color}". Cadastre a variação antes de usar esta cor na foto.`,
+    );
+  }
+  return color;
+}
+
 const addProductImageSchema = z.object({
   productId: z.uuid(),
   variantId: z.uuid().optional(),
@@ -690,6 +863,8 @@ const addProductImageSchema = z.object({
   ),
   contentType: z.string().min(1),
   altText: z.string().trim().min(1).optional(),
+  // Cor a que a foto pertence; ausente = foto do produto inteiro.
+  color: z.string().trim().min(1).optional(),
   userId: z.uuid(),
 });
 
@@ -708,7 +883,7 @@ export async function addProductImage(
     );
   }
 
-  await requireProduct(db, parsed.productId);
+  const product = await requireProduct(db, parsed.productId);
   if (parsed.variantId) {
     const [variant] = await db
       .select({ id: productVariants.id })
@@ -728,6 +903,9 @@ export async function addProductImage(
       );
     }
   }
+
+  // Toda validação acontece antes do upload: recusa não deixa arquivo órfão.
+  const color = await resolveImageColor(db, product, parsed.color);
 
   const source = Buffer.isBuffer(parsed.data)
     ? parsed.data
@@ -777,6 +955,7 @@ export async function addProductImage(
         variantId: parsed.variantId ?? null,
         storagePath: fullPath,
         altText: parsed.altText ?? null,
+        color,
         sortOrder: Number(nextSortOrder),
       })
       .returning();
@@ -786,7 +965,12 @@ export async function addProductImage(
       action: "product_image.create",
       entityType: "product_image",
       entityId: row.id,
-      after: { productId: parsed.productId, variantId: parsed.variantId ?? null, storagePath: fullPath },
+      after: {
+        productId: parsed.productId,
+        variantId: parsed.variantId ?? null,
+        storagePath: fullPath,
+        color,
+      },
     });
 
     return row;
@@ -798,6 +982,57 @@ export async function addProductImage(
     fullUrl: storage.publicUrl(fullPath),
     thumbUrl: storage.publicUrl(thumbPath),
   };
+}
+
+const setProductImageColorSchema = z.object({
+  imageId: z.uuid(),
+  /** null = foto do produto inteiro: aparece em qualquer cor escolhida. */
+  color: z.string().trim().min(1).nullable(),
+  userId: z.uuid(),
+});
+
+export type SetProductImageColorInput = z.input<
+  typeof setProductImageColorSchema
+>;
+
+/** Reetiqueta uma foto já enviada: define, troca ou tira a cor a que ela pertence. */
+export async function setProductImageColor(
+  db: ServiceDb,
+  input: SetProductImageColorInput,
+) {
+  const parsed = setProductImageColorSchema.parse(input);
+
+  const [image] = await db
+    .select()
+    .from(productImages)
+    .where(eq(productImages.id, parsed.imageId))
+    .limit(1);
+  if (!image) {
+    throw new ServiceError("nao_encontrado", "Imagem não encontrada.");
+  }
+
+  const product = await requireProduct(db, image.productId);
+  const color = await resolveImageColor(db, product, parsed.color);
+  if (color === image.color) return image;
+
+  return await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(productImages)
+      .set({ color })
+      .where(eq(productImages.id, parsed.imageId))
+      .returning();
+
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "product_image.set_color",
+      entityType: "product_image",
+      entityId: updated.id,
+      before: { color: image.color },
+      after: { color: updated.color },
+    });
+
+    return updated;
+  });
 }
 
 const removeProductImageSchema = z.object({

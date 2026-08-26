@@ -185,6 +185,24 @@ describe("listPublicProducts", () => {
     expect(esgotado).toMatchObject({ available: false, imagePath: null });
   });
 
+  it("usa como capa a primeira foto por sort_order, mesmo que ela seja de uma cor", async () => {
+    const { productId } = await createPublicProduct({
+      name: "Camisa Cores",
+      attributesSchema: ["cor"],
+      variants: [
+        { sku: "CC-VE", attributes: { cor: "Verde" }, priceCents: 9900, onHand: 1 },
+      ],
+    });
+    await db.insert(schema.productImages).values([
+      { productId, storagePath: "products/c/geral-full.webp", color: null, sortOrder: 1 },
+      { productId, storagePath: "products/c/verde-full.webp", color: "Verde", sortOrder: 0 },
+    ]);
+
+    const rows = await listPublicProducts(db);
+    const camisa = rows.find((row) => row.name === "Camisa Cores");
+    expect(camisa?.imagePath).toBe("products/c/verde-full.webp");
+  });
+
   it("ordena por created_at desc, filtra por categoria e busca por nome/marca (ILIKE)", async () => {
     const categoryId = await createCategory("Colares", "colares");
     await createPublicProduct({
@@ -288,7 +306,10 @@ describe("getPublicProductBySlug", () => {
       brand: "TRIVË",
       categoryName: "Brincos",
       attributesSchema: ["cor"],
-      images: ["products/b/1-full.webp", "products/b/2-full.webp"],
+      images: [
+        { path: "products/b/1-full.webp", color: null },
+        { path: "products/b/2-full.webp", color: null },
+      ],
     });
     expect(detail!.variants).toHaveLength(1);
     expect(detail!.variants[0]).toEqual({
@@ -300,6 +321,32 @@ describe("getPublicProductBySlug", () => {
       availableQty: 3,
       weightGrams: 120,
     });
+  });
+
+  it("devolve a cor de cada foto (null = foto do produto inteiro) sem filtrar nada", async () => {
+    const { productId } = await createPublicProduct({
+      name: "Polo Cores",
+      slug: "polo-cores",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "PC-VE-M", attributes: { cor: "Verde", tamanho: "M" }, priceCents: 12900 },
+        { sku: "PC-AZ-M", attributes: { cor: "Azul", tamanho: "M" }, priceCents: 12900 },
+      ],
+    });
+    await db.insert(schema.productImages).values([
+      { productId, storagePath: "products/p/azul-full.webp", color: "Azul", sortOrder: 2 },
+      { productId, storagePath: "products/p/geral-full.webp", color: null, sortOrder: 1 },
+      { productId, storagePath: "products/p/verde-full.webp", color: "Verde", sortOrder: 0 },
+    ]);
+
+    const detail = await getPublicProductBySlug(db, "polo-cores");
+    // Todas as fotos voltam, na ordem de sort_order: quem escolhe o que
+    // mostrar por cor é a vitrine, não o service.
+    expect(detail!.images).toEqual([
+      { path: "products/p/verde-full.webp", color: "Verde" },
+      { path: "products/p/geral-full.webp", color: null },
+      { path: "products/p/azul-full.webp", color: "Azul" },
+    ]);
   });
 
   it("retorna null para slug inexistente, produto draft e produto sem variante com preço", async () => {

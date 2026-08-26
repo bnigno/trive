@@ -15,6 +15,7 @@ export const ADMIN_AREAS = [
   "configuracoes",
   "whatsapp",
   "conversas",
+  "emails",
   "relatorios",
   "cupons",
   "ajuda",
@@ -34,7 +35,9 @@ export type AdminRole = "owner" | "staff";
  *
  * As demais áreas são compartilhadas com a equipe — o corte fino dentro
  * delas (coluna Custo, margem do pedido, taxa do Mercado Pago) é feito na
- * própria página, não aqui.
+ * própria página, não aqui. Conversas e E-mails ficam de fora desta lista
+ * pelo mesmo motivo: são canais de atendimento, e fechá-los no dono deixaria
+ * cliente esperando sempre que ele não estivesse na loja.
  */
 export const OWNER_ONLY_AREAS = [
   "fornecedores",
@@ -65,6 +68,7 @@ export const AREA_LABELS: Record<AdminArea, string> = {
   configuracoes: "Configurações",
   whatsapp: "WhatsApp",
   conversas: "Conversas",
+  emails: "E-mails",
   relatorios: "Relatórios",
   cupons: "Cupons",
   ajuda: "Ajuda",

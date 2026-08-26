@@ -7,6 +7,8 @@ import { categories } from "@/db/schema";
 import { getFileStorage } from "@/adapters/storage";
 import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
+import { axisValues } from "@/core/catalog/attributes";
+import { findColorAxis } from "@/core/catalog/product-images";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +23,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { OwnerOnly } from "../../owner-only";
 import { removeImageAction, setProductStatusAction } from "./actions";
 import { EditProductForm } from "./edit-product-form";
+import { ImageColorForm } from "./image-color-form";
 import { ImageUploadForm } from "./image-upload-form";
 import { AddVariantForm, EditVariantForm } from "./variant-forms";
 
@@ -106,6 +109,14 @@ export default async function ProdutoDetalhePage({
   const axes = Array.isArray(detail.attributesSchema)
     ? detail.attributesSchema.filter(
         (axis): axis is string => typeof axis === "string",
+      )
+    : [];
+  // Produto sem eixo de cor não ganha etiqueta de cor nas fotos.
+  const colorAxis = findColorAxis(axes);
+  const colorOptions = colorAxis
+    ? axisValues(
+        colorAxis,
+        detail.variants.map((variant) => variant.attributes),
       )
     : [];
 
@@ -199,38 +210,66 @@ export default async function ProdutoDetalhePage({
               hint="Envie fotos do produto — a primeira vira a imagem principal na lista."
             />
           ) : (
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
-              {detail.images.map((image) => (
-                <div key={image.id} className="flex flex-col gap-2">
-                  <a
-                    href={storage.publicUrl(image.storagePath)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title="Abrir imagem em tamanho grande"
-                  >
-                    { }
-                    <img
-                      src={storage.publicUrl(thumbPathFor(image.storagePath))}
-                      alt={image.altText ?? ""}
-                      className="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
-                    />
-                  </a>
-                  <OwnerOnly>
-                    <form action={removeImageAction}>
-                      <input type="hidden" name="imageId" value={image.id} />
-                      <input type="hidden" name="productId" value={detail.id} />
-                      <ConfirmButton
-                        size="sm"
-                        variant="outline"
-                        className="w-full"
-                        confirmMessage="Remover esta imagem? Esta ação não pode ser desfeita."
-                      >
-                        Remover
-                      </ConfirmButton>
-                    </form>
-                  </OwnerOnly>
-                </div>
-              ))}
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
+                {detail.images.map((image) => (
+                  <div key={image.id} className="flex flex-col gap-2">
+                    <a
+                      href={storage.publicUrl(image.storagePath)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Abrir imagem em tamanho grande"
+                    >
+                      { }
+                      <img
+                        src={storage.publicUrl(thumbPathFor(image.storagePath))}
+                        alt={image.altText ?? ""}
+                        className="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
+                      />
+                    </a>
+                    {colorAxis ? (
+                      owner ? (
+                        <ImageColorForm
+                          imageId={image.id}
+                          productId={detail.id}
+                          color={image.color}
+                          colorOptions={colorOptions}
+                        />
+                      ) : (
+                        <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                          {image.color ?? "Produto inteiro"}
+                        </p>
+                      )
+                    ) : null}
+                    <OwnerOnly>
+                      <form action={removeImageAction}>
+                        <input type="hidden" name="imageId" value={image.id} />
+                        <input
+                          type="hidden"
+                          name="productId"
+                          value={detail.id}
+                        />
+                        <ConfirmButton
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          confirmMessage="Remover esta imagem? Esta ação não pode ser desfeita."
+                        >
+                          Remover
+                        </ConfirmButton>
+                      </form>
+                    </OwnerOnly>
+                  </div>
+                ))}
+              </div>
+              {colorAxis && owner ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  A cor de cada foto decide o que o cliente vê na loja: ao
+                  escolher uma cor, ele vê primeiro as fotos daquela cor. Fotos
+                  marcadas como “Produto inteiro” aparecem em qualquer escolha.
+                  A cor é salva assim que você escolhe.
+                </p>
+              ) : null}
             </div>
           )}
           <OwnerOnly>

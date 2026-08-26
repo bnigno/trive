@@ -7,10 +7,29 @@ export type OutgoingEmail = {
   subject: string;
   html: string;
   text?: string;
+  /** Para onde a resposta do cliente deve voltar (a caixa lida por IMAP). */
+  replyTo?: string;
+  cc?: string[];
+  /**
+   * Cabeçalhos crus repassados ao provedor. É por aqui que In-Reply-To e
+   * References (montados em `core/email/threading.ts`) chegam ao e-mail: sem
+   * eles a resposta NÃO threadeia no Gmail do cliente — aparece como conversa
+   * solta, fora do assunto original.
+   */
+  headers?: Record<string, string>;
+};
+
+export type SentEmail = {
+  /**
+   * Id do e-mail no provedor. É a âncora para casar a mensagem enviada com o
+   * que volta pela caixa de entrada (e para consultar o envio no painel do
+   * Resend quando o cliente diz que não recebeu).
+   */
+  providerMessageId: string;
 };
 
 export interface EmailProvider {
-  send(email: OutgoingEmail): Promise<void>;
+  send(email: OutgoingEmail): Promise<SentEmail>;
 }
 
 /**

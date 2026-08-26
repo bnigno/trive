@@ -78,7 +78,10 @@ export const productVariants = pgTable(
       .notNull()
       .references(() => products.id, { onDelete: "restrict" }),
     sku: text("sku").unique().notNull(),
-    attributes: jsonb("attributes").default({}),
+    // NOT NULL é o que dá dente ao unique (product_id, attributes): em SQL,
+    // NULL nunca conflita com NULL, então duas variantes sem atributos
+    // duplicariam a grade cor×tamanho em silêncio.
+    attributes: jsonb("attributes").notNull().default({}),
     barcodeEan: text("barcode_ean"),
     weightGrams: integer("weight_grams"),
     lengthMm: integer("length_mm"),
@@ -117,6 +120,9 @@ export const productImages = pgTable(
     }),
     storagePath: text("storage_path").notNull(),
     altText: text("alt_text"),
+    // Cor à qual esta foto pertence; NULL = foto do produto inteiro, aparece
+    // em qualquer escolha. Pareia com o primeiro eixo de attributes_schema.
+    color: text("color"),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -125,5 +131,9 @@ export const productImages = pgTable(
   (table) => [
     index("product_images_product_id_idx").on(table.productId),
     index("product_images_variant_id_idx").on(table.variantId),
+    index("product_images_product_id_color_idx").on(
+      table.productId,
+      table.color,
+    ),
   ],
 );

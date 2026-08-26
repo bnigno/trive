@@ -461,6 +461,44 @@ describe("getStockOverview", () => {
     expect(overview[1]).toMatchObject({ sku: "AAA-1", available: 50, low: false });
     expect(overview[1].productName).toBe("Produto AAA-1");
   });
+
+  it("rotula a variante pelos eixos, na ordem do attributes_schema", async () => {
+    const [product] = await db
+      .insert(schema.products)
+      .values({
+        name: "Camisa Polo",
+        slug: "camisa-polo",
+        status: "active",
+        // Ordem deliberadamente diferente da que o jsonb devolve ('cor' antes
+        // de 'tamanho'): quem manda no rótulo é o attributes_schema.
+        attributesSchema: ["tamanho", "cor"],
+      })
+      .returning({ id: schema.products.id });
+    await db.insert(schema.productVariants).values([
+      {
+        productId: product.id,
+        sku: "POLO-VD-P",
+        attributes: { cor: "Verde", tamanho: "P" },
+      },
+      {
+        productId: product.id,
+        sku: "POLO-PT-G",
+        attributes: { cor: "Preto", tamanho: "G" },
+      },
+    ]);
+    const simples = await createTestVariant(db, { sku: "CANECA-1" });
+
+    const overview = await getStockOverview(sdb);
+    const bySku = (sku: string) => overview.find((row) => row.sku === sku);
+
+    expect(bySku("POLO-VD-P")?.variantLabel).toBe("P · Verde");
+    expect(bySku("POLO-PT-G")?.variantLabel).toBe("G · Preto");
+    expect(bySku("POLO-VD-P")?.productName).toBe("Camisa Polo");
+
+    // Produto sem grade: nada a acrescentar ao nome.
+    expect(bySku("CANECA-1")?.variantId).toBe(simples.variantId);
+    expect(bySku("CANECA-1")?.variantLabel).toBe("");
+  });
 });
 
 describe("listMovements", () => {

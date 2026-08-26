@@ -77,7 +77,11 @@ export interface PublicProductListItem {
   priceFromCents: number;
   /** Maior preço ativo entre as variantes vendáveis. */
   priceToCents: number;
-  /** Primeira imagem do produto por sort_order (path no Storage), ou null. */
+  /**
+   * Capa da listagem: primeira imagem do produto por sort_order (path no
+   * Storage), ou null. Não olha a cor de propósito — a vitrine em lista mostra
+   * uma capa só, e a escolha de cor acontece na página do produto.
+   */
   imagePath: string | null;
   /** true se a soma de disponível (on_hand - reserved) das variantes > 0. */
   available: boolean;
@@ -196,6 +200,13 @@ export interface PublicVariant {
   weightGrams: number | null;
 }
 
+export interface PublicProductImage {
+  /** Path do arquivo no Storage. */
+  path: string;
+  /** Cor a que a foto pertence; null = foto do produto inteiro. */
+  color: string | null;
+}
+
 export interface PublicProductDetail {
   id: string;
   name: string;
@@ -205,8 +216,11 @@ export interface PublicProductDetail {
   categoryName: string | null;
   /** Eixos de variação, ex.: ["cor", "tamanho"]. */
   attributesSchema: string[];
-  /** Paths das imagens no Storage, ordenados por sort_order. */
-  images: string[];
+  /**
+   * Todas as imagens do produto, ordenadas por sort_order. Nada é filtrado
+   * aqui: a vitrine recebe a lista inteira e decide o que mostrar por cor.
+   */
+  images: PublicProductImage[];
   variants: PublicVariant[];
 }
 
@@ -258,7 +272,7 @@ export async function getPublicProductBySlug(
   if (variantRows.length === 0) return null;
 
   const imageRows = await db
-    .select({ path: productImages.storagePath })
+    .select({ path: productImages.storagePath, color: productImages.color })
     .from(productImages)
     .where(eq(productImages.productId, product.id))
     .orderBy(asc(productImages.sortOrder), asc(productImages.createdAt));
@@ -271,7 +285,7 @@ export async function getPublicProductBySlug(
     brand: product.brand,
     categoryName: row.categoryName,
     attributesSchema: (product.attributesSchema ?? []) as string[],
-    images: imageRows.map((image) => image.path),
+    images: imageRows.map((image) => ({ path: image.path, color: image.color })),
     variants: variantRows.map((variant) => ({
       variantId: variant.variantId,
       sku: variant.sku,

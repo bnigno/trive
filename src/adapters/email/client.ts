@@ -3,7 +3,7 @@
 // ADAPTER_MODE=real; nos testes e em dev o FakeEmailProvider cobre o fluxo.
 import { z } from "zod";
 
-import type { EmailProvider, OutgoingEmail } from "./index";
+import type { EmailProvider, OutgoingEmail, SentEmail } from "./index";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
@@ -14,7 +14,13 @@ const resendSuccessSchema = z.object({ id: z.string().min(1) });
 const resendErrorSchema = z.object({ message: z.string() });
 
 export class ResendEmailProvider implements EmailProvider {
-  async send(email: OutgoingEmail): Promise<void> {
+  private readonly fetchFn: typeof fetch;
+
+  constructor(fetchFn: typeof fetch = fetch) {
+    this.fetchFn = fetchFn;
+  }
+
+  async send(email: OutgoingEmail): Promise<SentEmail> {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       throw new Error(
@@ -30,7 +36,7 @@ export class ResendEmailProvider implements EmailProvider {
       );
     }
 
-    const response = await fetch(RESEND_API_URL, {
+    const response = await this.fetchFn(RESEND_API_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -42,6 +48,19 @@ export class ResendEmailProvider implements EmailProvider {
         subject: email.subject,
         html: email.html,
         ...(email.text !== undefined ? { text: email.text } : {}),
+        // A API REST do Resend usa snake_case aqui (`reply_to`), diferente do
+        // SDK. Sem esta chave a resposta do cliente volta para o EMAIL_FROM,
+        // que pode não ser a caixa lida por IMAP.
+        ...(email.replyTo !== undefined ? { reply_to: email.replyTo } : {}),
+        ...(email.cc !== undefined && email.cc.length > 0
+          ? { cc: email.cc }
+          : {}),
+        // In-Reply-To/References passam por aqui: sem eles o Gmail do cliente
+        // não encaixa a resposta na conversa original — vira conversa solta.
+        ...(email.headers !== undefined &&
+        Object.keys(email.headers).length > 0
+          ? { headers: email.headers }
+          : {}),
       }),
     });
 
@@ -72,5 +91,6 @@ export class ResendEmailProvider implements EmailProvider {
           "não veio no corpo. Verifique a integração.",
       );
     }
+    return { providerMessageId: parsed.data.id };
   }
 }

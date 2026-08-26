@@ -1,8 +1,11 @@
+import { getMailboxProvider, isMailboxConfigured } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
+import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
 import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
@@ -85,6 +88,21 @@ export const waRecovery = inngest.createFunction(
   },
 );
 
+// Caixa de entrada de e-mail (Fase 6): a Vercel é serverless e não segura uma
+// conexão IMAP em IDLE, então cada rodada conecta, lê o que chegou depois do
+// maior imap_uid já gravado e fecha. Sem as credenciais no ambiente não há o
+// que tentar: o retorno explica o motivo no painel do Inngest em vez de
+// acumular uma falha de conexão a cada 2 minutos.
+export const emailPoll = inngest.createFunction(
+  { id: "email-poll", triggers: [{ cron: "*/2 * * * *" }] },
+  async () => {
+    if (!isMailboxConfigured()) {
+      return { skipped: "caixa_de_entrada_nao_configurada" };
+    }
+    return pollEmailInbox(getDb(), getMailboxProvider(), getFileStorage());
+  },
+);
+
 export const functions = [
   outboxSweep,
   outboxKick,
@@ -92,4 +110,5 @@ export const functions = [
   mpReconciliation,
   waSessionMonitor,
   waRecovery,
+  emailPoll,
 ];

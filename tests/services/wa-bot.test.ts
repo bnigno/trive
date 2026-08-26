@@ -104,6 +104,50 @@ async function setupStore(
   return { productId, variantId };
 }
 
+/** Variante com atributos (cor/tamanho), estoque e preço ativo. */
+async function createAttributedVariant(
+  productId: string,
+  sku: string,
+  attributes: Record<string, string>,
+  onHand: number,
+  priceCents = 8990,
+): Promise<string> {
+  const [variant] = await db
+    .insert(schema.productVariants)
+    .values({ productId, sku, attributes, costCents: 3000 })
+    .returning({ id: schema.productVariants.id });
+  await db.insert(schema.stockLevels).values({
+    productVariantId: variant.id,
+    onHand,
+    reserved: 0,
+  });
+  await activatePrice(variant.id, priceCents);
+  return variant.id;
+}
+
+/**
+ * Produto de DOIS eixos (cor × tamanho) — o caso que nenhum teste do bot
+ * cobria: 5 combinações, uma esgotada, todas ao mesmo preço.
+ */
+async function setupPolo(): Promise<{ productId: string }> {
+  const [product] = await db
+    .insert(schema.products)
+    .values({
+      name: "Camisa Polo",
+      slug: "camisa-polo",
+      status: "active",
+      attributesSchema: ["cor", "tamanho"],
+    })
+    .returning({ id: schema.products.id });
+  await createAttributedVariant(product.id, "POLO-VD-P", { cor: "Verde", tamanho: "P" }, 3);
+  await createAttributedVariant(product.id, "POLO-VD-G", { cor: "Verde", tamanho: "G" }, 2);
+  await createAttributedVariant(product.id, "POLO-AM-M", { cor: "Amarelo", tamanho: "M" }, 1);
+  await createAttributedVariant(product.id, "POLO-AM-G", { cor: "Amarelo", tamanho: "G" }, 0);
+  await createAttributedVariant(product.id, "POLO-PT-P", { cor: "Preto", tamanho: "P" }, 4);
+  await createRate();
+  return { productId: product.id };
+}
+
 async function createConversation(
   phoneE164 = PHONE,
   opts: { status?: string; customerId?: string | null } = {},
@@ -634,6 +678,200 @@ describe("runBotTurn — mídia", () => {
     expect(provider.sentMessages).toHaveLength(1);
     // No banco: exatamente UMA linha de mídia e UMA de texto.
     expect(await outboundMessages(conversationId)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Variações: cor e tamanho (produto de DOIS eixos)
+// ---------------------------------------------------------------------------
+
+describe("runBotTurn — cor e tamanho", () => {
+  /** Roda um turno com detalhar_produto e devolve o texto que a ferramenta deu ao modelo. */
+  async function detalhar(
+    conversationId: string,
+    input: { produto: string; cor?: string },
+  ): Promise<string> {
+    let toolText = "";
+    assistant.enqueueScript({
+      toolCalls: [{ name: "detalhar_produto", input }],
+      replyTemplate: (toolTexts) => {
+        toolText = toolTexts[0];
+        return "Que gosto bom! 😍";
+      },
+    });
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    return toolText;
+  }
+
+  it("lista agrupado por cor, com o preço uma vez só", async () => {
+    await setupPolo();
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Me fala da camisa polo");
+
+    const toolText = await detalhar(conversationId, { produto: "Camisa Polo" });
+
+    expect(toolText).toContain("• Verde: P (3), G (2)");
+    expect(toolText).toContain("• Amarelo: M (1), G (esgotado)");
+    expect(toolText).toContain("• Preto: P (4)");
+    expect(toolText).toContain(`Preço: ${formatCentsBRL(8990)}`);
+    // Preço igual em todas as combinações aparece UMA vez, não cinco.
+    expect(toolText.split(formatCentsBRL(8990))).toHaveLength(2);
+    // O texto inteiro cabe folgado no limite do WhatsApp.
+    expect(toolText.length).toBeLessThan(1200);
+  });
+
+  it("rótulo segue attributes_schema, não a ordem das chaves do jsonb", async () => {
+    // Eixos declarados com o TAMANHO primeiro: o jsonb do Postgres reordena as
+    // chaves ao gravar (por tamanho e depois byte a byte, logo "cor" primeiro),
+    // então ler Object.values daria "Verde · P" — a ordem errada.
+    const [product] = await db
+      .insert(schema.products)
+      .values({
+        name: "Vestido Midi",
+        slug: "vestido-midi",
+        status: "active",
+        attributesSchema: ["tamanho", "cor"],
+      })
+      .returning({ id: schema.products.id });
+    await createAttributedVariant(
+      product.id,
+      "VEST-P-VD",
+      { cor: "Verde", tamanho: "P" },
+      3,
+      12990,
+    );
+    await createAttributedVariant(
+      product.id,
+      "VEST-M-VD",
+      // Ordem de inserção invertida de propósito.
+      { tamanho: "M", cor: "Verde" },
+      2,
+      12990,
+    );
+    await createRate();
+
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Quero ver o vestido midi");
+    const toolText = await detalhar(conversationId, { produto: "Vestido Midi" });
+
+    expect(toolText).toContain("• P: Verde (3)");
+    expect(toolText).toContain("• M: Verde (2)");
+    expect(toolText).toContain("P · Verde=VEST-P-VD");
+    expect(toolText).toContain("M · Verde=VEST-M-VD");
+    expect(toolText).not.toContain("Verde · P");
+    expect(toolText).not.toContain("Verde / P");
+  });
+
+  it("menu de variação sai com id 'variante:<sku>' dentro dos limites da Z-API", async () => {
+    await setupPolo();
+    const conversationId = await createConversation();
+    const inboundId = await addInbound(conversationId, "Quero ver a polo");
+
+    const toolText = await detalhar(conversationId, { produto: "Camisa Polo" });
+    expect(toolText).toContain("[Um menu interativo com as variações foi enviado");
+
+    // Chegou ao provedor de verdade: passou pelo Zod de sendMediaMessage
+    // (estourar 10 opções ou 24 caracteres de título faria o menu sumir).
+    expect(provider.sentOptionLists).toHaveLength(1);
+    const list = provider.sentOptionLists[0];
+    expect(list.toE164).toBe(PHONE);
+    expect(list.buttonLabel).toBe("Escolher opção");
+    expect(list.title).toBe("Camisa Polo");
+    // Só as combinações COM estoque (POLO-AM-G está esgotada).
+    expect(list.options.map((option) => option.id)).toEqual([
+      "variante:POLO-VD-P",
+      "variante:POLO-VD-G",
+      "variante:POLO-AM-M",
+      "variante:POLO-PT-P",
+    ]);
+    expect(list.options.length).toBeLessThanOrEqual(10);
+    for (const option of list.options) {
+      expect(option.id.length).toBeLessThanOrEqual(64);
+      expect(option.title.length).toBeLessThanOrEqual(24);
+      expect(option.title.length).toBeGreaterThan(0);
+    }
+    expect(list.options[0].title).toBe("Verde · P");
+
+    const outbound = await outboundMessages(conversationId);
+    const menu = outbound.find((message) => message.kind === "option_list");
+    expect(menu?.status).toBe("sent");
+    expect(menu?.dedupeKey).toBe(`wa.bot_media:${inboundId}:0`);
+  });
+
+  it("produto sem variação continua sem menu de variação", async () => {
+    await setupStore();
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "me fala da caneca");
+
+    const toolText = await detalhar(conversationId, { produto: "Caneca Azul" });
+
+    expect(toolText).toContain("SKU: CANECA-AZUL");
+    expect(toolText).not.toContain("menu interativo com as variações");
+    expect(provider.sentOptionLists).toHaveLength(0);
+  });
+
+  it("manda a foto da cor escolhida; sem foto daquela cor, a genérica", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://x.supabase.co");
+    const { productId } = await setupPolo();
+    await db.insert(schema.productImages).values([
+      { productId, storagePath: "polo/geral-full.webp", color: null, sortOrder: 0 },
+      { productId, storagePath: "polo/verde-full.webp", color: "Verde", sortOrder: 1 },
+      { productId, storagePath: "polo/amarelo-full.webp", color: "Amarelo", sortOrder: 2 },
+    ]);
+    const base = "https://x.supabase.co/storage/v1/object/public/product-images/";
+
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Tem essa polo amarela?");
+    const toolText = await detalhar(conversationId, {
+      produto: "Camisa Polo",
+      cor: "Amarelo",
+    });
+    expect(toolText).toContain("[A foto de Amarelo foi enviada ao cliente.]");
+
+    expect(provider.sentImages).toHaveLength(1);
+    expect(provider.sentImages[0].imageUrl).toBe(`${base}polo/amarelo-full.webp`);
+    expect(provider.sentImages[0].caption).toContain("Camisa Polo (Amarelo)");
+
+    // Toque no menu: o SKU chega no lugar do nome e a cor sai da variante.
+    await addInbound(conversationId, "Escolhi esta opção: Verde · P (SKU POLO-VD-P).");
+    await detalhar(conversationId, { produto: "POLO-VD-P" });
+    expect(provider.sentImages[1].imageUrl).toBe(`${base}polo/verde-full.webp`);
+    // Quem já escolheu a combinação não recebe o menu de novo.
+    expect(provider.sentOptionLists).toHaveLength(1);
+
+    // Preto não tem foto própria: cai na genérica (color null).
+    await addInbound(conversationId, "E na cor preta?");
+    await detalhar(conversationId, { produto: "Camisa Polo", cor: "Preto" });
+    expect(provider.sentImages[2].imageUrl).toBe(`${base}polo/geral-full.webp`);
+  });
+
+  it("criar_pedido de combinação esgotada diz QUAL combinação acabou", async () => {
+    await setupPolo();
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+
+    const result = await executor("criar_pedido", {
+      itens: [{ sku: "POLO-AM-G", quantidade: 1 }],
+      nome_completo: "Maria da Silva",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain('"Camisa Polo (Amarelo · G)"');
+    expect(result.text).toContain("esgotou");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
   });
 });
 

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
 import { requireOwner } from "@/services/auth";
@@ -10,6 +10,7 @@ import {
   addVariant,
   removeProductImage,
   ServiceError,
+  setProductImageColor,
   updateProduct,
   updateVariant,
 } from "@/services/catalog";
@@ -121,6 +122,11 @@ export async function uploadImagesAction(
     return { error: "Selecione ao menos uma imagem." };
   }
 
+  // Cor a que as fotos deste envio pertencem; ausente = fotos do produto
+  // inteiro. Quem não manda o campo (o uploader da tela do produto) segue
+  // gravando color nulo, como antes.
+  const color = String(formData.get("color") ?? "").trim();
+
   const db = getDb();
   const storage = getFileStorage();
   let uploaded = 0;
@@ -131,6 +137,7 @@ export async function uploadImagesAction(
         productId,
         data,
         contentType: file.type || "application/octet-stream",
+        color: color || undefined,
         userId: user.id,
       });
       uploaded += 1;
@@ -166,6 +173,47 @@ export async function removeImageAction(formData: FormData): Promise<void> {
   }
 
   revalidateProduct(productId);
+}
+
+const setImageColorSchema = z.object({
+  imageId: z.uuid("Não foi possível identificar esta foto."),
+  productId: z.uuid("Não foi possível identificar este produto."),
+  // Campo vazio no seletor = foto do produto inteiro (cor nula).
+  color: z.string().trim(),
+});
+
+export async function setImageColorAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+
+  const parsed = setImageColorSchema.safeParse({
+    imageId: String(formData.get("imageId") ?? ""),
+    productId: String(formData.get("productId") ?? ""),
+    color: String(formData.get("color") ?? ""),
+  });
+  if (!parsed.success) return toErrorState(parsed.error);
+
+  let savedColor: string | null;
+  try {
+    const db = getDb();
+    const image = await setProductImageColor(db, {
+      imageId: parsed.data.imageId,
+      color: parsed.data.color || null,
+      userId: user.id,
+    });
+    savedColor = image.color;
+  } catch (error) {
+    return toErrorState(error);
+  }
+
+  revalidateProduct(parsed.data.productId);
+  return {
+    success: savedColor
+      ? `Foto marcada como "${savedColor}".`
+      : "Foto marcada como do produto inteiro.",
+  };
 }
 
 // ---------------------------------------------------------------------------

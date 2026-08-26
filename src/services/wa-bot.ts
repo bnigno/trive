@@ -17,10 +17,20 @@ import {
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import type { MessagingProvider } from "@/adapters/zapi";
 import {
+  OPTION_LIST_MAX_OPTIONS,
+  truncateOptionTitle,
+} from "@/core/bot/option-list";
+import {
   BOT_TOOL_INPUT_SCHEMAS,
   type BotToolInputs,
   type ToolExecutor,
 } from "@/core/bot/tools";
+import {
+  buildVariantMenu,
+  colorOfVariant,
+  formatVariantLines,
+  pickImagePath,
+} from "@/core/bot/variants";
 import { buildBotSystemPrompt, truncateForWhatsApp } from "@/core/bot/prompt";
 import {
   auditLog,
@@ -234,22 +244,12 @@ function formatDeliveryDays(min: number, max: number): string {
  */
 export function historyTextFor(kind: string, body: string): string {
   if (kind === "option_list") {
-    return "[menu interativo de produtos enviado ao cliente]";
+    return "[menu interativo enviado ao cliente]";
   }
   if (kind === "image") {
     return `[foto enviada ao cliente] ${body}`;
   }
   return body;
-}
-
-// Limites da lista interativa da Z-API: até 10 opções, título com 24 chars.
-const OPTION_LIST_MAX_OPTIONS = 10;
-const OPTION_TITLE_MAX_CHARS = 24;
-
-function truncateOptionTitle(name: string): string {
-  return name.length <= OPTION_TITLE_MAX_CHARS
-    ? name
-    : `${name.slice(0, OPTION_TITLE_MAX_CHARS - 1).trimEnd()}…`;
 }
 
 function formatPriceRange(fromCents: number, toCents: number): string {
@@ -307,19 +307,28 @@ async function execListarProdutos(
   return { ok: true, text: lines.join("\n") };
 }
 
+/**
+ * Produto resolvido + a variante EXATA quando o cliente falou por SKU (é o
+ * caso do toque no menu de variações): é dela que sai a cor da foto.
+ */
+type ResolvedProduct = {
+  detail: PublicProductDetail;
+  matchedSku: string | null;
+};
+
 /** Resolve por slug exato, depois SKU exato (case-insensitive), depois nome aproximado. */
 async function resolveProductDetail(
   db: DbOrTx,
   term: string,
-): Promise<PublicProductDetail | null> {
+): Promise<ResolvedProduct | null> {
   const trimmed = term.trim();
   if (trimmed === "") return null;
 
   const bySlug = await getPublicProductBySlug(db, trimmed.toLowerCase());
-  if (bySlug) return bySlug;
+  if (bySlug) return { detail: bySlug, matchedSku: null };
 
   const [bySku] = await db
-    .select({ slug: products.slug })
+    .select({ slug: products.slug, sku: productVariants.sku })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
     .where(
@@ -331,7 +340,7 @@ async function resolveProductDetail(
     .limit(1);
   if (bySku) {
     const detail = await getPublicProductBySlug(db, bySku.slug);
-    if (detail) return detail;
+    if (detail) return { detail, matchedSku: bySku.sku };
   }
 
   const list = await listPublicProducts(db, {});
@@ -339,7 +348,9 @@ async function resolveProductDetail(
   const match =
     list.find((p) => p.name.toLowerCase().includes(lowered)) ??
     list.find((p) => lowered.includes(p.name.toLowerCase()));
-  return match ? getPublicProductBySlug(db, match.slug) : null;
+  if (!match) return null;
+  const detail = await getPublicProductBySlug(db, match.slug);
+  return detail ? { detail, matchedSku: null } : null;
 }
 
 async function execDetalharProduto(
@@ -347,17 +358,31 @@ async function execDetalharProduto(
   ctx: BotExecutorContext,
   input: BotToolInputs["detalhar_produto"],
 ): Promise<ToolResult> {
-  const detail = await resolveProductDetail(db, input.produto);
-  if (!detail) {
+  const resolved = await resolveProductDetail(db, input.produto);
+  if (!resolved) {
     return {
       ok: false,
       text: `Não encontrei o produto "${input.produto}". Use listar_produtos para ver o catálogo disponível.`,
     };
   }
+  const { detail, matchedSku } = resolved;
+  const axes = detail.attributesSchema;
 
-  // Foto: primeira imagem do produto (images já vem ordenado por sort_order).
+  // Cor definida na conversa: a que o modelo passou ou, quando o cliente
+  // tocou numa variação do menu, a da própria variante do SKU resolvido.
+  const matchedVariant =
+    matchedSku === null
+      ? undefined
+      : detail.variants.find(
+          (variant) => variant.sku.toLowerCase() === matchedSku.toLowerCase(),
+        );
+  const chosenColor =
+    input.cor?.trim() ||
+    (matchedVariant ? colorOfVariant(matchedVariant.attributes, axes) : null);
+
+  // Foto da cor escolhida; sem foto daquela cor, cai na genérica.
   let photoEmitted = false;
-  const imagePath = detail.images[0];
+  const imagePath = pickImagePath(detail.images, chosenColor);
   if (imagePath && ctx.onAttachment) {
     let imageUrl: string | null = null;
     try {
@@ -372,12 +397,25 @@ async function execDetalharProduto(
         Math.min(...priceCentsList),
         Math.max(...priceCentsList),
       );
+      const nome = chosenColor ? `${detail.name} (${chosenColor})` : detail.name;
       ctx.onAttachment({
         kind: "image",
         imageUrl,
-        caption: `${detail.name} — ${preco}`,
+        caption: `${nome} — ${preco}`,
       });
       photoEmitted = true;
+    }
+  }
+
+  // Menu tocável das variações, espelhando o de produtos ('produto:<slug>').
+  // Quando o produto veio POR SKU, o cliente já escolheu a combinação (foi ele
+  // quem tocou no menu): reoferecer a lista só atrapalha.
+  let menuEmitted = false;
+  if (ctx.onAttachment && matchedSku === null) {
+    const menu = buildVariantMenu(detail.name, detail.variants, axes);
+    if (menu) {
+      ctx.onAttachment({ kind: "option_list", ...menu });
+      menuEmitted = true;
     }
   }
 
@@ -388,21 +426,21 @@ async function execDetalharProduto(
       description.length > 200 ? `${description.slice(0, 200).trimEnd()}…` : description,
     );
   }
-  for (const variant of detail.variants) {
-    const label = Object.values(variant.attributes).join(" / ");
-    const disponibilidade =
-      variant.availableQty > 0
-        ? `${variant.availableQty} ${variant.availableQty === 1 ? "disponível" : "disponíveis"}`
-        : "esgotado";
-    lines.push(
-      `• ${label ? `${label} — ` : ""}${formatCentsBRL(variant.priceCents)} (${disponibilidade}) — SKU: ${variant.sku}`,
-    );
-  }
+  lines.push(...formatVariantLines(detail.variants, axes));
   if (detail.variants.every((variant) => variant.availableQty === 0)) {
     lines.push("Atenção: este produto está esgotado no momento.");
   }
   if (photoEmitted) {
-    lines.push("[A foto do produto foi enviada ao cliente.]");
+    lines.push(
+      chosenColor
+        ? `[A foto de ${chosenColor} foi enviada ao cliente.]`
+        : "[A foto do produto foi enviada ao cliente.]",
+    );
+  }
+  if (menuEmitted) {
+    lines.push(
+      "[Um menu interativo com as variações foi enviado ao cliente. Responda em 1 frase curta convidando a tocar na opção desejada — NÃO repita a lista de variações.]",
+    );
   }
   return { ok: true, text: lines.join("\n") };
 }

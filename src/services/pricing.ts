@@ -1,6 +1,17 @@
 // Serviço de PRECIFICAÇÃO: versões de preço com fluxo de aprovação.
 // Regras puras vivem em @/core/pricing; aqui fica a orquestração com o banco.
-import { and, desc, eq, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
 import {
   alias,
@@ -22,6 +33,7 @@ import {
   variantCosts,
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { variantLabel } from "@/core/catalog/attributes";
 import {
   calculatePrice,
   evaluateApproval,
@@ -908,6 +920,8 @@ export interface PriceOverviewItem {
   variantId: string;
   sku: string;
   productName: string;
+  /** Eixos da variante já na ordem do produto ("Verde · P"); "" sem grade. */
+  variantLabel: string;
   costCents: number;
   activePriceCents: number | null;
   activeMarginRate: number | null;
@@ -923,6 +937,8 @@ export async function listPricesOverview(
       variantId: productVariants.id,
       sku: productVariants.sku,
       productName: products.name,
+      attributes: productVariants.attributes,
+      attributesSchema: products.attributesSchema,
       costCents: productVariants.costCents,
       activePriceCents: activePrice.priceCents,
       activeMarginRate: activePrice.computedMarginRate,
@@ -946,10 +962,18 @@ export async function listPricesOverview(
     .orderBy(productVariants.sku);
 
   return rows.map((row) => ({
-    ...row,
+    variantId: row.variantId,
+    sku: row.sku,
+    productName: row.productName,
+    variantLabel: variantLabel(
+      (row.attributes ?? {}) as Record<string, string>,
+      (row.attributesSchema ?? []) as string[],
+    ),
+    costCents: row.costCents,
     activePriceCents: row.activePriceCents ?? null,
     activeMarginRate:
       row.activeMarginRate === null ? null : Number(row.activeMarginRate),
+    pendingCount: row.pendingCount,
   }));
 }
 
@@ -1278,5 +1302,154 @@ export async function rejectBatch(
     });
 
     return { batchId: parsed.batchId, rejectedCount: rejected.length };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 9. Mesmo preço para todas as variantes de um produto
+// ---------------------------------------------------------------------------
+
+const applyPriceToProductSchema = z.object({
+  productId: uuidSchema,
+  priceCents: z.number().int().positive(),
+  userId: uuidSchema,
+  note: z.string().trim().min(1).optional(),
+});
+
+export type ApplyPriceToProductInput = z.input<
+  typeof applyPriceToProductSchema
+>;
+
+export interface ApplyPriceToProductResult {
+  productId: string;
+  batchId: string;
+  priceCents: number;
+  created: number;
+  autoActivated: number;
+  pendingApproval: number;
+  /** Já estavam nesse preço: ativa, ou versão nesse preço já pendente. */
+  skipped: number;
+}
+
+/**
+ * Aplica o MESMO preço de venda a todas as variantes ativas de um produto.
+ * Existe porque a grade cor×tamanho multiplica o trabalho manual: num produto
+ * 3×3, vender tudo pelo mesmo preço custaria nove passagens pela calculadora.
+ *
+ * Cada variante ganha uma versão de preço pelo caminho normal
+ * (createPriceVersionInTx com preço manual), então a régua de aprovação
+ * continua valendo item a item. Rodar de novo é seguro: variante que já está
+ * nesse preço — ativa ou aguardando aprovação — fica de fora, e nenhuma
+ * segunda ativa é criada (o índice único parcial é a rede final).
+ *
+ * Como em recalculateAllPrices, o batchId é gravado DEPOIS de criar a versão:
+ * assim o lote não vira, sozinho, motivo de aprovação (regra bulk_change), mas
+ * ainda dá para aprovar ou rejeitar tudo de uma vez na tela de pendências.
+ */
+export async function applyPriceToProduct(
+  db: PricingDb,
+  input: ApplyPriceToProductInput,
+): Promise<ApplyPriceToProductResult> {
+  const parsed = applyPriceToProductSchema.parse(input);
+  const batchId = crypto.randomUUID();
+
+  return await db.transaction(async (tx) => {
+    const [product] = await tx
+      .select({ id: products.id })
+      .from(products)
+      .where(and(eq(products.id, parsed.productId), isNull(products.deletedAt)))
+      .limit(1);
+
+    if (!product) {
+      throw new ServiceError(
+        "product_not_found",
+        `Produto ${parsed.productId} não encontrado.`,
+      );
+    }
+
+    const variants = await tx
+      .select({ id: productVariants.id })
+      .from(productVariants)
+      .where(
+        and(
+          eq(productVariants.productId, parsed.productId),
+          eq(productVariants.isActive, true),
+          isNull(productVariants.deletedAt),
+        ),
+      )
+      .orderBy(productVariants.sku);
+
+    if (variants.length === 0) {
+      throw new ServiceError(
+        "product_without_active_variants",
+        "Este produto não tem nenhuma variante ativa para precificar.",
+      );
+    }
+
+    let created = 0;
+    let autoActivated = 0;
+    let pendingApproval = 0;
+    let skipped = 0;
+
+    for (const variant of variants) {
+      const [atTargetPrice] = await tx
+        .select({ id: priceVersions.id })
+        .from(priceVersions)
+        .where(
+          and(
+            eq(priceVersions.productVariantId, variant.id),
+            eq(priceVersions.priceCents, parsed.priceCents),
+            inArray(priceVersions.status, ["active", "pending_approval"]),
+          ),
+        )
+        .limit(1);
+      if (atTargetPrice) {
+        skipped += 1;
+        continue;
+      }
+
+      const version = await createPriceVersionInTx(tx, {
+        variantId: variant.id,
+        userId: parsed.userId,
+        origin: "bulk_update",
+        overrides: undefined,
+        priceCentsManual: parsed.priceCents,
+        batchId: undefined,
+      });
+      await tx
+        .update(priceVersions)
+        .set({ batchId })
+        .where(eq(priceVersions.id, version.id));
+
+      created += 1;
+      if (version.status === "active") autoActivated += 1;
+      else pendingApproval += 1;
+    }
+
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "price.apply_to_product",
+      entityType: "product",
+      entityId: parsed.productId,
+      after: {
+        batchId,
+        priceCents: parsed.priceCents,
+        created,
+        autoActivated,
+        pendingApproval,
+        skipped,
+      },
+      reason: parsed.note ?? null,
+    });
+
+    return {
+      productId: parsed.productId,
+      batchId,
+      priceCents: parsed.priceCents,
+      created,
+      autoActivated,
+      pendingApproval,
+      skipped,
+    };
   });
 }

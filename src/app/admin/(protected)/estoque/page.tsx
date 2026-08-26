@@ -138,6 +138,11 @@ export default async function StockOverviewPage({
                     >
                       {row.productName}
                     </Link>
+                    {row.variantLabel ? (
+                      <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                        {row.variantLabel}
+                      </span>
+                    ) : null}
                   </Td>
                   <Td className="font-mono text-xs">{row.sku}</Td>
                   <Td

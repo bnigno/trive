@@ -22,10 +22,10 @@ export default async function NovoProdutoPage() {
     .orderBy(asc(categories.name));
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6">
+    <div className="flex max-w-5xl flex-col gap-6">
       <PageHeader
         title="Novo produto"
-        subtitle="Cadastre o produto e suas variações. O preço de venda vem depois, na calculadora."
+        subtitle="Produto, cores, tamanhos, quantidade e fotos — tudo numa tela só."
         actions={
           <Link
             href="/admin/produtos"

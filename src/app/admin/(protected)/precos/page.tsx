@@ -116,7 +116,14 @@ export default async function PricesOverviewPage({
                   {row.sku}
                 </Link>
               </Td>
-              <Td>{row.productName}</Td>
+              <Td>
+                {row.productName}
+                {row.variantLabel ? (
+                  <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    {row.variantLabel}
+                  </span>
+                ) : null}
+              </Td>
               <Td>
                 <Money cents={row.costCents} />
               </Td>

@@ -2,12 +2,34 @@
 
 // Seletor de variação por eixo (attributesSchema) + preço + botão de compra.
 // Recebe as variantes já serializadas por props do Server Component da página.
-import { useMemo, useState } from "react";
+// A escolha atual vive no componente de cima (product-detail-client): a galeria
+// precisa da mesma cor, e dois donos do mesmo estado sempre desandam.
+import { useMemo } from "react";
 
 import { AddToCartButton } from "@/components/store/cart/add-to-cart";
 import { cx } from "@/components/ui/cx";
 import { formatCentsBRL } from "@/lib/money";
 import type { PublicVariant } from "@/services/store-catalog";
+
+/**
+ * Escolha inicial de cada eixo: a primeira variação com estoque, ou a primeira
+ * de todas se o produto inteiro estiver esgotado.
+ */
+export function initialAxisSelection(
+  axes: readonly string[],
+  variants: readonly PublicVariant[],
+): Record<string, string> {
+  const initial =
+    variants.find((variant) => variant.availableQty > 0) ?? variants[0];
+  const selection: Record<string, string> = {};
+  if (initial) {
+    for (const axis of axes) {
+      const value = initial.attributes[axis];
+      if (value) selection[axis] = value;
+    }
+  }
+  return selection;
+}
 
 export function VariantPicker({
   productName,
@@ -15,12 +37,16 @@ export function VariantPicker({
   imageUrl,
   axes,
   variants,
+  selected,
+  onSelect,
 }: {
   productName: string;
   slug: string;
   imageUrl?: string;
   axes: string[];
   variants: PublicVariant[];
+  selected: Record<string, string>;
+  onSelect: (axis: string, value: string) => void;
 }) {
   // Valores únicos por eixo, na ordem em que aparecem nas variantes.
   const valuesByAxis = useMemo(() => {
@@ -35,18 +61,6 @@ export function VariantPicker({
     }
     return map;
   }, [axes, variants]);
-
-  const [selected, setSelected] = useState<Record<string, string>>(() => {
-    const initial = variants.find((v) => v.availableQty > 0) ?? variants[0];
-    const state: Record<string, string> = {};
-    if (initial) {
-      for (const axis of axes) {
-        const value = initial.attributes[axis];
-        if (value) state[axis] = value;
-      }
-    }
-    return state;
-  });
 
   const matched = useMemo(
     () =>
@@ -117,9 +131,7 @@ export function VariantPicker({
                   type="button"
                   disabled={!enabled && !isSelected}
                   aria-pressed={isSelected}
-                  onClick={() =>
-                    setSelected((prev) => ({ ...prev, [axis]: value }))
-                  }
+                  onClick={() => onSelect(axis, value)}
                   className={cx(
                     "rounded-(--radius-hair) border px-4 py-2 font-store text-sm transition-colors duration-300 ease-silk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
                     isSelected

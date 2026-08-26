@@ -3,10 +3,12 @@ import { z } from "zod";
 
 import { getSalesAssistant } from "@/adapters/assistant";
 import { getEmailProvider } from "@/adapters/email";
+import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
+import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
 import { runBotTurn } from "@/services/wa-bot";
@@ -105,6 +107,13 @@ const waBotTurnPayloadSchema = z.object({
   conversationId: z.uuid(),
 });
 
+// Resposta do dono a um e-mail de cliente: a linha 'queued' já existe em
+// email_messages (gravada na mesma transação que este evento) e o payload só
+// aponta para ela.
+const emailSendPayloadSchema = z.object({
+  emailMessageId: z.uuid(),
+});
+
 // Resposta de cliente encaminhada ao dono (bot desligado: humano responde).
 // raw: true envia o corpo como está — avisos do sistema (ex.: transferência
 // do bot) já chegam formatados e não são "fala de cliente".
@@ -182,6 +191,16 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       orderId: parsed.orderId,
       dedupeKey: parsed.dedupeKey ?? `wa.send:${event.id}`,
       requireOptIn: false,
+    });
+  },
+  // Resposta do dono pela caixa de entrada de e-mail. Idempotente pelo
+  // dedupe_key UNIQUE da linha: reentrega com a linha já 'sent' não reenvia.
+  // A cópia na pasta "Enviados" (IMAP) é melhor esforço lá dentro — falhar em
+  // copiar NÃO reprova o envio, que já aconteceu.
+  "email.send": async (event) => {
+    const parsed = emailSendPayloadSchema.parse(event.payload);
+    await sendQueuedEmail(getDb(), getEmailProvider(), getMailboxProvider(), {
+      emailMessageId: parsed.emailMessageId,
     });
   },
   // Turno do bot de vendas IA sobre uma conversa. runBotTurn trata os skips

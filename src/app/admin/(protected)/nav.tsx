@@ -6,6 +6,7 @@ import type { ComponentType } from "react";
 import type { AdminArea, AdminRole } from "@/core/auth/access";
 import { canAccess } from "@/core/auth/access";
 import { cx } from "@/components/ui/cx";
+import { EmailNavBadge } from "./emails/email-nav-badge";
 import { WaNavBadge } from "./wa-nav-badge";
 
 type NavItem = {
@@ -67,6 +68,16 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/admin/whatsapp/conversas",
         area: "conversas",
         badge: WaNavBadge,
+      },
+      // Mesma razão da Conversas: a caixa de e-mail é atendimento, então a
+      // equipe entra. O crachá conta as conversas com mensagem que ninguém
+      // abriu ainda — é o "tem gente esperando" do canal de e-mail, já que
+      // aqui não existe robô para transferir nada.
+      {
+        label: "E-mails",
+        href: "/admin/emails",
+        area: "emails",
+        badge: EmailNavBadge,
       },
       { label: "Relatórios", href: "/admin/relatorios", area: "relatorios" },
       { label: "Cupons", href: "/admin/cupons", area: "cupons" },

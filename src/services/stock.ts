@@ -13,6 +13,7 @@ import {
   suppliers,
   variantCosts,
 } from "@/db/schema";
+import { variantLabel } from "@/core/catalog/attributes";
 import {
   applyMovement,
   isLowStock,
@@ -491,6 +492,8 @@ export interface StockOverviewRow {
   variantId: string;
   sku: string;
   productName: string;
+  /** Eixos da variante já na ordem do produto ("Verde · P"); "" sem grade. */
+  variantLabel: string;
   onHand: number;
   reserved: number;
   available: number;
@@ -506,6 +509,8 @@ export async function getStockOverview(db: DbOrTx): Promise<StockOverviewRow[]> 
       variantId: productVariants.id,
       sku: productVariants.sku,
       productName: products.name,
+      attributes: productVariants.attributes,
+      attributesSchema: products.attributesSchema,
       onHand: sql<number>`coalesce(${stockLevels.onHand}, 0)`,
       reserved: sql<number>`coalesce(${stockLevels.reserved}, 0)`,
       lowStockThreshold: sql<number>`coalesce(${stockLevels.lowStockThreshold}, 3)`,
@@ -530,6 +535,10 @@ export async function getStockOverview(db: DbOrTx): Promise<StockOverviewRow[]> 
       variantId: row.variantId,
       sku: row.sku,
       productName: row.productName,
+      variantLabel: variantLabel(
+        (row.attributes ?? {}) as Record<string, string>,
+        (row.attributesSchema ?? []) as string[],
+      ),
       onHand,
       reserved,
       available: onHand - reserved,

@@ -4,6 +4,7 @@
 import { and, asc, eq, gte, isNull, lt, lte } from "drizzle-orm";
 import { z } from "zod";
 
+import { variantLabel } from "@/core/catalog/attributes";
 import { InsufficientStockError } from "@/core/stock/ledger";
 import { computeOrderTotals } from "@/core/orders/totals";
 import {
@@ -183,17 +184,23 @@ export async function createStoreOrder(
       priceVersionId: string | null;
       totalCents: number;
     }[] = [];
+    // Nome com a combinação — "Camisa Polo (Verde · P)" — para as mensagens de
+    // erro: sem a variação, o cliente não sabe QUAL delas esgotou. Fica fora
+    // de itemRows porque essas linhas vão inteiras para order_items.
+    const displayNameByVariantId = new Map<string, string>();
 
     for (const item of parsed.items) {
       const [variant] = await tx
         .select({
           id: productVariants.id,
           sku: productVariants.sku,
+          attributes: productVariants.attributes,
           costCents: productVariants.costCents,
           weightGrams: productVariants.weightGrams,
           isActive: productVariants.isActive,
           deletedAt: productVariants.deletedAt,
           productName: products.name,
+          productAttributesSchema: products.attributesSchema,
           productStatus: products.status,
           productDeletedAt: products.deletedAt,
         })
@@ -240,6 +247,15 @@ export async function createStoreOrder(
           newPriceCents: activePrice.priceCents,
         });
       }
+
+      const label = variantLabel(
+        (variant.attributes ?? {}) as Record<string, string>,
+        (variant.productAttributesSchema ?? []) as string[],
+      );
+      displayNameByVariantId.set(
+        variant.id,
+        label ? `${variant.productName} (${label})` : variant.productName,
+      );
 
       totalWeightGrams += (variant.weightGrams ?? 0) * item.quantity;
       itemRows.push({
@@ -329,9 +345,11 @@ export async function createStoreOrder(
         .where(eq(stockLevels.productVariantId, row.productVariantId));
       const available = (level?.onHand ?? 0) - (level?.reserved ?? 0);
       if (available < row.quantity) {
+        const displayName =
+          displayNameByVariantId.get(row.productVariantId) ?? row.nameSnapshot;
         throw new ServiceError(
           "OUT_OF_STOCK",
-          `Que pena — o item "${row.nameSnapshot}" esgotou. Remova-o do carrinho ou reduza a quantidade para continuar.`,
+          `Que pena — o item "${displayName}" esgotou. Remova-o do carrinho ou reduza a quantidade para continuar.`,
         );
       }
     }

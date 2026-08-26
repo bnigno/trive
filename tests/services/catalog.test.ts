@@ -13,6 +13,7 @@ import {
   listProducts,
   removeProductImage,
   ServiceError,
+  setProductImageColor,
   thumbPathFor,
   updateProduct,
 } from "@/services/catalog";
@@ -151,6 +152,198 @@ describe("createProduct", () => {
         userId: FIXED_USER_ID,
       }),
     ).rejects.toThrow(ServiceError);
+  });
+
+  it("rejects attributes that only differ in case (normalized before the check)", async () => {
+    await expect(
+      createProduct(db, {
+        name: "Camisa Linho",
+        attributesSchema: ["cor"],
+        variants: [
+          { sku: "CAM-LIN-VERDE", attributes: { cor: "verde" } },
+          { sku: "CAM-LIN-VERDE-2", attributes: { cor: "  Verde " } },
+        ],
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow("Há variações com os mesmos atributos no cadastro.");
+  });
+});
+
+describe("createProduct com grade cor × tamanho", () => {
+  // 3 cores × 3 tamanhos, mas só 6 combinações realmente existem na loja.
+  const GRID = [
+    { cor: "verde", tamanho: "p", quantity: 3 },
+    { cor: "verde", tamanho: "g", quantity: 2 },
+    { cor: "amarelo", tamanho: "m", quantity: 1 },
+    { cor: "amarelo", tamanho: "g", quantity: 1 },
+    { cor: "azul", tamanho: "p", quantity: 2 },
+    { cor: "azul", tamanho: "m", quantity: 1 },
+  ];
+
+  async function createPolo() {
+    return createProduct(db, {
+      name: "Polo Piquê",
+      attributesSchema: ["cor", "tamanho"],
+      variants: GRID.map((cell) => ({
+        sku: `POLO-${cell.cor.toUpperCase()}-${cell.tamanho.toUpperCase()}`,
+        attributes: { cor: cell.cor, tamanho: cell.tamanho },
+        costCents: 4000,
+        initialQuantity: cell.quantity,
+        priceCents: 8990,
+      })),
+      userId: FIXED_USER_ID,
+    });
+  }
+
+  it("creates only the 6 informed combinations, never the full 3×3 grid", async () => {
+    const { product, variants } = await createPolo();
+    expect(variants).toHaveLength(6);
+
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.variants).toHaveLength(6);
+    // Valores normalizados: "verde" → "Verde", "p" → "P" (sigla de tamanho).
+    const cells = detail.variants
+      .map((variant) => `${variant.attributes.cor}/${variant.attributes.tamanho}`)
+      .sort();
+    expect(cells).toEqual([
+      "Amarelo/G",
+      "Amarelo/M",
+      "Azul/M",
+      "Azul/P",
+      "Verde/G",
+      "Verde/P",
+    ]);
+  });
+
+  it("records the exact on_hand of each cell and the matching ledger movements", async () => {
+    const { variants } = await createPolo();
+    const idBySku = new Map(variants.map((v) => [v.sku, v.id]));
+
+    const levels = await db
+      .select()
+      .from(schema.stockLevels)
+      .where(
+        inArray(
+          schema.stockLevels.productVariantId,
+          variants.map((variant) => variant.id),
+        ),
+      );
+    expect(levels).toHaveLength(6);
+    const onHandById = new Map(
+      levels.map((level) => [level.productVariantId, level.onHand]),
+    );
+    for (const cell of GRID) {
+      const sku = `POLO-${cell.cor.toUpperCase()}-${cell.tamanho.toUpperCase()}`;
+      expect(onHandById.get(idBySku.get(sku)!)).toBe(cell.quantity);
+    }
+
+    const movements = await db
+      .select()
+      .from(schema.stockMovements)
+      .where(
+        inArray(
+          schema.stockMovements.productVariantId,
+          variants.map((variant) => variant.id),
+        ),
+      );
+    expect(movements).toHaveLength(6);
+    const deltaById = new Map(
+      movements.map((movement) => [
+        movement.productVariantId,
+        movement.quantityDelta,
+      ]),
+    );
+    for (const cell of GRID) {
+      const sku = `POLO-${cell.cor.toUpperCase()}-${cell.tamanho.toUpperCase()}`;
+      expect(deltaById.get(idBySku.get(sku)!)).toBe(cell.quantity);
+    }
+    for (const movement of movements) {
+      expect(movement.type).toBe("purchase_in");
+      expect(movement.idempotencyKey).toBe(
+        `purchase_in:${movement.referenceId}:${movement.productVariantId}`,
+      );
+    }
+  });
+
+  it("activates one price version per variant", async () => {
+    const { variants } = await createPolo();
+
+    const prices = await db
+      .select()
+      .from(schema.priceVersions)
+      .where(
+        inArray(
+          schema.priceVersions.productVariantId,
+          variants.map((variant) => variant.id),
+        ),
+      );
+    expect(prices).toHaveLength(6);
+    for (const price of prices) {
+      expect(price.status).toBe("active");
+      expect(price.priceCents).toBe(8990);
+      expect(price.versionNumber).toBe(1);
+      expect(price.origin).toBe("initial");
+      expect(price.costSnapshotCents).toBe(4000);
+      // (8990 − 4000) ÷ 8990 = 0,5551 — inverso da calculadora de preços.
+      expect(Number(price.computedMarginRate)).toBeCloseTo(0.5551, 4);
+      expect(price.activatedAt).not.toBeNull();
+    }
+  });
+
+  it("creates no movement when the quantity is zero or absent", async () => {
+    const { variants } = await createProduct(db, {
+      name: "Polo Sem Estoque",
+      attributesSchema: ["cor"],
+      variants: [
+        { sku: "POLO-SEM-1", attributes: { cor: "verde" }, initialQuantity: 0 },
+        { sku: "POLO-SEM-2", attributes: { cor: "azul" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+
+    const movements = await db
+      .select()
+      .from(schema.stockMovements)
+      .where(
+        inArray(
+          schema.stockMovements.productVariantId,
+          variants.map((variant) => variant.id),
+        ),
+      );
+    expect(movements).toHaveLength(0);
+
+    const levels = await db
+      .select()
+      .from(schema.stockLevels)
+      .where(
+        inArray(
+          schema.stockLevels.productVariantId,
+          variants.map((variant) => variant.id),
+        ),
+      );
+    expect(levels.map((level) => level.onHand)).toEqual([0, 0]);
+  });
+
+  it("lets the database UNIQUE (product_id, attributes) reject a repeated cell", async () => {
+    const { product } = await createPolo();
+
+    // Sem pré-checagem em memória neste caminho: quem recusa é o UNIQUE do
+    // banco — e o jsonb compara igual mesmo com as chaves em outra ordem.
+    await expect(
+      addVariant(db, {
+        productId: product.id,
+        sku: "POLO-VERDE-P-BIS",
+        attributes: { tamanho: "P", cor: "Verde" },
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(
+      "Já existe uma variação deste produto com os mesmos atributos.",
+    );
+
+    const [{ value: total }] = await db
+      .select({ value: count() })
+      .from(schema.productVariants);
+    expect(Number(total)).toBe(6);
   });
 });
 
@@ -353,6 +546,104 @@ describe("addProductImage / removeProductImage", () => {
     expect(storage.list()).toHaveLength(0);
   });
 
+  it("stores the normalized color and returns it in getProductDetail", async () => {
+    const storage = new FakeFileStorage();
+    const { product } = await createProduct(db, {
+      name: "Polo Cor",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "POLO-COR-VE-P", attributes: { cor: "verde", tamanho: "p" } },
+        { sku: "POLO-COR-AZ-M", attributes: { cor: "azul", tamanho: "m" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+
+    const image = await addProductImage(db, storage, {
+      productId: product.id,
+      data: await makePng(),
+      contentType: "image/png",
+      color: "  verde ",
+      userId: FIXED_USER_ID,
+    });
+    expect(image.color).toBe("Verde");
+
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.images).toHaveLength(1);
+    expect(detail.images[0].color).toBe("Verde");
+  });
+
+  it("returns color null for a photo of the whole product in getProductDetail", async () => {
+    const storage = new FakeFileStorage();
+    const { product } = await createProduct(db, {
+      name: "Polo Sem Cor",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "POLO-SC-VE-P", attributes: { cor: "verde", tamanho: "p" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+
+    const image = await addProductImage(db, storage, {
+      productId: product.id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    expect(image.color).toBe(null);
+
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.images).toHaveLength(1);
+    expect(detail.images[0].color).toBe(null);
+    expect(detail.images[0].storagePath).toBe(image.storagePath);
+  });
+
+  it("rejects a color no variant has, without leaving files behind", async () => {
+    const storage = new FakeFileStorage();
+    const { product } = await createProduct(db, {
+      name: "Polo Cor Errada",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "POLO-ERR-VE-P", attributes: { cor: "verde", tamanho: "p" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+
+    await expect(
+      addProductImage(db, storage, {
+        productId: product.id,
+        data: await makePng(),
+        contentType: "image/png",
+        color: "vermelho",
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow('Nenhuma variação deste produto tem a cor "Vermelho".');
+
+    expect(storage.list()).toHaveLength(0);
+    const rows = await db
+      .select()
+      .from(schema.productImages)
+      .where(eq(schema.productImages.productId, product.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("keeps the color free when the product has no color axis", async () => {
+    const storage = new FakeFileStorage();
+    const { product } = await createProduct(db, {
+      name: "Colar Sem Eixo",
+      variants: [{ sku: "COL-SEM-EIXO" }],
+      userId: FIXED_USER_ID,
+    });
+
+    const image = await addProductImage(db, storage, {
+      productId: product.id,
+      data: await makePng(),
+      contentType: "image/png",
+      color: "dourado",
+      userId: FIXED_USER_ID,
+    });
+    expect(image.color).toBe("Dourado");
+  });
+
   it("removes the row and both files from storage", async () => {
     const storage = new FakeFileStorage();
     const { product } = await createProduct(db, {
@@ -379,5 +670,114 @@ describe("addProductImage / removeProductImage", () => {
       .from(schema.productImages)
       .where(eq(schema.productImages.productId, product.id));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("setProductImageColor", () => {
+  async function productWithPhoto(storage: FakeFileStorage) {
+    const { product } = await createProduct(db, {
+      name: "Blusa Reetiqueta",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "BLU-RE-VE-P", attributes: { cor: "verde", tamanho: "p" } },
+        { sku: "BLU-RE-AZ-P", attributes: { cor: "azul", tamanho: "p" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const image = await addProductImage(db, storage, {
+      productId: product.id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    return { product, image };
+  }
+
+  it("tags a photo of the whole product with a color, normalized, with audit", async () => {
+    const storage = new FakeFileStorage();
+    const { product, image } = await productWithPhoto(storage);
+    expect(image.color).toBe(null);
+
+    const updated = await setProductImageColor(db, {
+      imageId: image.id,
+      color: "  verde ",
+      userId: FIXED_USER_ID,
+    });
+    expect(updated.color).toBe("Verde");
+
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.images[0].color).toBe("Verde");
+
+    const audits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "product_image.set_color"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0].entityId).toBe(image.id);
+    expect(audits[0].before).toEqual({ color: null });
+    expect(audits[0].after).toEqual({ color: "Verde" });
+  });
+
+  it("clears the color back to a photo of the whole product", async () => {
+    const storage = new FakeFileStorage();
+    const { product, image } = await productWithPhoto(storage);
+    await setProductImageColor(db, {
+      imageId: image.id,
+      color: "azul",
+      userId: FIXED_USER_ID,
+    });
+
+    const cleared = await setProductImageColor(db, {
+      imageId: image.id,
+      color: null,
+      userId: FIXED_USER_ID,
+    });
+    expect(cleared.color).toBe(null);
+
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.images[0].color).toBe(null);
+  });
+
+  it("rejects a color no variant has and keeps the photo as it was", async () => {
+    const storage = new FakeFileStorage();
+    const { product, image } = await productWithPhoto(storage);
+
+    await expect(
+      setProductImageColor(db, {
+        imageId: image.id,
+        color: "vermelho",
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow('Nenhuma variação deste produto tem a cor "Vermelho".');
+
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.images[0].color).toBe(null);
+  });
+
+  it("does not write an audit entry when the color did not change", async () => {
+    const storage = new FakeFileStorage();
+    const { image } = await productWithPhoto(storage);
+
+    await setProductImageColor(db, {
+      imageId: image.id,
+      color: null,
+      userId: FIXED_USER_ID,
+    });
+
+    const audits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "product_image.set_color"));
+    expect(audits).toHaveLength(0);
+  });
+
+  it("fails with a friendly message for an unknown photo", async () => {
+    await expect(
+      setProductImageColor(db, {
+        imageId: "00000000-0000-4000-8000-000000000000",
+        color: "verde",
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow("Imagem não encontrada.");
   });
 });

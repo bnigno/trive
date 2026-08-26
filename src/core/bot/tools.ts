@@ -25,7 +25,7 @@ export type BotToolDefinition = {
 
 export type BotToolInputs = {
   listar_produtos: { busca?: string };
-  detalhar_produto: { produto: string };
+  detalhar_produto: { produto: string; cor?: string };
   cotar_frete: { cep: string };
   criar_pedido: {
     itens: { sku: string; quantidade: number }[];
@@ -81,13 +81,18 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "detalhar_produto",
     description:
-      "Devolve detalhes de um produto: variações/tamanhos, estoque disponível e preço exato. Chame SEMPRE antes de adicionar um item ao pedido, para confirmar SKU, preço e estoque.",
+      "Devolve detalhes de um produto: cores e tamanhos disponíveis, estoque, preço exato e o SKU de cada combinação, E envia ao cliente a foto e (quando cabem até 10) um menu tocável com as variações. Chame SEMPRE antes de adicionar um item ao pedido, para confirmar SKU, preço e estoque. Passe cor quando o cliente já tiver dito a cor: a foto enviada passa a ser a daquela cor.",
     input_schema: {
       type: "object",
       properties: {
         produto: {
           type: "string",
           description: "Nome do produto ou SKU exato.",
+        },
+        cor: {
+          type: "string",
+          description:
+            "Cor que o cliente já escolheu nesta conversa (ex.: 'Verde'). Omita se ele ainda não disse a cor.",
         },
       },
       required: ["produto"],
@@ -297,6 +302,7 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   }),
   detalhar_produto: z.strictObject({
     produto: z.string().min(1),
+    cor: z.string().min(1).optional(),
   }),
   cotar_frete: z.strictObject({
     cep: digitos(8, "CEP"),

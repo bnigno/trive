@@ -9,6 +9,14 @@ import {
   BOT_TOOL_NAMES,
   BOT_TOOLS,
 } from "../../src/core/bot/tools";
+import {
+  buildVariantMenu,
+  colorOfVariant,
+  formatVariantLines,
+  pickImagePath,
+  type BotVariant,
+} from "../../src/core/bot/variants";
+import { formatCentsBRL } from "../../src/lib/money";
 
 const promptOptions = {
   storeName: "TRIVË",
@@ -62,6 +70,15 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("1.");
     expect(prompt).toContain("10.");
     expect(prompt).toContain("15.");
+  });
+
+  it("exige confirmar cor e tamanho antes de criar_pedido em produto com variação", () => {
+    const prompt = buildBotSystemPrompt(promptOptions);
+    expect(prompt).toContain("18.");
+    expect(prompt).toContain("COR e TAMANHO");
+    expect(prompt).toContain("SKU exato");
+    // O bot não pode "chutar" o tamanho para adiantar a venda.
+    expect(prompt).toContain("nunca escolha por ele");
   });
 
   it("contém as regras de Pix manual, aviso ao dono e dinheiro na entrega", () => {
@@ -195,11 +212,20 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     expect(schema.safeParse({ categoria: "x" }).success).toBe(false);
   });
 
-  it("detalhar_produto: exige produto", () => {
+  it("detalhar_produto: exige produto e aceita cor opcional", () => {
     const schema = BOT_TOOL_INPUT_SCHEMAS.detalhar_produto;
     expect(schema.safeParse({ produto: "CAM-P-AZUL" }).success).toBe(true);
     expect(schema.safeParse({}).success).toBe(false);
     expect(schema.safeParse({ produto: "" }).success).toBe(false);
+    expect(
+      schema.safeParse({ produto: "Camisa Polo", cor: "Verde" }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ produto: "Camisa Polo", cor: "" }).success).toBe(
+      false,
+    );
+    expect(
+      schema.safeParse({ produto: "Camisa Polo", tamanho: "P" }).success,
+    ).toBe(false);
   });
 
   it("cotar_frete: CEP com 8 dígitos; máscara comum é aceita e normalizada", () => {
@@ -336,6 +362,200 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     );
     expect(schema.safeParse({}).success).toBe(false);
     expect(schema.safeParse({ motivo: "" }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Variações (cor, tamanho) — apresentação pura
+// ---------------------------------------------------------------------------
+
+function variante(
+  sku: string,
+  attributes: Record<string, string>,
+  availableQty: number,
+  priceCents = 8990,
+): BotVariant {
+  return { sku, attributes, priceCents, availableQty };
+}
+
+const POLO_AXES = ["cor", "tamanho"];
+const POLO: BotVariant[] = [
+  variante("POLO-VD-P", { cor: "Verde", tamanho: "P" }, 3),
+  variante("POLO-VD-G", { cor: "Verde", tamanho: "G" }, 2),
+  variante("POLO-AM-M", { cor: "Amarelo", tamanho: "M" }, 1),
+  variante("POLO-AM-G", { cor: "Amarelo", tamanho: "G" }, 0),
+];
+
+describe("formatVariantLines", () => {
+  it("agrupa por cor e mostra o preço UMA vez quando é igual em tudo", () => {
+    expect(formatVariantLines(POLO, POLO_AXES)).toEqual([
+      "Opções disponíveis (quantidade entre parênteses):",
+      "• Verde: P (3), G (2)",
+      "• Amarelo: M (1), G (esgotado)",
+      `Preço: ${formatCentsBRL(8990)}`,
+      "[SKU de cada combinação, para criar_pedido — NÃO mostre ao cliente: Verde · P=POLO-VD-P; Verde · G=POLO-VD-G; Amarelo · M=POLO-AM-M; Amarelo · G=POLO-AM-G]",
+    ]);
+  });
+
+  it("segue a ordem de attributes_schema, nunca a ordem das chaves do jsonb", () => {
+    // Mesmas chaves, ordem de inserção invertida: o rótulo não pode mudar.
+    const invertido = [
+      variante("POLO-VD-P", { tamanho: "P", cor: "Verde" }, 3),
+      variante("POLO-VD-G", { tamanho: "G", cor: "Verde" }, 2),
+    ];
+    const direto = [
+      variante("POLO-VD-P", { cor: "Verde", tamanho: "P" }, 3),
+      variante("POLO-VD-G", { cor: "Verde", tamanho: "G" }, 2),
+    ];
+    expect(formatVariantLines(invertido, POLO_AXES)).toEqual(
+      formatVariantLines(direto, POLO_AXES),
+    );
+    // Com o tamanho declarado primeiro, é o tamanho que agrupa.
+    expect(formatVariantLines(direto, ["tamanho", "cor"])).toContain(
+      "• P: Verde (3)",
+    );
+  });
+
+  it("destaca o preço de cada combinação quando eles diferem", () => {
+    const precosDiferentes = [
+      variante("POLO-VD-P", { cor: "Verde", tamanho: "P" }, 3, 8990),
+      variante("POLO-VD-GG", { cor: "Verde", tamanho: "GG" }, 1, 9990),
+    ];
+    const linhas = formatVariantLines(precosDiferentes, POLO_AXES);
+    expect(linhas).toContain(
+      `• Verde: P (3) — ${formatCentsBRL(8990)}, GG (1) — ${formatCentsBRL(9990)}`,
+    );
+    expect(linhas.some((linha) => linha.startsWith("Preço: "))).toBe(false);
+  });
+
+  it("eixo único: uma linha só, sem grupo", () => {
+    const camiseta = [
+      variante("CAM-P", { tamanho: "P" }, 5, 4490),
+      variante("CAM-G", { tamanho: "G" }, 0, 4490),
+    ];
+    expect(formatVariantLines(camiseta, ["tamanho"])).toEqual([
+      "Opções disponíveis (quantidade entre parênteses):",
+      "• P (5), G (esgotado)",
+      `Preço: ${formatCentsBRL(4490)}`,
+      "[SKU de cada combinação, para criar_pedido — NÃO mostre ao cliente: P=CAM-P; G=CAM-G]",
+    ]);
+  });
+
+  it("produto sem variação: linha única com preço, estoque e SKU", () => {
+    const caneca = [variante("CANECA-AZUL", {}, 10, 4990)];
+    const esperado = [
+      `• ${formatCentsBRL(4990)} (10 disponíveis) — SKU: CANECA-AZUL`,
+    ];
+    expect(formatVariantLines(caneca, [])).toEqual(esperado);
+    // Eixo declarado que nenhuma variante preenche não vira rótulo vazio.
+    expect(formatVariantLines(caneca, ["cor"])).toEqual(esperado);
+  });
+
+  it("singular de 'disponível' no produto sem variação; lista vazia não gera linha", () => {
+    expect(formatVariantLines([variante("X", {}, 1, 1000)], [])).toEqual([
+      `• ${formatCentsBRL(1000)} (1 disponível) — SKU: X`,
+    ]);
+    expect(formatVariantLines([], POLO_AXES)).toEqual([]);
+  });
+});
+
+describe("buildVariantMenu", () => {
+  it("uma linha por combinação DISPONÍVEL, dentro dos limites da Z-API", () => {
+    const menu = buildVariantMenu("Camisa Polo", POLO, POLO_AXES);
+    expect(menu).not.toBeNull();
+    expect(menu?.message).toBe("Toque abaixo para escolher cor e tamanho 👇");
+    expect(menu?.title).toBe("Camisa Polo");
+    expect(menu?.options).toEqual([
+      {
+        id: "variante:POLO-VD-P",
+        title: "Verde · P",
+        description: `${formatCentsBRL(8990)} · 3 disponíveis`,
+      },
+      {
+        id: "variante:POLO-VD-G",
+        title: "Verde · G",
+        description: `${formatCentsBRL(8990)} · 2 disponíveis`,
+      },
+      {
+        id: "variante:POLO-AM-M",
+        title: "Amarelo · M",
+        description: `${formatCentsBRL(8990)} · 1 disponível`,
+      },
+    ]);
+  });
+
+  it("corta o título em 24 caracteres (limite da lista da Z-API)", () => {
+    const menu = buildVariantMenu(
+      "Camisa",
+      [variante("X", { cor: "Verde Militar Desbotado", tamanho: "GG" }, 1)],
+      POLO_AXES,
+    );
+    const titulo = menu?.options[0].title ?? "";
+    expect(titulo.length).toBeLessThanOrEqual(24);
+    expect(titulo.endsWith("…")).toBe(true);
+  });
+
+  it("null quando não cabe menu honesto: sem variação, tudo esgotado ou mais de 10", () => {
+    expect(buildVariantMenu("Caneca", [variante("C", {}, 5)], [])).toBeNull();
+    expect(
+      buildVariantMenu(
+        "Camisa Polo",
+        POLO.map((v) => ({ ...v, availableQty: 0 })),
+        POLO_AXES,
+      ),
+    ).toBeNull();
+    // 11 combinações: truncar esconderia opções que existem de verdade.
+    const onze = Array.from({ length: 11 }, (_, i) =>
+      variante(`SKU-${i}`, { cor: "Verde", tamanho: `T${i}` }, 1),
+    );
+    expect(buildVariantMenu("Camisa Polo", onze, POLO_AXES)).toBeNull();
+  });
+
+  it("null quando um id passaria de 64 caracteres", () => {
+    const skuEnorme = "S".repeat(60);
+    expect(
+      buildVariantMenu(
+        "Camisa Polo",
+        [variante(skuEnorme, { cor: "Verde", tamanho: "P" }, 1)],
+        POLO_AXES,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("pickImagePath / colorOfVariant", () => {
+  const imagens = [
+    { path: "polo/geral-full.webp", color: null },
+    { path: "polo/verde-full.webp", color: "Verde" },
+    { path: "polo/amarelo-full.webp", color: "Amarelo" },
+  ];
+
+  it("manda a foto da cor escolhida", () => {
+    expect(pickImagePath(imagens, "Amarelo")).toBe("polo/amarelo-full.webp");
+    // A comparação normaliza: "verde" e "Verde" são a mesma cor.
+    expect(pickImagePath(imagens, "verde")).toBe("polo/verde-full.webp");
+  });
+
+  it("sem foto da cor, cai na genérica; sem genérica, na primeira", () => {
+    expect(pickImagePath(imagens, "Preto")).toBe("polo/geral-full.webp");
+    const soColoridas = imagens.slice(1);
+    expect(pickImagePath(soColoridas, "Preto")).toBe("polo/verde-full.webp");
+  });
+
+  it("sem cor definida usa a primeira; sem imagem devolve null", () => {
+    expect(pickImagePath(imagens, null)).toBe("polo/geral-full.webp");
+    expect(pickImagePath(imagens, "  ")).toBe("polo/geral-full.webp");
+    expect(pickImagePath([], "Verde")).toBeNull();
+  });
+
+  it("colorOfVariant lê o PRIMEIRO eixo, que é o que product_images.color pareia", () => {
+    expect(colorOfVariant({ cor: "Verde", tamanho: "P" }, POLO_AXES)).toBe(
+      "Verde",
+    );
+    expect(colorOfVariant({ cor: "Verde", tamanho: "P" }, ["tamanho", "cor"])).toBe(
+      "P",
+    );
+    expect(colorOfVariant({}, [])).toBeNull();
   });
 });
 

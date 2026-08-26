@@ -12,8 +12,7 @@ import {
   publicThumbUrl,
 } from "@/services/store-catalog";
 
-import { ProductGallery } from "./gallery";
-import { VariantPicker } from "./variant-picker";
+import { ProductDetailClient } from "./product-detail-client";
 
 export const revalidate = 300;
 
@@ -35,7 +34,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       type: "website",
       images: product.images[0]
-        ? [{ url: publicImageUrl(product.images[0]), alt: product.name }]
+        ? [{ url: publicImageUrl(product.images[0].path), alt: product.name }]
         : undefined,
     },
   };
@@ -51,7 +50,7 @@ function buildProductJsonLd(product: {
   slug: string;
   description: string | null;
   brand: string | null;
-  images: string[];
+  images: { path: string }[];
   variants: { priceCents: number; availableQty: number }[];
 }): string {
   const siteUrl =
@@ -65,7 +64,7 @@ function buildProductJsonLd(product: {
     "@type": "Product",
     name: product.name,
     ...(product.images.length > 0
-      ? { image: product.images.map((path) => publicImageUrl(path)) }
+      ? { image: product.images.map((image) => publicImageUrl(image.path)) }
       : {}),
     ...(product.description?.trim()
       ? { description: product.description.trim() }
@@ -95,13 +94,13 @@ export default async function ProdutoPage({ params }: Props) {
   const product = await getPublicProductBySlug(getDb(), slug);
   if (!product) notFound();
 
-  const galleryImages = product.images.map((path) => ({
-    full: publicImageUrl(path),
-    thumb: publicThumbUrl(path),
+  // Todas as fotos vão para o cliente com a cor a que pertencem; quem decide o
+  // que aparece é a cor escolhida no seletor (core/catalog/product-images).
+  const galleryImages = product.images.map((image) => ({
+    full: publicImageUrl(image.path),
+    thumb: publicThumbUrl(image.path),
+    color: image.color,
   }));
-  const cartImageUrl = product.images[0]
-    ? publicThumbUrl(product.images[0])
-    : undefined;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -124,12 +123,13 @@ export default async function ProdutoPage({ params }: Props) {
         ) : null}
       </nav>
 
-      <div className="grid gap-8 lg:grid-cols-2 lg:gap-12">
-        <div className="self-start lg:sticky lg:top-24">
-          <ProductGallery images={galleryImages} alt={product.name} />
-        </div>
-
-        <div className="flex flex-col gap-4">
+      <ProductDetailClient
+        productName={product.name}
+        slug={product.slug}
+        axes={product.attributesSchema}
+        variants={product.variants}
+        images={galleryImages}
+        heading={
           <div>
             {product.brand ? (
               <p className="font-store text-eyebrow font-medium uppercase text-gold-800">
@@ -140,31 +140,23 @@ export default async function ProdutoPage({ params }: Props) {
               {product.name}
             </h1>
           </div>
-
-          <VariantPicker
-            productName={product.name}
-            slug={product.slug}
-            imageUrl={cartImageUrl}
-            axes={product.attributesSchema}
-            variants={product.variants}
-          />
-
-          {product.description ? (
-            <section aria-labelledby="descricao" className="mt-6">
-              <h2
-                id="descricao"
-                className="font-display text-heading text-ink-900"
-              >
-                Descrição
-              </h2>
-              <Ornament className="mt-3 w-20 text-gold-500" />
-              <p className="mt-4 whitespace-pre-line font-store text-[15px] leading-7 text-ink-700">
-                {product.description}
-              </p>
-            </section>
-          ) : null}
-        </div>
-      </div>
+        }
+      >
+        {product.description ? (
+          <section aria-labelledby="descricao" className="mt-6">
+            <h2
+              id="descricao"
+              className="font-display text-heading text-ink-900"
+            >
+              Descrição
+            </h2>
+            <Ornament className="mt-3 w-20 text-gold-500" />
+            <p className="mt-4 whitespace-pre-line font-store text-[15px] leading-7 text-ink-700">
+              {product.description}
+            </p>
+          </section>
+        ) : null}
+      </ProductDetailClient>
     </div>
   );
 }

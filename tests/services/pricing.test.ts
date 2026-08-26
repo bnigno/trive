@@ -406,6 +406,36 @@ describe("consultas", () => {
     expect(row?.activePriceCents).toBe(1690);
     expect(row?.activeMarginRate).toBe(0.3586);
     expect(row?.pendingCount).toBe(1);
+    // Variante de produto sem grade não tem o que acrescentar ao nome.
+    expect(row?.variantLabel).toBe("");
+  });
+
+  it("listPricesOverview rotula a variante na ordem do attributes_schema", async () => {
+    const [product] = await db
+      .insert(schema.products)
+      .values({
+        name: "Camisa Polo",
+        slug: "camisa-polo",
+        status: "active",
+        // Ordem deliberadamente diferente da que o jsonb devolve ('cor' antes
+        // de 'tamanho'): quem manda no rótulo é o attributes_schema.
+        attributesSchema: ["tamanho", "cor"],
+      })
+      .returning({ id: schema.products.id });
+    const [variant] = await db
+      .insert(schema.productVariants)
+      .values({
+        productId: product.id,
+        sku: "POLO-VD-P",
+        costCents: 1000,
+        attributes: { cor: "Verde", tamanho: "P" },
+      })
+      .returning({ id: schema.productVariants.id });
+
+    const overview = await listPricesOverview(db);
+    const row = overview.find((r) => r.variantId === variant.id);
+    expect(row?.productName).toBe("Camisa Polo");
+    expect(row?.variantLabel).toBe("P · Verde");
   });
 
   it("erros claros quando falta regra de taxa ou política", async () => {
