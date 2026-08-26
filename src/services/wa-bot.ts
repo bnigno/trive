@@ -221,6 +221,27 @@ function formatDeliveryDays(min: number, max: number): string {
   return min === max ? `${min} dias úteis` : `${min} a ${max} dias úteis`;
 }
 
+/**
+ * Texto que uma mensagem antiga assume no histórico enviado ao modelo.
+ *
+ * O body de um option_list é gravado JÁ RENDERIZADO ("Toque abaixo…" + uma
+ * linha por produto com preço) porque é o que a thread do admin exibe. Só que
+ * isso, no histórico, é uma lista pronta convidando a ser copiada — e o modelo
+ * copia: em 26/08 ele reemitiu o menu inteiro como texto puro, sem chamar
+ * listar_produtos, e o cliente ficou sem os botões (a lista interativa só sai
+ * quando a ferramenta roda de verdade). Trocar pelo marcador remove a cola:
+ * para mostrar produtos, o modelo é OBRIGADO a chamar a ferramenta.
+ */
+export function historyTextFor(kind: string, body: string): string {
+  if (kind === "option_list") {
+    return "[menu interativo de produtos enviado ao cliente]";
+  }
+  if (kind === "image") {
+    return `[foto enviada ao cliente] ${body}`;
+  }
+  return body;
+}
+
 // Limites da lista interativa da Z-API: até 10 opções, título com 24 chars.
 const OPTION_LIST_MAX_OPTIONS = 10;
 const OPTION_TITLE_MAX_CHARS = 24;
@@ -980,7 +1001,11 @@ export async function runBotTurn(
 
     // Histórico: últimas 20 mensagens em ordem cronológica.
     const recent = await tx
-      .select({ direction: waMessages.direction, body: waMessages.body })
+      .select({
+        direction: waMessages.direction,
+        body: waMessages.body,
+        kind: waMessages.kind,
+      })
       .from(waMessages)
       .where(eq(waMessages.conversationId, conversationId))
       .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
@@ -989,7 +1014,7 @@ export async function runBotTurn(
       .reverse()
       .map((message) => ({
         role: message.direction === "inbound" ? ("user" as const) : ("assistant" as const),
-        text: message.body,
+        text: historyTextFor(message.kind, message.body),
       }));
 
     const map = await getSettingsMap(tx, [

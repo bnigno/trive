@@ -20,6 +20,7 @@ import {
 import {
   buildToolExecutor,
   HANDOFF_COURTESY_REPLY,
+  historyTextFor,
   isBotEnabled,
   runBotTurn,
 } from "@/services/wa-bot";
@@ -1032,5 +1033,36 @@ describe("buildToolExecutor", () => {
     const result = await executor("cotar_frete", { cep: "013" });
     expect(result.ok).toBe(false);
     expect(result.text).toContain("Dados inválidos");
+  });
+});
+
+describe("historyTextFor", () => {
+  // Regressão de 26/08: o menu chegou ao cliente como texto puro, sem botões,
+  // porque o modelo copiou do histórico o body já renderizado de um option_list
+  // anterior em vez de chamar listar_produtos. O histórico não pode conter uma
+  // lista de produtos copiável.
+  it("troca o menu renderizado por um marcador sem produtos nem preços", () => {
+    const menuRenderizado = [
+      "Toque abaixo para ver os produtos 👇",
+      "• Camiseta Essencial — R$ 44,90",
+      "• Moletom Canguru — R$ 85,90",
+    ].join("\n");
+
+    const texto = historyTextFor("option_list", menuRenderizado);
+
+    expect(texto).not.toContain("Camiseta Essencial");
+    expect(texto).not.toContain("R$ 44,90");
+    expect(texto).not.toContain("•");
+    expect(texto).toContain("menu interativo");
+  });
+
+  it("mantém a legenda da foto, que é contexto útil e não vira menu falso", () => {
+    expect(historyTextFor("image", "Camiseta Essencial — R$ 44,90")).toBe(
+      "[foto enviada ao cliente] Camiseta Essencial — R$ 44,90",
+    );
+  });
+
+  it("não altera mensagem de texto comum", () => {
+    expect(historyTextFor("text", "Oi, tudo bem?")).toBe("Oi, tudo bem?");
   });
 });
