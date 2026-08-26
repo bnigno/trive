@@ -37,6 +37,9 @@ const PHONE = "+5511999998888";
 const OTHER_PHONE = "+5521977776666";
 const VALID_CPF = "52998224725";
 const VALID_CPF_2 = "16899535009";
+// Executor chamado direto (sem turno): qualquer id serve para os dedupes.
+const DUMMY_INBOUND_ID = "00000000-0000-4000-8000-00000000feed";
+const PIX_KEY = "pix@trive.com.br";
 
 beforeEach(async () => {
   ({ db, close } = await createTestDb());
@@ -634,6 +637,304 @@ describe("runBotTurn — mídia", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pix manual (enviar_chave_pix), aviso ao dono (avisar_dono) e dinheiro na
+// entrega (criar_pedido forma_de_pagamento)
+// ---------------------------------------------------------------------------
+
+describe("runBotTurn — enviar_chave_pix / avisar_dono / dinheiro na entrega", () => {
+  async function setPixKey(value: string) {
+    await db.insert(schema.settings).values({ key: "store_pix_key", value });
+  }
+
+  async function ownerForwards() {
+    return db
+      .select()
+      .from(schema.outboxEvents)
+      .where(eq(schema.outboxEvents.eventType, "wa.owner_forward"));
+  }
+
+  it("enviar_chave_pix feliz: marca pix_manual, estende prazo p/ 24h, avisa o dono e manda chave+valor", async () => {
+    await setPixKey(PIX_KEY);
+    const { variantId } = await setupStore();
+    const [rate] = await db.select().from(schema.shippingRates);
+    const created = await createStoreOrder(
+      sdb,
+      baseStoreOrderInput(variantId, rate.id),
+    );
+
+    const conversationId = await createConversation();
+    const inboundId = await addInbound(
+      conversationId,
+      "O link de pagamento não funciona aqui",
+    );
+    const before = Date.now();
+
+    assistant.enqueueScript({
+      toolCalls: [{ name: "enviar_chave_pix", input: {} }],
+      replyTemplate: (toolTexts) => toolTexts[0],
+    });
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(assistant.turns[0].toolCalls[0].ok).toBe(true);
+
+    // Pedido marcado como pix_manual, com prazo estendido de ~2h para ~24h.
+    const [order] = await db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, created.orderId));
+    expect(order.paymentMethod).toBe("pix_manual");
+    const dueMs = order.paymentDueAt!.getTime() - before;
+    expect(dueMs).toBeGreaterThan(23 * 60 * 60_000);
+    expect(dueMs).toBeLessThan(25 * 60 * 60_000);
+
+    // Resposta ao cliente: chave, valor EXATO, instrução de avisar e prazo.
+    const body = provider.sentMessages[0].body;
+    expect(body).toContain(PIX_KEY);
+    expect(body).toContain(formatCentsBRL(created.totalCents));
+    expect(body).toContain("avise aqui");
+    expect(body).toContain("reserva vale até");
+
+    // Aviso interno ao dono via outbox, raw, com dedupe pedido+inbound.
+    const forwards = await ownerForwards();
+    expect(forwards).toHaveLength(1);
+    expect(forwards[0].dedupeKey).toBe(
+      `wa.pix_key:${created.orderId}:${inboundId}`,
+    );
+    expect(forwards[0].payload).toMatchObject({ raw: true });
+    const forwardBody = String((forwards[0].payload as { body: string }).body);
+    expect(forwardBody).toContain(`#${created.orderNumber}`);
+    expect(forwardBody).toContain(formatCentsBRL(created.totalCents));
+    expect(forwardBody).toContain("Pix manual");
+
+    // Audit da marcação.
+    const audits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "order.pix_manual"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0].entityId).toBe(created.orderId);
+  });
+
+  it("enviar_chave_pix sem chave cadastrada: ok:false e NENHUM efeito", async () => {
+    const { variantId } = await setupStore();
+    const [rate] = await db.select().from(schema.shippingRates);
+    const created = await createStoreOrder(
+      sdb,
+      baseStoreOrderInput(variantId, rate.id),
+    );
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "não consigo pagar pelo link");
+
+    assistant.enqueueScript({
+      toolCalls: [{ name: "enviar_chave_pix", input: {} }],
+      replyTemplate: (toolTexts) => toolTexts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+
+    expect(assistant.turns[0].toolCalls[0].ok).toBe(false);
+    expect(provider.sentMessages[0].body).toContain("NÃO está disponível");
+    expect(await ownerForwards()).toHaveLength(0);
+    const [order] = await db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, created.orderId));
+    expect(order.paymentMethod).toBeNull();
+  });
+
+  it("enviar_chave_pix sem pedido pendente do cliente: ok:false", async () => {
+    await setPixKey(PIX_KEY);
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "me passa o pix");
+
+    assistant.enqueueScript({
+      toolCalls: [{ name: "enviar_chave_pix", input: {} }],
+      replyTemplate: (toolTexts) => toolTexts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+
+    expect(assistant.turns[0].toolCalls[0].ok).toBe(false);
+    expect(await ownerForwards()).toHaveLength(0);
+  });
+
+  it("enviar_chave_pix NÃO encurta prazo maior que 24h (e mantém NULL de cash como NULL)", async () => {
+    await setPixKey(PIX_KEY);
+    const { variantId } = await setupStore();
+    const [rate] = await db.select().from(schema.shippingRates);
+    const created = await createStoreOrder(
+      sdb,
+      baseStoreOrderInput(variantId, rate.id),
+    );
+    // Prazo atual de 48h (maior que a extensão de 24h): não pode encurtar.
+    const farDue = new Date(Date.now() + 48 * 60 * 60_000);
+    await db
+      .update(schema.orders)
+      .set({ paymentDueAt: farDue })
+      .where(eq(schema.orders.id, created.orderId));
+
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+    const result = await executor("enviar_chave_pix", {});
+    expect(result.ok).toBe(true);
+
+    const [order] = await db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, created.orderId));
+    expect(order.paymentMethod).toBe("pix_manual");
+    expect(order.paymentDueAt!.getTime()).toBe(farDue.getTime());
+
+    // Pedido cash (due NULL) que pediu Pix manual: continua sem prazo.
+    await db
+      .update(schema.orders)
+      .set({ paymentDueAt: null, paymentMethod: "cash" })
+      .where(eq(schema.orders.id, created.orderId));
+    const again = await executor("enviar_chave_pix", {});
+    expect(again.ok).toBe(true);
+    const [cashOrder] = await db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, created.orderId));
+    expect(cashOrder.paymentDueAt).toBeNull();
+    expect(cashOrder.paymentMethod).toBe("pix_manual");
+    expect(again.text).not.toContain("reserva vale até");
+  });
+
+  it("retry do turno com enviar_chave_pix: aviso ao dono e resposta NÃO duplicam", async () => {
+    await setPixKey(PIX_KEY);
+    const { variantId } = await setupStore();
+    const [rate] = await db.select().from(schema.shippingRates);
+    await createStoreOrder(sdb, baseStoreOrderInput(variantId, rate.id));
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "o link deu erro");
+
+    assistant.enqueueScript({
+      toolCalls: [{ name: "enviar_chave_pix", input: {} }],
+      replyTemplate: (toolTexts) => toolTexts[0],
+    });
+    const first = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(first).toEqual({ replied: true, handedOff: false });
+
+    // Retry do evento da fila: mesmo roteiro, mesma última inbound.
+    assistant.enqueueScript({
+      toolCalls: [{ name: "enviar_chave_pix", input: {} }],
+      replyTemplate: (toolTexts) => toolTexts[0],
+    });
+    const second = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(second).toEqual({ replied: false, handedOff: false });
+
+    expect(await ownerForwards()).toHaveLength(1);
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(await outboundMessages(conversationId)).toHaveLength(1);
+  });
+
+  it("avisar_dono: outbox raw com prefixo e dedupe pela última inbound", async () => {
+    const conversationId = await createConversation();
+    const inboundId = await addInbound(conversationId, "Já fiz o Pix do pedido 1000!");
+
+    assistant.enqueueScript({
+      toolCalls: [
+        {
+          name: "avisar_dono",
+          input: { mensagem: "Cliente diz que já pagou o pedido #1000 (R$ 51,80)." },
+        },
+      ],
+      replyTemplate: "Avisei o dono — ele confirma em breve! 😉",
+    });
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(assistant.turns[0].toolCalls[0].ok).toBe(true);
+
+    const forwards = await ownerForwards();
+    expect(forwards).toHaveLength(1);
+    expect(forwards[0].dedupeKey).toBe(`wa.avisar_dono:${inboundId}`);
+    expect(forwards[0].payload).toMatchObject({
+      phoneE164: PHONE,
+      raw: true,
+      body: "📢 Aviso do robô: Cliente diz que já pagou o pedido #1000 (R$ 51,80).",
+    });
+
+    // Retry do turno: aviso não duplica (dedupe no outbox) e a ferramenta
+    // continua ok (idempotente).
+    assistant.enqueueScript({
+      toolCalls: [
+        {
+          name: "avisar_dono",
+          input: { mensagem: "Cliente diz que já pagou o pedido #1000 (R$ 51,80)." },
+        },
+      ],
+      replyTemplate: "Avisei o dono — ele confirma em breve! 😉",
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(await ownerForwards()).toHaveLength(1);
+  });
+
+  it("criar_pedido dinheiro na entrega: pedido cash sem prazo, receivable pendente e resumo sem link MP", async () => {
+    await setupStore();
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Quero pagar em dinheiro na entrega");
+
+    assistant.enqueueScript({
+      toolCalls: [
+        {
+          name: "criar_pedido",
+          input: {
+            itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+            nome_completo: "Maria da Silva",
+            cpf: VALID_CPF,
+            cep: "01310100",
+            rua: "Avenida Paulista",
+            numero: "1000",
+            bairro: "Bela Vista",
+            cidade: "São Paulo",
+            uf: "SP",
+            forma_de_pagamento: "dinheiro_na_entrega",
+          },
+        },
+      ],
+      replyTemplate: (toolTexts) => toolTexts[0],
+    });
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(assistant.turns[0].toolCalls[0].ok).toBe(true);
+
+    const [order] = await db.select().from(schema.orders);
+    expect(order.channel).toBe("whatsapp");
+    expect(order.status).toBe("pending_payment");
+    expect(order.paymentMethod).toBe("cash");
+    expect(order.paymentDueAt).toBeNull();
+
+    // Receivable sale PENDENTE criado junto do pedido.
+    const entries = await db
+      .select()
+      .from(schema.financialEntries)
+      .where(eq(schema.financialEntries.orderId, order.id));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      direction: "receivable",
+      category: "sale",
+      status: "pending",
+      amountCents: order.totalCents,
+      createdBy: null,
+    });
+
+    // Resumo próprio do cash: sem link do MP e sem linha de reserva.
+    const body = provider.sentMessages[0].body;
+    expect(body).toContain(`Pedido #${order.orderNumber}`);
+    expect(body).toContain("Pagamento em dinheiro na entrega");
+    expect(body).toContain("combinar a entrega por aqui");
+    expect(body).toContain(`Acompanhe seu pedido: `);
+    expect(body).toContain(`/pedido/${order.publicToken}`);
+    expect(body).not.toContain("Pague aqui");
+    expect(body).not.toContain("Reserva garantida");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Executores direto (segurança e frete estimado)
 // ---------------------------------------------------------------------------
 
@@ -665,6 +966,7 @@ describe("buildToolExecutor", () => {
       conversationId: conversationB,
       phoneE164: OTHER_PHONE,
       customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
     });
 
     // B pergunta pelo NÚMERO do pedido de A: nada é revelado.
@@ -687,6 +989,7 @@ describe("buildToolExecutor", () => {
       conversationId: conversationC,
       phoneE164: "+5531988887777",
       customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
     });
     const none = await executorC("status_do_pedido", {});
     expect(none.ok).toBe(false);
@@ -699,6 +1002,7 @@ describe("buildToolExecutor", () => {
       conversationId,
       phoneE164: PHONE,
       customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
     });
 
     const result = await executor("cotar_frete", { cep: "01310100" });
@@ -722,6 +1026,7 @@ describe("buildToolExecutor", () => {
       conversationId,
       phoneE164: PHONE,
       customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
     });
 
     const result = await executor("cotar_frete", { cep: "013" });

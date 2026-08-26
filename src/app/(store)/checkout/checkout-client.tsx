@@ -101,6 +101,11 @@ export function CheckoutClient({
   useEffect(() => setMounted(true), []);
   const [placed, setPlaced] = useState(false);
 
+  // ----- Forma de pagamento: online (MP) ou dinheiro na entrega ------------
+  const [paymentMethod, setPaymentMethod] = useState<"online" | "cash">(
+    "online",
+  );
+
   // ----- Campos com máscara (controlados) --------------------------------
   const [documentValue, setDocumentValue] = useState("");
   const [phoneValue, setPhoneValue] = useState("");
@@ -325,6 +330,7 @@ export function CheckoutClient({
       })),
       shippingRateId: selectedQuote.rateId,
       expectedShippingCents: shippingCents,
+      paymentMethod,
       ...(couponCode ? { couponCode } : {}),
     };
     submitPayload(payload);
@@ -747,6 +753,66 @@ export function CheckoutClient({
           </div>
         </section>
 
+        <section
+          aria-labelledby="pagamento-title"
+          className="rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-5 sm:p-6"
+        >
+          <h2
+            id="pagamento-title"
+            className="mb-5 border-b border-ivory-300 pb-3 font-display text-heading text-ink-900"
+          >
+            Pagamento
+          </h2>
+          <fieldset>
+            <legend className="sr-only">Forma de pagamento</legend>
+            <div className="space-y-2">
+              {(
+                [
+                  {
+                    value: "online",
+                    label: "Pagar online (Pix ou cartão)",
+                    description:
+                      "Pagamento seguro logo após fechar o pedido.",
+                  },
+                  {
+                    value: "cash",
+                    label: "Pagar na entrega (dinheiro)",
+                    description:
+                      "Você paga em dinheiro ao receber — combinamos os detalhes pelo WhatsApp.",
+                  },
+                ] as const
+              ).map((option) => (
+                <label
+                  key={option.value}
+                  className={[
+                    "flex cursor-pointer items-start gap-3 rounded-(--radius-hair) border px-3 py-3 text-sm transition-colors",
+                    paymentMethod === option.value
+                      ? "border-gold-600 bg-gold-500/8"
+                      : "border-ivory-300 hover:border-ivory-400",
+                  ].join(" ")}
+                >
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value={option.value}
+                    checked={paymentMethod === option.value}
+                    onChange={() => setPaymentMethod(option.value)}
+                    className="mt-0.5 h-4 w-4 accent-gold-600"
+                  />
+                  <span>
+                    <span className="font-medium text-ink-900">
+                      {option.label}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-ink-500">
+                      {option.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        </section>
+
         {/* LGPD: opt-in começa DESMARCADO — nunca assumido. */}
         <label className="flex items-start gap-3 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-4 text-sm text-ink-700">
           <input
@@ -894,7 +960,10 @@ export function CheckoutClient({
             <Link href="/termos" className="text-gold-800 underline">
               termos de compra
             </Link>
-            . Pagamento combinado pelo WhatsApp após o envio.
+            .{" "}
+            {paymentMethod === "cash"
+              ? "Você paga em dinheiro na entrega."
+              : "Pagamento online na sequência — ou combinado pelo WhatsApp."}
           </p>
         </div>
       </form>

@@ -49,9 +49,11 @@ export async function placeOrderAction(
     // Pagamento automático: se o MP está habilitado, já cria a preference e
     // devolve o link do Checkout Pro. QUALQUER falha aqui NÃO derruba o
     // pedido (ele já existe e está reservado) — apenas cai no fluxo manual.
+    // Dinheiro na entrega NUNCA cria preference: o cliente vai direto para a
+    // página do pedido e o dono baixa o pagamento manualmente.
     let initPointUrl: string | null = null;
     try {
-      if (await isMpEnabled(db)) {
+      if (input.paymentMethod !== "cash" && (await isMpEnabled(db))) {
         const preference = await ensurePaymentPreference(
           db,
           getPaymentGateway(),

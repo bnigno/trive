@@ -11,7 +11,12 @@ import {
   monthOverview,
   settleEntry,
 } from "@/services/financial";
-import { createTestDb, FIXED_USER_ID, type TestDb } from "../helpers/db";
+import {
+  createTestDb,
+  createTestSupplier,
+  FIXED_USER_ID,
+  type TestDb,
+} from "../helpers/db";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -62,6 +67,41 @@ describe("createManualEntry", () => {
       .where(eq(schema.auditLog.action, "financial_entry.create"));
     expect(audits).toHaveLength(1);
     expect(audits[0].entityId).toBe(entryId);
+  });
+
+  it("vincula fornecedor quando informado e listEntries devolve o nome (join)", async () => {
+    const supplierId = await createTestSupplier(db, {
+      name: "Fornecedor do Lançamento",
+    });
+
+    const { entryId } = await createManualEntry(sdb, {
+      direction: "payable",
+      category: "supplier",
+      description: "Compra de insumos",
+      amountCents: 12345,
+      supplierId,
+      userId: FIXED_USER_ID,
+    });
+
+    const entry = await getEntry(entryId);
+    expect(entry.supplierId).toBe(supplierId);
+
+    const listed = await listEntries(sdb, { direction: "payable" });
+    expect(listed).toHaveLength(1);
+    expect(listed[0].supplierId).toBe(supplierId);
+    expect(listed[0].supplierName).toBe("Fornecedor do Lançamento");
+
+    // Sem fornecedor: nome vem nulo.
+    const other = await createManualEntry(sdb, {
+      direction: "payable",
+      category: "other",
+      description: "Sem vínculo",
+      amountCents: 100,
+      userId: FIXED_USER_ID,
+    });
+    const all = await listEntries(sdb, {});
+    const unlinked = all.find((e) => e.id === other.entryId);
+    expect(unlinked?.supplierName).toBeNull();
   });
 
   it("rejeita valor não positivo", async () => {

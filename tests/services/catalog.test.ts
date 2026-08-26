@@ -16,7 +16,12 @@ import {
   thumbPathFor,
   updateProduct,
 } from "@/services/catalog";
-import { createTestDb, FIXED_USER_ID, type TestDb } from "../helpers/db";
+import {
+  createTestDb,
+  createTestSupplier,
+  FIXED_USER_ID,
+  type TestDb,
+} from "../helpers/db";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -184,6 +189,32 @@ describe("addVariant / updateProduct", () => {
       .from(schema.stockLevels)
       .where(eq(schema.stockLevels.productVariantId, variant.id));
     expect(level.onHand).toBe(0);
+  });
+
+  it("sets and clears the product supplier (nullable)", async () => {
+    const supplierId = await createTestSupplier(db, {
+      name: "Fornecedor do Produto",
+    });
+    const { product } = await createProduct(db, {
+      name: "Brinco Lua",
+      variants: [{ sku: "BRI-LUA" }],
+      userId: FIXED_USER_ID,
+    });
+    expect(product.supplierId).toBeNull();
+
+    const linked = await updateProduct(db, {
+      productId: product.id,
+      supplierId,
+      userId: FIXED_USER_ID,
+    });
+    expect(linked.supplierId).toBe(supplierId);
+
+    const cleared = await updateProduct(db, {
+      productId: product.id,
+      supplierId: null,
+      userId: FIXED_USER_ID,
+    });
+    expect(cleared.supplierId).toBeNull();
   });
 
   it("archives a product keeping the row (snapshots preserved)", async () => {

@@ -14,7 +14,9 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const VALID_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   draft: ["pending_payment", "canceled"],
   pending_payment: ["paid", "canceled"],
-  paid: ["preparing", "canceled", "refunded"],
+  // paid→delivered: entrega direta sem separação/envio (ex.: dinheiro na
+  // entrega baixado pelo dono). O consume de estoque já ocorreu em paid.
+  paid: ["preparing", "canceled", "refunded", "delivered"],
   preparing: ["shipped", "canceled", "refunded"],
   shipped: ["delivered", "refunded"],
   delivered: ["refunded"],

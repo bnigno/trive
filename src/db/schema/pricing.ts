@@ -75,7 +75,7 @@ export const paymentFeeRules = pgTable(
   (table) => [
     check(
       "payment_fee_rules_payment_method_check",
-      sql`${table.paymentMethod} IN ('pix', 'credit_card', 'boleto')`,
+      sql`${table.paymentMethod} IN ('pix', 'credit_card', 'boleto', 'pix_manual', 'cash')`,
     ),
   ],
 );

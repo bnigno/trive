@@ -1,7 +1,7 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { auditLog, financialEntries } from "@/db/schema";
+import { auditLog, financialEntries, suppliers } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/stock";
 
@@ -29,6 +29,7 @@ const createManualEntrySchema = z.object({
     .int()
     .positive("Valor do lançamento deve ser maior que zero."),
   dueDate: z.iso.date().optional(),
+  supplierId: z.uuid().optional(),
   userId: z.uuid(),
 });
 
@@ -50,6 +51,7 @@ export async function createManualEntry(
         amountCents: parsed.amountCents,
         status: "pending",
         dueDate: parsed.dueDate ?? null,
+        supplierId: parsed.supplierId ?? null,
         createdBy: parsed.userId,
       })
       .returning({ id: financialEntries.id });
@@ -67,6 +69,7 @@ export async function createManualEntry(
         amountCents: parsed.amountCents,
         status: "pending",
         dueDate: parsed.dueDate ?? null,
+        supplierId: parsed.supplierId ?? null,
       },
     });
 
@@ -308,8 +311,13 @@ export async function listEntries(db: DbOrTx, input: ListEntriesInput = {}) {
   }
 
   return db
-    .select()
+    .select({
+      ...getTableColumns(financialEntries),
+      // Nome do fornecedor vinculado (null quando não há vínculo).
+      supplierName: suppliers.name,
+    })
     .from(financialEntries)
+    .leftJoin(suppliers, eq(suppliers.id, financialEntries.supplierId))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(financialEntries.createdAt), desc(financialEntries.id))
     .limit(parsed.limit);

@@ -7,6 +7,7 @@ import { categories } from "@/db/schema";
 import { getFileStorage } from "@/adapters/storage";
 import { requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
+import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -85,6 +86,12 @@ export default async function ProdutoDetalhePage({
     .select({ id: categories.id, name: categories.name })
     .from(categories)
     .orderBy(asc(categories.name));
+
+  const supplierRows = await listSuppliers(db);
+  const supplierOptions = supplierRows.map((supplier) => ({
+    id: supplier.id,
+    name: supplier.name,
+  }));
 
   const storage = getFileStorage();
   const status = (
@@ -167,9 +174,11 @@ export default async function ProdutoDetalhePage({
             description: detail.description,
             brand: detail.brand,
             categoryId: detail.categoryId,
+            supplierId: detail.supplierId,
             attributesSchema: axes,
           }}
           categoryOptions={categoryRows}
+          supplierOptions={supplierOptions}
         />
       </Card>
 

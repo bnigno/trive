@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -320,17 +320,61 @@ export async function transitionOrder(
     });
 
     // Lançamentos financeiros derivados da transição.
+    // paid = settle-or-skip-or-insert: pedido cash já nasce com receivable
+    // sale PENDENTE (createStoreOrder) — liquidar a MESMA entry em vez de
+    // inserir outra; se o dono liquidou antes no financeiro, no-op (nunca
+    // receita dobrada); sem entry (fluxo MP normal), insere já liquidada.
     if (to === "paid" && order.totalCents > 0) {
-      await tx.insert(financialEntries).values({
-        direction: "receivable",
-        category: "sale",
-        description: `Pedido #${order.orderNumber}`,
-        amountCents: order.totalCents,
-        status: "settled",
-        settledAt: now,
-        orderId: order.id,
-        createdBy: parsed.userId,
-      });
+      const [existingSale] = await tx
+        .select({
+          id: financialEntries.id,
+          status: financialEntries.status,
+        })
+        .from(financialEntries)
+        .where(
+          and(
+            eq(financialEntries.orderId, order.id),
+            eq(financialEntries.direction, "receivable"),
+            eq(financialEntries.category, "sale"),
+            ne(financialEntries.status, "canceled"),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (existingSale) {
+        if (existingSale.status === "pending") {
+          await tx
+            .update(financialEntries)
+            .set({ status: "settled", settledAt: now, updatedAt: now })
+            .where(eq(financialEntries.id, existingSale.id));
+        }
+      } else {
+        await tx.insert(financialEntries).values({
+          direction: "receivable",
+          category: "sale",
+          description: `Pedido #${order.orderNumber}`,
+          amountCents: order.totalCents,
+          status: "settled",
+          settledAt: now,
+          orderId: order.id,
+          createdBy: parsed.userId,
+        });
+      }
+    }
+    // Cancelamento: receivables sale PENDENTES do pedido são cancelados
+    // (senão a carteira aberta infla para sempre com pedidos cash desistidos).
+    if (to === "canceled") {
+      await tx
+        .update(financialEntries)
+        .set({ status: "canceled", updatedAt: now })
+        .where(
+          and(
+            eq(financialEntries.orderId, order.id),
+            eq(financialEntries.direction, "receivable"),
+            eq(financialEntries.category, "sale"),
+            eq(financialEntries.status, "pending"),
+          ),
+        );
     }
     if (to === "refunded" && order.totalCents > 0) {
       await tx.insert(financialEntries).values({

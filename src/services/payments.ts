@@ -14,6 +14,10 @@ import { and, asc, desc, eq, gte, isNotNull, isNull, lt } from "drizzle-orm";
 import { z } from "zod";
 
 import type { PaymentGateway } from "@/adapters/mercadopago";
+import {
+  MP_PAYMENT_METHODS,
+  type MpPaymentMethod,
+} from "@/core/orders/payment-methods";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { auditLog, orders, paymentFeeRules } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -21,9 +25,13 @@ import { ServiceError, transitionOrder } from "@/services/orders";
 
 export { ServiceError };
 
-/** Métodos aceitos pela coluna orders.payment_method (check constraint). */
-const ORDER_PAYMENT_METHODS = ["pix", "credit_card", "boleto"] as const;
-type OrderPaymentMethod = (typeof ORDER_PAYMENT_METHODS)[number];
+/**
+ * Métodos que o Mercado Pago pode reportar e sincronizar no pedido.
+ * pix_manual/cash existem na coluna orders.payment_method mas nunca vêm da
+ * API do MP — são marcados pelos fluxos manuais (bot/checkout).
+ */
+const ORDER_PAYMENT_METHODS = MP_PAYMENT_METHODS;
+type OrderPaymentMethod = MpPaymentMethod;
 
 /** Status em que o pagamento foi consumado (estoque já baixado). */
 const PAID_LIKE_STATUSES: readonly OrderStatus[] = [

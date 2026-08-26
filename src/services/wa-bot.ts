@@ -71,6 +71,9 @@ const DEFAULT_STORE_NAME = "TRIVË";
 const HISTORY_LIMIT = 20;
 const MAX_LISTED_PRODUCTS = 8;
 const HANDOFF_SILENCE_HOURS = 24;
+// Pix manual tem ritmo humano (dono confere o banco): o prazo de reserva de
+// 2h expiraria DEPOIS de o cliente pagar — estendemos para 24h quando menor.
+const PIX_MANUAL_TTL_HOURS = 24;
 
 export const BOT_UNAVAILABLE_REPLY =
   "Nosso atendimento automático está indisponível — já chamei um atendente 😉";
@@ -113,6 +116,12 @@ export type BotExecutorContext = {
   conversationId: string;
   phoneE164: string;
   customerId: string | null;
+  /**
+   * Id da última wa_message inbound do turno — base dos dedupes das
+   * ferramentas com efeito externo (enviar_chave_pix, avisar_dono): o retry
+   * do evento da fila reexecuta o turno inteiro e NÃO pode duplicar avisos.
+   */
+  lastInboundId: string;
   onAttachment?: (attachment: BotAttachment) => void;
 };
 
@@ -516,10 +525,13 @@ async function execCriarPedido(
     };
   }
 
+  const isCash = input.forma_de_pagamento === "dinheiro_na_entrega";
+
   let created;
   try {
     created = await createStoreOrder(db, {
       channel: "whatsapp",
+      paymentMethod: isCash ? "cash" : "online",
       customer: {
         fullName: input.nome_completo,
         document: input.cpf,
@@ -581,8 +593,11 @@ async function execCriarPedido(
 
   // Link de pagamento: Mercado Pago quando ligado; senão a página pública do
   // pedido. Falha ao criar a preference NÃO derruba o pedido já criado.
-  let paymentLine = `Acompanhe e pague: ${orderPublicUrl(created.publicToken)}`;
-  if (await isMpEnabled(db)) {
+  // Dinheiro na entrega NÃO cria preference nem mostra link de pagamento.
+  let paymentLine = isCash
+    ? `Acompanhe seu pedido: ${orderPublicUrl(created.publicToken)}`
+    : `Acompanhe e pague: ${orderPublicUrl(created.publicToken)}`;
+  if (!isCash && (await isMpEnabled(db))) {
     try {
       const preference = await ensurePaymentPreference(db, getPaymentGateway(), {
         orderId: created.orderId,
@@ -611,10 +626,37 @@ async function execCriarPedido(
     `Frete (${cheapest.name}): ${formatCentsBRL(cheapest.priceCents)}`,
     ...(discountCents > 0 ? [`Desconto: -${formatCentsBRL(discountCents)}`] : []),
     `TOTAL: ${formatCentsBRL(created.totalCents)}`,
+    ...(isCash
+      ? ["Pagamento em dinheiro na entrega — vamos combinar a entrega por aqui."]
+      : []),
     paymentLine,
-    `Reserva garantida até ${formatDateTimeSP(created.paymentDueAt)} (horário de Brasília).`,
+    // Sem linha de reserva no cash: pedido em dinheiro não expira (due NULL).
+    ...(created.paymentDueAt !== null
+      ? [
+          `Reserva garantida até ${formatDateTimeSP(created.paymentDueAt)} (horário de Brasília).`,
+        ]
+      : []),
   ];
   return { ok: true, text: lines.join("\n") };
+}
+
+/**
+ * Cliente DESTA conversa: vínculo direto, senão o dono do telefone. Base da
+ * segurança de status_do_pedido e enviar_chave_pix — nunca cruzar conversas.
+ */
+async function resolveConversationCustomerId(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+): Promise<string | null> {
+  if (ctx.customerId) return ctx.customerId;
+  const [customer] = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(
+      and(eq(customers.phoneE164, ctx.phoneE164), isNull(customers.deletedAt)),
+    )
+    .limit(1);
+  return customer?.id ?? null;
 }
 
 async function execStatusDoPedido(
@@ -623,17 +665,7 @@ async function execStatusDoPedido(
   input: BotToolInputs["status_do_pedido"],
 ): Promise<ToolResult> {
   // Segurança: só pedidos do cliente DESTA conversa (vínculo ou telefone).
-  let customerId = ctx.customerId;
-  if (!customerId) {
-    const [customer] = await db
-      .select({ id: customers.id })
-      .from(customers)
-      .where(
-        and(eq(customers.phoneE164, ctx.phoneE164), isNull(customers.deletedAt)),
-      )
-      .limit(1);
-    customerId = customer?.id ?? null;
-  }
+  const customerId = await resolveConversationCustomerId(db, ctx);
   if (!customerId) {
     return {
       ok: false,
@@ -674,6 +706,154 @@ async function execStatusDoPedido(
     `Acompanhe: ${orderPublicUrl(order.publicToken)}`,
   ];
   return { ok: true, text: lines.join("\n") };
+}
+
+/**
+ * Plano B de pagamento: envia a chave Pix da loja para o cliente pagar por
+ * transferência manual. Guardas: chave cadastrada (store_pix_key) E pedido
+ * pending_payment do cliente DESTA conversa. Marca payment_method
+ * 'pix_manual', estende o prazo para now+24h quando o atual é menor (e
+ * não-nulo — cash sem prazo continua sem prazo) e avisa o dono via outbox
+ * com dedupe por pedido+inbound (retry do turno nunca duplica o aviso).
+ */
+async function execEnviarChavePix(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["enviar_chave_pix"],
+): Promise<ToolResult> {
+  const map = await getSettingsMap(db, ["store_pix_key"]);
+  const pixKey =
+    typeof map["store_pix_key"] === "string" ? map["store_pix_key"].trim() : "";
+  if (pixKey === "") {
+    return {
+      ok: false,
+      text: "O Pix manual NÃO está disponível (a loja não tem chave Pix cadastrada). Não prometa Pix manual: siga pelo link de pagamento ou transfira para o atendente.",
+    };
+  }
+
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  if (!customerId) {
+    return {
+      ok: false,
+      text: "Ainda não encontrei pedidos para este número de WhatsApp — o Pix manual vale para um pedido já criado e aguardando pagamento.",
+    };
+  }
+
+  const conditions = [
+    eq(orders.customerId, customerId),
+    eq(orders.status, "pending_payment"),
+  ];
+  if (input.numero_do_pedido !== undefined) {
+    conditions.push(eq(orders.orderNumber, input.numero_do_pedido));
+  }
+  const [order] = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      totalCents: orders.totalCents,
+      paymentMethod: orders.paymentMethod,
+      paymentDueAt: orders.paymentDueAt,
+    })
+    .from(orders)
+    .where(and(...conditions))
+    .orderBy(desc(orders.createdAt), desc(orders.orderNumber))
+    .limit(1);
+  if (!order) {
+    return {
+      ok: false,
+      text:
+        input.numero_do_pedido !== undefined
+          ? `Não encontrei o pedido #${input.numero_do_pedido} aguardando pagamento neste número de WhatsApp.`
+          : "Não encontrei pedido aguardando pagamento neste número de WhatsApp. Crie o pedido antes de oferecer o Pix manual.",
+    };
+  }
+
+  const now = new Date();
+  const extendedDueAt = new Date(
+    now.getTime() + PIX_MANUAL_TTL_HOURS * 60 * 60_000,
+  );
+  const shouldExtendDue =
+    order.paymentDueAt !== null &&
+    order.paymentDueAt.getTime() < extendedDueAt.getTime();
+  const effectiveDueAt = shouldExtendDue ? extendedDueAt : order.paymentDueAt;
+
+  const updateSet: Partial<typeof orders.$inferInsert> = { updatedAt: now };
+  if (order.paymentMethod !== "pix_manual") {
+    updateSet.paymentMethod = "pix_manual";
+  }
+  if (shouldExtendDue) {
+    updateSet.paymentDueAt = extendedDueAt;
+  }
+  if (order.paymentMethod !== "pix_manual" || shouldExtendDue) {
+    await db.update(orders).set(updateSet).where(eq(orders.id, order.id));
+    await db.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "order.pix_manual",
+      entityType: "order",
+      entityId: order.id,
+      before: {
+        paymentMethod: order.paymentMethod,
+        paymentDueAt: order.paymentDueAt?.toISOString() ?? null,
+      },
+      after: {
+        paymentMethod: "pix_manual",
+        paymentDueAt: effectiveDueAt?.toISOString() ?? null,
+      },
+      reason: "Chave Pix enviada pelo robô (plano B do link de pagamento)",
+    });
+  }
+
+  await enqueueOutboxEvent(db, {
+    eventType: "wa.owner_forward",
+    dedupeKey: `wa.pix_key:${order.id}:${ctx.lastInboundId}`,
+    aggregateType: "order",
+    aggregateId: order.id,
+    payload: {
+      phoneE164: ctx.phoneE164,
+      body: `Pedido #${order.orderNumber}: cliente vai pagar ${formatCentsBRL(order.totalCents)} por Pix manual — confira no banco e marque como pago.`,
+      raw: true,
+    },
+  });
+
+  const lines = [
+    `Para pagar o pedido #${order.orderNumber} por Pix:`,
+    `Chave Pix: ${pixKey}`,
+    `Valor EXATO: ${formatCentsBRL(order.totalCents)}`,
+    "Quando fizer o Pix, avise aqui na conversa — o dono confere e confirma o pagamento.",
+    ...(effectiveDueAt !== null
+      ? [
+          `Sua reserva vale até ${formatDateTimeSP(effectiveDueAt)} (horário de Brasília).`,
+        ]
+      : []),
+  ];
+  return { ok: true, text: lines.join("\n") };
+}
+
+/**
+ * Aviso interno ao dono (ex.: "cliente diz que já fez o Pix"). Sai via outbox
+ * (nunca inline) com dedupe pela última inbound — retry do turno não duplica.
+ */
+async function execAvisarDono(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["avisar_dono"],
+): Promise<ToolResult> {
+  await enqueueOutboxEvent(db, {
+    eventType: "wa.owner_forward",
+    dedupeKey: `wa.avisar_dono:${ctx.lastInboundId}`,
+    aggregateType: "wa_conversation",
+    aggregateId: ctx.conversationId,
+    payload: {
+      phoneE164: ctx.phoneE164,
+      body: `📢 Aviso do robô: ${input.mensagem}`,
+      raw: true,
+    },
+  });
+  return {
+    ok: true,
+    text: "Aviso enviado ao dono da loja. Diga ao cliente que o dono confere e confirma — NUNCA afirme que o pagamento já foi confirmado.",
+  };
 }
 
 async function execTransferir(
@@ -729,6 +909,18 @@ export function buildToolExecutor(
           db,
           ctx,
           parsed.data as BotToolInputs["status_do_pedido"],
+        );
+      case "enviar_chave_pix":
+        return execEnviarChavePix(
+          db,
+          ctx,
+          parsed.data as BotToolInputs["enviar_chave_pix"],
+        );
+      case "avisar_dono":
+        return execAvisarDono(
+          db,
+          ctx,
+          parsed.data as BotToolInputs["avisar_dono"],
         );
       case "transferir_para_atendente":
         return execTransferir(
@@ -830,6 +1022,7 @@ export async function runBotTurn(
       conversationId,
       phoneE164: conversation.phoneE164,
       customerId: conversation.customerId,
+      lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
     });
 

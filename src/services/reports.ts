@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, lt, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { PAYMENT_METHOD_LABELS as CORE_PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { auditLog, customers, orderItems, orders } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
@@ -377,11 +378,8 @@ const CSV_HEADERS = [
   "Líquido (R$)",
 ] as const;
 
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  pix: "Pix",
-  credit_card: "Cartão de crédito",
-  boleto: "Boleto",
-};
+// Labels completos da fonte única do core (CSV do contador).
+const PAYMENT_METHOD_LABELS: Record<string, string> = CORE_PAYMENT_METHOD_LABELS;
 
 /** 123456 → '1234,56' (sem separador de milhar: o Excel BR lê como número). */
 function centsToCsvNumber(cents: number): string {

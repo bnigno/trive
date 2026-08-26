@@ -61,10 +61,16 @@ async function sendOrderWa(
   if (!ctx) return;
 
   const spec = ORDER_WA_MILESTONES[milestone];
+  // Dinheiro na entrega: confirmação SEM link de pagamento nem prazo de
+  // reserva (o template order_confirmed quebraria com {{prazo}} vazio).
+  const clientTemplate =
+    milestone === "store_created" && ctx.paymentMethod === "cash"
+      ? "order_confirmed_cash"
+      : spec.clientTemplate;
   // Cliente sem telefone não é erro: o e-mail (quando houver) já cobriu.
   if (ctx.customer.phoneE164) {
     await sendTemplateMessage(db, provider, {
-      templateKey: spec.clientTemplate,
+      templateKey: clientTemplate,
       phoneE164: ctx.customer.phoneE164,
       vars: ctx.vars,
       customerId: ctx.customer.id,

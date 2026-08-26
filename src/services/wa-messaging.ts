@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { getAdapterMode } from "@/adapters/adapter-mode";
 import type { MessagingProvider } from "@/adapters/zapi";
+import { PAYMENT_METHOD_LABELS_SHORT } from "@/core/orders/payment-methods";
 import { renderTemplate } from "@/core/whatsapp/render";
 import {
   auditLog,
@@ -78,11 +79,8 @@ export function firstNameOf(fullName: string): string {
  * template simplesmente não é usada — e chave usada sem valor vira '' no
  * render (nunca lança em produção).
  */
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  pix: "Pix",
-  credit_card: "Cartão",
-  boleto: "Boleto",
-};
+// Labels curtos da fonte única do core (WhatsApp pede mensagens compactas).
+const PAYMENT_METHOD_LABELS: Record<string, string> = PAYMENT_METHOD_LABELS_SHORT;
 
 export function buildOrderVars(input: {
   orderNumber: number;

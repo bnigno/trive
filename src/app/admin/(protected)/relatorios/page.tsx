@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
 import { monthlyAccountantReport } from "@/services/reports";
@@ -19,11 +20,10 @@ export const metadata: Metadata = {
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const PREVIEW_LIMIT = 15;
 
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  pix: "Pix",
-  credit_card: "Cartão de crédito",
-  boleto: "Boleto",
-};
+/** Label pt-BR do método vindo do core; método desconhecido volta cru. */
+function paymentMethodLabel(method: string): string {
+  return (PAYMENT_METHOD_LABELS as Record<string, string>)[method] ?? method;
+}
 
 /** Mês corrente no fuso de São Paulo, formato YYYY-MM. */
 function currentMonthSP(): string {
@@ -189,8 +189,7 @@ export default async function ReportsPage({
                 </Td>
                 <Td className="whitespace-nowrap">
                   {row.paymentMethod
-                    ? (PAYMENT_METHOD_LABELS[row.paymentMethod] ??
-                      row.paymentMethod)
+                    ? paymentMethodLabel(row.paymentMethod)
                     : "—"}
                 </Td>
                 <Td className="whitespace-nowrap">

@@ -10,6 +10,7 @@ import {
   auditLog,
   customerAddresses,
   customers,
+  financialEntries,
   orderItems,
   orders,
   orderStatusHistory,
@@ -141,6 +142,13 @@ const createStoreOrderSchema = z.object({
   expectedShippingCents: z.number().int().nonnegative(),
   /** Código de cupom digitado no checkout (opcional; normalizado no serviço). */
   couponCode: z.string().trim().optional(),
+  /**
+   * 'online' (default): pagamento pelo link (MP/página pública) com prazo de
+   * reserva; 'cash': dinheiro na entrega — sem prazo (payment_due_at NULL,
+   * isento de expiração/lembrete) e com receivable pendente para o dono
+   * baixar manualmente.
+   */
+  paymentMethod: z.enum(["online", "cash"]).default("online"),
 });
 
 export type CreateStoreOrderInput = z.input<typeof createStoreOrderSchema>;
@@ -149,7 +157,8 @@ export interface CreateStoreOrderResult {
   orderId: string;
   orderNumber: number;
   publicToken: string;
-  paymentDueAt: Date;
+  /** Null em pedido 'cash' (dinheiro na entrega não expira). */
+  paymentDueAt: Date | null;
   totalCents: number;
 }
 
@@ -512,22 +521,45 @@ export async function createStoreOrder(
       throw error;
     }
 
-    // (f) Prazo da reserva a partir da setting (fallback 120 min).
-    const [ttlRow] = await tx
-      .select({ value: settings.value })
-      .from(settings)
-      .where(eq(settings.key, "stock_reservation_ttl_minutes"));
-    const ttlMinutes =
-      typeof ttlRow?.value === "number" &&
-      Number.isInteger(ttlRow.value) &&
-      ttlRow.value > 0
-        ? ttlRow.value
-        : DEFAULT_RESERVATION_TTL_MINUTES;
-    const paymentDueAt = new Date(Date.now() + ttlMinutes * 60_000);
-    await tx
-      .update(orders)
-      .set({ paymentDueAt, updatedAt: new Date() })
-      .where(eq(orders.id, order.id));
+    // (f) Prazo e forma de pagamento.
+    // - online: prazo da reserva a partir da setting (fallback 120 min);
+    // - cash: payment_due_at fica NULL (sem expiração nem lembrete — o cron e
+    //   a recuperação filtram por payment_due_at não-nulo) e nasce um
+    //   receivable PENDENTE que o dono liquida ao receber o dinheiro.
+    let paymentDueAt: Date | null = null;
+    if (parsed.paymentMethod === "cash") {
+      await tx
+        .update(orders)
+        .set({ paymentMethod: "cash", updatedAt: new Date() })
+        .where(eq(orders.id, order.id));
+      if (totals.totalCents > 0) {
+        await tx.insert(financialEntries).values({
+          direction: "receivable",
+          category: "sale",
+          description: `Pedido #${order.orderNumber}`,
+          amountCents: totals.totalCents,
+          status: "pending",
+          orderId: order.id,
+          createdBy: null,
+        });
+      }
+    } else {
+      const [ttlRow] = await tx
+        .select({ value: settings.value })
+        .from(settings)
+        .where(eq(settings.key, "stock_reservation_ttl_minutes"));
+      const ttlMinutes =
+        typeof ttlRow?.value === "number" &&
+        Number.isInteger(ttlRow.value) &&
+        ttlRow.value > 0
+          ? ttlRow.value
+          : DEFAULT_RESERVATION_TTL_MINUTES;
+      paymentDueAt = new Date(Date.now() + ttlMinutes * 60_000);
+      await tx
+        .update(orders)
+        .set({ paymentDueAt, updatedAt: new Date() })
+        .where(eq(orders.id, order.id));
+    }
 
     // (g) Efeito externo só via outbox, na MESMA transação.
     await enqueueOutboxEvent(tx, {
@@ -558,7 +590,8 @@ export async function createStoreOrder(
         couponCode: coupon?.code ?? null,
         shippingCents,
         totalCents: totals.totalCents,
-        paymentDueAt: paymentDueAt.toISOString(),
+        paymentMethod: parsed.paymentMethod,
+        paymentDueAt: paymentDueAt?.toISOString() ?? null,
         items: itemRows.map((r) => ({
           sku: r.skuSnapshot,
           quantity: r.quantity,
@@ -668,6 +701,8 @@ export interface PublicOrder {
   status: string;
   createdAt: Date;
   paymentDueAt: Date | null;
+  /** 'cash'/'pix_manual' mudam o bloco "Como pagar" da página pública. */
+  paymentMethod: string | null;
   trackingCode: string | null;
   subtotalCents: number;
   discountCents: number;
@@ -698,6 +733,7 @@ export async function getPublicOrder(
         status: orders.status,
         createdAt: orders.createdAt,
         paymentDueAt: orders.paymentDueAt,
+        paymentMethod: orders.paymentMethod,
         trackingCode: orders.shippingTrackingCode,
         subtotalCents: orders.subtotalCents,
         discountCents: orders.discountCents,
@@ -738,6 +774,7 @@ export async function getPublicOrder(
     status: order.status,
     createdAt: order.createdAt,
     paymentDueAt: order.paymentDueAt,
+    paymentMethod: order.paymentMethod,
     trackingCode: order.trackingCode,
     subtotalCents: order.subtotalCents,
     discountCents: order.discountCents,

@@ -61,6 +61,7 @@ export function StoreDataForm({
     address: string;
     email: string;
     whatsapp: string;
+    pixKey: string;
   };
 }) {
   const [state, formAction] = useActionState(updateStoreDataAction, INITIAL_STATE);
@@ -125,6 +126,18 @@ export function StoreDataForm({
             inputMode="tel"
             defaultValue={defaults.whatsapp}
             placeholder="(11) 99999-8888"
+          />
+        </Field>
+        <Field
+          label="Chave Pix"
+          hint="Com a chave cadastrada, o robô e a página do pedido oferecem Pix manual como alternativa. Deixe em branco para desligar."
+          className="sm:col-span-2"
+        >
+          <Input
+            name="storePixKey"
+            maxLength={140}
+            defaultValue={defaults.pixKey}
+            placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"
           />
         </Field>
       </div>

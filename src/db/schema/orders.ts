@@ -101,7 +101,7 @@ export const orders = pgTable(
     ),
     check(
       "orders_payment_method_check",
-      sql`${table.paymentMethod} IN ('pix', 'credit_card', 'boleto')`,
+      sql`${table.paymentMethod} IN ('pix', 'credit_card', 'boleto', 'pix_manual', 'cash')`,
     ),
     check(
       "orders_total_consistency_check",

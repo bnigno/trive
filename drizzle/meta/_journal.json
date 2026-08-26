@@ -71,6 +71,13 @@
       "when": 1787715039584,
       "tag": "0009_careless_imperial_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787719228356,
+      "tag": "0010_ambitious_absorbing_man",
+      "breakpoints": true
     }
   ]
 }

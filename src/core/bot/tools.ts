@@ -10,6 +10,8 @@ export const BOT_TOOL_NAMES = [
   "cotar_frete",
   "criar_pedido",
   "status_do_pedido",
+  "enviar_chave_pix",
+  "avisar_dono",
   "transferir_para_atendente",
 ] as const;
 
@@ -39,8 +41,12 @@ export type BotToolInputs = {
     cupom?: string;
     /** Aceito e ignorado — o pedido usa o telefone da conversa. */
     telefone?: string;
+    /** Default 'online'; dinheiro só quando o cliente pedir explicitamente. */
+    forma_de_pagamento?: "online" | "dinheiro_na_entrega";
   };
   status_do_pedido: { numero_do_pedido?: number };
+  enviar_chave_pix: { numero_do_pedido?: number };
+  avisar_dono: { mensagem: string };
   transferir_para_atendente: { motivo: string };
 };
 
@@ -168,6 +174,13 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           type: "string",
           description: "Código de cupom informado pelo cliente. Omita se não houver.",
         },
+        forma_de_pagamento: {
+          type: "string",
+          enum: ["online", "dinheiro_na_entrega"],
+          default: "online",
+          description:
+            "Use 'dinheiro_na_entrega' SOMENTE quando o cliente pedir explicitamente para pagar em dinheiro na entrega. Caso contrário, omita: o padrão é 'online' (link de pagamento).",
+        },
         telefone: {
           type: "string",
           description:
@@ -202,6 +215,43 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         },
       },
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "enviar_chave_pix",
+    description:
+      "Envia a chave Pix da loja para o cliente pagar por transferência manual quando houver problema com o link. SÓ oferece se a ferramenta confirmar disponibilidade; o dono confirma o recebimento manualmente.",
+    input_schema: {
+      type: "object",
+      properties: {
+        numero_do_pedido: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "Número do pedido a pagar, se o cliente informar. Omita para usar o pedido mais recente da conversa.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "avisar_dono",
+    description:
+      "Envia um aviso interno ao dono da loja. Use APENAS para fatos que exigem ação dele — ex.: cliente informa que fez o Pix. Nunca para conversa comum.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mensagem: {
+          type: "string",
+          minLength: 1,
+          maxLength: 300,
+          description:
+            "Texto curto do aviso (máximo 300 caracteres), com número do pedido e valor quando existirem.",
+        },
+      },
+      required: ["mensagem"],
       additionalProperties: false,
     },
   },
@@ -274,9 +324,18 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     // modelo tende a coletar telefone por instinto de vendedor — rejeitar o
     // campo travava a finalização (caso real em produção, 2026-08-26).
     telefone: z.string().optional(),
+    forma_de_pagamento: z
+      .enum(["online", "dinheiro_na_entrega"])
+      .default("online"),
   }),
   status_do_pedido: z.strictObject({
     numero_do_pedido: z.number().int().min(1).optional(),
+  }),
+  enviar_chave_pix: z.strictObject({
+    numero_do_pedido: z.number().int().min(1).optional(),
+  }),
+  avisar_dono: z.strictObject({
+    mensagem: z.string().min(1).max(300),
   }),
   transferir_para_atendente: z.strictObject({
     motivo: z.string().min(1),

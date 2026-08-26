@@ -94,6 +94,22 @@ export async function createTestVariant(
   return { productId: product.id, variantId: variant.id };
 }
 
+export async function createTestSupplier(
+  db: TestDb,
+  opts: { name?: string; email?: string; phoneE164?: string; pixKey?: string } = {},
+): Promise<string> {
+  const [supplier] = await db
+    .insert(schema.suppliers)
+    .values({
+      name: opts.name ?? "Fornecedor Teste",
+      email: opts.email ?? null,
+      phoneE164: opts.phoneE164 ?? null,
+      pixKey: opts.pixKey ?? null,
+    })
+    .returning({ id: schema.suppliers.id });
+  return supplier.id;
+}
+
 export async function createTestCustomer(db: TestDb, name = "Cliente Teste"): Promise<string> {
   const [customer] = await db
     .insert(schema.customers)

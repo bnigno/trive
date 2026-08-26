@@ -5,10 +5,12 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
 import {
   auditLog,
+  financialEntries,
   products,
   productVariants,
   stockLevels,
   stockMovements,
+  suppliers,
   variantCosts,
 } from "@/db/schema";
 import {
@@ -17,6 +19,11 @@ import {
   movementsForTransition,
   type StockLevel,
 } from "@/core/stock/ledger";
+import {
+  repriceAfterCostChangeTx,
+  type PriceVersionRow,
+  type PricingDb,
+} from "@/services/pricing";
 
 // ---------------------------------------------------------------------------
 // Erros de negócio
@@ -190,6 +197,157 @@ export async function receiveStock(
     });
 
     return { movementId: movement.id, onHand: after.onHand, reserved: after.reserved };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 1b. receivePurchase — entrada de compra COM fornecedor
+// ---------------------------------------------------------------------------
+
+// repriceAfterCostChangeTx é tipado com o PricingDb estrutural; a transação
+// aqui usa a mesma API drizzle (mesmo precedente do asDbOrTx em pricing.ts).
+function asPricingDb(tx: DbOrTx): PricingDb {
+  return tx as unknown as PricingDb;
+}
+
+const receivePurchaseSchema = z.object({
+  variantId: z.uuid(),
+  supplierId: z.uuid(),
+  quantity: z.number().int().positive(),
+  unitCostCents: z
+    .number()
+    .int()
+    .positive("O custo unitário da compra deve ser maior que zero."),
+  invoiceNumber: z.string().trim().min(1).optional(),
+  dueDate: z.iso.date().optional(),
+  note: z.string().min(1).optional(),
+  userId: z.uuid(),
+});
+
+export type ReceivePurchaseInput = z.input<typeof receivePurchaseSchema>;
+
+/**
+ * Entrada de compra vinculada a fornecedor, TUDO numa transação:
+ * movimento purchase_in referenciando o fornecedor + custo (ledger
+ * variant_costs 'purchase' + denormalização) + sugestão de reprecificação
+ * (mecânica do setVariantCost, só quando há preço ativo) + conta a pagar
+ * pendente no financeiro. Entrada SEM fornecedor continua no receiveStock.
+ */
+export async function receivePurchase(
+  db: DbOrTx,
+  input: ReceivePurchaseInput,
+): Promise<{
+  movementId: string;
+  onHand: number;
+  reserved: number;
+  financialEntryId: string;
+  priceVersion: PriceVersionRow | null;
+}> {
+  const parsed = receivePurchaseSchema.parse(input);
+
+  return db.transaction(async (tx) => {
+    const [variant] = await tx
+      .select({ id: productVariants.id, sku: productVariants.sku })
+      .from(productVariants)
+      .where(eq(productVariants.id, parsed.variantId))
+      .limit(1);
+    if (!variant) throw new VariantNotFoundError(parsed.variantId);
+
+    const [supplier] = await tx
+      .select({ id: suppliers.id, name: suppliers.name })
+      .from(suppliers)
+      .where(
+        and(eq(suppliers.id, parsed.supplierId), isNull(suppliers.deletedAt)),
+      )
+      .limit(1);
+    if (!supplier) {
+      throw new ServiceError("SUPPLIER_NOT_FOUND", "Fornecedor não encontrado.");
+    }
+
+    const before = await lockLevel(tx, parsed.variantId);
+    const after = applyMovement(before, {
+      type: "purchase_in",
+      quantityDelta: parsed.quantity,
+    });
+
+    const [movement] = await tx
+      .insert(stockMovements)
+      .values({
+        productVariantId: parsed.variantId,
+        type: "purchase_in",
+        quantityDelta: parsed.quantity,
+        unitCostCents: parsed.unitCostCents,
+        referenceType: "supplier",
+        referenceId: parsed.supplierId,
+        note: parsed.note ?? null,
+        createdBy: parsed.userId,
+      })
+      .returning({ id: stockMovements.id });
+
+    await updateLevel(tx, parsed.variantId, after);
+
+    await tx.insert(variantCosts).values({
+      productVariantId: parsed.variantId,
+      costCents: parsed.unitCostCents,
+      source: "purchase",
+      note: parsed.note ?? null,
+      createdBy: parsed.userId,
+    });
+    // Denormalização: custo mais recente refletido na variante.
+    await tx
+      .update(productVariants)
+      .set({ costCents: parsed.unitCostCents, updatedAt: sql`now()` })
+      .where(eq(productVariants.id, parsed.variantId));
+
+    const priceVersion = await repriceAfterCostChangeTx(asPricingDb(tx), {
+      variantId: parsed.variantId,
+      userId: parsed.userId,
+    });
+
+    const amountCents = parsed.quantity * parsed.unitCostCents;
+    const description = `Compra: ${parsed.quantity}× ${variant.sku} — ${supplier.name}${
+      parsed.invoiceNumber ? ` (NF ${parsed.invoiceNumber})` : ""
+    }`;
+    const [entry] = await tx
+      .insert(financialEntries)
+      .values({
+        direction: "payable",
+        category: "supplier",
+        description,
+        amountCents,
+        status: "pending",
+        dueDate: parsed.dueDate ?? null,
+        supplierId: parsed.supplierId,
+        createdBy: parsed.userId,
+      })
+      .returning({ id: financialEntries.id });
+
+    await tx.insert(auditLog).values({
+      actorType: "user",
+      actorId: parsed.userId,
+      action: "purchase.receive",
+      entityType: "stock_level",
+      entityId: parsed.variantId,
+      before: { onHand: before.onHand, reserved: before.reserved },
+      after: {
+        onHand: after.onHand,
+        reserved: after.reserved,
+        supplierId: parsed.supplierId,
+        unitCostCents: parsed.unitCostCents,
+        amountCents,
+        financialEntryId: entry.id,
+        priceVersionId: priceVersion?.id ?? null,
+      },
+      reason: parsed.note ?? null,
+    });
+
+    return {
+      movementId: movement.id,
+      onHand: after.onHand,
+      reserved: after.reserved,
+      financialEntryId: entry.id,
+      priceVersion,
+    };
   });
 }
 

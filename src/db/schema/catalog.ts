@@ -13,6 +13,7 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { suppliers } from "./suppliers";
 
 export const categories = pgTable(
   "categories",
@@ -44,6 +45,10 @@ export const products = pgTable(
       onDelete: "restrict",
     }),
     brand: text("brand"),
+    // 1 fornecedor por produto (espelha categoryId; multi-fornecedor = YAGNI).
+    supplierId: uuid("supplier_id").references(() => suppliers.id, {
+      onDelete: "restrict",
+    }),
     status: text("status").notNull().default("draft"),
     // Eixos de variação do produto, ex.: ["cor","tamanho"].
     attributesSchema: jsonb("attributes_schema").default([]),
@@ -57,6 +62,7 @@ export const products = pgTable(
   },
   (table) => [
     index("products_category_id_idx").on(table.categoryId),
+    index("products_supplier_id_idx").on(table.supplierId),
     check(
       "products_status_check",
       sql`${table.status} IN ('draft', 'active', 'archived')`,

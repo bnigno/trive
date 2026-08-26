@@ -8,6 +8,7 @@ import {
   ORDER_STATUS_LABELS,
   type OrderStatus,
 } from "@/core/orders/state-machine";
+import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { financialEntries, paymentFeeRules } from "@/db/schema";
 import { requireUser } from "@/services/auth";
@@ -16,6 +17,7 @@ import { OrderTimeline } from "@/components/admin/order-timeline";
 import { orderPublicUrl } from "@/services/wa-messaging";
 
 import { CopyOrderLink } from "./copy-link";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
@@ -41,11 +43,10 @@ const ENTRY_STATUS_LABELS: Record<string, string> = {
   canceled: "Cancelado",
 };
 
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  pix: "Pix",
-  credit_card: "Cartão de crédito",
-  boleto: "Boleto",
-};
+/** Label pt-BR do método vindo do core; método desconhecido volta cru. */
+function paymentMethodLabel(method: string): string {
+  return (PAYMENT_METHOD_LABELS as Record<string, string>)[method] ?? method;
+}
 
 /** Cor do delta margem real − prevista: verde quando ≥ 0, vermelho abaixo. */
 function deltaClass(deltaCents: number): string {
@@ -151,9 +152,9 @@ export default async function PedidoDetalhePage({
         <div className="flex flex-col gap-2">
           <CopyOrderLink url={orderPublicUrl(order.publicToken)} />
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Por esse link o cliente acompanha o pedido e, quando estiver
-            aguardando pagamento, paga com Pix ou cartão pelo Mercado Pago —
-            o pedido vira &quot;Pago&quot; sozinho.
+            {order.paymentMethod === "cash"
+              ? "Por esse link o cliente acompanha o pedido. Pagamento em dinheiro na entrega — marque como pago aqui quando receber."
+              : 'Por esse link o cliente acompanha o pedido e, quando estiver aguardando pagamento, paga com Pix ou cartão pelo Mercado Pago — o pedido vira "Pago" sozinho.'}
           </p>
         </div>
       </Card>
@@ -211,8 +212,7 @@ export default async function PedidoDetalhePage({
                   <dt className="text-zinc-500 dark:text-zinc-400">Método</dt>
                   <dd className="text-zinc-900 dark:text-zinc-100">
                     {order.paymentMethod
-                      ? (PAYMENT_METHOD_LABELS[order.paymentMethod] ??
-                        order.paymentMethod)
+                      ? paymentMethodLabel(order.paymentMethod)
                       : "—"}
                   </dd>
                 </div>
@@ -375,6 +375,17 @@ export default async function PedidoDetalhePage({
                   tone={orderStatusTone(order.status)}
                 />
               </div>
+              {order.paymentMethod === "cash" &&
+              status === "pending_payment" ? (
+                <div className="flex flex-col gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-800 dark:bg-amber-950">
+                  <Badge tone="warning" className="self-start">
+                    Dinheiro na entrega
+                  </Badge>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    Sem prazo de expiração: marcar como pago = dinheiro na mão.
+                  </p>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between">
                 <span className="text-zinc-500 dark:text-zinc-400">Total</span>
                 <Money
@@ -460,6 +471,7 @@ export default async function PedidoDetalhePage({
             <OrderActions
               orderId={order.id}
               status={status}
+              paymentMethod={order.paymentMethod}
               trackingCode={order.shippingTrackingCode}
             />
           </Card>

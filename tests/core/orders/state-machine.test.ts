@@ -19,6 +19,7 @@ const VALID_PAIRS: ReadonlySet<string> = new Set([
   "paid->preparing",
   "paid->canceled",
   "paid->refunded",
+  "paid->delivered",
   "preparing->shipped",
   "preparing->canceled",
   "preparing->refunded",

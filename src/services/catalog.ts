@@ -330,6 +330,7 @@ const updateProductSchema = z.object({
   description: z.string().nullable().optional(),
   brand: z.string().trim().min(1).nullable().optional(),
   categoryId: z.uuid().nullable().optional(),
+  supplierId: z.uuid().nullable().optional(),
   // 'archived' apenas oculta do catálogo; pedidos antigos preservam snapshots.
   status: z.enum(["draft", "active", "archived"]).optional(),
   attributesSchema: z.array(z.string().trim().min(1)).optional(),
@@ -347,6 +348,7 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
     if (parsed.description !== undefined) patch.description = parsed.description;
     if (parsed.brand !== undefined) patch.brand = parsed.brand;
     if (parsed.categoryId !== undefined) patch.categoryId = parsed.categoryId;
+    if (parsed.supplierId !== undefined) patch.supplierId = parsed.supplierId;
     if (parsed.status !== undefined) patch.status = parsed.status;
     if (parsed.attributesSchema !== undefined) {
       patch.attributesSchema = parsed.attributesSchema;

@@ -35,6 +35,9 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "bot_enabled", value: false },
   { key: "bot_model", value: "claude-sonnet-5" },
   { key: "bot_extra_instructions", value: "" },
+  // Fase 6 — chave Pix da LOJA para Pix manual (plano B do robô).
+  // Vazia = recurso desligado; o dono cadastra em /admin/configuracoes.
+  { key: "store_pix_key", value: "" },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca
@@ -56,6 +59,18 @@ const initialWaTemplates: Array<{
       "Acompanhe por aqui: {{link}}\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "pedido", "total", "link", "prazo"],
+  },
+  {
+    // Pedido em dinheiro na entrega: SEM link de pagamento e SEM prazo de
+    // reserva ({{link}} aqui é o de ACOMPANHAMENTO do pedido).
+    key: "order_confirmed_cash",
+    label: "Pedido recebido (dinheiro na entrega)",
+    bodyTemplate:
+      "Oi, {{nome}}! Recebemos seu pedido #{{pedido}} no valor de {{total}}. 💛\n" +
+      "O pagamento é em dinheiro na entrega — vamos combinar os detalhes por aqui no WhatsApp.\n" +
+      "Acompanhe seu pedido: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "total", "link"],
   },
   {
     key: "payment_approved",
@@ -182,6 +197,24 @@ async function main(): Promise<void> {
         percentRate: "0",
         fixedFeeCents: 349,
         settlementDays: 3,
+        isReferenceForPricing: false,
+      },
+      {
+        // Pix manual (transferência direta para a chave da loja): sem taxa.
+        paymentMethod: "pix_manual",
+        installmentsMax: 1,
+        percentRate: "0",
+        fixedFeeCents: 0,
+        settlementDays: 0,
+        isReferenceForPricing: false,
+      },
+      {
+        // Dinheiro na entrega: sem taxa.
+        paymentMethod: "cash",
+        installmentsMax: 1,
+        percentRate: "0",
+        fixedFeeCents: 0,
+        settlementDays: 0,
         isReferenceForPricing: false,
       },
     ];

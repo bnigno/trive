@@ -13,6 +13,7 @@ import {
   ShippingChangedError,
   type CreateStoreOrderInput,
 } from "@/services/store-orders";
+import { transitionOrder } from "@/services/orders";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 
 let db: TestDb;
@@ -145,7 +146,8 @@ describe("createStoreOrder", () => {
     expect(result.totalCents).toBe(2 * 4990 + 1990);
 
     // paymentDueAt ~ agora + 120 min (setting stock_reservation_ttl_minutes).
-    const dueMs = result.paymentDueAt.getTime() - before;
+    expect(result.paymentDueAt).not.toBeNull();
+    const dueMs = result.paymentDueAt!.getTime() - before;
     expect(dueMs).toBeGreaterThan(119 * 60_000);
     expect(dueMs).toBeLessThan(121 * 60_000);
 
@@ -158,7 +160,7 @@ describe("createStoreOrder", () => {
     expect(order.note).toBe("Pedido da loja");
     expect(order.subtotalCents).toBe(9980);
     expect(order.shippingCents).toBe(1990);
-    expect(order.paymentDueAt?.getTime()).toBe(result.paymentDueAt.getTime());
+    expect(order.paymentDueAt?.getTime()).toBe(result.paymentDueAt!.getTime());
     expect(order.shippingAddress).toMatchObject({
       postalCode: "01310100",
       street: "Avenida Paulista",
@@ -336,6 +338,131 @@ describe("createStoreOrder", () => {
   });
 });
 
+describe("createStoreOrder — dinheiro na entrega (cash)", () => {
+  async function getSaleEntries(orderId: string) {
+    return db
+      .select()
+      .from(schema.financialEntries)
+      .where(eq(schema.financialEntries.orderId, orderId));
+  }
+
+  it("cash: pending_payment com due NULL, payment_method cash e receivable sale PENDENTE", async () => {
+    const { variantId, rate } = await setupStore();
+
+    const result = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { paymentMethod: "cash" }),
+    );
+
+    expect(result.paymentDueAt).toBeNull();
+
+    const [order] = await db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, result.orderId));
+    expect(order.status).toBe("pending_payment");
+    expect(order.paymentMethod).toBe("cash");
+    expect(order.paymentDueAt).toBeNull();
+
+    // Reserva de estoque acontece normalmente.
+    const level = await getLevel(variantId);
+    expect(level.reserved).toBe(2);
+
+    // Receivable sale PENDENTE criado na MESMA transação (ator sistema).
+    const entries = await getSaleEntries(result.orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      direction: "receivable",
+      category: "sale",
+      status: "pending",
+      amountCents: result.totalCents,
+      createdBy: null,
+    });
+    expect(entries[0].settledAt).toBeNull();
+
+    // Sem prazo, o pedido cash é NATURALMENTE isento da expiração de reserva.
+    expect(await expireOverdueReservations(sdb, {})).toEqual({ expired: 0 });
+
+    // Página pública expõe o método (bloco "Como pagar" da loja).
+    const pub = await getPublicOrder(sdb, result.publicToken);
+    expect(pub?.paymentMethod).toBe("cash");
+    expect(pub?.paymentDueAt).toBeNull();
+    expect(pub?.status).toBe("pending_payment");
+  });
+
+  it("paid liquida a MESMA entry pendente (sem duplicar receita)", async () => {
+    const { variantId, rate } = await setupStore();
+    const created = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { paymentMethod: "cash" }),
+    );
+
+    await transitionOrder(sdb, {
+      orderId: created.orderId,
+      to: "paid",
+      userId: null,
+      reason: "Dinheiro recebido na entrega",
+    });
+
+    const entries = await getSaleEntries(created.orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("settled");
+    expect(entries[0].settledAt).not.toBeNull();
+    expect(entries[0].amountCents).toBe(created.totalCents);
+  });
+
+  it("dono liquidou a entry ANTES no financeiro: paid não duplica nem falha", async () => {
+    const { variantId, rate } = await setupStore();
+    const created = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { paymentMethod: "cash" }),
+    );
+
+    // Dono marca como recebida direto no financeiro antes de mudar o status.
+    const settledAt = new Date();
+    await db
+      .update(schema.financialEntries)
+      .set({ status: "settled", settledAt })
+      .where(eq(schema.financialEntries.orderId, created.orderId));
+
+    await transitionOrder(sdb, {
+      orderId: created.orderId,
+      to: "paid",
+      userId: null,
+    });
+
+    const entries = await getSaleEntries(created.orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("settled");
+    // settledAt original preservado (no-op de verdade, não re-liquidação).
+    expect(entries[0].settledAt?.getTime()).toBe(settledAt.getTime());
+  });
+
+  it("cancelamento de pedido cash cancela a entry pendente (carteira não infla)", async () => {
+    const { variantId, rate } = await setupStore();
+    const created = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { paymentMethod: "cash" }),
+    );
+
+    await transitionOrder(sdb, {
+      orderId: created.orderId,
+      to: "canceled",
+      userId: null,
+      reason: "Cliente desistiu",
+    });
+
+    const entries = await getSaleEntries(created.orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("canceled");
+
+    // Reserva devolvida normalmente.
+    const level = await getLevel(variantId);
+    expect(level.reserved).toBe(0);
+    expect(level.onHand).toBe(10);
+  });
+});
+
 describe("getPublicOrder", () => {
   it("retorna apenas dados não pessoais (sem nome/telefone/documento/endereço)", async () => {
     const { variantId, rate } = await setupStore();
@@ -351,6 +478,7 @@ describe("getPublicOrder", () => {
         "status",
         "createdAt",
         "paymentDueAt",
+        "paymentMethod",
         "trackingCode",
         "subtotalCents",
         "discountCents",

@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { orders } from "./orders";
+import { suppliers } from "./suppliers";
 
 export const financialEntries = pgTable(
   "financial_entries",
@@ -26,6 +27,9 @@ export const financialEntries = pgTable(
     orderId: uuid("order_id").references(() => orders.id, {
       onDelete: "restrict",
     }),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, {
+      onDelete: "restrict",
+    }),
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -40,6 +44,7 @@ export const financialEntries = pgTable(
       table.dueDate,
     ),
     index("financial_entries_order_id_idx").on(table.orderId),
+    index("financial_entries_supplier_id_idx").on(table.supplierId),
     check(
       "financial_entries_direction_check",
       sql`${table.direction} IN ('receivable', 'payable')`,

@@ -305,6 +305,130 @@ describe("transitionOrder — fluxo feliz", () => {
   });
 });
 
+describe("transitionOrder — financeiro (settle-or-skip-or-insert)", () => {
+  /** Receivable sale pré-existente do pedido (como o checkout cash cria). */
+  async function insertPendingSale(orderId: string, amountCents: number) {
+    const [entry] = await db
+      .insert(schema.financialEntries)
+      .values({
+        direction: "receivable",
+        category: "sale",
+        description: "Pedido cash",
+        amountCents,
+        status: "pending",
+        orderId,
+        createdBy: null,
+      })
+      .returning({ id: schema.financialEntries.id });
+    return entry.id;
+  }
+
+  it("paid com sale PENDENTE pré-existente liquida a MESMA entry (não insere outra)", async () => {
+    const { customerId, variantId } = await setupOrder({ onHand: 10 });
+    const { orderId } = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    await transitionOrder(sdb, {
+      orderId,
+      to: "pending_payment",
+      userId: FIXED_USER_ID,
+    });
+    const entryId = await insertPendingSale(orderId, 4990);
+
+    await transitionOrder(sdb, { orderId, to: "paid", userId: FIXED_USER_ID });
+
+    const entries = await getEntries(orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].id).toBe(entryId);
+    expect(entries[0].status).toBe("settled");
+    expect(entries[0].settledAt).not.toBeNull();
+  });
+
+  it("paid com sale já SETTLED (dono liquidou antes) é no-op: nada duplica", async () => {
+    const { customerId, variantId } = await setupOrder({ onHand: 10 });
+    const { orderId } = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    await transitionOrder(sdb, {
+      orderId,
+      to: "pending_payment",
+      userId: FIXED_USER_ID,
+    });
+    const entryId = await insertPendingSale(orderId, 4990);
+    const settledAt = new Date();
+    await db
+      .update(schema.financialEntries)
+      .set({ status: "settled", settledAt })
+      .where(eq(schema.financialEntries.id, entryId));
+
+    await transitionOrder(sdb, { orderId, to: "paid", userId: FIXED_USER_ID });
+
+    const entries = await getEntries(orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].settledAt?.getTime()).toBe(settledAt.getTime());
+  });
+
+  it("paid com sale CANCELADA ignora a cancelada e insere settled nova", async () => {
+    const { customerId, variantId } = await setupOrder({ onHand: 10 });
+    const { orderId } = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    await transitionOrder(sdb, {
+      orderId,
+      to: "pending_payment",
+      userId: FIXED_USER_ID,
+    });
+    const canceledId = await insertPendingSale(orderId, 4990);
+    await db
+      .update(schema.financialEntries)
+      .set({ status: "canceled" })
+      .where(eq(schema.financialEntries.id, canceledId));
+
+    await transitionOrder(sdb, { orderId, to: "paid", userId: FIXED_USER_ID });
+
+    const entries = await getEntries(orderId);
+    expect(entries).toHaveLength(2);
+    const settled = entries.find((e) => e.status === "settled");
+    expect(settled).toMatchObject({
+      direction: "receivable",
+      category: "sale",
+      amountCents: 4990,
+    });
+  });
+
+  it("canceled cancela os receivables sale PENDENTES do pedido", async () => {
+    const { customerId, variantId } = await setupOrder({ onHand: 10 });
+    const { orderId } = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    await transitionOrder(sdb, {
+      orderId,
+      to: "pending_payment",
+      userId: FIXED_USER_ID,
+    });
+    await insertPendingSale(orderId, 4990);
+
+    await transitionOrder(sdb, {
+      orderId,
+      to: "canceled",
+      userId: FIXED_USER_ID,
+      reason: "Cliente desistiu",
+    });
+
+    const entries = await getEntries(orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("canceled");
+  });
+});
+
 describe("transitionOrder — falhas e cancelamentos", () => {
   it("transição inválida falha sem nenhum efeito colateral", async () => {
     const { customerId, variantId } = await setupOrder({ onHand: 10 });

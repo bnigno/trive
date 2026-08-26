@@ -6,6 +6,7 @@ import { getDb } from "@/db/client";
 import { orders } from "@/db/schema";
 import { requireUser } from "@/services/auth";
 import { listEntries, monthOverview } from "@/services/financial";
+import { listSuppliers } from "@/services/suppliers";
 import { Badge } from "@/components/ui/badge";
 import { Card, StatCard } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -117,10 +118,15 @@ export default async function FinancialPage({
     : undefined;
 
   const db = getDb();
-  const [overview, entries] = await Promise.all([
+  const [overview, entries, supplierRows] = await Promise.all([
     monthOverview(db, { year, month: monthNumber }),
     listEntries(db, { month, status, direction, limit: 200 }),
+    listSuppliers(db),
   ]);
+  const supplierOptions = supplierRows.map((supplier) => ({
+    id: supplier.id,
+    name: supplier.name,
+  }));
 
   // Leitura direta (não é mutação): número dos pedidos vinculados.
   const orderIds = [
@@ -250,6 +256,7 @@ export default async function FinancialPage({
                 "Tipo",
                 "Categoria",
                 "Descrição",
+                "Fornecedor",
                 "Valor",
                 "Status",
                 "Vencimento",
@@ -275,6 +282,18 @@ export default async function FinancialPage({
                     </Td>
                     <Td className="max-w-64">
                       <span className="line-clamp-2">{entry.description}</span>
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      {entry.supplierId && entry.supplierName ? (
+                        <Link
+                          href={`/admin/fornecedores/${entry.supplierId}`}
+                          className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          {entry.supplierName}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
                     </Td>
                     <Td
                       className={
@@ -323,7 +342,7 @@ export default async function FinancialPage({
         </div>
 
         <Card title="Novo lançamento">
-          <NewEntryForm />
+          <NewEntryForm supplierOptions={supplierOptions} />
         </Card>
       </div>
     </div>

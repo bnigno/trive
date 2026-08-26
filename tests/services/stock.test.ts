@@ -10,10 +10,13 @@ import {
   applyStockEffectTx,
   getStockOverview,
   listMovements,
+  receivePurchase,
   receiveStock,
 } from "@/services/stock";
 import {
   createTestDb,
+  createTestFeeRuleAndPolicy,
+  createTestSupplier,
   createTestVariant,
   FIXED_USER_ID,
   type TestDb,
@@ -84,6 +87,193 @@ describe("receiveStock", () => {
       .where(eq(schema.auditLog.action, "stock.receive"));
     expect(audits).toHaveLength(1);
     expect(audits[0].entityId).toBe(variantId);
+  });
+});
+
+describe("receivePurchase", () => {
+  async function insertActivePrice(variantId: string, priceCents: number) {
+    await db.insert(schema.priceVersions).values({
+      productVariantId: variantId,
+      versionNumber: 1,
+      status: "active",
+      priceCents,
+      origin: "initial",
+      breakdown: {},
+      costSnapshotCents: 1000,
+      computedMarginRate: "0.3000",
+      activatedAt: new Date(),
+    });
+  }
+
+  it("movimento com referência do fornecedor + custo + conta a pagar na mesma transação", async () => {
+    const { variantId } = await createTestVariant(db, {
+      sku: "COMPRA-1",
+      onHand: 0,
+      costCents: 1000,
+    });
+    const supplierId = await createTestSupplier(db, {
+      name: "Fornecedor Teste",
+    });
+
+    const result = await receivePurchase(sdb, {
+      variantId,
+      supplierId,
+      quantity: 4,
+      unitCostCents: 2500,
+      invoiceNumber: "123",
+      dueDate: "2026-09-15",
+      note: "Reposição de setembro",
+      userId: FIXED_USER_ID,
+    });
+
+    expect(result.onHand).toBe(4);
+    expect(result.priceVersion).toBeNull();
+    expect((await getLevel(variantId)).onHand).toBe(4);
+
+    const movements = await listMovements(sdb, { variantId });
+    expect(movements).toHaveLength(1);
+    expect(movements[0]).toMatchObject({
+      type: "purchase_in",
+      quantityDelta: 4,
+      unitCostCents: 2500,
+      referenceType: "supplier",
+      referenceId: supplierId,
+    });
+
+    const costs = await db
+      .select()
+      .from(schema.variantCosts)
+      .where(eq(schema.variantCosts.productVariantId, variantId));
+    expect(costs).toHaveLength(1);
+    expect(costs[0]).toMatchObject({ costCents: 2500, source: "purchase" });
+
+    const [variant] = await db
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.id, variantId));
+    expect(variant.costCents).toBe(2500);
+
+    const [entry] = await db
+      .select()
+      .from(schema.financialEntries)
+      .where(eq(schema.financialEntries.id, result.financialEntryId));
+    expect(entry).toMatchObject({
+      direction: "payable",
+      category: "supplier",
+      status: "pending",
+      amountCents: 10000, // 4 × 2500
+      dueDate: "2026-09-15",
+      supplierId,
+      description: "Compra: 4× COMPRA-1 — Fornecedor Teste (NF 123)",
+    });
+
+    const audits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "purchase.receive"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0].entityId).toBe(variantId);
+  });
+
+  it("gera sugestão de reprecificação quando a variante tem preço ativo", async () => {
+    await createTestFeeRuleAndPolicy(db);
+    const { variantId } = await createTestVariant(db, {
+      sku: "COMPRA-2",
+      costCents: 1000,
+    });
+    await insertActivePrice(variantId, 1690);
+    const supplierId = await createTestSupplier(db);
+
+    const result = await receivePurchase(sdb, {
+      variantId,
+      supplierId,
+      quantity: 2,
+      unitCostCents: 2500,
+      userId: FIXED_USER_ID,
+    });
+
+    expect(result.priceVersion).not.toBeNull();
+    expect(result.priceVersion?.origin).toBe("auto_cost_change");
+    expect(result.priceVersion?.costSnapshotCents).toBe(2500);
+
+    const versions = await db
+      .select()
+      .from(schema.priceVersions)
+      .where(eq(schema.priceVersions.productVariantId, variantId));
+    expect(versions).toHaveLength(2);
+  });
+
+  it("fornecedor inexistente falha SEM gravar nada", async () => {
+    const { variantId } = await createTestVariant(db, {
+      onHand: 3,
+      costCents: 1000,
+    });
+
+    await expect(
+      receivePurchase(sdb, {
+        variantId,
+        supplierId: "00000000-0000-4000-8000-0000000000ff",
+        quantity: 2,
+        unitCostCents: 500,
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow("Fornecedor não encontrado.");
+
+    expect((await getLevel(variantId)).onHand).toBe(3);
+    expect(await listMovements(sdb, { variantId })).toHaveLength(0);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+  });
+
+  it("falha no meio da transação desfaz movimento, custo e conta (atomicidade)", async () => {
+    // Preço ativo SEM regra de taxa: a reprecificação lança fee_rule_missing
+    // DEPOIS do movimento e do custo já gravados — tudo precisa desfazer.
+    const { variantId } = await createTestVariant(db, {
+      onHand: 1,
+      costCents: 1000,
+    });
+    await insertActivePrice(variantId, 1690);
+    const supplierId = await createTestSupplier(db);
+
+    await expect(
+      receivePurchase(sdb, {
+        variantId,
+        supplierId,
+        quantity: 5,
+        unitCostCents: 2000,
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(/taxa de pagamento/);
+
+    expect((await getLevel(variantId)).onHand).toBe(1);
+    expect(await listMovements(sdb, { variantId })).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.variantCosts)
+        .where(eq(schema.variantCosts.productVariantId, variantId)),
+    ).toHaveLength(0);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+
+    const [variant] = await db
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.id, variantId));
+    expect(variant.costCents).toBe(1000);
+  });
+
+  it("rejeita custo unitário zero (a compra exige custo positivo)", async () => {
+    const { variantId } = await createTestVariant(db);
+    const supplierId = await createTestSupplier(db);
+
+    await expect(
+      receivePurchase(sdb, {
+        variantId,
+        supplierId,
+        quantity: 1,
+        unitCostCents: 0,
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(/maior que zero/);
   });
 });
 

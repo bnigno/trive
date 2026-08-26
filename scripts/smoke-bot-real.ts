@@ -21,6 +21,8 @@ async function main() {
     conversationId: randomUUID(),
     phoneE164: "+5511900000000",
     customerId: null,
+    // Smoke sem inbound real: id sintético só para os dedupes das ferramentas.
+    lastInboundId: randomUUID(),
   });
 
   const turn = await assistant.respondTurn({

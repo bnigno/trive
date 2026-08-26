@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
+import {
+  ALL_PAYMENT_METHODS,
+  MP_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+} from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
 import {
   getDefaultPolicy,
   getFeeRules,
   getSettingsMap,
-  PAYMENT_METHODS,
   type DefaultPolicy,
   type FeeRule,
 } from "@/services/settings";
@@ -31,11 +35,10 @@ export const metadata: Metadata = {
   title: "Configurações",
 };
 
-const METHOD_LABELS: Record<string, string> = {
-  pix: "Pix",
-  credit_card: "Cartão de crédito",
-  boleto: "Boleto",
-};
+/** Método processado pelo MP? Os demais (Pix manual, dinheiro) o dono liquida. */
+function isMpMethod(method: string): boolean {
+  return (MP_PAYMENT_METHODS as readonly string[]).includes(method);
+}
 
 const whenFormatter = new Intl.DateTimeFormat("pt-BR", {
   timeZone: "America/Sao_Paulo",
@@ -65,6 +68,7 @@ type SettingsData = {
     address: string;
     email: string;
     whatsapp: string;
+    pixKey: string;
   };
   mpEnabled: boolean;
 };
@@ -89,6 +93,7 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_address",
         "store_email",
         "store_whatsapp",
+        "store_pix_key",
         "mp_enabled",
       ]),
     ]);
@@ -102,6 +107,7 @@ async function loadSettings(): Promise<SettingsData | null> {
         address: asString(map.store_address),
         email: asString(map.store_email),
         whatsapp: asString(map.store_whatsapp),
+        pixKey: asString(map.store_pix_key),
       },
       settings: {
         changeThresholdRate:
@@ -180,16 +186,18 @@ export default async function ConfiguracoesPage() {
               address: data.store.address,
               email: data.store.email,
               whatsapp: data.store.whatsapp,
+              pixKey: data.store.pixKey,
             }}
           />
         </div>
       </Card>
 
-      <Card title="Taxas do Mercado Pago">
+      <Card title="Taxas por forma de pagamento">
         <div className="flex flex-col gap-5">
           <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
             Confira as taxas reais no painel do Mercado Pago — elas mudam por
-            plano e prazo de repasse.
+            plano e prazo de repasse. Pix manual e dinheiro na entrega não
+            passam pelo Mercado Pago: a taxa padrão deles é zero.
           </p>
 
           <Table
@@ -202,11 +210,18 @@ export default async function ConfiguracoesPage() {
               "Vigente desde",
             ]}
           >
-            {PAYMENT_METHODS.map((method) => {
+            {ALL_PAYMENT_METHODS.map((method) => {
               const rule = currentByMethod.get(method);
               return (
                 <Tr key={method}>
-                  <Td className="font-medium">{METHOD_LABELS[method]}</Td>
+                  <Td className="font-medium">
+                    {PAYMENT_METHOD_LABELS[method]}
+                    {isMpMethod(method) ? null : (
+                      <Badge tone="neutral" className="ml-2">
+                        liquidação manual
+                      </Badge>
+                    )}
+                  </Td>
                   {rule ? (
                     <>
                       <Td>{formatRatePercent(rule.percentRate)}</Td>
@@ -240,7 +255,7 @@ export default async function ConfiguracoesPage() {
           </Table>
 
           <div className="flex flex-col gap-3">
-            {PAYMENT_METHODS.map((method) => {
+            {ALL_PAYMENT_METHODS.map((method) => {
               const rule = currentByMethod.get(method);
               return (
                 <details
@@ -248,7 +263,7 @@ export default async function ConfiguracoesPage() {
                   className="rounded-lg border border-zinc-200 dark:border-zinc-800"
                 >
                   <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Nova vigência — {METHOD_LABELS[method]}
+                    Nova vigência — {PAYMENT_METHOD_LABELS[method]}
                   </summary>
                   <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
                     <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
@@ -257,7 +272,7 @@ export default async function ConfiguracoesPage() {
                     </p>
                     <FeeRuleForm
                       paymentMethod={method}
-                      methodLabel={METHOD_LABELS[method]}
+                      methodLabel={PAYMENT_METHOD_LABELS[method]}
                       defaults={
                         rule
                           ? {
@@ -287,7 +302,7 @@ export default async function ConfiguracoesPage() {
                 >
                   {data.feeRules.history.map((rule) => (
                     <Tr key={rule.id}>
-                      <Td>{METHOD_LABELS[rule.paymentMethod]}</Td>
+                      <Td>{PAYMENT_METHOD_LABELS[rule.paymentMethod]}</Td>
                       <Td>{formatRatePercent(rule.percentRate)}</Td>
                       <Td>
                         <Money cents={rule.fixedFeeCents} />

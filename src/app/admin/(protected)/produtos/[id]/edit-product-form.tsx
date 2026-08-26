@@ -13,12 +13,14 @@ import {
 import { updateProductAction, type FormState } from "./actions";
 
 export type CategoryOption = { id: string; name: string };
+export type SupplierOption = { id: string; name: string };
 
 const initialState: FormState = {};
 
 export function EditProductForm({
   product,
   categoryOptions,
+  supplierOptions,
 }: {
   product: {
     id: string;
@@ -26,9 +28,11 @@ export function EditProductForm({
     description: string | null;
     brand: string | null;
     categoryId: string | null;
+    supplierId: string | null;
     attributesSchema: string[];
   };
   categoryOptions: CategoryOption[];
+  supplierOptions: SupplierOption[];
 }) {
   const [state, formAction] = useActionState(updateProductAction, initialState);
 
@@ -59,6 +63,20 @@ export function EditProductForm({
             {categoryOptions.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field
+          label="Fornecedor"
+          className="sm:col-span-2"
+          hint="De quem você compra este produto. Compras registradas no estoque com esse fornecedor aparecem na página dele."
+        >
+          <Select name="supplierId" defaultValue={product.supplierId ?? ""}>
+            <option value="">Sem fornecedor</option>
+            {supplierOptions.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
               </option>
             ))}
           </Select>

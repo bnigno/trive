@@ -704,6 +704,43 @@ export async function rejectPriceVersion(
 // 6. Custo da variante
 // ---------------------------------------------------------------------------
 
+/**
+ * Reprecifica a variante após mudança de custo, DENTRO da transação chamadora:
+ * cria versão 'auto_cost_change' apenas quando já existe preço ativo; o fluxo
+ * de aprovação decide se a nova versão ativa ou fica pendente. Sem preço
+ * ativo não há o que reprecificar e retorna null. Usada por setVariantCost e
+ * por receivePurchase (stock) — mecânica única, sem duplicação.
+ */
+export async function repriceAfterCostChangeTx(
+  tx: PricingDb,
+  input: { variantId: string; userId: string },
+): Promise<PriceVersionRow | null> {
+  const parsed = z
+    .object({ variantId: uuidSchema, userId: uuidSchema })
+    .parse(input);
+
+  const [active] = await tx
+    .select({ id: priceVersions.id })
+    .from(priceVersions)
+    .where(
+      and(
+        eq(priceVersions.productVariantId, parsed.variantId),
+        eq(priceVersions.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (!active) return null;
+
+  return createPriceVersionInTx(tx, {
+    variantId: parsed.variantId,
+    userId: parsed.userId,
+    origin: "auto_cost_change",
+    overrides: undefined,
+    priceCentsManual: undefined,
+    batchId: undefined,
+  });
+}
+
 const setVariantCostSchema = z.object({
   variantId: uuidSchema,
   costCents: z.number().int().min(0),
@@ -761,30 +798,10 @@ export async function setVariantCost(
       reason: parsed.note ?? null,
     });
 
-    // Reprecificação automática apenas quando já existe preço ativo;
-    // o fluxo de aprovação decide se a nova versão ativa ou fica pendente.
-    const [active] = await tx
-      .select({ id: priceVersions.id })
-      .from(priceVersions)
-      .where(
-        and(
-          eq(priceVersions.productVariantId, parsed.variantId),
-          eq(priceVersions.status, "active"),
-        ),
-      )
-      .limit(1);
-
-    let priceVersion: PriceVersionRow | null = null;
-    if (active) {
-      priceVersion = await createPriceVersionInTx(tx, {
-        variantId: parsed.variantId,
-        userId: parsed.userId,
-        origin: "auto_cost_change",
-        overrides: undefined,
-        priceCentsManual: undefined,
-        batchId: undefined,
-      });
-    }
+    const priceVersion = await repriceAfterCostChangeTx(tx, {
+      variantId: parsed.variantId,
+      userId: parsed.userId,
+    });
 
     return {
       variantId: parsed.variantId,

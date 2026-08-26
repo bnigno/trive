@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import {
   Field,
@@ -14,8 +14,19 @@ import { createEntryAction, type FormState } from "./actions";
 
 const initialState: FormState = {};
 
-export function NewEntryForm() {
+export type SupplierOption = { id: string; name: string };
+
+export function NewEntryForm({
+  supplierOptions,
+}: {
+  supplierOptions: SupplierOption[];
+}) {
   const [state, formAction] = useActionState(createEntryAction, initialState);
+  const [direction, setDirection] = useState("payable");
+  const [category, setCategory] = useState("supplier");
+
+  // Vincular fornecedor só faz sentido em saída da categoria Fornecedor.
+  const showSupplier = direction === "payable" && category === "supplier";
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -26,13 +37,21 @@ export function NewEntryForm() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Tipo">
-          <Select name="direction" defaultValue="payable">
+          <Select
+            name="direction"
+            value={direction}
+            onChange={(event) => setDirection(event.target.value)}
+          >
             <option value="payable">Saída (a pagar)</option>
             <option value="receivable">Entrada (a receber)</option>
           </Select>
         </Field>
         <Field label="Categoria">
-          <Select name="category" defaultValue="supplier">
+          <Select
+            name="category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          >
             <option value="supplier">Fornecedor</option>
             <option value="shipping_cost">Frete</option>
             <option value="mp_fee">Taxa MP</option>
@@ -41,6 +60,22 @@ export function NewEntryForm() {
           </Select>
         </Field>
       </div>
+
+      {showSupplier ? (
+        <Field
+          label="Fornecedor (opcional)"
+          hint="Vincula a conta ao fornecedor — ela aparece na página dele."
+        >
+          <Select name="supplierId" defaultValue="">
+            <option value="">Sem fornecedor</option>
+            {supplierOptions.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
 
       <Field label="Descrição">
         <Input

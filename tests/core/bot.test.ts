@@ -40,6 +40,20 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("nota fiscal");
     expect(prompt).toContain("1.");
     expect(prompt).toContain("10.");
+    expect(prompt).toContain("15.");
+  });
+
+  it("contém as regras de Pix manual, aviso ao dono e dinheiro na entrega", () => {
+    const prompt = buildBotSystemPrompt(promptOptions);
+    // Problema com o link → oferecer Pix manual; só a ferramenta confirma.
+    expect(prompt).toContain("enviar_chave_pix");
+    expect(prompt).toContain("NÃO prometa");
+    // Cliente já fez o Pix → avisar o dono; nunca confirmar pagamento.
+    expect(prompt).toContain("avisar_dono");
+    expect(prompt).toContain("número do pedido e o valor");
+    // Dinheiro na entrega só quando o cliente pedir explicitamente.
+    expect(prompt).toContain('forma_de_pagamento "dinheiro_na_entrega"');
+    expect(prompt).toContain("explicitamente");
   });
 
   it("inclui extraInstructions rotulado quando não-vazio", () => {
@@ -115,6 +129,27 @@ describe("BOT_TOOLS", () => {
     );
     expect(required).not.toContain("complemento");
     expect(required).not.toContain("cupom");
+    expect(required).not.toContain("forma_de_pagamento");
+  });
+
+  it("forma_de_pagamento de criar_pedido: enum online/dinheiro_na_entrega, default online", () => {
+    const criarPedido = BOT_TOOLS.find((tool) => tool.name === "criar_pedido");
+    const properties = criarPedido?.input_schema["properties"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const forma = properties["forma_de_pagamento"];
+    expect(forma["enum"]).toEqual(["online", "dinheiro_na_entrega"]);
+    expect(forma["default"]).toBe("online");
+  });
+
+  it("enviar_chave_pix: numero_do_pedido opcional; avisar_dono exige mensagem", () => {
+    const enviarChavePix = BOT_TOOLS.find(
+      (tool) => tool.name === "enviar_chave_pix",
+    );
+    expect(enviarChavePix?.input_schema["required"]).toEqual([]);
+    const avisarDono = BOT_TOOLS.find((tool) => tool.name === "avisar_dono");
+    expect(avisarDono?.input_schema["required"]).toEqual(["mensagem"]);
   });
 });
 
@@ -211,12 +246,66 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     ).toBe(false);
   });
 
+  it("criar_pedido: forma_de_pagamento aceita os dois valores e assume online", () => {
+    const schema = BOT_TOOL_INPUT_SCHEMAS.criar_pedido;
+    const semForma = schema.safeParse(pedidoValido);
+    expect(semForma.success).toBe(true);
+    expect(
+      (semForma as { data: { forma_de_pagamento: string } }).data
+        .forma_de_pagamento,
+    ).toBe("online");
+    expect(
+      schema.safeParse({ ...pedidoValido, forma_de_pagamento: "online" })
+        .success,
+    ).toBe(true);
+    const dinheiro = schema.safeParse({
+      ...pedidoValido,
+      forma_de_pagamento: "dinheiro_na_entrega",
+    });
+    expect(dinheiro.success).toBe(true);
+    expect(
+      (dinheiro as { data: { forma_de_pagamento: string } }).data
+        .forma_de_pagamento,
+    ).toBe("dinheiro_na_entrega");
+    expect(
+      schema.safeParse({ ...pedidoValido, forma_de_pagamento: "cash" }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ ...pedidoValido, forma_de_pagamento: "" }).success,
+    ).toBe(false);
+  });
+
   it("status_do_pedido: número opcional, inteiro positivo", () => {
     const schema = BOT_TOOL_INPUT_SCHEMAS.status_do_pedido;
     expect(schema.safeParse({}).success).toBe(true);
     expect(schema.safeParse({ numero_do_pedido: 42 }).success).toBe(true);
     expect(schema.safeParse({ numero_do_pedido: "42" }).success).toBe(false);
     expect(schema.safeParse({ numero_do_pedido: 0 }).success).toBe(false);
+  });
+
+  it("enviar_chave_pix: número opcional, inteiro positivo; rejeita extras", () => {
+    const schema = BOT_TOOL_INPUT_SCHEMAS.enviar_chave_pix;
+    expect(schema.safeParse({}).success).toBe(true);
+    expect(schema.safeParse({ numero_do_pedido: 1042 }).success).toBe(true);
+    expect(schema.safeParse({ numero_do_pedido: "1042" }).success).toBe(false);
+    expect(schema.safeParse({ numero_do_pedido: 0 }).success).toBe(false);
+    expect(schema.safeParse({ numero_do_pedido: 1.5 }).success).toBe(false);
+    expect(schema.safeParse({ chave: "x" }).success).toBe(false);
+  });
+
+  it("avisar_dono: mensagem obrigatória de 1 a 300 caracteres", () => {
+    const schema = BOT_TOOL_INPUT_SCHEMAS.avisar_dono;
+    expect(
+      schema.safeParse({ mensagem: "Pedido #1042: cliente diz que fez o Pix." })
+        .success,
+    ).toBe(true);
+    expect(schema.safeParse({ mensagem: "a".repeat(300) }).success).toBe(true);
+    expect(schema.safeParse({ mensagem: "a".repeat(301) }).success).toBe(false);
+    expect(schema.safeParse({ mensagem: "" }).success).toBe(false);
+    expect(schema.safeParse({}).success).toBe(false);
+    expect(
+      schema.safeParse({ mensagem: "ok", pedido: 1 }).success,
+    ).toBe(false);
   });
 
   it("transferir_para_atendente: exige motivo", () => {

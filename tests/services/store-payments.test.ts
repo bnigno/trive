@@ -232,6 +232,21 @@ describe("ensurePaymentPreference", () => {
     expect(gateway.calls).toBe(1);
   });
 
+  it("pedido em dinheiro na entrega NUNCA cria preference (POST direto)", async () => {
+    const order = await createPendingStoreOrder();
+    // Simula o pedido cash sem passar pela UI: só o método muda no banco.
+    await db
+      .update(schema.orders)
+      .set({ paymentMethod: "cash", paymentDueAt: null })
+      .where(eq(schema.orders.id, order.orderId));
+    const gateway = new RecordingGateway();
+
+    await expect(
+      ensurePaymentPreference(sdb, gateway, { orderId: order.orderId }),
+    ).rejects.toThrow("dinheiro na entrega");
+    expect(gateway.calls).toBe(0);
+  });
+
   it("pedido inexistente → ORDER_NOT_FOUND", async () => {
     await expect(
       ensurePaymentPreference(sdb, new RecordingGateway(), {

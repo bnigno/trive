@@ -56,6 +56,7 @@ export async function updateProductAction(
   const description = String(formData.get("description") ?? "").trim();
   const brand = String(formData.get("brand") ?? "").trim();
   const categoryId = String(formData.get("categoryId") ?? "").trim();
+  const supplierId = String(formData.get("supplierId") ?? "").trim();
   const axes = String(formData.get("axes") ?? "")
     .split(",")
     .map((axis) => axis.trim())
@@ -70,6 +71,7 @@ export async function updateProductAction(
       description: description || null,
       brand: brand || null,
       categoryId: categoryId || null,
+      supplierId: supplierId || null,
       attributesSchema: axes,
     });
   } catch (error) {

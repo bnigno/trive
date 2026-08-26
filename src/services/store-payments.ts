@@ -113,6 +113,7 @@ export async function ensurePaymentPreference(
       shippingCents: orders.shippingCents,
       mpPreferenceId: orders.mpPreferenceId,
       customerId: orders.customerId,
+      paymentMethod: orders.paymentMethod,
     })
     .from(orders)
     .where(eq(orders.id, parsed.orderId));
@@ -128,6 +129,15 @@ export async function ensurePaymentPreference(
       order.status === "paid"
         ? "Este pedido já está pago — não é preciso pagar de novo."
         : "Este pedido não está mais aguardando pagamento.",
+    );
+  }
+  // Dinheiro na entrega nunca gera link do MP — a UI não mostra o botão, e
+  // este guard cobre POST direto com o token (defesa em profundidade).
+  // pix_manual segue permitido: o cliente ainda pode preferir pagar online.
+  if (order.paymentMethod === "cash") {
+    throw new ServiceError(
+      "ORDER_NOT_PAYABLE",
+      "Este pedido será pago em dinheiro na entrega — combine pelo WhatsApp.",
     );
   }
 

@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { ALL_PAYMENT_METHODS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
 import {
-  PAYMENT_METHODS,
   replaceFeeRule,
   ServiceError,
   updateDefaultPolicy,
@@ -74,7 +74,7 @@ function parseIntField(raw: string, label: string): number {
 // Taxas do Mercado Pago — nova vigência
 // ---------------------------------------------------------------------------
 
-const paymentMethodSchema = z.enum(PAYMENT_METHODS);
+const paymentMethodSchema = z.enum(ALL_PAYMENT_METHODS);
 
 export async function replaceFeeRuleAction(
   _prev: FormState,
@@ -293,6 +293,7 @@ export async function updateStoreDataAction(
     const address = String(formData.get("storeAddress") ?? "").trim();
     const email = String(formData.get("storeEmail") ?? "").trim();
     const whatsapp = String(formData.get("storeWhatsapp") ?? "").trim();
+    const pixKey = String(formData.get("storePixKey") ?? "").trim();
 
     const db = getDb();
     const entries: Array<[string, string]> = [
@@ -302,6 +303,8 @@ export async function updateStoreDataAction(
       ["store_email", email],
       // O serviço normaliza o WhatsApp para E.164 (+55…) quando não vazio.
       ["store_whatsapp", whatsapp],
+      // Vazio = Pix manual desligado (robô e página do pedido não oferecem).
+      ["store_pix_key", pixKey],
     ];
     for (const [key, value] of entries) {
       await updateSetting(db, { key, value, userId: user.id });

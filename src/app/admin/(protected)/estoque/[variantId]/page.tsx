@@ -4,9 +4,16 @@ import { notFound } from "next/navigation";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { orders, products, productVariants, stockLevels } from "@/db/schema";
+import {
+  orders,
+  products,
+  productVariants,
+  stockLevels,
+  suppliers,
+} from "@/db/schema";
 import { requireUser } from "@/services/auth";
 import { listMovements } from "@/services/stock";
+import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Card, StatCard } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -80,6 +87,13 @@ export default async function StockVariantPage({
 
   const movements = await listMovements(db, { variantId, limit: 100 });
 
+  // Fornecedores ativos para o select de entrada de compra.
+  const supplierRows = await listSuppliers(db);
+  const supplierOptions = supplierRows.map((supplier) => ({
+    id: supplier.id,
+    name: supplier.name,
+  }));
+
   // Números dos pedidos referenciados, para o link "Pedido nº X".
   const orderIds = [
     ...new Set(
@@ -95,6 +109,24 @@ export default async function StockVariantPage({
       .from(orders)
       .where(inArray(orders.id, orderIds));
     for (const row of orderRows) orderNumberById.set(row.id, row.orderNumber);
+  }
+
+  // Nomes dos fornecedores referenciados no histórico (leitura direta, sem o
+  // filtro de desativados: compras antigas podem apontar para inativos).
+  const supplierRefIds = [
+    ...new Set(
+      movements
+        .filter((m) => m.referenceType === "supplier" && m.referenceId !== null)
+        .map((m) => m.referenceId as string),
+    ),
+  ];
+  const supplierNameById = new Map<string, string>();
+  if (supplierRefIds.length > 0) {
+    const rows = await db
+      .select({ id: suppliers.id, name: suppliers.name })
+      .from(suppliers)
+      .where(inArray(suppliers.id, supplierRefIds));
+    for (const row of rows) supplierNameById.set(row.id, row.name);
   }
 
   const attributes = (item.attributes ?? {}) as Record<string, string>;
@@ -143,7 +175,10 @@ export default async function StockVariantPage({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Registrar entrada">
-          <ReceiveStockForm variantId={item.variantId} />
+          <ReceiveStockForm
+            variantId={item.variantId}
+            supplierOptions={supplierOptions}
+          />
         </Card>
         <Card title="Ajustar estoque">
           <AdjustStockForm variantId={item.variantId} />
@@ -196,6 +231,15 @@ export default async function StockVariantPage({
                       {orderNumberById.has(movement.referenceId)
                         ? `Pedido nº ${orderNumberById.get(movement.referenceId)}`
                         : "Ver pedido"}
+                    </Link>
+                  ) : movement.referenceType === "supplier" &&
+                    movement.referenceId ? (
+                    <Link
+                      href={`/admin/fornecedores/${movement.referenceId}`}
+                      className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                      {supplierNameById.get(movement.referenceId) ??
+                        "Ver fornecedor"}
                     </Link>
                   ) : (
                     "—"

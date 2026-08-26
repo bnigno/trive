@@ -183,4 +183,55 @@ describe("updateSetting / getSettingsMap", () => {
     expect(map.price_change_pct_threshold).toBe(0.25);
     expect(map.default_low_stock_threshold).toBe(7);
   });
+
+  it("store_pix_key: aparas espaços, aceita vazia (= desligado) e limita a 140", async () => {
+    const saved = await updateSetting(db, {
+      key: "store_pix_key",
+      value: "  pix@trive.com.br  ",
+      userId: FIXED_USER_ID,
+    });
+    expect(saved.value).toBe("pix@trive.com.br");
+
+    const map = await getSettingsMap(db, ["store_pix_key"]);
+    expect(map.store_pix_key).toBe("pix@trive.com.br");
+
+    // Vazia desliga o recurso (o robô responde indisponível) — permitida.
+    const cleared = await updateSetting(db, {
+      key: "store_pix_key",
+      value: "",
+      userId: FIXED_USER_ID,
+    });
+    expect(cleared.value).toBe("");
+
+    await expect(
+      updateSetting(db, {
+        key: "store_pix_key",
+        value: "x".repeat(141),
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(/140/);
+  });
+});
+
+describe("replaceFeeRule — métodos manuais (pix_manual/cash)", () => {
+  it("aceita os métodos novos do core (dono edita a taxa dos 5)", async () => {
+    const cash = await replaceFeeRule(db, {
+      paymentMethod: "cash",
+      percentRate: 0,
+      fixedFeeCents: 0,
+      settlementDays: 0,
+      userId: FIXED_USER_ID,
+    });
+    expect(cash.paymentMethod).toBe("cash");
+    expect(cash.percentRate).toBe(0);
+
+    const pixManual = await replaceFeeRule(db, {
+      paymentMethod: "pix_manual",
+      percentRate: 0,
+      fixedFeeCents: 0,
+      settlementDays: 0,
+      userId: FIXED_USER_ID,
+    });
+    expect(pixManual.paymentMethod).toBe("pix_manual");
+  });
 });

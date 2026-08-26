@@ -11,6 +11,8 @@ import { buildOrderVars } from "@/services/wa-messaging";
 
 export interface OrderWaContext {
   orderId: string;
+  /** 'cash' troca o template de confirmação (order_confirmed_cash). */
+  paymentMethod: string | null;
   customer: {
     id: string;
     fullName: string;
@@ -58,6 +60,7 @@ export async function loadOrderWaContext(
 
   return {
     orderId: row.id,
+    paymentMethod: row.paymentMethod,
     customer: {
       id: row.customerId,
       fullName: row.customerName,

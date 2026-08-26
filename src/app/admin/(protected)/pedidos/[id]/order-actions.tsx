@@ -151,10 +151,12 @@ function Divider() {
 export function OrderActions({
   orderId,
   status,
+  paymentMethod,
   trackingCode,
 }: {
   orderId: string;
   status: OrderStatus;
+  paymentMethod: string | null;
   trackingCode: string | null;
 }) {
   if (status === "canceled" || status === "refunded") {
@@ -190,17 +192,30 @@ export function OrderActions({
           action={markPaidAction}
           label="Marcar como pago"
           pendingLabel="Marcando…"
-          hint="Baixa o estoque em definitivo e lança a venda no financeiro."
+          hint={
+            paymentMethod === "cash"
+              ? "Pedido em dinheiro na entrega: marque como pago SOMENTE com o dinheiro na mão. Baixa o estoque em definitivo e liquida a venda no financeiro."
+              : "Baixa o estoque em definitivo e lança a venda no financeiro."
+          }
         />
       ) : null}
 
       {status === "paid" ? (
-        <AdvanceForm
-          orderId={orderId}
-          action={startPreparingAction}
-          label="Iniciar separação"
-          pendingLabel="Iniciando…"
-        />
+        <>
+          <AdvanceForm
+            orderId={orderId}
+            action={startPreparingAction}
+            label="Iniciar separação"
+            pendingLabel="Iniciando…"
+          />
+          <AdvanceForm
+            orderId={orderId}
+            action={markDeliveredAction}
+            label="Marcar como entregue"
+            pendingLabel="Marcando…"
+            hint="Entrega direta, sem passar por separação e envio — ex.: dinheiro na entrega ou entrega em mãos."
+          />
+        </>
       ) : null}
 
       {status === "preparing" ? (

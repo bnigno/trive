@@ -76,6 +76,17 @@ export async function createEntryAction(
 
   const dueDate = text(formData, "dueDate");
 
+  // Fornecedor é opcional; quando vem, precisa ser um id válido.
+  const supplierIdRaw = text(formData, "supplierId");
+  let supplierId: string | undefined;
+  if (supplierIdRaw) {
+    const parsed = z.uuid().safeParse(supplierIdRaw);
+    if (!parsed.success) {
+      return { error: "Escolha um fornecedor válido." };
+    }
+    supplierId = parsed.data;
+  }
+
   try {
     const db = getDb();
     await createManualEntry(db, {
@@ -84,6 +95,7 @@ export async function createEntryAction(
       description,
       amountCents,
       dueDate: dueDate || undefined,
+      supplierId,
       userId: user.id,
     });
   } catch (error) {

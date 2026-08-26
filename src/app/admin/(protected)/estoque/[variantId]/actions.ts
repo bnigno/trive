@@ -1,9 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
-import { adjustStock, receiveStock, ServiceError } from "@/services/stock";
+import { ServiceError as PricingServiceError } from "@/services/pricing";
+import {
+  adjustStock,
+  receivePurchase,
+  receiveStock,
+  ServiceError,
+} from "@/services/stock";
 import { InsufficientStockError, SignError } from "@/core/stock/ledger";
 import { parseBRLToCents } from "@/lib/money";
 
@@ -13,6 +20,7 @@ export type StockFormState = { error?: string; success?: string };
 function toErrorMessage(error: unknown): string {
   if (
     error instanceof ServiceError ||
+    error instanceof PricingServiceError ||
     error instanceof InsufficientStockError ||
     error instanceof SignError
   ) {
@@ -73,6 +81,80 @@ export async function receiveStockAction(
       unitCostCents !== undefined
         ? "Entrada registrada. O custo do produto foi atualizado."
         : "Entrada registrada com sucesso.",
+  };
+}
+
+/**
+ * Entrada de compra COM fornecedor: custo obrigatório, gera conta a pagar
+ * e sugestão de reprecificação. Entrada sem fornecedor usa receiveStockAction.
+ */
+export async function receivePurchaseAction(
+  _prev: StockFormState,
+  formData: FormData,
+): Promise<StockFormState> {
+  const user = await requireUser();
+
+  const variantId = String(formData.get("variantId") ?? "");
+  const supplierId = z.uuid().safeParse(formData.get("supplierId"));
+  if (!supplierId.success) {
+    return { error: "Escolha o fornecedor da compra." };
+  }
+
+  const quantityRaw = String(formData.get("quantity") ?? "").trim();
+  if (!/^\d+$/.test(quantityRaw) || Number(quantityRaw) <= 0) {
+    return {
+      error: "Informe a quantidade recebida: um número inteiro maior que zero.",
+    };
+  }
+
+  const unitCostRaw = String(formData.get("unitCost") ?? "").trim();
+  if (unitCostRaw === "") {
+    return {
+      error: "Informe o custo unitário — ele é obrigatório na compra com fornecedor.",
+    };
+  }
+  let unitCostCents: number;
+  try {
+    unitCostCents = parseBRLToCents(unitCostRaw);
+  } catch {
+    return { error: "Custo unitário inválido. Use o formato 1.234,56." };
+  }
+  if (unitCostCents <= 0) {
+    return { error: "O custo unitário da compra deve ser maior que zero." };
+  }
+
+  const dueDateRaw = String(formData.get("dueDate") ?? "").trim();
+  if (dueDateRaw !== "" && !z.iso.date().safeParse(dueDateRaw).success) {
+    return { error: "Vencimento inválido. Use o seletor de data." };
+  }
+
+  const invoiceNumber = String(formData.get("invoiceNumber") ?? "").trim();
+  const noteRaw = String(formData.get("note") ?? "").trim();
+
+  let repriced = false;
+  try {
+    const result = await receivePurchase(getDb(), {
+      variantId,
+      supplierId: supplierId.data,
+      quantity: Number(quantityRaw),
+      unitCostCents,
+      invoiceNumber: invoiceNumber === "" ? undefined : invoiceNumber,
+      dueDate: dueDateRaw === "" ? undefined : dueDateRaw,
+      note: noteRaw === "" ? undefined : noteRaw,
+      userId: user.id,
+    });
+    repriced = result.priceVersion !== null;
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+
+  revalidateStock(variantId);
+  revalidatePath("/admin/financeiro");
+  revalidatePath(`/admin/fornecedores/${supplierId.data}`);
+  return {
+    success: repriced
+      ? "Compra registrada: conta a pagar criada no financeiro e sugestão de reprecificação gerada em Preços."
+      : "Compra registrada: conta a pagar criada no financeiro e custo do produto atualizado.",
   };
 }
 

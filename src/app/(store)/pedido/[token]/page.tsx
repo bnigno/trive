@@ -95,11 +95,25 @@ export default async function OrderPage({
     isPendingPayment &&
     (query.collection_status === "approved" || query.status === "approved");
   const mpUnavailable = isPendingPayment && query.pagamento === "indisponivel";
-  const mpEnabled = isPendingPayment ? await isMpEnabled(db) : false;
+
+  // Variante do bloco "Como pagar" pela forma de pagamento do pedido:
+  // cash → dinheiro na entrega; pix_manual COM chave cadastrada → chave
+  // copiável; pix_manual SEM chave e demais casos → MP (se habilitado) ou
+  // combinação pelo WhatsApp.
+  const isCash = order.paymentMethod === "cash";
+  const isPixManual = order.paymentMethod === "pix_manual";
 
   const settings = isPendingPayment
-    ? await getSettingsMap(db, ["store_whatsapp"])
+    ? await getSettingsMap(db, ["store_whatsapp", "store_pix_key"])
     : {};
+  const pixKey =
+    typeof settings["store_pix_key"] === "string"
+      ? settings["store_pix_key"].trim()
+      : "";
+  const showPixManual = isPendingPayment && isPixManual && pixKey !== "";
+  const mpEnabled =
+    isPendingPayment && !isCash && !isPixManual ? await isMpEnabled(db) : false;
+
   const whatsappLink = isPendingPayment
     ? waMeLink(settings["store_whatsapp"], order.orderNumber)
     : null;
@@ -191,18 +205,94 @@ export default async function OrderPage({
         </div>
       ) : null}
 
-      {isPendingPayment && !mpApproved && order.paymentDueAt ? (
-        mpEnabled ? (
+      {isPendingPayment && !mpApproved ? (
+        isCash ? (
           <section className={goldPanel}>
             <h2 className="font-display text-heading font-semibold text-ink-950">
               Como pagar
             </h2>
             <p className="mt-2 text-[15px] leading-7 text-ink-800">
-              Pague com segurança pelo Mercado Pago. Reserva válida até{" "}
+              Você paga em{" "}
+              <strong className="font-medium text-ink-900">
+                dinheiro na entrega
+              </strong>{" "}
+              — vamos combinar os detalhes pelo WhatsApp. Tenha{" "}
               <strong className="font-medium whitespace-nowrap text-ink-900">
-                {formatDueAt(order.paymentDueAt)}
-              </strong>
-              .
+                <Money cents={order.totalCents} />
+              </strong>{" "}
+              em mãos ao receber.
+            </p>
+            {whatsappLink ? (
+              <a
+                href={whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`${btnPrimary} mt-5`}
+              >
+                Chamar no WhatsApp
+              </a>
+            ) : null}
+          </section>
+        ) : showPixManual ? (
+          <section className={goldPanel}>
+            <h2 className="font-display text-heading font-semibold text-ink-950">
+              Como pagar
+            </h2>
+            <p className="mt-2 text-[15px] leading-7 text-ink-800">
+              Faça um Pix de{" "}
+              <strong className="font-medium whitespace-nowrap text-ink-900">
+                <Money cents={order.totalCents} />
+              </strong>{" "}
+              para a chave abaixo.
+              {order.paymentDueAt ? (
+                <>
+                  {" "}
+                  Reserva válida até{" "}
+                  <strong className="font-medium whitespace-nowrap text-ink-900">
+                    {formatDueAt(order.paymentDueAt)}
+                  </strong>
+                  .
+                </>
+              ) : null}
+            </p>
+            <div className="mt-4">
+              <CopyCode code={pixKey} />
+            </div>
+            <p className="mt-4 text-sm leading-relaxed text-ink-700">
+              Depois de fazer o Pix,{" "}
+              {whatsappLink ? (
+                <a
+                  href={whatsappLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={whatsappLinkClasses}
+                >
+                  avise a gente no WhatsApp
+                </a>
+              ) : (
+                "avise a gente no WhatsApp"
+              )}{" "}
+              — a confirmação é manual e o pedido aparece como pago aqui em
+              seguida.
+            </p>
+          </section>
+        ) : mpEnabled ? (
+          <section className={goldPanel}>
+            <h2 className="font-display text-heading font-semibold text-ink-950">
+              Como pagar
+            </h2>
+            <p className="mt-2 text-[15px] leading-7 text-ink-800">
+              Pague com segurança pelo Mercado Pago.
+              {order.paymentDueAt ? (
+                <>
+                  {" "}
+                  Reserva válida até{" "}
+                  <strong className="font-medium whitespace-nowrap text-ink-900">
+                    {formatDueAt(order.paymentDueAt)}
+                  </strong>
+                  .
+                </>
+              ) : null}
             </p>
             {mpUnavailable ? (
               <p
@@ -245,11 +335,16 @@ export default async function OrderPage({
             </h2>
             <p className="mt-2 text-[15px] leading-7 text-ink-800">
               Vamos te chamar no WhatsApp para combinar o pagamento via Pix.
-              Reserva válida até{" "}
-              <strong className="font-medium whitespace-nowrap text-ink-900">
-                {formatDueAt(order.paymentDueAt)}
-              </strong>
-              .
+              {order.paymentDueAt ? (
+                <>
+                  {" "}
+                  Reserva válida até{" "}
+                  <strong className="font-medium whitespace-nowrap text-ink-900">
+                    {formatDueAt(order.paymentDueAt)}
+                  </strong>
+                  .
+                </>
+              ) : null}
             </p>
             {whatsappLink ? (
               <a

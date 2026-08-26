@@ -5,6 +5,7 @@ import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
+import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/core/orders/payment-methods";
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
 import { toE164BR } from "@/lib/phone";
@@ -50,8 +51,10 @@ async function writeAudit(
   });
 }
 
-export const PAYMENT_METHODS = ["pix", "credit_card", "boleto"] as const;
-export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+// Fonte única no core: o dono edita taxa de TODOS os métodos (inclusive
+// pix_manual e cash, com taxa zero por padrão).
+export const PAYMENT_METHODS = ALL_PAYMENT_METHODS;
+export type { PaymentMethod };
 
 const ROUNDING_MODES = ["none", "to_90", "to_99", "to_50", "integer"] as const;
 const ROUNDING_DIRECTIONS = ["up", "nearest"] as const;
@@ -466,6 +469,15 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .string()
     .trim()
     .max(2000, "As instruções extras devem ter no máximo 2000 caracteres."),
+  /**
+   * Chave Pix da LOJA para o Pix manual (plano B do robô quando o link de
+   * pagamento falha). Vazia = recurso desligado — a ferramenta
+   * enviar_chave_pix responde indisponível.
+   */
+  store_pix_key: z
+    .string()
+    .trim()
+    .max(140, "A chave Pix deve ter no máximo 140 caracteres."),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);
