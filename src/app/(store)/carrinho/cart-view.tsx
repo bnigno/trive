@@ -13,7 +13,9 @@ import {
 } from "react";
 
 import { useCart, type CartLine } from "@/components/store/cart/cart-context";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/store/empty-state";
+import { btnPrimary, eyebrow, inputBase } from "@/components/store/styles";
+import { cx } from "@/components/ui/cx";
 import { Money } from "@/components/ui/money";
 import type { ShippingQuote } from "@/services/store-catalog";
 
@@ -222,9 +224,9 @@ export function CartView() {
           aria-label="Carregando sua sacola"
           className="animate-pulse space-y-4"
         >
-          <div className="h-8 w-40 rounded bg-zinc-200 dark:bg-zinc-800" />
-          <div className="h-28 rounded-2xl bg-zinc-200 dark:bg-zinc-800" />
-          <div className="h-28 rounded-2xl bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-8 w-40 rounded-(--radius-hair) bg-ivory-200/80" />
+          <div className="h-28 rounded-(--radius-hair) bg-ivory-200/80" />
+          <div className="h-28 rounded-(--radius-hair) bg-ivory-200/80" />
         </div>
       </div>
     );
@@ -233,17 +235,14 @@ export function CartView() {
   if (items.length === 0) {
     return (
       <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">
-        <h1 className="mb-6 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+        <h1 className="mb-6 font-display text-title text-ink-900">
           Sua sacola
         </h1>
         <EmptyState
           title="Sua sacola está vazia"
           hint="Explore a loja e adicione o que você amar."
           action={
-            <Link
-              href="/produtos"
-              className="inline-flex items-center justify-center rounded-full bg-amber-700 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
-            >
+            <Link href="/produtos" className={btnPrimary}>
               Ver produtos
             </Link>
           }
@@ -254,21 +253,18 @@ export function CartView() {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+      <h1 className="mb-6 font-display text-title text-ink-900">
         Sua sacola{" "}
-        <span className="text-base font-normal text-zinc-500 dark:text-zinc-400">
+        <span className="font-store text-base text-ink-500">
           ({count} {count === 1 ? "item" : "itens"})
         </span>
       </h1>
 
       <div className="grid gap-8 lg:grid-cols-[1fr_22rem] lg:items-start">
-        {/* Itens */}
-        <ul className="space-y-3">
+        {/* Itens: linhas hairline (sem cards) */}
+        <ul className="divide-y divide-ivory-300 border-y border-ivory-300">
           {items.map((line) => (
-            <li
-              key={line.variantId}
-              className="flex gap-4 rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
-            >
+            <li key={line.variantId} className="flex gap-4 py-5">
               {/* <img> simples com lazy: o otimizador de imagens da Vercel tem
                   limites no plano gratuito — evitamos next/image de propósito. */}
               {line.imageUrl ? (
@@ -276,14 +272,14 @@ export function CartView() {
                   src={line.imageUrl}
                   alt={line.name}
                   loading="lazy"
-                  width={80}
-                  height={80}
-                  className="h-20 w-20 shrink-0 rounded-xl border border-zinc-100 object-cover dark:border-zinc-800"
+                  width={96}
+                  height={96}
+                  className="h-24 w-24 shrink-0 rounded-(--radius-soft) object-cover"
                 />
               ) : (
                 <div
                   aria-hidden="true"
-                  className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
+                  className="flex h-24 w-24 shrink-0 items-center justify-center rounded-(--radius-soft) bg-ivory-200 text-ink-300"
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -303,12 +299,12 @@ export function CartView() {
                   <div className="min-w-0">
                     <Link
                       href={`/produto/${line.slug}`}
-                      className="line-clamp-2 text-sm font-medium text-zinc-900 hover:text-amber-800 dark:text-zinc-100 dark:hover:text-amber-400"
+                      className="line-clamp-2 text-sm font-medium text-ink-900 transition-colors hover:text-gold-800"
                     >
                       {line.name}
                     </Link>
                     {line.attributesLabel ? (
-                      <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      <p className="mt-0.5 text-xs text-ink-500">
                         {line.attributesLabel}
                       </p>
                     ) : null}
@@ -317,7 +313,7 @@ export function CartView() {
                     type="button"
                     onClick={() => removeItem(line.variantId)}
                     aria-label={`Remover ${line.name} da sacola`}
-                    className="shrink-0 rounded-full p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400"
+                    className="shrink-0 p-1 text-ink-400 transition-colors hover:text-claret-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
                   >
                     <svg
                       aria-hidden="true"
@@ -335,18 +331,18 @@ export function CartView() {
 
                 <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
                   {/* Stepper de quantidade, limitado ao estoque disponível */}
-                  <div className="flex items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700">
+                  <div className="flex items-center gap-1 rounded-(--radius-hair) border border-ivory-400">
                     <button
                       type="button"
                       onClick={() => setQuantity(line.variantId, line.quantity - 1)}
                       aria-label={`Diminuir quantidade de ${line.name}`}
-                      className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      className="flex h-8 w-8 items-center justify-center rounded-(--radius-hair) text-ink-700 transition-colors hover:bg-ivory-200 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
                     >
                       −
                     </button>
                     <span
                       aria-label={`Quantidade: ${line.quantity}`}
-                      className="min-w-6 text-center text-sm font-medium text-zinc-900 tabular-nums dark:text-zinc-100"
+                      className="min-w-6 text-center text-sm font-medium text-ink-900 tabular-nums"
                     >
                       {line.quantity}
                     </span>
@@ -355,7 +351,7 @@ export function CartView() {
                       onClick={() => setQuantity(line.variantId, line.quantity + 1)}
                       disabled={line.quantity >= line.availableQty}
                       aria-label={`Aumentar quantidade de ${line.name}`}
-                      className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-600 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      className="flex h-8 w-8 items-center justify-center rounded-(--radius-hair) text-ink-700 transition-colors hover:bg-ivory-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
                     >
                       +
                     </button>
@@ -364,10 +360,10 @@ export function CartView() {
                   <div className="text-right">
                     <Money
                       cents={line.priceCents * line.quantity}
-                      className="text-base font-semibold text-amber-800 dark:text-amber-400"
+                      className="text-base font-medium text-ink-900"
                     />
                     {line.quantity > 1 ? (
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      <p className="text-xs text-ink-500">
                         <Money cents={line.priceCents} /> cada
                       </p>
                     ) : null}
@@ -375,7 +371,7 @@ export function CartView() {
                 </div>
 
                 {line.quantity >= line.availableQty ? (
-                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                  <p className="text-xs text-ink-500">
                     Só {line.availableQty} em estoque.
                   </p>
                 ) : null}
@@ -385,18 +381,15 @@ export function CartView() {
         </ul>
 
         {/* Frete + resumo */}
-        <div className="space-y-4">
+        <div className="space-y-4 lg:sticky lg:top-24">
           <section
             aria-labelledby="frete-title"
-            className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+            className="rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-5"
           >
-            <h2
-              id="frete-title"
-              className="text-sm font-semibold text-zinc-900 dark:text-zinc-100"
-            >
+            <h2 id="frete-title" className={eyebrow}>
               Calcular frete e prazo
             </h2>
-            <form onSubmit={handleQuoteSubmit} className="mt-3 flex gap-2">
+            <form onSubmit={handleQuoteSubmit} className="mt-3 flex items-end gap-3">
               <label htmlFor="cart-cep" className="sr-only">
                 CEP de entrega
               </label>
@@ -408,22 +401,22 @@ export function CartView() {
                 placeholder="00000-000"
                 value={cepInput}
                 onChange={(event) => setCepInput(formatCep(event.target.value))}
-                className="w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-amber-700 focus:ring-2 focus:ring-amber-700/25 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                className={cx(inputBase, "min-w-0")}
               />
               <button
                 type="submit"
                 disabled={pending}
-                className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                className="shrink-0 rounded-(--radius-hair) bg-ink-950 px-4 py-2 font-store text-xs font-medium uppercase tracking-[0.14em] text-ivory-50 transition-colors duration-300 ease-silk hover:bg-ink-800 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
               >
                 {pending ? "Calculando…" : "Calcular"}
               </button>
             </form>
-            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            <p className="mt-2 text-xs text-ink-500">
               <a
                 href="https://buscacepinter.correios.com.br/app/endereco/index.php"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="underline hover:text-amber-800 dark:hover:text-amber-400"
+                className="underline underline-offset-2 transition-colors hover:text-gold-800"
               >
                 Não sei meu CEP
               </a>
@@ -432,7 +425,7 @@ export function CartView() {
             {quote.status === "error" ? (
               <p
                 role="alert"
-                className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+                className="mt-3 rounded-(--radius-hair) border border-claret-600/30 bg-claret-50 px-3 py-2 text-sm text-claret-700"
               >
                 {quote.message}
               </p>
@@ -441,7 +434,7 @@ export function CartView() {
             {quote.status === "done" && quote.quotes.length === 0 ? (
               <div
                 role="alert"
-                className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                className="mt-3 rounded-(--radius-hair) border border-gold-600/40 bg-gold-500/8 px-3 py-2 text-sm text-ink-900"
               >
                 Ainda não entregamos para este CEP —{" "}
                 {quote.whatsappUrl ? (
@@ -468,10 +461,10 @@ export function CartView() {
                     <label
                       key={option.rateId}
                       className={[
-                        "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+                        "flex cursor-pointer items-center gap-3 rounded-(--radius-hair) border px-3 py-2.5 transition-colors",
                         selectedRateId === option.rateId
-                          ? "border-amber-700 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/40"
-                          : "border-zinc-200 hover:border-zinc-300 dark:border-zinc-700 dark:hover:border-zinc-600",
+                          ? "border-gold-600 bg-gold-500/8"
+                          : "border-ivory-300 hover:border-ivory-400",
                       ].join(" ")}
                     >
                       <input
@@ -480,25 +473,25 @@ export function CartView() {
                         value={option.rateId}
                         checked={selectedRateId === option.rateId}
                         onChange={() => setSelectedRateId(option.rateId)}
-                        className="h-4 w-4 accent-amber-700"
+                        className="h-4 w-4 accent-gold-600"
                       />
                       <span className="flex flex-1 items-baseline justify-between gap-2 text-sm">
                         <span className="min-w-0">
-                          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                          <span className="font-medium text-ink-900">
                             {option.name}
                           </span>{" "}
-                          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                          <span className="text-xs text-ink-500">
                             {deliveryLabel(option)}
                           </span>
                         </span>
                         {option.priceCents === 0 ? (
-                          <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                          <span className="font-medium text-laurel-700">
                             Grátis
                           </span>
                         ) : (
                           <Money
                             cents={option.priceCents}
-                            className="font-semibold text-zinc-900 dark:text-zinc-100"
+                            className="font-medium text-ink-900"
                           />
                         )}
                       </span>
@@ -511,28 +504,26 @@ export function CartView() {
 
           <section
             aria-label="Resumo do pedido"
-            className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+            className="rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-5"
           >
             {/* Cupom de desconto */}
-            <div className="mb-3 border-b border-zinc-200 pb-3 dark:border-zinc-700">
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                Cupom de desconto
-              </h2>
+            <div className="mb-4 border-b border-ivory-300 pb-4">
+              <h2 className={eyebrow}>Cupom de desconto</h2>
               {appliedCoupon ? (
                 <div className="mt-2 flex items-center justify-between gap-2 text-sm">
-                  <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                  <span className="font-medium text-laurel-700">
                     {appliedCoupon.code} aplicado
                   </span>
                   <button
                     type="button"
                     onClick={removeCoupon}
-                    className="text-xs text-zinc-500 underline hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400"
+                    className="text-xs text-ink-500 underline transition-colors hover:text-claret-600"
                   >
                     remover cupom
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleCouponSubmit} className="mt-2 flex gap-2">
+                <form onSubmit={handleCouponSubmit} className="mt-2 flex items-end gap-3">
                   <label htmlFor="cart-coupon" className="sr-only">
                     Código do cupom
                   </label>
@@ -545,12 +536,12 @@ export function CartView() {
                     onChange={(event) =>
                       setCouponInput(event.target.value.toUpperCase())
                     }
-                    className="w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm uppercase text-zinc-900 placeholder:normal-case placeholder:text-zinc-400 focus:border-amber-700 focus:ring-2 focus:ring-amber-700/25 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    className={cx(inputBase, "min-w-0 uppercase placeholder:normal-case")}
                   />
                   <button
                     type="submit"
                     disabled={couponPending || couponInput.trim() === ""}
-                    className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                    className="shrink-0 rounded-(--radius-hair) bg-ink-950 px-4 py-2 font-store text-xs font-medium uppercase tracking-[0.14em] text-ivory-50 transition-colors duration-300 ease-silk hover:bg-ink-800 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
                   >
                     {couponPending ? "Aplicando…" : "Aplicar"}
                   </button>
@@ -559,7 +550,7 @@ export function CartView() {
               {coupon.status === "error" ? (
                 <p
                   role="alert"
-                  className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+                  className="mt-2 rounded-(--radius-hair) border border-claret-600/30 bg-claret-50 px-3 py-2 text-sm text-claret-700"
                 >
                   {coupon.message}
                 </p>
@@ -567,14 +558,14 @@ export function CartView() {
             </div>
 
             <dl className="space-y-2 text-sm">
-              <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+              <div className="flex justify-between text-ink-700">
                 <dt>Subtotal</dt>
                 <dd>
                   <Money cents={subtotalCents} />
                 </dd>
               </div>
               {appliedCoupon ? (
-                <div className="flex justify-between font-medium text-emerald-700 dark:text-emerald-400">
+                <div className="flex justify-between font-medium text-laurel-700">
                   <dt>Desconto</dt>
                   <dd>
                     − <Money cents={appliedCoupon.discountCents} /> (
@@ -582,40 +573,32 @@ export function CartView() {
                   </dd>
                 </div>
               ) : null}
-              <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+              <div className="flex justify-between text-ink-700">
                 <dt>Frete</dt>
                 <dd>
                   {selectedQuote ? (
                     selectedQuote.priceCents === 0 ? (
-                      <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                      <span className="font-medium text-laurel-700">
                         Grátis
                       </span>
                     ) : (
                       <Money cents={selectedQuote.priceCents} />
                     )
                   ) : (
-                    <span className="text-zinc-400 dark:text-zinc-500">
-                      calcule acima
-                    </span>
+                    <span className="text-ink-400">calcule acima</span>
                   )}
                 </dd>
               </div>
-              <div className="flex justify-between border-t border-zinc-200 pt-2 text-base font-semibold text-zinc-900 dark:border-zinc-700 dark:text-zinc-100">
+              <div className="flex justify-between border-t border-ivory-300 pt-3 text-base font-semibold text-ink-900">
                 <dt>Total</dt>
                 <dd>
-                  <Money
-                    cents={totalCents}
-                    className="text-amber-800 dark:text-amber-400"
-                  />
+                  <Money cents={totalCents} className="text-ink-900" />
                 </dd>
               </div>
             </dl>
 
             {checkoutHref ? (
-              <Link
-                href={checkoutHref}
-                className="mt-4 flex w-full items-center justify-center rounded-full bg-amber-700 px-6 py-3.5 text-base font-semibold text-white transition-colors hover:bg-amber-800"
-              >
+              <Link href={checkoutHref} className={cx(btnPrimary, "mt-5 w-full")}>
                 Fechar pedido
               </Link>
             ) : (
@@ -623,11 +606,11 @@ export function CartView() {
                 <button
                   type="button"
                   disabled
-                  className="mt-4 flex w-full cursor-not-allowed items-center justify-center rounded-full bg-zinc-300 px-6 py-3.5 text-base font-semibold text-zinc-500 dark:bg-zinc-800"
+                  className="mt-5 inline-flex w-full cursor-not-allowed items-center justify-center rounded-(--radius-hair) bg-ivory-200 px-7 py-3.5 font-store text-sm font-medium uppercase tracking-[0.16em] text-ink-400"
                 >
                   Fechar pedido
                 </button>
-                <p className="mt-2 text-center text-xs text-zinc-500 dark:text-zinc-400">
+                <p className="mt-2 text-center text-xs text-ink-500">
                   Calcule o frete para continuar.
                 </p>
               </>
@@ -635,7 +618,7 @@ export function CartView() {
 
             <Link
               href="/produtos"
-              className="mt-3 block text-center text-sm text-zinc-600 underline hover:text-amber-800 dark:text-zinc-400 dark:hover:text-amber-400"
+              className="mt-4 block text-center text-sm text-ink-700 underline underline-offset-4 transition-colors hover:text-gold-800"
             >
               Continuar comprando
             </Link>

@@ -1,6 +1,7 @@
 // Linha do tempo visual do pedido na página pública /pedido/[token].
 // Server Component puro (sem interatividade). Para status cancelado/
 // reembolsado o componente não renderiza nada — a página mostra o banner.
+import { IconCheck } from "@/components/store/icons";
 import { cx } from "@/components/ui/cx";
 
 const STEPS = [
@@ -23,6 +24,24 @@ const CURRENT_STEP_BY_STATUS: Record<string, number> = {
 
 type StepState = "done" | "current" | "upcoming";
 
+/** Linha entre passos: trilho marfim; concluída ganha preenchimento dourado
+ *  que se desenha ao montar (scale-x, origem à esquerda). */
+function StepLine({ hidden, filled }: { hidden: boolean; filled: boolean }) {
+  return (
+    <div
+      aria-hidden
+      className={cx(
+        "relative h-px flex-1 overflow-hidden",
+        hidden ? "bg-transparent" : "bg-ivory-300",
+      )}
+    >
+      {!hidden && filled ? (
+        <span className="absolute inset-0 origin-left animate-step-fill bg-gold-500 [animation-duration:600ms] motion-reduce:animate-none" />
+      ) : null}
+    </div>
+  );
+}
+
 export function OrderStatusSteps({ status }: { status: string }) {
   const current = CURRENT_STEP_BY_STATUS[status];
   if (current === undefined) return null;
@@ -36,10 +55,7 @@ export function OrderStatusSteps({ status }: { status: string }) {
   };
 
   return (
-    <ol
-      className="flex items-start"
-      aria-label="Andamento do pedido"
-    >
+    <ol className="flex items-start" aria-label="Andamento do pedido">
       {STEPS.map((step, index) => {
         const state = stateOf(index);
         return (
@@ -49,53 +65,39 @@ export function OrderStatusSteps({ status }: { status: string }) {
             aria-current={state === "current" ? "step" : undefined}
           >
             <div className="flex w-full items-center">
-              {/* linha à esquerda do círculo */}
+              <StepLine hidden={index === 0} filled={state !== "upcoming"} />
               <div
                 aria-hidden
                 className={cx(
-                  "h-0.5 flex-1 rounded",
-                  index === 0
-                    ? "bg-transparent"
-                    : state === "upcoming"
-                      ? "bg-zinc-200 dark:bg-zinc-800"
-                      : "bg-amber-700 dark:bg-amber-600",
-                )}
-              />
-              <div
-                aria-hidden
-                className={cx(
-                  "flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-                  state === "done" &&
-                    "bg-amber-700 text-white dark:bg-amber-600 dark:text-zinc-950",
-                  state === "current" &&
-                    "bg-amber-700 text-white ring-4 ring-amber-200 dark:bg-amber-600 dark:text-zinc-950 dark:ring-amber-950",
+                  "relative flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-medium",
+                  state === "current" && "bg-ink-950 text-gold-300",
+                  state === "done" && "border border-gold-500 bg-ivory-50",
                   state === "upcoming" &&
-                    "border border-zinc-300 bg-white text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500",
+                    "border border-ivory-300 bg-ivory-50 text-ink-400",
                 )}
               >
-                {state === "done" ? "✓" : index + 1}
-              </div>
-              {/* linha à direita do círculo */}
-              <div
-                aria-hidden
-                className={cx(
-                  "h-0.5 flex-1 rounded",
-                  index === STEPS.length - 1
-                    ? "bg-transparent"
-                    : stateOf(index + 1) === "upcoming"
-                      ? "bg-zinc-200 dark:bg-zinc-800"
-                      : "bg-amber-700 dark:bg-amber-600",
+                {state === "current" ? (
+                  <span className="absolute inset-0 animate-step-halo rounded-full ring-4 ring-gold-500/25 motion-reduce:animate-none" />
+                ) : null}
+                {state === "done" ? (
+                  <IconCheck className="h-3.5 w-3.5 text-gold-700" />
+                ) : (
+                  index + 1
                 )}
+              </div>
+              <StepLine
+                hidden={index === STEPS.length - 1}
+                filled={stateOf(index + 1) !== "upcoming"}
               />
             </div>
             <span
               className={cx(
-                "mt-2 px-0.5 text-center text-[11px] leading-tight sm:text-xs",
+                "mt-2.5 px-0.5 text-center text-[11px] leading-tight tracking-[0.08em]",
                 state === "current"
-                  ? "font-semibold text-amber-800 dark:text-amber-400"
+                  ? "font-medium text-ink-900"
                   : state === "done"
-                    ? "font-medium text-zinc-700 dark:text-zinc-300"
-                    : "text-zinc-400 dark:text-zinc-500",
+                    ? "text-ink-700"
+                    : "text-ink-400",
               )}
             >
               {step.label}

@@ -24,3 +24,361 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
+
+/* ==========================================================================
+   Boutique Clara — design system da VITRINE (grupo (store)).
+   O @theme inline e o :root acima permanecem intocados: o admin depende deles.
+   ========================================================================== */
+
+@theme {
+  /* Paleta marfim / tinta / dourado / semânticos */
+  --color-ivory-50: #fdfcf9;
+  --color-ivory-100: #faf7f0;
+  --color-ivory-200: #f3eee2;
+  --color-ivory-300: #e7dfcc;
+  --color-ivory-400: #d9cdaf;
+
+  --color-ink-950: #171512;
+  --color-ink-900: #201d18;
+  --color-ink-800: #2c2822;
+  --color-ink-700: #453f35;
+  --color-ink-500: #6e6656;
+  --color-ink-400: #8c8371;
+  --color-ink-300: #aba28e;
+
+  --color-gold-300: #e6d3a3;
+  --color-gold-400: #d4b96a;
+  --color-gold-500: #c0a050;
+  --color-gold-600: #a8862f;
+  --color-gold-700: #8a6d24;
+  --color-gold-800: #6f561b;
+
+  --color-laurel-600: #3e6b4f;
+  --color-laurel-700: #33573f;
+
+  --color-claret-50: #faf0ee;
+  --color-claret-600: #963b31;
+  --color-claret-700: #7c3129;
+
+  /* Tipografia (fontes declaradas em src/app/(store)/layout.tsx) */
+  --font-display: var(--font-cormorant), Georgia, "Times New Roman", serif;
+  --font-store: var(--font-jost), system-ui, -apple-system, sans-serif;
+
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1.5;
+  --text-eyebrow--letter-spacing: 0.3em;
+  --text-display: clamp(2.75rem, 2rem + 3.75vw, 4.25rem);
+  --text-display--line-height: 1.05;
+  --text-title: clamp(1.875rem, 1.5rem + 1.9vw, 2.625rem);
+  --text-title--line-height: 1.15;
+  --text-heading: 1.375rem;
+  --text-heading--line-height: 1.3;
+
+  /* Raios (boutique = quase reto) */
+  --radius-hair: 2px;
+  --radius-soft: 6px;
+
+  /* Movimento */
+  --ease-silk: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-curtain: cubic-bezier(0.76, 0, 0.24, 1);
+  --dur-fast: 150ms;
+  --dur-base: 300ms;
+  --dur-slow: 700ms;
+  --dur-veil: 1500ms;
+
+  --animate-gallery-in: gallery-in var(--dur-slow) var(--ease-silk);
+  --animate-cart-bump: cart-bump 320ms var(--ease-silk);
+  --animate-step-fill: step-fill var(--dur-slow) var(--ease-silk) both;
+  --animate-step-halo: step-halo 2000ms ease-in-out infinite;
+}
+
+/* Vitrine é claro único: controles nativos claros mesmo com o SO em dark. */
+[data-store] {
+  color-scheme: light;
+}
+
+[data-store] ::selection {
+  background: var(--color-gold-300);
+  color: var(--color-ink-950);
+}
+
+[data-store] :focus-visible {
+  outline: 2px solid var(--color-gold-600);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Keyframes compartilhados da vitrine (referenciados pelos --animate-* acima)
+   -------------------------------------------------------------------------- */
+
+@keyframes gallery-in {
+  from {
+    opacity: 0;
+    transform: scale(1.015);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes cart-bump {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes step-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes step-halo {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   <Reveal> — visível por padrão (SSR); o estado "pending" só é aplicado via
+   JS a elementos abaixo do viewport, e sai ao entrar na tela.
+   -------------------------------------------------------------------------- */
+
+.reveal {
+  transition:
+    opacity var(--dur-slow) var(--ease-silk),
+    transform var(--dur-slow) var(--ease-silk);
+}
+
+.reveal[data-reveal="pending"] {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal[data-reveal="pending"] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   O Véu da maison — abertura da vitrine, 100% CSS (roda antes do JS hidratar).
+   Timeline (1500ms): monograma 0–350 → anel 200–700 → costura 700–1000 →
+   cortina em 2 painéis 1000–1500. O keyframe final do contêiner seta
+   visibility: hidden com fill both — o véu morre até sem JS.
+   -------------------------------------------------------------------------- */
+
+.veil {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  cursor: pointer;
+  animation: veil-done var(--dur-veil) linear both;
+}
+
+@keyframes veil-done {
+  from {
+    visibility: visible;
+  }
+  to {
+    visibility: hidden;
+  }
+}
+
+.veil-inner {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.veil-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50.5%;
+  background: var(--color-ivory-100);
+}
+
+.veil-panel-top {
+  top: 0;
+  animation: veil-panel-up 500ms var(--ease-curtain) 1000ms both;
+}
+
+.veil-panel-bottom {
+  bottom: 0;
+  animation: veil-panel-down 500ms var(--ease-curtain) 1000ms both;
+}
+
+@keyframes veil-panel-up {
+  to {
+    transform: translateY(-101%);
+  }
+}
+
+@keyframes veil-panel-down {
+  to {
+    transform: translateY(101%);
+  }
+}
+
+/* Costura dourada de 1px no eixo da cortina */
+.veil-seam {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(320px, 64vw);
+  height: 1px;
+  background: var(--color-gold-500);
+  transform: translate(-50%, -50%) scaleX(0);
+  animation:
+    veil-seam-in 300ms var(--ease-silk) 700ms both,
+    veil-center-out 200ms ease-out 1000ms both;
+}
+
+@keyframes veil-seam-in {
+  from {
+    transform: translate(-50%, -50%) scaleX(0);
+  }
+  to {
+    transform: translate(-50%, -50%) scaleX(1);
+  }
+}
+
+.veil-center {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.75rem;
+  animation: veil-center-out 200ms ease-out 1000ms both;
+}
+
+@keyframes veil-center-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.veil-mark {
+  animation: veil-mark-in 350ms var(--ease-silk) both;
+}
+
+@keyframes veil-mark-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Anel se desenhando: circunferência do r=26 ≈ 163.4 */
+.veil-ring {
+  stroke-dasharray: 163.5;
+  stroke-dashoffset: 163.5;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  animation: veil-ring-draw 500ms var(--ease-silk) 200ms both;
+}
+
+@keyframes veil-ring-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.veil-hint {
+  animation: veil-hint-in 400ms ease 600ms both;
+}
+
+@keyframes veil-hint-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.9;
+  }
+}
+
+/* Pular (clique/tecla): fade rápido; o JS desmonta no animationend. */
+.veil-skip,
+.veil-skip * {
+  animation: none !important;
+}
+
+.veil-skip {
+  animation: veil-skip-out var(--dur-fast) ease both !important;
+}
+
+@keyframes veil-skip-out {
+  from {
+    opacity: 1;
+    visibility: visible;
+  }
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* Reduced motion: sem movimento espacial — monograma estático + fade do véu. */
+@media (prefers-reduced-motion: reduce) {
+  .veil {
+    animation: veil-reduced 1100ms ease both;
+  }
+
+  .veil-panel-top,
+  .veil-panel-bottom,
+  .veil-center,
+  .veil-mark,
+  .veil-hint {
+    animation: none;
+  }
+
+  .veil-seam {
+    display: none;
+  }
+
+  .veil-ring {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes veil-reduced {
+  0% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+  }
+  95% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}

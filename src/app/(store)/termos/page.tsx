@@ -24,11 +24,12 @@ function settingText(map: Record<string, unknown>, key: string): string {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="mt-10">
-      <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+    <section className="mt-12">
+      <div aria-hidden className="h-px w-10 bg-gold-500" />
+      <h2 className="mt-4 font-display text-heading font-semibold text-ink-900">
         {title}
       </h2>
-      <div className="mt-3 space-y-3 text-base leading-relaxed text-zinc-700 dark:text-zinc-300">
+      <div className="mt-3 space-y-3 text-[15px] leading-7 text-ink-700">
         {children}
       </div>
     </section>
@@ -52,11 +53,11 @@ export default async function TermsPage() {
   const whatsapp = settingText(s, "store_whatsapp");
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
-      <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+    <article className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
+      <h1 className="font-display text-title font-semibold tracking-tight text-ink-950">
         Termos de uso
       </h1>
-      <p className="mt-4 text-lg leading-relaxed text-zinc-600 dark:text-zinc-400">
+      <p className="mt-4 font-display text-xl leading-relaxed text-ink-700 italic">
         Estas são as condições de compra da {storeName}, escritas para serem
         entendidas — não para confundir. Ao fazer um pedido, você concorda com o
         que está descrito aqui.
@@ -137,7 +138,7 @@ export default async function TermsPage() {
           detalhes e o passo a passo estão na nossa página de{" "}
           <a
             href="/trocas-e-devolucoes"
-            className="font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300"
+            className="font-medium text-gold-800 underline underline-offset-4"
           >
             trocas e devoluções
           </a>
@@ -167,6 +168,6 @@ export default async function TermsPage() {
           sempre a que vale.
         </p>
       </Section>
-    </main>
+    </article>
   );
 }

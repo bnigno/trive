@@ -6,7 +6,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { Monogram } from "@/components/store/brand/monogram";
+import { IconCheck, IconParcel } from "@/components/store/icons";
 import { OrderStatusSteps } from "@/components/store/order-status-steps";
+import { Ornament } from "@/components/store/ornament";
+import { btnPrimary, eyebrow } from "@/components/store/styles";
 import { Money } from "@/components/ui/money";
 import { getDb } from "@/db/client";
 import { getPublicOrder } from "@/services/store-orders";
@@ -52,6 +56,12 @@ function waMeLink(rawPhone: unknown, orderNumber: number): string | null {
   return `https://wa.me/${digits}?text=${text}`;
 }
 
+const goldPanel =
+  "mb-8 rounded-(--radius-hair) border border-gold-600/50 bg-gold-500/8 px-5 py-6";
+
+const whatsappLinkClasses =
+  "font-medium text-gold-800 underline decoration-gold-500/50 underline-offset-4 transition-colors duration-300 hover:decoration-gold-700";
+
 export default async function OrderPage({
   params,
   searchParams,
@@ -95,29 +105,30 @@ export default async function OrderPage({
     : null;
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-8 sm:py-12">
+    <div className="mx-auto w-full max-w-2xl px-4 py-8 sm:py-12">
       {novo === "1" && !isCanceled ? (
         <div
           role="status"
-          className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-900 dark:bg-amber-950/40"
+          className="mb-8 flex items-start gap-4 rounded-(--radius-hair) border border-gold-600/40 bg-ivory-50 px-5 py-4"
         >
-          <p className="text-lg font-semibold text-amber-900 dark:text-amber-300">
-            Pedido recebido! 🎉
-          </p>
-          <p className="mt-1 text-sm leading-relaxed text-amber-800 dark:text-amber-400">
-            Obrigado pela sua compra. Acompanhe tudo por esta página.
-          </p>
+          <Monogram size={34} className="mt-0.5" />
+          <div>
+            <p className="font-display text-heading font-semibold text-ink-950">
+              Pedido recebido
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-ink-700">
+              Obrigado pela sua compra. Acompanhe tudo por esta página.
+            </p>
+          </div>
         </div>
       ) : null}
 
-      <header className="mb-8">
-        <p className="text-sm font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Seu pedido
-        </p>
-        <h1 className="mt-1 text-4xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+      <header className="mb-10">
+        <p className={eyebrow}>Seu pedido</p>
+        <h1 className="mt-2 font-display text-5xl font-semibold tracking-tight text-ink-950">
           #{order.orderNumber}
         </h1>
-        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="mt-3 text-sm text-ink-500">
           Feito em {formatDueAt(order.createdAt)}
         </p>
       </header>
@@ -125,35 +136,32 @@ export default async function OrderPage({
       {isCanceled ? (
         <div
           role="alert"
-          className="mb-8 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 dark:border-red-900 dark:bg-red-950/40"
+          className="mb-8 rounded-(--radius-hair) border border-claret-600/30 bg-claret-50 px-5 py-5"
         >
-          <p className="text-lg font-semibold text-red-800 dark:text-red-300">
+          <p className="font-display text-heading font-semibold text-claret-700">
             {order.status === "refunded"
               ? "Este pedido foi reembolsado"
               : "Este pedido foi cancelado"}
           </p>
           {reservationExpired ? (
-            <p className="mt-2 text-sm leading-relaxed text-red-700 dark:text-red-400">
+            <p className="mt-2 text-sm leading-relaxed text-claret-700">
               A reserva dos produtos expirou porque o pagamento não foi
               confirmado dentro do prazo. Não se preocupe: nada foi cobrado, e
               você pode refazer o pedido quando quiser — é rapidinho.
             </p>
           ) : order.canceledReason ? (
-            <p className="mt-2 text-sm leading-relaxed text-red-700 dark:text-red-400">
+            <p className="mt-2 text-sm leading-relaxed text-claret-700">
               Motivo: {order.canceledReason}. Se ficou alguma dúvida, fale com a
               gente — teremos prazer em ajudar.
             </p>
           ) : (
-            <p className="mt-2 text-sm leading-relaxed text-red-700 dark:text-red-400">
+            <p className="mt-2 text-sm leading-relaxed text-claret-700">
               Se ficou alguma dúvida, fale com a gente — teremos prazer em
               ajudar.
             </p>
           )}
           {reservationExpired ? (
-            <a
-              href="/produtos"
-              className="mt-4 inline-block rounded-full bg-amber-700 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
-            >
+            <a href="/produtos" className={`${btnPrimary} mt-5`}>
               Refazer meu pedido
             </a>
           ) : null}
@@ -161,7 +169,7 @@ export default async function OrderPage({
       ) : (
         <section
           aria-label="Andamento do pedido"
-          className="mb-8 rounded-2xl border border-zinc-200 bg-white px-4 py-6 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900"
+          className="mb-8 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-4 py-6 sm:px-6"
         >
           <OrderStatusSteps status={order.status} />
         </section>
@@ -170,12 +178,13 @@ export default async function OrderPage({
       {mpApproved ? (
         <div
           role="status"
-          className="mb-8 rounded-2xl border-2 border-emerald-300 bg-emerald-50 px-5 py-5 dark:border-emerald-800 dark:bg-emerald-950/40"
+          className="mb-8 rounded-(--radius-hair) border border-laurel-600/40 bg-ivory-50 px-5 py-5"
         >
-          <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-300">
+          <p className="flex items-center gap-2.5 font-display text-heading font-semibold text-laurel-700">
+            <IconCheck className="h-5 w-5 shrink-0 text-laurel-600" />
             Pagamento recebido! Processando confirmação…
           </p>
-          <p className="mt-1 text-sm leading-relaxed text-emerald-800 dark:text-emerald-400">
+          <p className="mt-2 text-sm leading-relaxed text-ink-700">
             O Mercado Pago aprovou o seu pagamento. Em instantes o pedido
             aparece como pago aqui — pode atualizar a página para conferir.
           </p>
@@ -184,13 +193,13 @@ export default async function OrderPage({
 
       {isPendingPayment && !mpApproved && order.paymentDueAt ? (
         mpEnabled ? (
-          <section className="mb-8 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-5 dark:border-amber-800 dark:bg-amber-950/40">
-            <h2 className="text-lg font-semibold text-amber-900 dark:text-amber-300">
+          <section className={goldPanel}>
+            <h2 className="font-display text-heading font-semibold text-ink-950">
               Como pagar
             </h2>
-            <p className="mt-2 text-base leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+            <p className="mt-2 text-[15px] leading-7 text-ink-800">
               Pague com segurança pelo Mercado Pago. Reserva válida até{" "}
-              <strong className="whitespace-nowrap">
+              <strong className="font-medium whitespace-nowrap text-ink-900">
                 {formatDueAt(order.paymentDueAt)}
               </strong>
               .
@@ -198,28 +207,28 @@ export default async function OrderPage({
             {mpUnavailable ? (
               <p
                 role="alert"
-                className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200"
+                className="mt-3 rounded-(--radius-soft) border border-claret-600/40 bg-claret-50 px-3 py-2 text-sm text-claret-700"
               >
                 Não foi possível iniciar o pagamento online agora. Tente de
                 novo em instantes — ou combine pelo WhatsApp aqui embaixo.
               </p>
             ) : null}
-            <form action={payNowAction.bind(null, token)} className="mt-4">
+            <form action={payNowAction.bind(null, token)} className="mt-5">
               <button
                 type="submit"
-                className="flex w-full items-center justify-center rounded-full bg-amber-700 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-amber-800 sm:w-auto sm:min-w-72"
+                className={`${btnPrimary} w-full sm:w-auto sm:min-w-72`}
               >
                 Pagar agora (Pix ou cartão)
               </button>
             </form>
-            <p className="mt-4 text-sm text-amber-900/90 dark:text-amber-200/90">
+            <p className="mt-5 text-sm text-ink-700">
               Prefere combinar pelo WhatsApp?{" "}
               {whatsappLink ? (
                 <a
                   href={whatsappLink}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-semibold underline"
+                  className={whatsappLinkClasses}
                 >
                   Fale com a gente
                 </a>
@@ -230,14 +239,14 @@ export default async function OrderPage({
             </p>
           </section>
         ) : (
-          <section className="mb-8 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-5 dark:border-amber-800 dark:bg-amber-950/40">
-            <h2 className="text-lg font-semibold text-amber-900 dark:text-amber-300">
+          <section className={goldPanel}>
+            <h2 className="font-display text-heading font-semibold text-ink-950">
               Como pagar
             </h2>
-            <p className="mt-2 text-base leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+            <p className="mt-2 text-[15px] leading-7 text-ink-800">
               Vamos te chamar no WhatsApp para combinar o pagamento via Pix.
               Reserva válida até{" "}
-              <strong className="whitespace-nowrap">
+              <strong className="font-medium whitespace-nowrap text-ink-900">
                 {formatDueAt(order.paymentDueAt)}
               </strong>
               .
@@ -247,7 +256,7 @@ export default async function OrderPage({
                 href={whatsappLink}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-block rounded-full bg-amber-700 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
+                className={`${btnPrimary} mt-5`}
               >
                 Chamar no WhatsApp agora
               </a>
@@ -258,66 +267,63 @@ export default async function OrderPage({
 
       {(order.status === "shipped" || order.status === "delivered") &&
       order.trackingCode ? (
-        <section className="mb-8 rounded-2xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+        <section className="mb-8 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-5 py-5">
+          <h2 className="flex items-center gap-2.5 font-display text-heading font-semibold text-ink-950">
+            <IconParcel className="h-5 w-5 shrink-0 text-gold-700" />
             {order.status === "delivered"
               ? "Rastreamento da entrega"
-              : "Seu pedido está a caminho 📦"}
+              : "Seu pedido está a caminho"}
           </h2>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          <p className="mt-2 text-sm leading-relaxed text-ink-700">
             Use o código abaixo para rastrear a entrega no site dos Correios ou
             da transportadora.
           </p>
-          <div className="mt-3">
+          <div className="mt-4">
             <CopyCode code={order.trackingCode} />
           </div>
         </section>
       ) : null}
 
-      <section className="mb-8 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 className="border-b border-zinc-200 px-5 py-4 text-lg font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+      <section className="mb-10 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50">
+        <h2 className="border-b border-ivory-300 px-5 py-4 font-display text-heading font-semibold text-ink-950">
           Itens do pedido
         </h2>
-        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        <ul className="divide-y divide-ivory-200">
           {order.items.map((item) => (
             <li
               key={item.sku}
               className="flex items-start justify-between gap-4 px-5 py-4"
             >
               <div className="min-w-0">
-                <p className="font-medium text-zinc-900 dark:text-zinc-100">
-                  {item.name}
-                </p>
-                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                  Cód. {item.sku}
-                </p>
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                <p className="font-medium text-ink-900">{item.name}</p>
+                <p className="mt-0.5 text-xs text-ink-500">Cód. {item.sku}</p>
+                <p className="mt-1 text-sm text-ink-700">
                   {item.quantity} × <Money cents={item.unitPriceCents} />
                 </p>
               </div>
               <Money
                 cents={item.totalCents}
-                className="shrink-0 font-semibold text-zinc-900 dark:text-zinc-100"
+                className="shrink-0 font-medium text-ink-900"
               />
             </li>
           ))}
         </ul>
-        <dl className="space-y-2 border-t border-zinc-200 px-5 py-4 text-sm dark:border-zinc-800">
-          <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+        <dl className="space-y-2 border-t border-ivory-300 px-5 py-4 text-sm">
+          <div className="flex justify-between text-ink-700">
             <dt>Subtotal</dt>
             <dd>
               <Money cents={order.subtotalCents} />
             </dd>
           </div>
           {order.discountCents > 0 ? (
-            <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+            <div className="flex justify-between text-ink-700">
               <dt>Desconto</dt>
               <dd>
                 − <Money cents={order.discountCents} />
               </dd>
             </div>
           ) : null}
-          <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+          <div className="flex justify-between text-ink-700">
             <dt>Frete</dt>
             <dd>
               {order.shippingCents === 0 ? (
@@ -327,21 +333,24 @@ export default async function OrderPage({
               )}
             </dd>
           </div>
-          <div className="flex justify-between border-t border-zinc-200 pt-3 text-base font-bold dark:border-zinc-800">
-            <dt className="text-zinc-900 dark:text-zinc-100">Total</dt>
+          <div className="flex justify-between border-t border-ivory-300 pt-3 text-base">
+            <dt className="font-medium text-ink-900">Total</dt>
             <dd>
               <Money
                 cents={order.totalCents}
-                className="text-amber-800 dark:text-amber-400"
+                className="font-semibold text-ink-900"
               />
             </dd>
           </div>
         </dl>
       </section>
 
-      <footer className="pb-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
-        Guarde este link para acompanhar seu pedido. 💛
+      <footer className="flex flex-col items-center gap-4 pb-4 text-center">
+        <Ornament className="text-gold-500" />
+        <p className="text-sm text-ink-500">
+          Guarde este link para acompanhar seu pedido.
+        </p>
       </footer>
-    </main>
+    </div>
   );
 }

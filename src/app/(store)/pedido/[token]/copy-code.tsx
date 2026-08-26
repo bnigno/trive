@@ -4,6 +4,13 @@
 // código, que o cliente cola no site da transportadora/Correios.
 import { useState } from "react";
 
+import { IconCheck } from "@/components/store/icons";
+
+// Variante compacta do btnOutline (styles.ts) com hover preenchido em dourado
+// — declarada aqui para não conflitar com o padding/hover da receita original.
+const copyButton =
+  "inline-flex items-center justify-center gap-2 rounded-(--radius-hair) border border-ink-900/80 px-5 py-2.5 font-store text-xs font-medium uppercase tracking-[0.16em] text-ink-900 transition-colors duration-300 ease-silk hover:border-gold-600 hover:bg-gold-600 hover:text-ivory-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600";
+
 export function CopyCode({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -19,15 +26,18 @@ export function CopyCode({ code }: { code: string }) {
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <code className="select-all rounded-lg bg-zinc-100 px-3 py-2 font-mono text-base tracking-wide text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+      <code className="select-all rounded-(--radius-soft) bg-ivory-200 px-3 py-2 font-mono text-base tracking-wide text-ink-900">
         {code}
       </code>
-      <button
-        type="button"
-        onClick={copy}
-        className="rounded-full border border-amber-700 px-4 py-2 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-700 hover:text-white dark:border-amber-600 dark:text-amber-400 dark:hover:bg-amber-600 dark:hover:text-zinc-950"
-      >
-        {copied ? "Copiado ✓" : "Copiar código"}
+      <button type="button" onClick={copy} className={copyButton}>
+        {copied ? (
+          <>
+            <IconCheck className="h-4 w-4" />
+            Copiado
+          </>
+        ) : (
+          "Copiar código"
+        )}
       </button>
     </div>
   );

@@ -86,25 +86,25 @@ export function VariantPicker({
     <div className="flex flex-col gap-5">
       {matched ? (
         <div className="flex items-baseline gap-3">
-          <p className="text-3xl font-semibold text-amber-800 dark:text-amber-400">
+          <p className="font-store text-2xl text-ink-900">
             {formatCentsBRL(matched.priceCents)}
           </p>
           {matched.compareAtPriceCents != null &&
           matched.compareAtPriceCents > matched.priceCents ? (
-            <p className="text-lg text-zinc-400 line-through dark:text-zinc-500">
+            <p className="font-store text-base text-ink-400 line-through">
               {formatCentsBRL(matched.compareAtPriceCents)}
             </p>
           ) : null}
         </div>
       ) : (
-        <p className="text-lg text-zinc-500 dark:text-zinc-400">
+        <p className="font-store text-lg text-ink-500">
           Combinação indisponível
         </p>
       )}
 
       {axes.map((axis) => (
         <fieldset key={axis}>
-          <legend className="mb-2 text-sm font-medium capitalize text-zinc-700 dark:text-zinc-300">
+          <legend className="mb-2.5 font-store text-eyebrow font-medium uppercase text-ink-500">
             {axis}
           </legend>
           <div className="flex flex-wrap gap-2">
@@ -121,12 +121,12 @@ export function VariantPicker({
                     setSelected((prev) => ({ ...prev, [axis]: value }))
                   }
                   className={cx(
-                    "rounded-full border px-4 py-1.5 text-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700",
+                    "rounded-(--radius-hair) border px-4 py-2 font-store text-sm transition-colors duration-300 ease-silk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
                     isSelected
-                      ? "border-amber-700 bg-amber-700 text-white"
+                      ? "border-ink-950 bg-ink-950 text-ivory-50"
                       : enabled
-                        ? "border-zinc-300 bg-white text-zinc-700 hover:border-amber-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                        : "cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-300 line-through dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-600",
+                        ? "border-ivory-400 bg-ivory-50 text-ink-700 hover:border-ink-900"
+                        : "cursor-not-allowed border-ivory-300 bg-transparent text-ink-300 line-through",
                   )}
                 >
                   {value}
@@ -138,12 +138,12 @@ export function VariantPicker({
       ))}
 
       {matched && soldOut ? (
-        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+        <p className="font-store text-sm font-medium text-ink-500">
           Esgotado — esta variação está sem estoque no momento.
         </p>
       ) : null}
       {matched && lowStock ? (
-        <p className="text-sm font-medium text-amber-800 dark:text-amber-400">
+        <p className="font-store text-sm font-medium text-gold-800">
           {matched.availableQty === 1
             ? "Última unidade!"
             : `Últimas ${matched.availableQty} unidades!`}

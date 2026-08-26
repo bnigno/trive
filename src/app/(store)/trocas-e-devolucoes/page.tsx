@@ -23,11 +23,12 @@ function settingText(map: Record<string, unknown>, key: string): string {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="mt-10">
-      <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+    <section className="mt-12">
+      <div aria-hidden className="h-px w-10 bg-gold-500" />
+      <h2 className="mt-4 font-display text-heading font-semibold text-ink-900">
         {title}
       </h2>
-      <div className="mt-3 space-y-3 text-base leading-relaxed text-zinc-700 dark:text-zinc-300">
+      <div className="mt-3 space-y-3 text-[15px] leading-7 text-ink-700">
         {children}
       </div>
     </section>
@@ -47,11 +48,11 @@ export default async function ReturnsPage() {
   const whatsapp = settingText(s, "store_whatsapp");
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
-      <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+    <article className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
+      <h1 className="font-display text-title font-semibold tracking-tight text-ink-950">
         Trocas e devoluções
       </h1>
-      <p className="mt-4 text-lg leading-relaxed text-zinc-600 dark:text-zinc-400">
+      <p className="mt-4 font-display text-xl leading-relaxed text-ink-700 italic">
         Queremos que você fique feliz com a sua compra na {storeName}. Se algo
         não deu certo, aqui está tudo o que você precisa saber — de forma
         simples e sem pegadinhas.
@@ -133,6 +134,6 @@ export default async function ReturnsPage() {
           <li>Guarde o link de acompanhamento do seu pedido.</li>
         </ul>
       </Section>
-    </main>
+    </article>
   );
 }

@@ -1,0 +1,11 @@
+<!-- Slot do logo real da maison. Hoje: monograma provisório (mesma arte de
+     src/components/store/brand/monogram.tsx e src/app/icon.svg).
+     Quando o dono enviar o logo: sobrescrever este arquivo e rodar
+     node scripts/generate-brand-assets.mjs para regenerar os PNGs. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <circle cx="32" cy="32" r="31" fill="#171512"/>
+  <circle cx="32" cy="32" r="26" fill="none" stroke="#C0A050" stroke-width="1"/>
+  <path d="M 20.2 24.6 L 43.8 24.6 L 43.8 30.2 C 43.3 27.9 42.4 27.1 39.8 27 L 34.3 27 L 34.3 42.4 C 34.3 44.3 35.2 44.8 38.1 45 L 38.1 45.9 L 25.9 45.9 L 25.9 45 C 28.8 44.8 29.7 44.3 29.7 42.4 L 29.7 27 L 24.2 27 C 21.6 27.1 20.7 27.9 20.2 30.2 Z" fill="#D4B96A"/>
+  <circle cx="28.8" cy="20.8" r="1.5" fill="#D4B96A"/>
+  <circle cx="35.2" cy="20.8" r="1.5" fill="#D4B96A"/>
+</svg>

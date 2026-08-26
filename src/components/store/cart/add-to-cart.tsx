@@ -1,10 +1,12 @@
 "use client";
 
-// Botão "Adicionar à sacola" com feedback imediato ("Adicionado ✓" por 2s).
+// Botão "Adicionar à sacola" com feedback imediato ("Adicionado" por 2s).
 // Desabilitado quando o item está esgotado (availableQty <= 0) ou quando a
 // página do produto pedir (ex.: variante ainda não selecionada).
 
 import { useEffect, useRef, useState } from "react";
+
+import { IconCheck } from "@/components/store/icons";
 
 import { useCart, type CartItemInput } from "./cart-context";
 
@@ -45,15 +47,20 @@ export function AddToCartButton({
       disabled={isDisabled}
       aria-disabled={isDisabled}
       className={[
-        "inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-3.5 text-base font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700 sm:w-auto sm:min-w-56",
+        // Variação do btnPrimary (styles.ts) para a compra: mais tracking,
+        // corpo menor e py maior — o CTA mais importante da vitrine.
+        "inline-flex w-full items-center justify-center gap-2 rounded-(--radius-hair) px-7 py-4 font-store text-xs font-medium uppercase tracking-[0.18em] transition duration-300 ease-silk active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600 sm:w-auto sm:min-w-56",
         added
-          ? "bg-emerald-700 text-white"
-          : "bg-amber-700 text-white hover:bg-amber-800 active:bg-amber-900",
-        "disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500",
+          ? "bg-gold-600 text-ink-950"
+          : "bg-ink-950 text-ivory-50 hover:bg-ink-800 hover:text-gold-300",
+        "disabled:cursor-not-allowed disabled:bg-ivory-300 disabled:text-ink-400",
       ].join(" ")}
     >
       {added ? (
-        <span role="status">Adicionado ✓</span>
+        <span role="status" className="inline-flex items-center gap-2">
+          <IconCheck className="h-4 w-4" />
+          Adicionado
+        </span>
       ) : soldOut ? (
         "Esgotado"
       ) : (

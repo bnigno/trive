@@ -1,8 +1,21 @@
-// Home da loja: hero, grade de novidades e categorias. Vitrine com ISR —
-// nunca force-dynamic aqui; o conteúdo revalida a cada 5 minutos.
+// Home da loja: véu de abertura, hero editorial, benefícios, novidades,
+// categorias e convite final. Vitrine com ISR — nunca force-dynamic aqui;
+// o conteúdo revalida a cada 5 minutos.
 import Link from "next/link";
 
+import { BrandVeil } from "@/components/store/brand-veil";
+import { Monogram } from "@/components/store/brand/monogram";
+import { Wordmark } from "@/components/store/brand/wordmark";
+import {
+  IconArrowRight,
+  IconExchange,
+  IconParcel,
+  IconShield,
+} from "@/components/store/icons";
+import { Ornament } from "@/components/store/ornament";
 import { ProductCard } from "@/components/store/product-card";
+import { Reveal } from "@/components/store/reveal";
+import { btnPrimary, eyebrow } from "@/components/store/styles";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
@@ -12,6 +25,24 @@ import {
 } from "@/services/store-catalog";
 
 export const revalidate = 300;
+
+const BENEFITS = [
+  {
+    icon: IconParcel,
+    title: "Envio para todo o Brasil",
+    text: "Cada peça é embalada com cuidado e despachada para todas as regiões.",
+  },
+  {
+    icon: IconShield,
+    title: "Pagamento seguro",
+    text: "Combinado via Pix, com confirmação acompanhada de perto.",
+  },
+  {
+    icon: IconExchange,
+    title: "Troca em até 7 dias",
+    text: "Primeira troca facilitada, conforme o Código de Defesa do Consumidor.",
+  },
+] as const;
 
 export default async function HomePage() {
   const [products, categories, settings] = await tryOrBuildFallback(
@@ -31,77 +62,156 @@ export default async function HomePage() {
       : "TRIVË";
 
   return (
-    <div className="mx-auto max-w-6xl px-4 sm:px-6">
-      <section className="flex flex-col items-center gap-4 py-14 text-center sm:py-20">
-        <h1 className="text-4xl font-semibold tracking-[0.25em] sm:text-5xl">
-          {storeName}
-        </h1>
-        <div className="h-px w-20 bg-amber-700/60" aria-hidden="true" />
-        <p className="max-w-md text-lg text-zinc-600 dark:text-zinc-400">
-          Peças escolhidas com carinho para o seu dia a dia.
-        </p>
-        {products.length > 0 ? (
-          <Link
-            href="/produtos"
-            className="mt-2 rounded-full bg-amber-700 px-6 py-3 text-sm font-medium text-white transition hover:bg-amber-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700"
-          >
-            Ver todos os produtos
-          </Link>
-        ) : null}
-      </section>
-
-      {products.length === 0 ? (
-        <section className="flex flex-col items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-6 py-16 text-center dark:border-amber-900 dark:bg-amber-950/30">
-          <p className="text-lg font-medium text-amber-900 dark:text-amber-200">
-            Loja em preparação — volte em breve!
+    <>
+      <BrandVeil />
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        {/* Hero editorial — nunca dentro de <Reveal> */}
+        <section className="flex flex-col items-center gap-5 py-16 text-center sm:py-24">
+          <p className={eyebrow}>Maison</p>
+          <h1 className="text-display text-ink-950">
+            <Wordmark>{storeName}</Wordmark>
+          </h1>
+          <Ornament className="text-gold-500" />
+          <p className="max-w-md font-display text-xl text-ink-700 italic">
+            Peças escolhidas com carinho para o seu dia a dia.
           </p>
-          <p className="max-w-md text-sm text-amber-800/80 dark:text-amber-300/80">
-            Estamos caprichando nos últimos detalhes. Em breve você encontra
-            nossas novidades por aqui.
-          </p>
+          {products.length > 0 ? (
+            <Link href="/produtos" className={`mt-3 ${btnPrimary}`}>
+              Ver a coleção
+            </Link>
+          ) : null}
         </section>
-      ) : (
-        <>
-          <section aria-labelledby="novidades" className="pb-4">
-            <h2
-              id="novidades"
-              className="mb-5 text-2xl font-semibold text-zinc-900 dark:text-zinc-100"
-            >
-              Novidades
-            </h2>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {products.map((product) => (
-                <ProductCard key={product.id} product={product} />
-              ))}
-            </div>
-          </section>
 
-          {categories.length > 0 ? (
-            <section aria-labelledby="categorias" className="py-10">
-              <h2
-                id="categorias"
-                className="mb-4 text-2xl font-semibold text-zinc-900 dark:text-zinc-100"
+        {products.length === 0 ? (
+          <section className="mb-16 flex flex-col items-center gap-4 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-6 py-20 text-center">
+            <Ornament className="text-gold-500" />
+            <p className="font-display text-heading font-semibold text-ink-950">
+              Loja em preparação — volte em breve!
+            </p>
+            <p className="max-w-md text-sm text-ink-500">
+              Estamos caprichando nos últimos detalhes. Em breve você encontra
+              nossas novidades por aqui.
+            </p>
+          </section>
+        ) : (
+          <>
+            <Reveal>
+              <section
+                aria-label="Benefícios"
+                className="grid divide-y divide-ivory-300 border-y border-ivory-300 sm:grid-cols-3 sm:divide-x sm:divide-y-0"
               >
-                Categorias
-              </h2>
-              <div className="flex flex-wrap gap-2">
-                {categories.map((category) => (
-                  <Link
-                    key={category.id}
-                    href={`/produtos?categoria=${encodeURIComponent(category.slug)}`}
-                    className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 transition hover:border-amber-700 hover:text-amber-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-amber-500 dark:hover:text-amber-400"
+                {BENEFITS.map((benefit) => (
+                  <div
+                    key={benefit.title}
+                    className="flex flex-col items-center gap-3 px-6 py-10 text-center"
                   >
-                    {category.name}
-                    <span className="ml-1.5 text-xs text-zinc-400">
-                      {category.productCount}
-                    </span>
+                    <benefit.icon className="h-6 w-6 text-gold-600" />
+                    <p className="font-store text-sm font-medium tracking-[0.14em] text-ink-900 uppercase">
+                      {benefit.title}
+                    </p>
+                    <p className="max-w-xs text-sm text-ink-500">
+                      {benefit.text}
+                    </p>
+                  </div>
+                ))}
+              </section>
+            </Reveal>
+
+            <section aria-labelledby="novidades" className="py-14">
+              <Reveal>
+                <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <p className={eyebrow}>A coleção</p>
+                    <h2
+                      id="novidades"
+                      className="mt-1 font-display text-title font-semibold text-ink-950"
+                    >
+                      Novidades
+                    </h2>
+                  </div>
+                  <Link
+                    href="/produtos"
+                    className="group inline-flex items-center gap-2 font-store text-sm tracking-[0.16em] text-ink-700 uppercase transition-colors duration-300 hover:text-gold-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
+                  >
+                    Ver tudo
+                    <IconArrowRight className="h-4 w-4 transition-transform duration-300 ease-silk group-hover:translate-x-1" />
                   </Link>
+                </div>
+              </Reveal>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {products.map((product, index) => (
+                  <Reveal
+                    key={product.id}
+                    delay={index * 60}
+                    className="h-full *:h-full"
+                  >
+                    <ProductCard product={product} />
+                  </Reveal>
                 ))}
               </div>
             </section>
-          ) : null}
-        </>
-      )}
-    </div>
+
+            {categories.length > 0 ? (
+              <section aria-labelledby="categorias" className="pb-14">
+                <Reveal>
+                  <div className="mb-8">
+                    <p className={eyebrow}>Explore</p>
+                    <h2
+                      id="categorias"
+                      className="mt-1 font-display text-title font-semibold text-ink-950"
+                    >
+                      Categorias
+                    </h2>
+                  </div>
+                </Reveal>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  {categories.map((category, index) => (
+                    <Reveal key={category.id} delay={index * 60}>
+                      <Link
+                        href={`/produtos?categoria=${encodeURIComponent(category.slug)}`}
+                        className="group relative flex aspect-[4/3] flex-col justify-end overflow-hidden rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-5 transition-colors duration-300 hover:border-gold-500/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
+                      >
+                        {/* Marca-d'água editorial: inicial da categoria em serif gigante */}
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute -top-7 right-1 font-display text-[9rem] leading-none font-semibold text-ivory-400/50 transition-transform duration-700 ease-silk select-none group-hover:scale-105"
+                        >
+                          {category.name.charAt(0)}
+                        </span>
+                        <span className="relative font-display text-heading font-semibold text-ink-950">
+                          {category.name}
+                        </span>
+                        <span className={`relative mt-1 ${eyebrow}`}>
+                          {category.productCount}{" "}
+                          {category.productCount === 1 ? "produto" : "produtos"}
+                        </span>
+                      </Link>
+                    </Reveal>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            <Reveal>
+              <section
+                aria-label="Convite"
+                className="mb-4 flex flex-col items-center gap-6 rounded-(--radius-hair) bg-ink-950 px-6 py-16 text-center"
+              >
+                <Monogram size={48} tone="gold" />
+                <p className="max-w-xl font-display text-2xl text-ivory-100 italic sm:text-3xl">
+                  Escolhido a dedo, feito para durar no seu dia a dia.
+                </p>
+                <Link
+                  href="/produtos"
+                  className="inline-flex items-center justify-center gap-2 rounded-(--radius-hair) border border-gold-500/70 px-7 py-3.5 font-store text-sm font-medium tracking-[0.16em] text-gold-300 uppercase transition-colors duration-300 ease-silk hover:border-gold-400 hover:bg-gold-400/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-400"
+                >
+                  Conhecer a coleção
+                </Link>
+              </section>
+            </Reveal>
+          </>
+        )}
+      </div>
+    </>
   );
 }

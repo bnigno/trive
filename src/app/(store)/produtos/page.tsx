@@ -1,10 +1,13 @@
-// Listagem de produtos com filtro por categoria (chips) e busca ?q=.
+// Listagem de produtos com filtro por categoria (rail tipográfico) e busca ?q=.
 // Vitrine com ISR (revalidate 300); com searchParams o Next renderiza sob
 // demanda — sem force-dynamic.
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { Monogram } from "@/components/store/brand/monogram";
 import { ProductCard } from "@/components/store/product-card";
+import { Reveal } from "@/components/store/reveal";
+import { btnOutline, eyebrow } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { getDb } from "@/db/client";
 import {
@@ -51,29 +54,27 @@ export default async function ProdutosPage({
     ? `Resultados para “${q}”`
     : (activeCategory?.name ?? "Todos os produtos");
 
-  const chipBase =
-    "rounded-full border px-4 py-1.5 text-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700";
-  const chipActive =
-    "border-amber-700 bg-amber-700 text-white dark:border-amber-600 dark:bg-amber-700";
-  const chipIdle =
-    "border-zinc-300 bg-white text-zinc-700 hover:border-amber-700 hover:text-amber-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-amber-500 dark:hover:text-amber-400";
+  const railLink =
+    "font-store text-xs uppercase tracking-[0.18em] transition-colors duration-300 ease-silk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600";
+  const railActive =
+    "text-ink-900 underline decoration-gold-500 decoration-1 underline-offset-8";
+  const railIdle = "text-ink-500 hover:text-ink-900";
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-semibold text-zinc-900 sm:text-3xl dark:text-zinc-100">
-        {title}
-      </h1>
-      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        {products.length === 1
-          ? "1 produto encontrado"
-          : `${products.length} produtos encontrados`}
+      <p className={eyebrow}>
+        {products.length === 1 ? "1 peça" : `${products.length} peças`}
       </p>
+      <h1 className="mt-2 font-display text-title text-ink-900">{title}</h1>
 
       {categories.length > 0 ? (
-        <nav aria-label="Categorias" className="mt-5 flex flex-wrap gap-2">
+        <nav
+          aria-label="Categorias"
+          className="mt-7 flex flex-wrap gap-x-6 gap-y-3"
+        >
           <Link
             href={chipHref(null, q)}
-            className={cx(chipBase, categoria ? chipIdle : chipActive)}
+            className={cx(railLink, categoria ? railIdle : railActive)}
             aria-current={categoria ? undefined : "page"}
           >
             Todas
@@ -83,8 +84,8 @@ export default async function ProdutosPage({
               key={category.id}
               href={chipHref(category.slug, q)}
               className={cx(
-                chipBase,
-                category.slug === categoria ? chipActive : chipIdle,
+                railLink,
+                category.slug === categoria ? railActive : railIdle,
               )}
               aria-current={category.slug === categoria ? "page" : undefined}
             >
@@ -95,25 +96,29 @@ export default async function ProdutosPage({
       ) : null}
 
       {products.length === 0 ? (
-        <div className="mt-10 flex flex-col items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center dark:border-zinc-800 dark:bg-zinc-900">
-          <p className="text-lg font-medium text-zinc-800 dark:text-zinc-200">
+        <div className="mt-12 flex flex-col items-center gap-4 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-6 py-20 text-center">
+          <Monogram size={56} className="opacity-15" />
+          <p className="font-display text-heading text-ink-900">
             Nenhum produto encontrado
           </p>
-          <p className="max-w-md text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="max-w-md font-store text-sm text-ink-500">
             Tente outra busca ou navegue pelas categorias.
           </p>
-          <Link
-            href="/produtos"
-            className="mt-2 rounded-full bg-amber-700 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-amber-800"
-          >
+          <Link href="/produtos" className={cx(btnOutline, "mt-2")}>
             Ver todos os produtos
           </Link>
         </div>
       ) : (
-        <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {products.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
+        <div className="mt-10 grid grid-cols-2 gap-x-5 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
+          {products.map((product, index) =>
+            index < 12 ? (
+              <Reveal key={product.id} delay={index * 60} className="h-full">
+                <ProductCard product={product} />
+              </Reveal>
+            ) : (
+              <ProductCard key={product.id} product={product} />
+            ),
+          )}
         </div>
       )}
     </div>

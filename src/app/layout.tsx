@@ -20,7 +20,11 @@ export const metadata: Metadata = {
     default: "TRIVË",
     template: "%s | TRIVË",
   },
-  description: "TRIVË — loja em construção.",
+  description:
+    "TRIVË — peças escolhidas com carinho. Envio para todo o Brasil.",
+  openGraph: {
+    images: ["/brand/og.png"],
+  },
 };
 
 export default function RootLayout({

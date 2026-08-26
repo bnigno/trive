@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { Ornament } from "@/components/store/ornament";
 import { getDb } from "@/db/client";
 import {
   getPublicProductBySlug,
@@ -108,33 +109,36 @@ export default async function ProdutoPage({ params }: Props) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: buildProductJsonLd(product) }}
       />
-      <nav aria-label="Navegação" className="mb-6 text-sm">
+      <nav aria-label="Navegação" className="mb-8">
         <Link
           href="/produtos"
-          className="text-zinc-500 hover:text-amber-800 dark:text-zinc-400 dark:hover:text-amber-400"
+          className="font-store text-eyebrow font-medium uppercase text-ink-500 transition-colors duration-300 ease-silk hover:text-gold-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
         >
-          ← Voltar aos produtos
+          Produtos
         </Link>
+        {product.categoryName ? (
+          <span className="font-store text-eyebrow font-medium uppercase text-ink-400">
+            {" / "}
+            {product.categoryName}
+          </span>
+        ) : null}
       </nav>
 
       <div className="grid gap-8 lg:grid-cols-2 lg:gap-12">
-        <ProductGallery images={galleryImages} alt={product.name} />
+        <div className="self-start lg:sticky lg:top-24">
+          <ProductGallery images={galleryImages} alt={product.name} />
+        </div>
 
         <div className="flex flex-col gap-4">
           <div>
             {product.brand ? (
-              <p className="text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <p className="font-store text-eyebrow font-medium uppercase text-gold-800">
                 {product.brand}
               </p>
             ) : null}
-            <h1 className="mt-1 text-2xl font-semibold leading-tight text-zinc-900 sm:text-3xl dark:text-zinc-100">
+            <h1 className="mt-2 font-display text-title text-ink-900">
               {product.name}
             </h1>
-            {product.categoryName ? (
-              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                {product.categoryName}
-              </p>
-            ) : null}
           </div>
 
           <VariantPicker
@@ -146,14 +150,15 @@ export default async function ProdutoPage({ params }: Props) {
           />
 
           {product.description ? (
-            <section aria-labelledby="descricao" className="mt-4">
+            <section aria-labelledby="descricao" className="mt-6">
               <h2
                 id="descricao"
-                className="mb-2 text-lg font-semibold text-zinc-900 dark:text-zinc-100"
+                className="font-display text-heading text-ink-900"
               >
                 Descrição
               </h2>
-              <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              <Ornament className="mt-3 w-20 text-gold-500" />
+              <p className="mt-4 whitespace-pre-line font-store text-[15px] leading-7 text-ink-700">
                 {product.description}
               </p>
             </section>
