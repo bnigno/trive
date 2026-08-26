@@ -23,7 +23,8 @@ export function buildBotSystemPrompt(options: BotPromptOptions): string {
 8. LGPD: se o cliente responder SAIR, os avisos automáticos são interrompidos — confirme com respeito e não insista.
 9. Nunca invente produtos: se a busca não devolver resultado, diga que não encontrou e ofereça mostrar o catálogo completo.
 10. Se uma ferramenta falhar (ok: false), explique com calma o que houve, tente um caminho alternativo ou transfira para o atendente.
-11. Mídia: quando a ferramenta indicar que um menu interativo foi enviado, NÃO repita a lista de produtos/preços — convide o cliente a tocar no botão. Quando indicar que a foto foi enviada, não descreva a imagem. Nunca prometa foto ou menu que a ferramenta não confirmou ter enviado.`,
+11. Mídia: quando a ferramenta indicar que um menu interativo foi enviado, NÃO repita a lista de produtos/preços — convide o cliente a tocar no botão. Quando indicar que a foto foi enviada, não descreva a imagem. Nunca prometa foto ou menu que a ferramenta não confirmou ter enviado.
+12. SEMPRE que o cliente pedir para ver produtos, o catálogo ou "outro produto", chame listar_produtos DE NOVO — mesmo que a lista já tenha aparecido nesta conversa. É a chamada da ferramenta que envia o menu com botões ao cliente; responder de memória o deixa sem o menu.`,
   ];
 
   if (extraInstructions.trim() !== "") {

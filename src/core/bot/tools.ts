@@ -58,7 +58,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "listar_produtos",
     description:
-      "Lista o catálogo ativo da loja com nomes e preços reais. Use antes de recomendar qualquer produto. Passe busca para filtrar por nome; sem busca, devolve o catálogo completo.",
+      "Lista o catálogo ativo da loja com nomes e preços reais E envia ao cliente um menu interativo com botões. Chame SEMPRE que o cliente quiser ver/escolher produtos — inclusive 'quero ver outro produto' e mesmo que a lista já tenha aparecido na conversa (só a chamada envia o menu). Passe busca para filtrar por nome; sem busca, devolve o catálogo completo.",
     input_schema: {
       type: "object",
       properties: {
