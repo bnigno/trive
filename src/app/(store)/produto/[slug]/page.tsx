@@ -55,7 +55,7 @@ function buildProductJsonLd(product: {
   variants: { priceCents: number; availableQty: number }[];
 }): string {
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL || "https://trive-lime.vercel.app";
+    process.env.NEXT_PUBLIC_SITE_URL || "https://trivemaison.com.br";
   const prices = product.variants.map((variant) => variant.priceCents);
   const cheapestCents = prices.length > 0 ? Math.min(...prices) : null;
   const inStock = product.variants.some((variant) => variant.availableQty > 0);

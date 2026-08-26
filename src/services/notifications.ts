@@ -18,7 +18,7 @@ import { ServiceError } from "@/services/settings";
 
 export { ServiceError };
 
-const DEFAULT_SITE_URL = "https://trive-lime.vercel.app";
+const DEFAULT_SITE_URL = "https://trivemaison.com.br";
 const DEFAULT_STORE_NAME = "TRIVË";
 
 export const ORDER_EMAIL_KINDS = ["confirmed", "paid", "shipped"] as const;

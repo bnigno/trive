@@ -171,10 +171,10 @@ describe("ensurePaymentPreference", () => {
     expect(input.externalReference).toBe(order.orderId);
     expect(input.payerEmail).toBe("maria@example.com");
     expect(input.backUrl).toBe(
-      `https://trive-lime.vercel.app/pedido/${order.publicToken}`,
+      `https://trivemaison.com.br/pedido/${order.publicToken}`,
     );
     expect(input.notificationUrl).toBe(
-      "https://trive-lime.vercel.app/api/webhooks/mercadopago",
+      "https://trivemaison.com.br/api/webhooks/mercadopago",
     );
     expect(input.items).toEqual([
       { title: "Caneca Azul", quantity: 2, unitPriceCents: 4990 },

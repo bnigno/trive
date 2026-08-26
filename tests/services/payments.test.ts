@@ -119,7 +119,7 @@ async function createFakePayment(order: {
     orderNumber: order.orderNumber,
     externalReference: order.orderId,
     items: [{ title: "Pedido", quantity: 1, unitPriceCents: order.totalCents }],
-    backUrl: "https://trive-lime.vercel.app/pedido/token",
+    backUrl: "https://trivemaison.com.br/pedido/token",
   });
   return gateway.paymentIdForPreference(pref.preferenceId);
 }
@@ -364,7 +364,7 @@ describe("processPaymentEvent", () => {
       orderNumber: 9999,
       externalReference: "11111111-1111-4111-8111-111111111111",
       items: [{ title: "Fantasma", quantity: 1, unitPriceCents: 1000 }],
-      backUrl: "https://trive-lime.vercel.app/pedido/token",
+      backUrl: "https://trivemaison.com.br/pedido/token",
     });
     const paymentId = gateway.paymentIdForPreference(pref.preferenceId);
     gateway.approvePayment(paymentId);

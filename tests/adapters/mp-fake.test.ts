@@ -15,7 +15,7 @@ function checkoutInput(overrides: Partial<Parameters<PaymentGateway["createCheck
       { title: "Boné", quantity: 1, unitPriceCents: 2900 },
     ],
     payerEmail: "cliente@example.com",
-    backUrl: "https://trive-lime.vercel.app/pedido/tok-123",
+    backUrl: "https://trivemaison.com.br/pedido/tok-123",
     ...overrides,
   };
 }

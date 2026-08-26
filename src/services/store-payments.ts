@@ -49,7 +49,7 @@ export interface StorePaymentGateway {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SITE_URL = "https://trive-lime.vercel.app";
+const DEFAULT_SITE_URL = "https://trivemaison.com.br";
 
 export function getSiteUrl(): string {
   const raw = process.env.NEXT_PUBLIC_SITE_URL;

@@ -150,8 +150,8 @@ export default async function AjudaPage() {
         <Steps>
           <li>
             Primeiro, confira se o problema é mesmo no site. Abra{" "}
-            <ExternalLink href="https://trive-lime.vercel.app/api/health">
-              trive-lime.vercel.app/api/health
+            <ExternalLink href="https://trivemaison.com.br/api/health">
+              trivemaison.com.br/api/health
             </ExternalLink>{" "}
             — é o &quot;check-up&quot; automático da loja. Se aparecer{" "}
             <Code>ok</Code>, o site e o banco estão de pé (o problema pode ser

@@ -56,7 +56,7 @@ export async function isWaEnabled(db: DbOrTx): Promise<boolean> {
 // e pela recuperação de pedido não pago).
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SITE_URL = "https://trive-lime.vercel.app";
+const DEFAULT_SITE_URL = "https://trivemaison.com.br";
 
 export function siteBaseUrl(): string {
   return (process.env.NEXT_PUBLIC_SITE_URL?.trim() || DEFAULT_SITE_URL).replace(
