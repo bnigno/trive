@@ -26,6 +26,11 @@ import {
   type ToolExecutor,
 } from "@/core/bot/tools";
 import {
+  isAddressUsable,
+  summarizeRegistration,
+  type SavedRegistration,
+} from "@/core/bot/customer";
+import {
   buildVariantMenu,
   colorOfVariant,
   formatVariantLines,
@@ -34,6 +39,7 @@ import {
 import { buildBotSystemPrompt, truncateForWhatsApp } from "@/core/bot/prompt";
 import {
   auditLog,
+  customerAddresses,
   customers,
   orders,
   priceVersions,
@@ -530,13 +536,131 @@ async function resolveVariantBySku(db: DbOrTx, sku: string) {
   return row ?? null;
 }
 
+/**
+ * Cadastro já salvo para este telefone: o cliente mais recente com o número,
+ * mais o endereço padrão (ou o último cadastrado).
+ *
+ * Cliente anonimizado por LGPD é IGNORADO de propósito — quem pediu para ser
+ * esquecido não volta como sugestão de preenchimento.
+ */
+async function loadSavedRegistration(
+  db: DbOrTx,
+  phoneE164: string,
+): Promise<SavedRegistration | null> {
+  const [customer] = await db
+    .select({
+      id: customers.id,
+      fullName: customers.fullName,
+      documentNumber: customers.documentNumber,
+    })
+    .from(customers)
+    .where(
+      and(
+        eq(customers.phoneE164, phoneE164),
+        isNull(customers.deletedAt),
+        isNull(customers.anonymizedAt),
+      ),
+    )
+    .orderBy(desc(customers.updatedAt))
+    .limit(1);
+  if (!customer) return null;
+
+  const [address] = await db
+    .select({
+      postalCode: customerAddresses.postalCode,
+      street: customerAddresses.street,
+      number: customerAddresses.number,
+      complement: customerAddresses.complement,
+      district: customerAddresses.district,
+      city: customerAddresses.city,
+      state: customerAddresses.state,
+    })
+    .from(customerAddresses)
+    .where(eq(customerAddresses.customerId, customer.id))
+    .orderBy(desc(customerAddresses.isDefault), desc(customerAddresses.createdAt))
+    .limit(1);
+
+  return {
+    fullName: customer.fullName,
+    documentDigits: customer.documentNumber,
+    address: address ?? null,
+  };
+}
+
+async function execBuscarCadastro(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+): Promise<ToolResult> {
+  const registration = await loadSavedRegistration(db, ctx.phoneE164);
+  if (!registration) {
+    return {
+      ok: true,
+      text: "Este telefone ainda não tem cadastro — é a primeira compra dele por aqui. Colete os dados normalmente, um por vez.\n\n[NUNCA diga ao cliente que a loja não guarda dados: guardamos, este número é que ainda não tem cadastro.]",
+    };
+  }
+  return { ok: true, text: summarizeRegistration(registration) };
+}
+
+/** Dados pessoais do pedido, vindos do cadastro salvo OU do que o bot coletou. */
+type OrderIdentity = {
+  fullName: string;
+  documentDigits: string;
+  postalCode: string;
+  street: string;
+  number: string;
+  complement?: string;
+  district: string;
+  city: string;
+  state: string;
+};
+
 async function execCriarPedido(
   db: DbOrTx,
   ctx: BotExecutorContext,
   input: BotToolInputs["criar_pedido"],
 ): Promise<ToolResult> {
+  let identity: OrderIdentity;
+
+  if (input.usar_cadastro_salvo) {
+    // Caminho do cliente recorrente: os dados REAIS saem do banco, então o CPF
+    // nunca passa pelo modelo nem por uma mensagem de WhatsApp.
+    const registration = await loadSavedRegistration(db, ctx.phoneE164);
+    if (!registration || !isAddressUsable(registration.address)) {
+      return {
+        ok: false,
+        text: "Não consegui reaproveitar o cadastro deste telefone (não existe ou está sem endereço completo). Colete nome, CPF e endereço com o cliente, um dado por vez, e chame criar_pedido com os campos preenchidos.",
+      };
+    }
+    const address = registration.address;
+    identity = {
+      fullName: registration.fullName,
+      documentDigits: (registration.documentDigits ?? "").replace(/\D/g, ""),
+      postalCode: (address?.postalCode ?? "").replace(/\D/g, ""),
+      street: address?.street ?? "",
+      number: address?.number ?? "",
+      ...(address?.complement ? { complement: address.complement } : {}),
+      district: address?.district ?? "",
+      city: address?.city ?? "",
+      state: address?.state ?? "",
+    };
+  } else {
+    // O superRefine de criarPedidoSchema já garantiu que todos vieram; o
+    // fallback vazio existe só para o TypeScript estreitar os opcionais.
+    identity = {
+      fullName: input.nome_completo ?? "",
+      documentDigits: input.cpf ?? "",
+      postalCode: input.cep ?? "",
+      street: input.rua ?? "",
+      number: input.numero ?? "",
+      ...(input.complemento !== undefined ? { complement: input.complemento } : {}),
+      district: input.bairro ?? "",
+      city: input.cidade ?? "",
+      state: input.uf ?? "",
+    };
+  }
+
   // CPF com dígito verificador válido — a nota fiscal depende disso.
-  if (!isValidCpf(input.cpf)) {
+  if (!isValidCpf(identity.documentDigits)) {
     return {
       ok: false,
       text: "CPF inválido — confira os 11 dígitos com o cliente e tente de novo.",
@@ -575,7 +699,10 @@ async function execCriarPedido(
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
-  const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams });
+  const quotes = await quoteShipping(db, {
+    cep: identity.postalCode,
+    totalWeightGrams,
+  });
   const cheapest = quotes[0];
   if (!cheapest) {
     return {
@@ -592,20 +719,22 @@ async function execCriarPedido(
       channel: "whatsapp",
       paymentMethod: isCash ? "cash" : "online",
       customer: {
-        fullName: input.nome_completo,
-        document: input.cpf,
+        fullName: identity.fullName,
+        document: identity.documentDigits,
         // Telefone é SEMPRE o da conversa — nunca um número ditado ao bot.
         phone: ctx.phoneE164,
         marketingOptIn: true,
       },
       address: {
-        postalCode: input.cep,
-        street: input.rua,
-        number: input.numero,
-        ...(input.complemento !== undefined ? { complement: input.complemento } : {}),
-        district: input.bairro,
-        city: input.cidade,
-        state: input.uf,
+        postalCode: identity.postalCode,
+        street: identity.street,
+        number: identity.number,
+        ...(identity.complement !== undefined
+          ? { complement: identity.complement }
+          : {}),
+        district: identity.district,
+        city: identity.city,
+        state: identity.state,
       },
       items: resolved.map((r) => ({
         variantId: r.variantId,
@@ -961,6 +1090,8 @@ export function buildToolExecutor(
         );
       case "cotar_frete":
         return execCotarFrete(db, ctx, parsed.data as BotToolInputs["cotar_frete"]);
+      case "buscar_cadastro":
+        return execBuscarCadastro(db, ctx);
       case "criar_pedido":
         return execCriarPedido(db, ctx, parsed.data as BotToolInputs["criar_pedido"]);
       case "status_do_pedido":

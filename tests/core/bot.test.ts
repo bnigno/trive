@@ -149,25 +149,27 @@ describe("BOT_TOOLS", () => {
     expect(itens["required"]).toEqual(["sku", "quantidade"]);
   });
 
-  it("required de criar_pedido cobre os obrigatórios e exclui os opcionais", () => {
+  it("required de criar_pedido é só 'itens': os dados pessoais podem vir do cadastro salvo", () => {
     const criarPedido = BOT_TOOLS.find((tool) => tool.name === "criar_pedido");
     const required = criarPedido?.input_schema["required"] as string[];
-    expect([...required].sort()).toEqual(
-      [
-        "itens",
-        "nome_completo",
-        "cpf",
-        "cep",
-        "rua",
-        "numero",
-        "bairro",
-        "cidade",
-        "uf",
-      ].sort(),
-    );
-    expect(required).not.toContain("complemento");
-    expect(required).not.toContain("cupom");
-    expect(required).not.toContain("forma_de_pagamento");
+    // A exigência de verdade (cadastro salvo OU conjunto completo) vive no
+    // superRefine de criarPedidoSchema — o JSON schema só orienta o modelo.
+    expect(required).toEqual(["itens"]);
+
+    const properties = criarPedido?.input_schema["properties"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(properties["usar_cadastro_salvo"]?.["type"]).toBe("boolean");
+    expect(properties["usar_cadastro_salvo"]?.["default"]).toBe(false);
+  });
+
+  it("buscar_cadastro não recebe entrada: o telefone é o da conversa", () => {
+    const buscar = BOT_TOOLS.find((tool) => tool.name === "buscar_cadastro");
+    expect(buscar?.input_schema["required"]).toEqual([]);
+    expect(buscar?.input_schema["properties"]).toEqual({});
+    // O cliente não pode induzir o bot a consultar o cadastro de outra pessoa.
+    expect(buscar?.input_schema["additionalProperties"]).toBe(false);
   });
 
   it("forma_de_pagamento de criar_pedido: enum online/dinheiro_na_entrega, default online", () => {

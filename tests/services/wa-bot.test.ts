@@ -1304,3 +1304,109 @@ describe("historyTextFor", () => {
     expect(historyTextFor("text", "Oi, tudo bem?")).toBe("Oi, tudo bem?");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cadastro salvo do cliente recorrente
+// ---------------------------------------------------------------------------
+
+describe("buscar_cadastro + usar_cadastro_salvo", () => {
+  it("cliente novo: diz que não há compra registrada, sem negar que a loja guarda dados", async () => {
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+
+    const result = await executor("buscar_cadastro", {});
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("ainda não tem cadastro");
+    // A frase que gerou o incidente de 26/08 não pode voltar.
+    expect(result.text).toContain("NUNCA diga ao cliente que a loja não guarda dados");
+  });
+
+  it("cliente recorrente: acha o cadastro e mascara o CPF", async () => {
+    const { variantId } = await setupStore();
+    const rate = await createRate();
+    // Primeira compra: é ela que cria cliente + endereço.
+    await createStoreOrder(sdb, baseStoreOrderInput(variantId, rate.id));
+
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+
+    const result = await executor("buscar_cadastro", {});
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("Maria da Silva");
+    expect(result.text).toContain("Avenida Paulista, 1000");
+    expect(result.text).toContain(`•••.•••.•••-${VALID_CPF.slice(-2)}`);
+    // A garantia central: o CPF inteiro nunca chega ao modelo.
+    expect(result.text).not.toContain(VALID_CPF);
+  });
+
+  it("fecha pedido com usar_cadastro_salvo, sem receber nome, CPF nem endereço", async () => {
+    const { variantId } = await setupStore({ onHand: 10 });
+    const rate = await createRate();
+    await createStoreOrder(sdb, baseStoreOrderInput(variantId, rate.id));
+
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+
+    const result = await executor("criar_pedido", {
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      usar_cadastro_salvo: true,
+    });
+
+    expect(result.ok).toBe(true);
+
+    const [novo] = await db
+      .select()
+      .from(schema.orders)
+      .orderBy(schema.orders.orderNumber);
+    expect(novo).toBeDefined();
+
+    // O endereço do pedido novo veio do cadastro, não do que o bot digitou.
+    const criados = await db.select().from(schema.orders);
+    expect(criados).toHaveLength(2);
+    const ultimo = criados[criados.length - 1];
+    expect(ultimo.channel).toBe("whatsapp");
+    expect(ultimo.shippingAddress).toMatchObject({
+      street: "Avenida Paulista",
+      number: "1000",
+      city: "São Paulo",
+      state: "SP",
+    });
+  });
+
+  it("sem cadastro, usar_cadastro_salvo falha com instrução de coletar os dados", async () => {
+    await setupStore();
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+
+    const result = await executor("criar_pedido", {
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      usar_cadastro_salvo: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("Colete nome, CPF e endereço");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+});

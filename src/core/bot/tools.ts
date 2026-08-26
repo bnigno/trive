@@ -8,6 +8,7 @@ export const BOT_TOOL_NAMES = [
   "listar_produtos",
   "detalhar_produto",
   "cotar_frete",
+  "buscar_cadastro",
   "criar_pedido",
   "status_do_pedido",
   "enviar_chave_pix",
@@ -27,17 +28,25 @@ export type BotToolInputs = {
   listar_produtos: { busca?: string };
   detalhar_produto: { produto: string; cor?: string };
   cotar_frete: { cep: string };
+  buscar_cadastro: Record<string, never>;
   criar_pedido: {
     itens: { sku: string; quantidade: number }[];
-    nome_completo: string;
-    cpf: string;
-    cep: string;
-    rua: string;
-    numero: string;
+    /**
+     * Reaproveita nome, CPF e endereço já salvos deste telefone. Quando true,
+     * os campos pessoais são OPCIONAIS: o serviço lê os dados reais do banco e
+     * o CPF nunca passa pelo modelo. Só use após confirmar com o cliente via
+     * buscar_cadastro.
+     */
+    usar_cadastro_salvo?: boolean;
+    nome_completo?: string;
+    cpf?: string;
+    cep?: string;
+    rua?: string;
+    numero?: string;
     complemento?: string;
-    bairro: string;
-    cidade: string;
-    uf: string;
+    bairro?: string;
+    cidade?: string;
+    uf?: string;
     cupom?: string;
     /** Aceito e ignorado — o pedido usa o telefone da conversa. */
     telefone?: string;
@@ -117,6 +126,17 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "buscar_cadastro",
+    description:
+      "Procura o cadastro já salvo do cliente DESTA conversa (nome, CPF e endereço da última compra). Chame ANTES de começar a pedir dados pessoais: se o cliente já comprou, você confirma tudo em uma pergunta em vez de coletar sete campos. Devolve o CPF mascarado de propósito — os dados reais nunca passam por você.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "criar_pedido",
     description:
       "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após confirmar com o cliente TODOS os dados (itens, quantidades, dados pessoais, endereço e frete) e receber o SIM. O resumo devolvido é a única fonte de valores — retransmita sem alterar. TELEFONE: o pedido usa automaticamente o número de WhatsApp desta conversa — NUNCA peça telefone ao cliente.",
@@ -144,9 +164,16 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
             additionalProperties: false,
           },
         },
+        usar_cadastro_salvo: {
+          type: "boolean",
+          default: false,
+          description:
+            "true reaproveita nome, CPF e endereço já salvos deste telefone — o serviço lê os dados do banco, então NÃO envie nome_completo, cpf nem endereço. Só use depois de buscar_cadastro e do cliente CONFIRMAR que os dados estão certos. Se ele quiser mudar algo, omita este campo e envie todos os dados normalmente.",
+        },
         nome_completo: {
           type: "string",
-          description: "Nome completo do cliente.",
+          description:
+            "Nome completo do cliente. Obrigatório, exceto quando usar_cadastro_salvo for true.",
         },
         cpf: {
           type: "string",
@@ -192,17 +219,11 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
             "IGNORADO — o pedido sempre usa o número de WhatsApp da própria conversa. Não peça telefone ao cliente; omita este campo.",
         },
       },
-      required: [
-        "itens",
-        "nome_completo",
-        "cpf",
-        "cep",
-        "rua",
-        "numero",
-        "bairro",
-        "cidade",
-        "uf",
-      ],
+      // Só 'itens' é sempre obrigatório: com usar_cadastro_salvo os dados
+      // pessoais vêm do banco. A exigência real (ou o cadastro salvo, ou o
+      // conjunto completo de campos) é validada em criarPedidoSchema, que é
+      // quem barra de fato — o JSON schema aqui só orienta o modelo.
+      required: ["itens"],
       additionalProperties: false,
     },
   },
@@ -316,15 +337,19 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
         }),
       )
       .min(1),
-    nome_completo: z.string().min(1),
-    cpf: digitos(11, "CPF"),
-    cep: digitos(8, "CEP"),
-    rua: z.string().min(1),
-    numero: z.string().min(1),
+    usar_cadastro_salvo: z.boolean().default(false),
+    nome_completo: z.string().min(1).optional(),
+    cpf: digitos(11, "CPF").optional(),
+    cep: digitos(8, "CEP").optional(),
+    rua: z.string().min(1).optional(),
+    numero: z.string().min(1).optional(),
     complemento: z.string().optional(),
-    bairro: z.string().min(1),
-    cidade: z.string().min(1),
-    uf: z.string().regex(/^[A-Za-z]{2}$/, "UF deve ter 2 letras"),
+    bairro: z.string().min(1).optional(),
+    cidade: z.string().min(1).optional(),
+    uf: z
+      .string()
+      .regex(/^[A-Za-z]{2}$/, "UF deve ter 2 letras")
+      .optional(),
     cupom: z.string().optional(),
     // Aceito e IGNORADO: o pedido usa o telefone da própria conversa. O
     // modelo tende a coletar telefone por instinto de vendedor — rejeitar o
@@ -333,7 +358,32 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     forma_de_pagamento: z
       .enum(["online", "dinheiro_na_entrega"])
       .default("online"),
-  }),
+  })
+    // Ou o pedido reaproveita o cadastro salvo, ou traz o conjunto COMPLETO de
+    // dados pessoais. Meio-termo produziria pedido sem endereço de entrega.
+    .superRefine((valor, ctx) => {
+      if (valor.usar_cadastro_salvo) return;
+      const obrigatorios = [
+        "nome_completo",
+        "cpf",
+        "cep",
+        "rua",
+        "numero",
+        "bairro",
+        "cidade",
+        "uf",
+      ] as const;
+      for (const campo of obrigatorios) {
+        if (valor[campo] === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: [campo],
+            message: `Informe ${campo.replace(/_/g, " ")} — ou use usar_cadastro_salvo se o cliente confirmou o cadastro.`,
+          });
+        }
+      }
+    }),
+  buscar_cadastro: z.strictObject({}),
   status_do_pedido: z.strictObject({
     numero_do_pedido: z.number().int().min(1).optional(),
   }),
