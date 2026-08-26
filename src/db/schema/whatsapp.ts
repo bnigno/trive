@@ -62,7 +62,12 @@ export const waMessages = pgTable(
       .references(() => waConversations.id, { onDelete: "restrict" }),
     direction: text("direction").notNull(),
     zapiMessageId: text("zapi_message_id").unique(),
+    // text: mensagem comum; image: body é a legenda; option_list: body é o
+    // texto do menu já renderizado com as opções (histórico do bot/admin).
+    kind: text("kind").notNull().default("text"),
     body: text("body").notNull(),
+    // URL pública da imagem quando kind='image'.
+    mediaUrl: text("media_url"),
     templateKey: text("template_key"),
     dedupeKey: text("dedupe_key").unique(),
     status: text("status").notNull().default("queued"),
@@ -88,6 +93,10 @@ export const waMessages = pgTable(
     check(
       "wa_messages_status_check",
       sql`${table.status} IN ('queued', 'sent', 'delivered', 'read', 'failed')`,
+    ),
+    check(
+      "wa_messages_kind_check",
+      sql`${table.kind} IN ('text', 'image', 'option_list')`,
     ),
   ],
 );

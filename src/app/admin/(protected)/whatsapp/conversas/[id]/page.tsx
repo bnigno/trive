@@ -37,6 +37,25 @@ function MessageBubble({ message }: { message: WaThreadMessage }) {
             : "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100",
         )}
       >
+        {message.kind === "image" && message.mediaUrl ? (
+          <img
+            src={message.mediaUrl}
+            alt=""
+            className="mb-1 max-h-48 rounded-md"
+          />
+        ) : null}
+        {message.kind === "option_list" ? (
+          <p
+            className={cx(
+              "mb-1 text-[11px] font-medium",
+              outbound
+                ? "text-emerald-700 dark:text-emerald-400"
+                : "text-zinc-500 dark:text-zinc-400",
+            )}
+          >
+            📋 Menu interativo
+          </p>
+        ) : null}
         <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
         <p
           className={cx(

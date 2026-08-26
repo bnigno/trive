@@ -48,6 +48,7 @@ describe("wa-conversations (painel do admin)", () => {
     direction: "inbound" | "outbound",
     body: string,
     createdAt: Date,
+    extra: Partial<typeof schema.waMessages.$inferInsert> = {},
   ) {
     await db.insert(schema.waMessages).values({
       conversationId,
@@ -55,6 +56,7 @@ describe("wa-conversations (painel do admin)", () => {
       body,
       status: direction === "inbound" ? "delivered" : "sent",
       createdAt,
+      ...extra,
     });
   }
 
@@ -101,9 +103,41 @@ describe("wa-conversations (painel do admin)", () => {
       "primeira",
       "segunda",
     ]);
+    // Mensagem comum expõe os campos de mídia com os defaults.
+    expect(thread!.messages[0]).toMatchObject({ kind: "text", mediaUrl: null });
     expect(thread!.conversation.phoneE164).toBe("+5511999990000");
 
     expect(await getWaConversationThread(sdb, randomUUID())).toBeNull();
+  });
+
+  it("thread expõe kind e mediaUrl de mensagens de mídia (foto e menu)", async () => {
+    const conversationId = await createConversation();
+    await addMessage(
+      conversationId,
+      "outbound",
+      "Camiseta Básica",
+      new Date("2026-08-01T10:00:00Z"),
+      { kind: "image", mediaUrl: "https://cdn.exemplo.com/foto.webp" },
+    );
+    await addMessage(
+      conversationId,
+      "outbound",
+      "Escolha um produto:\n• Camiseta Básica — R$ 49,90",
+      new Date("2026-08-01T10:01:00Z"),
+      { kind: "option_list" },
+    );
+
+    const thread = await getWaConversationThread(sdb, conversationId);
+    expect(thread!.messages).toHaveLength(2);
+    expect(thread!.messages[0]).toMatchObject({
+      kind: "image",
+      mediaUrl: "https://cdn.exemplo.com/foto.webp",
+      body: "Camiseta Básica",
+    });
+    expect(thread!.messages[1]).toMatchObject({
+      kind: "option_list",
+      mediaUrl: null,
+    });
   });
 
   it("assumir: open → human com audit; repetir é no-op idempotente", async () => {

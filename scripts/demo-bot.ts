@@ -27,22 +27,34 @@ const SECRET = process.env.ZAPI_WEBHOOK_SECRET?.trim() || "demo-bot-secret";
 
 let messageSequence = 0;
 
-function inboundText(text: string) {
+function inboundBase() {
   messageSequence += 1;
   return {
+    type: "ReceivedCallback",
+    instanceId: "demo-bot",
+    messageId: `DEMO-BOT-${Date.now()}-${messageSequence}`,
+    phone: CLIENT_PHONE_ZAPI,
+    fromMe: false,
+    isGroup: false,
+    senderName: "Cliente do Demo",
+    momment: Date.now(),
+    status: "RECEIVED",
+  };
+}
+
+function inboundText(text: string) {
+  return {
     providedSecret: SECRET,
-    body: {
-      type: "ReceivedCallback",
-      instanceId: "demo-bot",
-      messageId: `DEMO-BOT-${Date.now()}-${messageSequence}`,
-      phone: CLIENT_PHONE_ZAPI,
-      fromMe: false,
-      isGroup: false,
-      senderName: "Cliente do Demo",
-      momment: Date.now(),
-      status: "RECEIVED",
-      text: { message: text },
-    },
+    body: { ...inboundBase(), text: { message: text } },
+  };
+}
+
+// Cliente TOCOU numa opção do menu interativo: a Z-API entrega
+// listResponseMessage (sem text.message).
+function inboundListReply(selectedRowId: string, title: string) {
+  return {
+    providedSecret: SECRET,
+    body: { ...inboundBase(), listResponseMessage: { selectedRowId, title } },
   };
 }
 
@@ -116,6 +128,17 @@ async function main() {
   const { product, variant } = withStock;
   console.log(`   produto do roteiro: ${product.name} (SKU ${variant.sku})`);
 
+  // O passo 2 envia a FOTO do produto: garante uma imagem cadastrada (o fake
+  // não busca a URL, então um path inexistente serve) e a base do Storage.
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://demo.supabase.co";
+  if (product.images.length === 0) {
+    await db.insert(schema.productImages).values({
+      productId: product.id,
+      storagePath: "demo/nao-existe-full.webp",
+    });
+    console.log("   (imagem de demo cadastrada para o produto do roteiro)");
+  }
+
   console.log('1) Cliente: "Oi, o que vocês vendem?" → robô lista o catálogo…');
   assistant.enqueueScript({
     toolCalls: [{ name: "listar_produtos", input: {} }],
@@ -126,14 +149,39 @@ async function main() {
   await drainAll(db);
   console.log(`   robô respondeu: ${lastClientMessage(wa).slice(0, 120)}…`);
 
-  console.log(`2) Cliente pergunta do produto → robô detalha com preço real…`);
+  if (wa.sentOptionLists.length !== 1) {
+    throw new Error(
+      `Esperava 1 menu interativo enviado, veio ${wa.sentOptionLists.length}`,
+    );
+  }
+  if (wa.sentOptionLists[0].options.length === 0) {
+    throw new Error("Menu interativo enviado sem opções");
+  }
+  console.log(
+    `   ✓ menu interativo com ${wa.sentOptionLists[0].options.length} opções`,
+  );
+
+  console.log(`2) Cliente TOCA no produto no menu → robô detalha com foto…`);
   assistant.enqueueScript({
-    toolCalls: [{ name: "detalhar_produto", input: { produto: product.name } }],
+    toolCalls: [{ name: "detalhar_produto", input: { produto: product.slug } }],
     replyTemplate: (toolTexts) => toolTexts[0],
   });
-  await processZapiInbound(db, inboundText(`Me conta mais sobre ${product.name}`));
+  await processZapiInbound(
+    db,
+    inboundListReply(`produto:${product.slug}`, product.name),
+  );
   await drainAll(db);
   console.log(`   robô respondeu: ${lastClientMessage(wa).slice(0, 120)}…`);
+
+  if (wa.sentImages.length !== 1) {
+    throw new Error(`Esperava 1 foto enviada, veio ${wa.sentImages.length}`);
+  }
+  if (!wa.sentImages[0].caption?.includes(product.name)) {
+    throw new Error(
+      `Legenda da foto não menciona o produto: "${wa.sentImages[0].caption}"`,
+    );
+  }
+  console.log(`   ✓ foto do produto enviada com legenda "${wa.sentImages[0].caption}"`);
 
   console.log("3) Cliente pede o frete para 01310-100…");
   assistant.enqueueScript({

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import type {
   MessagingProvider,
+  OutboundImageMessage,
+  OutboundOptionListMessage,
   OutboundTextMessage,
   QrCode,
   SentMessage,
@@ -122,6 +124,54 @@ export class ZapiMessagingProvider implements MessagingProvider {
     const providerMessageId = parsed.messageId ?? parsed.zaapId ?? parsed.id;
     if (!providerMessageId) {
       throw new Error("Resposta da Z-API sem id de mensagem em /send-text.");
+    }
+    return { providerMessageId };
+  }
+
+  async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
+    const raw = await this.request("/send-image", {
+      method: "POST",
+      body: {
+        // Z-API espera o número SEM o '+' do E.164.
+        phone: message.toE164.replace(/^\+/, ""),
+        image: message.imageUrl,
+        ...(message.caption !== undefined ? { caption: message.caption } : {}),
+      },
+    });
+
+    const parsed = zapiSendTextResponseSchema.parse(raw);
+    const providerMessageId = parsed.messageId ?? parsed.zaapId ?? parsed.id;
+    if (!providerMessageId) {
+      throw new Error("Resposta da Z-API sem id de mensagem em /send-image.");
+    }
+    return { providerMessageId };
+  }
+
+  async sendOptionList(message: OutboundOptionListMessage): Promise<SentMessage> {
+    const raw = await this.request("/send-option-list", {
+      method: "POST",
+      body: {
+        // Z-API espera o número SEM o '+' do E.164.
+        phone: message.toE164.replace(/^\+/, ""),
+        message: message.message,
+        optionList: {
+          title: message.title,
+          buttonLabel: message.buttonLabel,
+          options: message.options.map((option) => ({
+            id: option.id,
+            title: option.title,
+            ...(option.description !== undefined
+              ? { description: option.description }
+              : {}),
+          })),
+        },
+      },
+    });
+
+    const parsed = zapiSendTextResponseSchema.parse(raw);
+    const providerMessageId = parsed.messageId ?? parsed.zaapId ?? parsed.id;
+    if (!providerMessageId) {
+      throw new Error("Resposta da Z-API sem id de mensagem em /send-option-list.");
     }
     return { providerMessageId };
   }

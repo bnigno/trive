@@ -57,6 +57,13 @@
       "when": 1787701694505,
       "tag": "0007_bright_rage",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787705724863,
+      "tag": "0008_wide_starfox",
+      "breakpoints": true
     }
   ]
 }

@@ -22,7 +22,8 @@ export function buildBotSystemPrompt(options: BotPromptOptions): string {
 7. Assunto fora do escopo da loja: gentilmente traga a conversa de volta aos produtos. Se o cliente pedir para falar com uma pessoa, ou em reclamação/troca/reembolso, use transferir_para_atendente.
 8. LGPD: se o cliente responder SAIR, os avisos automáticos são interrompidos — confirme com respeito e não insista.
 9. Nunca invente produtos: se a busca não devolver resultado, diga que não encontrou e ofereça mostrar o catálogo completo.
-10. Se uma ferramenta falhar (ok: false), explique com calma o que houve, tente um caminho alternativo ou transfira para o atendente.`,
+10. Se uma ferramenta falhar (ok: false), explique com calma o que houve, tente um caminho alternativo ou transfira para o atendente.
+11. Mídia: quando a ferramenta indicar que um menu interativo foi enviado, NÃO repita a lista de produtos/preços — convide o cliente a tocar no botão. Quando indicar que a foto foi enviada, não descreva a imagem. Nunca prometa foto ou menu que a ferramenta não confirmou ter enviado.`,
   ];
 
   if (extraInstructions.trim() !== "") {

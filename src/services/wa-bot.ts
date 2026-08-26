@@ -42,6 +42,7 @@ import {
   DEFAULT_ITEM_WEIGHT_GRAMS,
   getPublicProductBySlug,
   listPublicProducts,
+  publicImageUrl,
   quoteShipping,
   type PublicProductDetail,
   type ShippingQuote,
@@ -56,6 +57,7 @@ import { ensurePaymentPreference, isMpEnabled } from "@/services/store-payments"
 import {
   isWaEnabled,
   orderPublicUrl,
+  sendMediaMessage,
   sendTemplateMessage,
   siteBaseUrl,
 } from "@/services/wa-messaging";
@@ -92,10 +94,26 @@ type BotState = {
   lastQuotes?: ShippingQuote[];
 };
 
+/**
+ * Mídia que uma ferramenta quer enviar ao cliente NESTE turno (menu interativo
+ * ou foto). A ferramenta apenas EMITE via ctx.onAttachment; quem envia de fato
+ * (com dedupe e melhor esforço) é o runBotTurn, antes do texto da IA.
+ */
+export type BotAttachment =
+  | {
+      kind: "option_list";
+      message: string;
+      title: string;
+      buttonLabel: string;
+      options: { id: string; title: string; description?: string }[];
+    }
+  | { kind: "image"; imageUrl: string; caption: string };
+
 export type BotExecutorContext = {
   conversationId: string;
   phoneE164: string;
   customerId: string | null;
+  onAttachment?: (attachment: BotAttachment) => void;
 };
 
 export type RunBotTurnResult =
@@ -194,8 +212,25 @@ function formatDeliveryDays(min: number, max: number): string {
   return min === max ? `${min} dias úteis` : `${min} a ${max} dias úteis`;
 }
 
+// Limites da lista interativa da Z-API: até 10 opções, título com 24 chars.
+const OPTION_LIST_MAX_OPTIONS = 10;
+const OPTION_TITLE_MAX_CHARS = 24;
+
+function truncateOptionTitle(name: string): string {
+  return name.length <= OPTION_TITLE_MAX_CHARS
+    ? name
+    : `${name.slice(0, OPTION_TITLE_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+function formatPriceRange(fromCents: number, toCents: number): string {
+  return fromCents === toCents
+    ? formatCentsBRL(fromCents)
+    : `a partir de ${formatCentsBRL(fromCents)}`;
+}
+
 async function execListarProdutos(
   db: DbOrTx,
+  ctx: BotExecutorContext,
   input: BotToolInputs["listar_produtos"],
 ): Promise<ToolResult> {
   const busca = input.busca?.trim();
@@ -211,14 +246,33 @@ async function execListarProdutos(
   }
 
   const lines = items.slice(0, MAX_LISTED_PRODUCTS).map((item) => {
-    const preco =
-      item.priceFromCents === item.priceToCents
-        ? formatCentsBRL(item.priceFromCents)
-        : `a partir de ${formatCentsBRL(item.priceFromCents)}`;
+    const preco = formatPriceRange(item.priceFromCents, item.priceToCents);
     return `• ${item.name} — ${preco}${item.available ? "" : " (esgotado)"}`;
   });
   if (items.length > MAX_LISTED_PRODUCTS) {
     lines.push(`e mais ${items.length - MAX_LISTED_PRODUCTS} no site ${siteBaseUrl()}`);
+  }
+
+  if (ctx.onAttachment) {
+    const map = await getSettingsMap(db, ["store_name"]);
+    const title =
+      typeof map["store_name"] === "string" && map["store_name"].trim() !== ""
+        ? map["store_name"].trim()
+        : "Nossos produtos";
+    ctx.onAttachment({
+      kind: "option_list",
+      message: "Toque abaixo para ver os produtos 👇",
+      title,
+      buttonLabel: "Ver produtos",
+      options: items.slice(0, OPTION_LIST_MAX_OPTIONS).map((item) => ({
+        id: `produto:${item.slug}`,
+        title: truncateOptionTitle(item.name),
+        description: formatPriceRange(item.priceFromCents, item.priceToCents),
+      })),
+    });
+    lines.push(
+      "[Um menu interativo com os produtos foi enviado ao cliente. Responda em 1 frase curta convidando a tocar em Ver produtos — NÃO repita a lista de preços.]",
+    );
   }
   return { ok: true, text: lines.join("\n") };
 }
@@ -260,6 +314,7 @@ async function resolveProductDetail(
 
 async function execDetalharProduto(
   db: DbOrTx,
+  ctx: BotExecutorContext,
   input: BotToolInputs["detalhar_produto"],
 ): Promise<ToolResult> {
   const detail = await resolveProductDetail(db, input.produto);
@@ -268,6 +323,32 @@ async function execDetalharProduto(
       ok: false,
       text: `Não encontrei o produto "${input.produto}". Use listar_produtos para ver o catálogo disponível.`,
     };
+  }
+
+  // Foto: primeira imagem do produto (images já vem ordenado por sort_order).
+  let photoEmitted = false;
+  const imagePath = detail.images[0];
+  if (imagePath && ctx.onAttachment) {
+    let imageUrl: string | null = null;
+    try {
+      imageUrl = publicImageUrl(imagePath);
+    } catch {
+      // NEXT_PUBLIC_SUPABASE_URL ausente (ex.: teste): segue sem foto.
+      imageUrl = null;
+    }
+    if (imageUrl) {
+      const priceCentsList = detail.variants.map((variant) => variant.priceCents);
+      const preco = formatPriceRange(
+        Math.min(...priceCentsList),
+        Math.max(...priceCentsList),
+      );
+      ctx.onAttachment({
+        kind: "image",
+        imageUrl,
+        caption: `${detail.name} — ${preco}`,
+      });
+      photoEmitted = true;
+    }
   }
 
   const lines = [detail.name];
@@ -289,6 +370,9 @@ async function execDetalharProduto(
   }
   if (detail.variants.every((variant) => variant.availableQty === 0)) {
     lines.push("Atenção: este produto está esgotado no momento.");
+  }
+  if (photoEmitted) {
+    lines.push("[A foto do produto foi enviada ao cliente.]");
   }
   return { ok: true, text: lines.join("\n") };
 }
@@ -625,10 +709,15 @@ export function buildToolExecutor(
 
     switch (name) {
       case "listar_produtos":
-        return execListarProdutos(db, parsed.data as BotToolInputs["listar_produtos"]);
+        return execListarProdutos(
+          db,
+          ctx,
+          parsed.data as BotToolInputs["listar_produtos"],
+        );
       case "detalhar_produto":
         return execDetalharProduto(
           db,
+          ctx,
           parsed.data as BotToolInputs["detalhar_produto"],
         );
       case "cotar_frete":
@@ -735,10 +824,13 @@ export async function runBotTurn(
       siteUrl: siteBaseUrl(),
     });
 
+    // Mídia emitida pelas ferramentas do turno (menu de produtos, foto).
+    const attachments: BotAttachment[] = [];
     const executeTool = buildToolExecutor(tx, {
       conversationId,
       phoneE164: conversation.phoneE164,
       customerId: conversation.customerId,
+      onAttachment: (attachment) => attachments.push(attachment),
     });
 
     const replyDedupeKey = `wa.bot_reply:${lastInbound.id}`;
@@ -768,6 +860,45 @@ export async function runBotTurn(
         return { replied: "sent" in sent, handedOff: true };
       }
       throw error;
+    }
+
+    // Mídia sai ANTES do texto, em MELHOR ESFORÇO: falha de envio nunca segura
+    // a resposta da IA. O dedupe determinístico (última inbound + índice)
+    // garante que o retry do evento não duplica menu nem foto.
+    for (const [index, attachment] of attachments.entries()) {
+      const mediaDedupeKey = `wa.bot_media:${lastInbound.id}:${index}`;
+      try {
+        if (attachment.kind === "option_list") {
+          await sendMediaMessage(tx, provider, {
+            kind: "option_list",
+            body: attachment.message,
+            optionList: {
+              title: attachment.title,
+              buttonLabel: attachment.buttonLabel,
+              options: attachment.options,
+            },
+            phoneE164: conversation.phoneE164,
+            ...customerRef,
+            dedupeKey: mediaDedupeKey,
+            requireOptIn: false,
+          });
+        } else {
+          await sendMediaMessage(tx, provider, {
+            kind: "image",
+            imageUrl: attachment.imageUrl,
+            body: attachment.caption,
+            phoneE164: conversation.phoneE164,
+            ...customerRef,
+            dedupeKey: mediaDedupeKey,
+            requireOptIn: false,
+          });
+        }
+      } catch (error) {
+        console.warn(
+          `[wa-bot] Falha ao enviar mídia ${mediaDedupeKey}; o texto da IA segue mesmo assim.`,
+          error,
+        );
+      }
     }
 
     let replied = false;

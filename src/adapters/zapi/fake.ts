@@ -1,5 +1,7 @@
 import type {
   MessagingProvider,
+  OutboundImageMessage,
+  OutboundOptionListMessage,
   OutboundTextMessage,
   QrCode,
   SentMessage,
@@ -18,24 +20,46 @@ export const FAKE_QR_CODE_PNG_BASE64 =
 
 export class FakeMessagingProvider implements MessagingProvider {
   readonly sentMessages: FakeSentMessage[] = [];
+  readonly sentImages: (OutboundImageMessage & { providerMessageId: string })[] = [];
+  readonly sentOptionLists: (OutboundOptionListMessage & {
+    providerMessageId: string;
+  })[] = [];
   private connected = true;
+  // Contador ÚNICO para todos os tipos de mensagem (texto, imagem, lista):
+  // espelha a Z-API real, onde o id é global por sessão, não por endpoint.
   private sequence = 0;
   // Sufixo único por instância: zapi_message_id é UNIQUE no banco, e um
   // contador que reinicia a cada processo colide com execuções anteriores
   // quando o fake roda contra um banco persistente (demos no dev).
   private runId = Math.random().toString(36).slice(2, 8);
 
-  async sendText(message: OutboundTextMessage): Promise<SentMessage> {
+  private nextProviderMessageId(): string {
     if (!this.connected) {
       throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
     }
     this.sequence += 1;
-    const providerMessageId = `fake-zapi-msg-${this.runId}-${this.sequence}`;
+    return `fake-zapi-msg-${this.runId}-${this.sequence}`;
+  }
+
+  async sendText(message: OutboundTextMessage): Promise<SentMessage> {
+    const providerMessageId = this.nextProviderMessageId();
     this.sentMessages.push({
       providerMessageId,
       toE164: message.toE164,
       body: message.body,
     });
+    return { providerMessageId };
+  }
+
+  async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
+    const providerMessageId = this.nextProviderMessageId();
+    this.sentImages.push({ ...message, providerMessageId });
+    return { providerMessageId };
+  }
+
+  async sendOptionList(message: OutboundOptionListMessage): Promise<SentMessage> {
+    const providerMessageId = this.nextProviderMessageId();
+    this.sentOptionLists.push({ ...message, providerMessageId });
     return { providerMessageId };
   }
 
@@ -72,6 +96,8 @@ export class FakeMessagingProvider implements MessagingProvider {
 
   reset(): void {
     this.sentMessages.length = 0;
+    this.sentImages.length = 0;
+    this.sentOptionLists.length = 0;
     this.connected = true;
     this.sequence = 0;
     this.runId = Math.random().toString(36).slice(2, 8);

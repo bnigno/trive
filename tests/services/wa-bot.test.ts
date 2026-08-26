@@ -2,7 +2,9 @@
 // com PGlite real, FakeSalesAssistant roteirizado e FakeMessagingProvider.
 // Cobertura: turno simples, roteiro completo de venda (pedido channel
 // 'whatsapp' com reserva e link), CPF inválido sem persistência, segurança do
-// status_do_pedido, transferência para humano, skips e idempotência do reply.
+// status_do_pedido, transferência para humano, skips, idempotência do reply e
+// mídia do turno (menu interativo de listar_produtos, foto de
+// detalhar_produto, melhor esforço e dedupe do retry).
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -86,8 +88,8 @@ async function createRate(): Promise<{ id: string; priceCents: number }> {
 /** Vitrine pronta: variante ativa com preço, estoque e uma opção de frete. */
 async function setupStore(
   opts: { onHand?: number; priceCents?: number } = {},
-): Promise<{ variantId: string }> {
-  const { variantId } = await createTestVariant(db, {
+): Promise<{ productId: string; variantId: string }> {
+  const { productId, variantId } = await createTestVariant(db, {
     sku: "CANECA-AZUL",
     costCents: 1200,
     onHand: opts.onHand ?? 10,
@@ -95,7 +97,7 @@ async function setupStore(
   });
   await activatePrice(variantId, opts.priceCents ?? 4990);
   await createRate();
-  return { variantId };
+  return { productId, variantId };
 }
 
 async function createConversation(
@@ -435,6 +437,199 @@ describe("runBotTurn", () => {
     expect(provider.sentMessages).toHaveLength(1);
     expect(provider.sentMessages[0].body).toBe("Primeira resposta");
     expect(await outboundMessages(conversationId)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mídia do turno: menu interativo (listar_produtos) e foto (detalhar_produto)
+// ---------------------------------------------------------------------------
+
+/** Sufixo numérico da sequência única do fake — permite afirmar a ORDEM de envio. */
+function providerSequence(providerMessageId: string): number {
+  return Number(providerMessageId.split("-").at(-1));
+}
+
+class OptionListFailingProvider extends FakeMessagingProvider {
+  override async sendOptionList(): Promise<never> {
+    throw new Error("Z-API indisponível para mídia (stub)");
+  }
+}
+
+describe("runBotTurn — mídia", () => {
+  it("listar_produtos envia menu interativo ANTES do texto e persiste kind option_list", async () => {
+    await setupStore();
+    const conversationId = await createConversation();
+    const inboundId = await addInbound(conversationId, "O que vocês vendem?");
+
+    let toolText = "";
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: (toolTexts) => {
+        toolText = toolTexts[0];
+        return "Toque em Ver produtos 👇";
+      },
+    });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+
+    // O texto da ferramenta mantém os fatos e instrui a NÃO repetir a lista.
+    expect(toolText).toContain("Caneca Azul");
+    expect(toolText).toContain("[Um menu interativo com os produtos foi enviado");
+
+    expect(provider.sentOptionLists).toHaveLength(1);
+    const list = provider.sentOptionLists[0];
+    expect(list.toE164).toBe(PHONE);
+    expect(list.buttonLabel).toBe("Ver produtos");
+    expect(list.title).toBe("Nossos produtos");
+    expect(list.options).toEqual([
+      {
+        id: "produto:caneca-azul",
+        title: "Caneca Azul",
+        description: formatCentsBRL(4990),
+      },
+    ]);
+
+    // Menu saiu antes do texto da IA.
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(providerSequence(list.providerMessageId)).toBeLessThan(
+      providerSequence(provider.sentMessages[0].providerMessageId),
+    );
+
+    const outbound = await outboundMessages(conversationId);
+    expect(outbound).toHaveLength(2);
+    const media = outbound.find((m) => m.kind === "option_list");
+    expect(media?.status).toBe("sent");
+    expect(media?.dedupeKey).toBe(`wa.bot_media:${inboundId}:0`);
+    expect(media?.body).toContain("Caneca Azul");
+    const text = outbound.find((m) => m.kind === "text");
+    expect(text?.body).toBe("Toque em Ver produtos 👇");
+  });
+
+  it("detalhar_produto com imagem envia a foto com legenda 'nome — preço'", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://x.supabase.co");
+    const { productId } = await setupStore();
+    await db.insert(schema.productImages).values({
+      productId,
+      storagePath: "caneca-azul/1-full.webp",
+      sortOrder: 0,
+    });
+    const conversationId = await createConversation();
+    const inboundId = await addInbound(conversationId, "Me mostra a caneca azul");
+
+    let toolText = "";
+    assistant.enqueueScript({
+      toolCalls: [{ name: "detalhar_produto", input: { produto: "Caneca Azul" } }],
+      replyTemplate: (toolTexts) => {
+        toolText = toolTexts[0];
+        return "Olha só que linda! 😍";
+      },
+    });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+
+    expect(toolText).toContain("[A foto do produto foi enviada ao cliente.]");
+
+    const expectedUrl =
+      "https://x.supabase.co/storage/v1/object/public/product-images/caneca-azul/1-full.webp";
+    expect(provider.sentImages).toHaveLength(1);
+    expect(provider.sentImages[0].imageUrl).toBe(expectedUrl);
+    expect(provider.sentImages[0].caption).toBe(
+      `Caneca Azul — ${formatCentsBRL(4990)}`,
+    );
+
+    const outbound = await outboundMessages(conversationId);
+    const media = outbound.find((m) => m.kind === "image");
+    expect(media?.status).toBe("sent");
+    expect(media?.mediaUrl).toBe(expectedUrl);
+    expect(media?.dedupeKey).toBe(`wa.bot_media:${inboundId}:0`);
+  });
+
+  it("detalhar_produto SEM imagem: nenhum attachment e texto normal", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://x.supabase.co");
+    await setupStore();
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Me fala da caneca");
+
+    let toolText = "";
+    assistant.enqueueScript({
+      toolCalls: [{ name: "detalhar_produto", input: { produto: "Caneca Azul" } }],
+      replyTemplate: (toolTexts) => {
+        toolText = toolTexts[0];
+        return "Temos a Caneca Azul por R$ 49,90 😊";
+      },
+    });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+
+    expect(toolText).toContain("Caneca Azul");
+    expect(toolText).not.toContain("[A foto do produto");
+    expect(provider.sentImages).toHaveLength(0);
+
+    const outbound = await outboundMessages(conversationId);
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].kind).toBe("text");
+  });
+
+  it("falha do provedor na mídia é melhor esforço: o texto da IA sai mesmo assim", async () => {
+    const failing = new OptionListFailingProvider();
+    await setupStore();
+    const conversationId = await createConversation();
+    const inboundId = await addInbound(conversationId, "produtos?");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      assistant.enqueueScript({
+        toolCalls: [{ name: "listar_produtos", input: {} }],
+        replyTemplate: "Temos canecas! 😊",
+      });
+
+      const result = await runBotTurn(sdb, assistant, failing, { conversationId });
+      expect(result).toEqual({ replied: true, handedOff: false });
+
+      expect(failing.sentOptionLists).toHaveLength(0);
+      expect(failing.sentMessages).toHaveLength(1);
+      expect(failing.sentMessages[0].body).toBe("Temos canecas! 😊");
+      expect(warn).toHaveBeenCalled();
+
+      // A linha de mídia fica 'failed' (visível no admin), sem derrubar o turno.
+      const outbound = await outboundMessages(conversationId);
+      const media = outbound.find((m) => m.kind === "option_list");
+      expect(media?.status).toBe("failed");
+      expect(media?.dedupeKey).toBe(`wa.bot_media:${inboundId}:0`);
+      const text = outbound.find((m) => m.kind === "text");
+      expect(text?.status).toBe("sent");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("retry do turno: mídia e texto não duplicam (dedupe determinístico)", async () => {
+    await setupStore();
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "produtos?");
+
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: "Toque em Ver produtos 👇",
+    });
+    const first = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(first).toEqual({ replied: true, handedOff: false });
+
+    // Retry do evento da fila: mesmo roteiro, mesma última inbound.
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: "Toque em Ver produtos 👇",
+    });
+    const second = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(second).toEqual({ replied: false, handedOff: false });
+
+    expect(provider.sentOptionLists).toHaveLength(1);
+    expect(provider.sentMessages).toHaveLength(1);
+    // No banco: exatamente UMA linha de mídia e UMA de texto.
+    expect(await outboundMessages(conversationId)).toHaveLength(2);
   });
 });
 

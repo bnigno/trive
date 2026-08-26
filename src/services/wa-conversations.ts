@@ -85,7 +85,10 @@ export async function listWaConversations(
 export interface WaThreadMessage {
   id: string;
   direction: "inbound" | "outbound";
+  /** 'text' | 'image' (body é a legenda) | 'option_list' (body traz o menu). */
+  kind: string;
   body: string;
+  mediaUrl: string | null;
   templateKey: string | null;
   status: string;
   errorDetail: string | null;
@@ -129,7 +132,9 @@ export async function getWaConversationThread(
     .select({
       id: waMessages.id,
       direction: waMessages.direction,
+      kind: waMessages.kind,
       body: waMessages.body,
+      mediaUrl: waMessages.mediaUrl,
       templateKey: waMessages.templateKey,
       status: waMessages.status,
       errorDetail: waMessages.errorDetail,

@@ -11,6 +11,8 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
   it("implementa a interface completa do contrato", () => {
     const provider: MessagingProvider = new FakeMessagingProvider();
     expect(provider.sendText).toBeTypeOf("function");
+    expect(provider.sendImage).toBeTypeOf("function");
+    expect(provider.sendOptionList).toBeTypeOf("function");
     expect(provider.getSessionStatus).toBeTypeOf("function");
     expect(provider.getQrCode).toBeTypeOf("function");
   });
@@ -44,6 +46,78 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
       toE164: "+5511888880000",
       body: "Pedido enviado!",
     });
+  });
+
+  it("sendImage registra a mensagem e compartilha o contador com sendText", async () => {
+    const provider = new FakeMessagingProvider();
+    await provider.sendText({ toE164: "+5511999990000", body: "Oi" });
+    const sent = await provider.sendImage({
+      toE164: "+5511999990000",
+      imageUrl: "https://cdn.trive.example/produtos/colar.jpg",
+      caption: "Colar de prata",
+    });
+
+    // Mesmo contador para todos os tipos: o texto foi -1, a imagem é -2.
+    expect(sent.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-2$/);
+    expect(provider.sentImages).toHaveLength(1);
+    expect(provider.sentImages[0]).toEqual({
+      toE164: "+5511999990000",
+      imageUrl: "https://cdn.trive.example/produtos/colar.jpg",
+      caption: "Colar de prata",
+      providerMessageId: sent.providerMessageId,
+    });
+  });
+
+  it("sendOptionList registra a mensagem completa com as opções", async () => {
+    const provider = new FakeMessagingProvider();
+    const sent = await provider.sendOptionList({
+      toE164: "+5511999990000",
+      message: "Como quer receber?",
+      title: "Entrega",
+      buttonLabel: "Ver opções",
+      options: [
+        { id: "sedex", title: "Sedex", description: "2 dias úteis" },
+        { id: "pac", title: "PAC" },
+      ],
+    });
+
+    expect(sent.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-1$/);
+    expect(provider.sentOptionLists).toHaveLength(1);
+    expect(provider.sentOptionLists[0]).toMatchObject({
+      toE164: "+5511999990000",
+      message: "Como quer receber?",
+      title: "Entrega",
+      buttonLabel: "Ver opções",
+      providerMessageId: sent.providerMessageId,
+    });
+    expect(provider.sentOptionLists[0]?.options).toEqual([
+      { id: "sedex", title: "Sedex", description: "2 dias úteis" },
+      { id: "pac", title: "PAC" },
+    ]);
+  });
+
+  it("desconectado: sendImage e sendOptionList lançam sem registrar nada", async () => {
+    const provider = new FakeMessagingProvider();
+    provider.simulateDisconnect();
+
+    await expect(
+      provider.sendImage({
+        toE164: "+5511999990000",
+        imageUrl: "https://cdn.trive.example/produtos/colar.jpg",
+      }),
+    ).rejects.toThrow(/desconectada/);
+    await expect(
+      provider.sendOptionList({
+        toE164: "+5511999990000",
+        message: "Como quer receber?",
+        title: "Entrega",
+        buttonLabel: "Ver opções",
+        options: [{ id: "pac", title: "PAC" }],
+      }),
+    ).rejects.toThrow(/desconectada/);
+
+    expect(provider.sentImages).toHaveLength(0);
+    expect(provider.sentOptionLists).toHaveLength(0);
   });
 
   it("conectado: status {connected: true} e getQrCode null", async () => {
@@ -83,11 +157,24 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
   it("reset limpa mensagens, sequência e reconecta", async () => {
     const provider = new FakeMessagingProvider();
     await provider.sendText({ toE164: "+5511999990000", body: "Oi" });
+    await provider.sendImage({
+      toE164: "+5511999990000",
+      imageUrl: "https://cdn.trive.example/produtos/colar.jpg",
+    });
+    await provider.sendOptionList({
+      toE164: "+5511999990000",
+      message: "Como quer receber?",
+      title: "Entrega",
+      buttonLabel: "Ver opções",
+      options: [{ id: "pac", title: "PAC" }],
+    });
     provider.simulateDisconnect();
 
     provider.reset();
 
     expect(provider.sentMessages).toHaveLength(0);
+    expect(provider.sentImages).toHaveLength(0);
+    expect(provider.sentOptionLists).toHaveLength(0);
     await expect(provider.getSessionStatus()).resolves.toEqual({ connected: true });
     const sent = await provider.sendText({ toE164: "+5511999990000", body: "De novo" });
     expect(sent.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-1$/);

@@ -27,8 +27,10 @@ export const OPT_OUT_ACK_BODY =
 const FORWARD_BODY_MAX_CHARS = 300;
 
 // Corpo tolerante: a Z-API varia o formato entre versões — texto vem em
-// text.message ou body.message; phone/messageId às vezes chegam numéricos.
-// Qualquer coisa fora do reconhecível vira {} e o evento é ignorado.
+// text.message ou body.message; respostas interativas (toque em lista de
+// opções ou botão) chegam em listResponseMessage/buttonsResponseMessage;
+// phone/messageId às vezes chegam numéricos. Qualquer coisa fora do
+// reconhecível vira {} e o evento é ignorado.
 const zapiInboundBodySchema = z
   .object({
     messageId: z.union([z.string(), z.number()]).optional(),
@@ -39,6 +41,19 @@ const zapiInboundBodySchema = z
     chatName: z.string().optional(),
     text: z.object({ message: z.string().optional() }).optional(),
     body: z.object({ message: z.string().optional() }).optional(),
+    listResponseMessage: z
+      .object({
+        message: z.string().optional(),
+        title: z.string().optional(),
+        selectedRowId: z.string().optional(),
+      })
+      .optional(),
+    buttonsResponseMessage: z
+      .object({
+        buttonId: z.string().optional(),
+        message: z.string().optional(),
+      })
+      .optional(),
     // Callback de status de mensagem (webhook update-webhook-message-status):
     // status SENT/RECEIVED/READ/PLAYED + ids das mensagens afetadas.
     status: z.string().optional(),
@@ -80,6 +95,21 @@ function normalizeKeyword(text: string): string {
     .toUpperCase();
 }
 
+// Toque numa lista de opções vira texto normal para o fluxo: option id
+// 'produto:{slug}' vira um pedido explícito de detalhe (detalhar_produto
+// resolve o slug com match exato); outra opção usa o título visível.
+function listResponseText(
+  list:
+    | { message?: string; title?: string; selectedRowId?: string }
+    | undefined,
+): string | undefined {
+  if (!list) return undefined;
+  if (list.selectedRowId?.startsWith("produto:")) {
+    return `Quero ver o produto ${list.selectedRowId.slice("produto:".length)}`;
+  }
+  return list.title ?? list.message;
+}
+
 /** Z-API manda '5511999998888' (sem '+'): normaliza BR; aceita E.164 estrangeiro. */
 function normalizePhone(raw: string): string | null {
   const br = toE164BR(raw);
@@ -111,7 +141,11 @@ export async function processZapiInbound(
   const messageId =
     parsed.messageId !== undefined ? String(parsed.messageId) : undefined;
   const rawPhone = parsed.phone !== undefined ? String(parsed.phone) : undefined;
-  const text = parsed.text?.message ?? parsed.body?.message;
+  const text =
+    parsed.text?.message ??
+    parsed.body?.message ??
+    listResponseText(parsed.listResponseMessage) ??
+    parsed.buttonsResponseMessage?.message;
 
   // Callback de STATUS de mensagem (entregue/lida): atualiza wa_messages
   // pelo zapi_message_id de forma MONOTÔNICA (nunca regride) — é o que torna

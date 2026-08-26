@@ -200,13 +200,170 @@ async function upsertConversation(
 }
 
 /**
+ * Resolve o cliente (por id, senão pelo telefone) — necessário para o opt-in
+ * e para vincular a conversa.
+ */
+async function resolveCustomer(
+  db: DbOrTx,
+  customerId: string | undefined,
+  phoneE164: string,
+): Promise<{ id: string; marketingOptIn: boolean } | null> {
+  if (customerId) {
+    const [row] = await db
+      .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .limit(1);
+    return row ?? null;
+  }
+  const [row] = await db
+    .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
+    .from(customers)
+    .where(
+      and(eq(customers.phoneE164, phoneE164), isNull(customers.deletedAt)),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+type OutboundMessageInsert = typeof waMessages.$inferInsert;
+
+/**
+ * Insere a linha outbound respeitando dedupe_key UNIQUE:
+ * - linha existente sent/delivered/read → { skipped: 'ja_enviado' };
+ * - failed (provedor falhou) ou queued (tentativa interrompida antes do envio)
+ *   → RETOMA: volta a queued aplicando resumePatch, na MESMA linha, nunca uma
+ *   segunda mensagem.
+ */
+async function insertOrResumeOutboundMessage(
+  db: DbOrTx,
+  values: OutboundMessageInsert,
+  resumePatch: Partial<OutboundMessageInsert>,
+): Promise<{ waMessageId: string } | { skipped: "ja_enviado" }> {
+  const dedupeKey = values.dedupeKey ?? null;
+  if (!dedupeKey) {
+    const [inserted] = await db
+      .insert(waMessages)
+      .values(values)
+      .returning({ id: waMessages.id });
+    return { waMessageId: inserted.id };
+  }
+
+  const inserted = await db
+    .insert(waMessages)
+    .values(values)
+    .onConflictDoNothing({ target: waMessages.dedupeKey })
+    .returning({ id: waMessages.id });
+  if (inserted[0]) return { waMessageId: inserted[0].id };
+
+  const [existing] = await db
+    .select({ id: waMessages.id, status: waMessages.status })
+    .from(waMessages)
+    .where(eq(waMessages.dedupeKey, dedupeKey))
+    .limit(1);
+  if (!existing) {
+    throw new ServiceError(
+      "dedupe_inconsistente",
+      `Conflito de dedupe sem linha correspondente (${dedupeKey}).`,
+    );
+  }
+  if (existing.status !== "failed" && existing.status !== "queued") {
+    return { skipped: "ja_enviado" };
+  }
+  await db
+    .update(waMessages)
+    .set({ status: "queued", errorDetail: null, ...resumePatch })
+    .where(eq(waMessages.id, existing.id));
+  return { waMessageId: existing.id };
+}
+
+/**
+ * A Z-API aceita envio para número SEM WhatsApp em silêncio (caso real do
+ * pedido #1000): o serviço consulta antes. Falha PERMANENTE — a linha fica
+ * visível como 'failed' no admin e o evento da fila conclui sem retry (skip).
+ */
+async function failNumberWithoutWhatsapp(
+  db: DbOrTx,
+  waMessageId: string,
+  phoneE164: string,
+): Promise<{ skipped: "numero_sem_whatsapp" }> {
+  await db
+    .update(waMessages)
+    .set({
+      status: "failed",
+      errorDetail: "Número sem WhatsApp — confira o telefone do cliente.",
+    })
+    .where(eq(waMessages.id, waMessageId));
+  await db.insert(auditLog).values({
+    actorType: "system",
+    actorId: null,
+    action: "wa.send_failed",
+    entityType: "wa_message",
+    entityId: waMessageId,
+    after: { phoneE164, reason: "numero_sem_whatsapp" },
+  });
+  return { skipped: "numero_sem_whatsapp" };
+}
+
+/**
+ * Executa o envio no provedor e fecha o ciclo da linha: sucesso → sent +
+ * lastOutboundAt da conversa + audit; falha REAL → failed + error_detail e
+ * RELANÇA (retry/backoff/DLQ da fila reentregam e caem na retomada do dedupe).
+ */
+async function deliverOutboundMessage(
+  db: DbOrTx,
+  input: {
+    waMessageId: string;
+    conversationId: string;
+    send: () => Promise<{ providerMessageId: string }>;
+    auditAfter: Record<string, unknown>;
+  },
+): Promise<{ sent: true; waMessageId: string }> {
+  try {
+    const { providerMessageId } = await input.send();
+    const now = new Date();
+    await db
+      .update(waMessages)
+      .set({
+        status: "sent",
+        zapiMessageId: providerMessageId,
+        sentAt: now,
+        errorDetail: null,
+      })
+      .where(eq(waMessages.id, input.waMessageId));
+    await db
+      .update(waConversations)
+      .set({ lastOutboundAt: now, updatedAt: now })
+      .where(eq(waConversations.id, input.conversationId));
+    await db.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "notification.whatsapp",
+      entityType: "wa_message",
+      entityId: input.waMessageId,
+      after: input.auditAfter,
+    });
+    return { sent: true, waMessageId: input.waMessageId };
+  } catch (error) {
+    await db
+      .update(waMessages)
+      .set({
+        status: "failed",
+        errorDetail: error instanceof Error ? error.message : String(error),
+      })
+      .where(eq(waMessages.id, input.waMessageId));
+    throw error;
+  }
+}
+
+/**
  * Envia uma mensagem (template ativo OU bodyOverride) para phoneE164, com:
  * - toggle wa_enabled (+ credenciais em modo real) → { skipped: 'desabilitado' };
  * - opt-in LGPD quando requireOptIn (sem cliente ou sem opt-in → 'sem_opt_in',
  *   e NADA é gravado);
  * - idempotência: dedupeKey UNIQUE em wa_messages — repetição vira
- *   { skipped: 'ja_enviado' }; se a existente está 'failed', RETOMA
- *   (failed → queued → tenta de novo) em vez de pular;
+ *   { skipped: 'ja_enviado' }; linha failed/queued é RETOMADA
+ *   (→ queued → tenta de novo) em vez de pular;
  * - falha do provedor: marca a linha como failed + error_detail e RELANÇA
  *   (o retry da fila reprocessa e cai na retomada acima).
  */
@@ -219,29 +376,7 @@ export async function sendTemplateMessage(
 
   if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
 
-  // Resolve o cliente (por id, senão pelo telefone) — necessário para o
-  // opt-in e para vincular a conversa.
-  let customer: { id: string; marketingOptIn: boolean } | null = null;
-  if (parsed.customerId) {
-    const [row] = await db
-      .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
-      .from(customers)
-      .where(eq(customers.id, parsed.customerId))
-      .limit(1);
-    customer = row ?? null;
-  } else {
-    const [row] = await db
-      .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
-      .from(customers)
-      .where(
-        and(
-          eq(customers.phoneE164, parsed.phoneE164),
-          isNull(customers.deletedAt),
-        ),
-      )
-      .limit(1);
-    customer = row ?? null;
-  }
+  const customer = await resolveCustomer(db, parsed.customerId, parsed.phoneE164);
 
   if (parsed.requireOptIn && (!customer || !customer.marketingOptIn)) {
     return { skipped: "sem_opt_in" };
@@ -270,119 +405,168 @@ export async function sendTemplateMessage(
     customer?.id ?? null,
   );
 
-  const messageValues = {
-    conversationId,
-    direction: "outbound" as const,
-    body,
-    templateKey: parsed.templateKey ?? null,
-    dedupeKey: parsed.dedupeKey ?? null,
-    status: "queued" as const,
-    orderId: parsed.orderId ?? null,
-  };
-
-  let waMessageId: string;
-  if (parsed.dedupeKey) {
-    const inserted = await db
-      .insert(waMessages)
-      .values(messageValues)
-      .onConflictDoNothing({ target: waMessages.dedupeKey })
-      .returning({ id: waMessages.id });
-    if (inserted[0]) {
-      waMessageId = inserted[0].id;
-    } else {
-      const [existing] = await db
-        .select({ id: waMessages.id, status: waMessages.status })
-        .from(waMessages)
-        .where(eq(waMessages.dedupeKey, parsed.dedupeKey))
-        .limit(1);
-      if (!existing) {
-        throw new ServiceError(
-          "dedupe_inconsistente",
-          `Conflito de dedupe sem linha correspondente (${parsed.dedupeKey}).`,
-        );
-      }
-      if (existing.status !== "failed") return { skipped: "ja_enviado" };
-      // Retomada: a tentativa anterior falhou no provedor — volta a queued
-      // e tenta de novo (mesma linha, nunca uma segunda mensagem).
-      await db
-        .update(waMessages)
-        .set({ status: "queued", body, errorDetail: null })
-        .where(eq(waMessages.id, existing.id));
-      waMessageId = existing.id;
-    }
-  } else {
-    const [inserted] = await db
-      .insert(waMessages)
-      .values(messageValues)
-      .returning({ id: waMessages.id });
-    waMessageId = inserted.id;
-  }
-
-  // A Z-API aceita envio para número SEM WhatsApp em silêncio (caso real do
-  // pedido #1000): consultamos antes. Falha PERMANENTE — a linha fica visível
-  // como 'failed' no admin e o evento da fila conclui sem retry (skip).
-  if (!(await provider.phoneExists(parsed.phoneE164))) {
-    await db
-      .update(waMessages)
-      .set({
-        status: "failed",
-        errorDetail: "Número sem WhatsApp — confira o telefone do cliente.",
-      })
-      .where(eq(waMessages.id, waMessageId));
-    await db.insert(auditLog).values({
-      actorType: "system",
-      actorId: null,
-      action: "wa.send_failed",
-      entityType: "wa_message",
-      entityId: waMessageId,
-      after: { phoneE164: parsed.phoneE164, reason: "numero_sem_whatsapp" },
-    });
-    return { skipped: "numero_sem_whatsapp" };
-  }
-
-  try {
-    const { providerMessageId } = await provider.sendText({
-      toE164: parsed.phoneE164,
+  const insertResult = await insertOrResumeOutboundMessage(
+    db,
+    {
+      conversationId,
+      direction: "outbound",
       body,
-    });
-    const now = new Date();
-    await db
-      .update(waMessages)
-      .set({
-        status: "sent",
-        zapiMessageId: providerMessageId,
-        sentAt: now,
-        errorDetail: null,
-      })
-      .where(eq(waMessages.id, waMessageId));
-    await db
-      .update(waConversations)
-      .set({ lastOutboundAt: now, updatedAt: now })
-      .where(eq(waConversations.id, conversationId));
-    await db.insert(auditLog).values({
-      actorType: "system",
-      actorId: null,
-      action: "notification.whatsapp",
-      entityType: "wa_message",
-      entityId: waMessageId,
-      after: {
-        to: parsed.phoneE164,
-        templateKey: parsed.templateKey ?? null,
-        orderId: parsed.orderId ?? null,
-      },
-    });
-    return { sent: true, waMessageId };
-  } catch (error) {
-    await db
-      .update(waMessages)
-      .set({
-        status: "failed",
-        errorDetail: error instanceof Error ? error.message : String(error),
-      })
-      .where(eq(waMessages.id, waMessageId));
-    // Falha REAL do provedor: relança para o retry da fila reprocessar.
-    throw error;
+      templateKey: parsed.templateKey ?? null,
+      dedupeKey: parsed.dedupeKey ?? null,
+      status: "queued",
+      orderId: parsed.orderId ?? null,
+    },
+    { body },
+  );
+  if ("skipped" in insertResult) return insertResult;
+  const { waMessageId } = insertResult;
+
+  if (!(await provider.phoneExists(parsed.phoneE164))) {
+    return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164);
   }
+
+  return deliverOutboundMessage(db, {
+    waMessageId,
+    conversationId,
+    send: () => provider.sendText({ toE164: parsed.phoneE164, body }),
+    auditAfter: {
+      to: parsed.phoneE164,
+      templateKey: parsed.templateKey ?? null,
+      orderId: parsed.orderId ?? null,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// sendMediaMessage — imagem (URL pública) e lista interativa de opções.
+// ---------------------------------------------------------------------------
+
+const sendMediaMessageCommonFields = {
+  phoneE164: E164_SCHEMA,
+  /** Legenda (image) ou mensagem convidativa CRUA do menu (option_list). */
+  body: z.string().min(1),
+  customerId: z.uuid().optional(),
+  orderId: z.uuid().optional(),
+  dedupeKey: z.string().min(1),
+  requireOptIn: z.boolean().default(false),
+};
+
+const sendMediaMessageSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("image"),
+    imageUrl: z.url(),
+    ...sendMediaMessageCommonFields,
+  }),
+  z.object({
+    kind: z.literal("option_list"),
+    optionList: z.object({
+      title: z.string().min(1),
+      buttonLabel: z.string().min(1),
+      options: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(64),
+            title: z.string().min(1).max(24),
+            description: z.string().optional(),
+          }),
+        )
+        .min(1)
+        .max(10),
+    }),
+    ...sendMediaMessageCommonFields,
+  }),
+]);
+
+export type SendMediaMessageInput = z.input<typeof sendMediaMessageSchema>;
+
+/**
+ * Envia mensagem de MÍDIA (imagem ou lista de opções) com as MESMAS regras de
+ * sendTemplateMessage (wa_enabled, opt-in quando requireOptIn, phoneExists,
+ * dedupe com retomada, falha do provedor relança).
+ *
+ * body persistido em wa_messages é o que o histórico do bot e a thread do
+ * admin leem: a legenda (image) ou o menu já renderizado com as opções em
+ * linhas '• título — descrição' (option_list). Ao provedor vai a mensagem
+ * CRUA + opções estruturadas.
+ */
+export async function sendMediaMessage(
+  db: DbOrTx,
+  provider: MessagingProvider,
+  input: SendMediaMessageInput,
+): Promise<SendWaMessageResult> {
+  const parsed = sendMediaMessageSchema.parse(input);
+
+  if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
+
+  const customer = await resolveCustomer(db, parsed.customerId, parsed.phoneE164);
+
+  if (parsed.requireOptIn && (!customer || !customer.marketingOptIn)) {
+    return { skipped: "sem_opt_in" };
+  }
+
+  const persistedBody =
+    parsed.kind === "option_list"
+      ? [
+          parsed.body,
+          ...parsed.optionList.options.map((option) =>
+            option.description
+              ? `• ${option.title} — ${option.description}`
+              : `• ${option.title}`,
+          ),
+        ].join("\n")
+      : parsed.body;
+  const mediaUrl = parsed.kind === "image" ? parsed.imageUrl : null;
+
+  const conversationId = await upsertConversation(
+    db,
+    parsed.phoneE164,
+    customer?.id ?? null,
+  );
+
+  const insertResult = await insertOrResumeOutboundMessage(
+    db,
+    {
+      conversationId,
+      direction: "outbound",
+      kind: parsed.kind,
+      body: persistedBody,
+      mediaUrl,
+      dedupeKey: parsed.dedupeKey,
+      status: "queued",
+      orderId: parsed.orderId ?? null,
+    },
+    { kind: parsed.kind, body: persistedBody, mediaUrl },
+  );
+  if ("skipped" in insertResult) return insertResult;
+  const { waMessageId } = insertResult;
+
+  if (!(await provider.phoneExists(parsed.phoneE164))) {
+    return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164);
+  }
+
+  return deliverOutboundMessage(db, {
+    waMessageId,
+    conversationId,
+    send: () =>
+      parsed.kind === "image"
+        ? provider.sendImage({
+            toE164: parsed.phoneE164,
+            imageUrl: parsed.imageUrl,
+            caption: parsed.body,
+          })
+        : provider.sendOptionList({
+            toE164: parsed.phoneE164,
+            message: parsed.body,
+            title: parsed.optionList.title,
+            buttonLabel: parsed.optionList.buttonLabel,
+            options: parsed.optionList.options,
+          }),
+    auditAfter: {
+      to: parsed.phoneE164,
+      kind: parsed.kind,
+      orderId: parsed.orderId ?? null,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
