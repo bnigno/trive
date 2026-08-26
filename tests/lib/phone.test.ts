@@ -35,8 +35,17 @@ describe("toE164BR", () => {
     expect(toE164BR("11 89999-8888")).toBe(null);
   });
 
-  it("rejects 8-digit numbers starting with 9 (old mobile format)", () => {
+  it("adds the ninth digit to legacy 8-digit mobiles ONLY with the 55 prefix", () => {
+    // O WhatsApp (Z-API) entrega contas antigas SEM o nono dígito — caso
+    // real em produção que travava o criar_pedido do bot. O formato do JID
+    // sempre traz o 55; digitação humana sem 55 não é reinterpretada.
+    expect(toE164BR("+559181037536")).toBe("+5591981037536");
+    expect(toE164BR("559181037536")).toBe("+5591981037536");
+    expect(toE164BR("55 11 9999-8888")).toBe("+5511999998888");
     expect(toE164BR("11 9999-8888")).toBe(null);
+    expect(toE164BR("91 8103-7536")).toBe(null);
+    // Fixo (2-5) continua fixo, sem ganhar dígito.
+    expect(toE164BR("55 11 3222-1234")).toBe("+551132221234");
   });
 
   it("rejects invalid DDDs, lengths and garbage", () => {
