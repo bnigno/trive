@@ -198,6 +198,11 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     ).toBe(false);
     expect(schema.safeParse({ ...pedidoValido, itens: [] }).success).toBe(false);
     expect(schema.safeParse({ ...pedidoValido, uf: "SPO" }).success).toBe(false);
+    // telefone é aceito e ignorado (caso real: o modelo coleta telefone por
+    // instinto e rejeitá-lo travava a finalização do pedido).
+    expect(
+      schema.safeParse({ ...pedidoValido, telefone: "91981037536" }).success,
+    ).toBe(true);
     const semBairro: Record<string, unknown> = { ...pedidoValido };
     delete semBairro["bairro"];
     expect(schema.safeParse(semBairro).success).toBe(false);

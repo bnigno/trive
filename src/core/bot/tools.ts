@@ -37,6 +37,8 @@ export type BotToolInputs = {
     cidade: string;
     uf: string;
     cupom?: string;
+    /** Aceito e ignorado — o pedido usa o telefone da conversa. */
+    telefone?: string;
   };
   status_do_pedido: { numero_do_pedido?: number };
   transferir_para_atendente: { motivo: string };
@@ -106,7 +108,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "criar_pedido",
     description:
-      "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após confirmar com o cliente TODOS os dados (itens, quantidades, dados pessoais, endereço e frete) e receber o SIM. O resumo devolvido é a única fonte de valores — retransmita sem alterar.",
+      "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após confirmar com o cliente TODOS os dados (itens, quantidades, dados pessoais, endereço e frete) e receber o SIM. O resumo devolvido é a única fonte de valores — retransmita sem alterar. TELEFONE: o pedido usa automaticamente o número de WhatsApp desta conversa — NUNCA peça telefone ao cliente.",
     input_schema: {
       type: "object",
       properties: {
@@ -165,6 +167,11 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         cupom: {
           type: "string",
           description: "Código de cupom informado pelo cliente. Omita se não houver.",
+        },
+        telefone: {
+          type: "string",
+          description:
+            "IGNORADO — o pedido sempre usa o número de WhatsApp da própria conversa. Não peça telefone ao cliente; omita este campo.",
         },
       },
       required: [
@@ -263,6 +270,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     cidade: z.string().min(1),
     uf: z.string().regex(/^[A-Za-z]{2}$/, "UF deve ter 2 letras"),
     cupom: z.string().optional(),
+    // Aceito e IGNORADO: o pedido usa o telefone da própria conversa. O
+    // modelo tende a coletar telefone por instinto de vendedor — rejeitar o
+    // campo travava a finalização (caso real em produção, 2026-08-26).
+    telefone: z.string().optional(),
   }),
   status_do_pedido: z.strictObject({
     numero_do_pedido: z.number().int().min(1).optional(),
