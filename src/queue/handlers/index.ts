@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { getSalesAssistant } from "@/adapters/assistant";
 import { getEmailProvider } from "@/adapters/email";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getMessagingProvider } from "@/adapters/zapi";
@@ -8,6 +9,7 @@ import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
+import { runBotTurn } from "@/services/wa-bot";
 import {
   isWaEnabled,
   sendTemplateMessage,
@@ -92,7 +94,12 @@ const waSendPayloadSchema = z.object({
   dedupeKey: z.string().min(1).optional(),
 });
 
-// Resposta de cliente encaminhada ao dono (sem chatbot: humano responde).
+// Turno do bot de vendas: um por mensagem inbound (dedupe no enqueue).
+const waBotTurnPayloadSchema = z.object({
+  conversationId: z.uuid(),
+});
+
+// Resposta de cliente encaminhada ao dono (bot desligado: humano responde).
 const waOwnerForwardPayloadSchema = z.object({
   phoneE164: z.string().optional(),
   customerName: z.string().optional(),
@@ -168,7 +175,19 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       requireOptIn: false,
     });
   },
-  // Resposta de cliente → encaminha ao dono (humano responde; sem chatbot).
+  // Turno do bot de vendas IA sobre uma conversa. runBotTurn trata os skips
+  // (bot desligado, conversa assumida, AssistantUnavailableError) devolvendo
+  // { skipped } SEM lançar — o evento fica done e não entra em retry-loop.
+  // Qualquer throw residual (banco, provedor) propaga de propósito:
+  // retry/backoff/DLQ da fila agem, com idempotência via dedupe do enqueue.
+  "wa.bot_turn": async (event) => {
+    const payload = waBotTurnPayloadSchema.parse(event.payload);
+    await runBotTurn(getDb(), getSalesAssistant(), getMessagingProvider(), {
+      conversationId: payload.conversationId,
+    });
+  },
+  // Resposta de cliente → encaminha ao dono (humano responde; bot desligado
+  // ou conversa assumida).
   "wa.owner_forward": async (event) => {
     const parsed = waOwnerForwardPayloadSchema.parse(event.payload);
     const who =

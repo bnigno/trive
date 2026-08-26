@@ -2,9 +2,11 @@
 // Autenticação: o [secret] do path DEVE bater com ZAPI_WEBHOOK_SECRET (rota
 // devolve 404 num mismatch — não revelamos que o endpoint existe); quando a
 // Z-API manda o header Client-Token, ele também precisa bater. Idempotência
-// por inbound_events (source 'zapi' + messageId). SEM chatbot: comando
-// SAIR/PARAR desliga o opt-in (LGPD) e confirma; qualquer outro texto é
-// encaminhado ao DONO via outbox — humano responde.
+// por inbound_events (source 'zapi' + messageId). Comando SAIR/PARAR desliga
+// o opt-in (LGPD) e confirma — SEMPRE antes de qualquer bot. Outro texto:
+// se a conversa está 'open', o bot não está silenciado (bot_disabled_until)
+// e o bot de vendas está habilitado, enfileira 'wa.bot_turn'; senão o texto
+// é encaminhado ao DONO via outbox — humano responde.
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -17,6 +19,7 @@ import {
 } from "@/db/schema";
 import { isValidE164, toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { isBotEnabled } from "@/services/wa-bot";
 
 export const OPT_OUT_ACK_BODY =
   "Pronto! Você não receberá mais avisos. Se mudar de ideia, é só chamar. 💬";
@@ -65,7 +68,8 @@ export type ProcessZapiInboundResult =
       /** true quando havia cliente cadastrado com esse telefone para desligar. */
       optedOut: boolean;
     }
-  | { action: "forwarded"; conversationId: string; waMessageId: string };
+  | { action: "forwarded"; conversationId: string; waMessageId: string }
+  | { action: "bot_queued"; conversationId: string; waMessageId: string };
 
 /** trim + maiúsculas + sem acento, para comparar comandos como SAIR/PARAR. */
 function normalizeKeyword(text: string): string {
@@ -209,7 +213,11 @@ export async function processZapiInbound(
             : {}),
         },
       })
-      .returning({ id: waConversations.id });
+      .returning({
+        id: waConversations.id,
+        status: waConversations.status,
+        botDisabledUntil: waConversations.botDisabledUntil,
+      });
 
     const [message] = await tx
       .insert(waMessages)
@@ -278,8 +286,36 @@ export async function processZapiInbound(
       } as const;
     }
 
-    // Texto comum: encaminha ao DONO (aviso interno, sem opt-in) e um humano
-    // responde. Nunca respondemos o cliente automaticamente aqui.
+    // Texto comum: se a conversa está 'open', o bot não está silenciado
+    // (bot_disabled_until nulo ou no passado) e o bot de vendas está ligado,
+    // o turno vai para a fila — a resposta acontece no handler 'wa.bot_turn',
+    // nunca inline no webhook. Checagens baratas primeiro; isBotEnabled (que
+    // consulta settings) só roda quando a conversa é elegível.
+    const botEligible =
+      conversation.status === "open" &&
+      (conversation.botDisabledUntil === null ||
+        conversation.botDisabledUntil.getTime() <= now.getTime()) &&
+      (await isBotEnabled(tx));
+
+    if (botEligible) {
+      await enqueueOutboxEvent(tx, {
+        eventType: "wa.bot_turn",
+        dedupeKey: `wa.bot_turn:${messageId}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: { conversationId: conversation.id },
+      });
+
+      await markDone();
+      return {
+        action: "bot_queued",
+        conversationId: conversation.id,
+        waMessageId: message.id,
+      } as const;
+    }
+
+    // Bot desligado/silenciado ou conversa assumida por humano: encaminha ao
+    // DONO (aviso interno, sem opt-in) e um humano responde.
     await enqueueOutboxEvent(tx, {
       eventType: "wa.owner_forward",
       dedupeKey: `wa.fwd:${messageId}`,

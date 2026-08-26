@@ -122,6 +122,8 @@ const storeAddressSchema = z.object({
 });
 
 const createStoreOrderSchema = z.object({
+  /** Origem do pedido: loja pública (default) ou bot de vendas no WhatsApp. */
+  channel: z.enum(["store", "whatsapp"]).default("store"),
   customer: storeCustomerSchema,
   address: storeAddressSchema,
   items: z
@@ -451,7 +453,7 @@ export async function createStoreOrder(
       .values({
         customerId,
         status: "draft",
-        channel: "store",
+        channel: parsed.channel,
         subtotalCents: totals.subtotalCents,
         discountCents: coupon?.discountCents ?? 0,
         couponId: coupon?.couponId ?? null,
