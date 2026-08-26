@@ -8,7 +8,7 @@ import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listPricesOverview } from "@/services/pricing";
 import { formatPercent } from "./labels";
 import { RecalcButton } from "./recalc-button";
@@ -25,7 +25,7 @@ export default async function PricesOverviewPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireUser();
+  await requireOwner("precos");
   const sp = await searchParams;
   const query = (typeof sp.q === "string" ? sp.q : "").trim();
 

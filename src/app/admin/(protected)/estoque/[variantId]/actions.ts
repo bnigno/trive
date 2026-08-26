@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner, requireUser } from "@/services/auth";
 import { ServiceError as PricingServiceError } from "@/services/pricing";
 import {
   adjustStock,
@@ -51,8 +51,14 @@ export async function receiveStockAction(
     };
   }
 
+  // Custo é dinheiro do negócio: a equipe nem vê o campo. Se o valor vier
+  // assim mesmo (POST forjado), ele é IGNORADO em vez de aceito — aceitar
+  // reescreveria o custo do produto e dispararia reprecificação. A entrada
+  // continua valendo: a mercadoria chegou de verdade.
+  const canSetCost = user.role === "owner";
+
   let unitCostCents: number | undefined;
-  if (unitCostRaw !== "") {
+  if (canSetCost && unitCostRaw !== "") {
     try {
       unitCostCents = parseBRLToCents(unitCostRaw);
     } catch {
@@ -87,12 +93,16 @@ export async function receiveStockAction(
 /**
  * Entrada de compra COM fornecedor: custo obrigatório, gera conta a pagar
  * e sugestão de reprecificação. Entrada sem fornecedor usa receiveStockAction.
+ *
+ * Só o proprietário: a compra escolhe fornecedor, grava custo e mexe no
+ * financeiro — as três coisas que a equipe não vê. A entrada simples
+ * (receiveStockAction) continua liberada para quem recebe a mercadoria.
  */
 export async function receivePurchaseAction(
   _prev: StockFormState,
   formData: FormData,
 ): Promise<StockFormState> {
-  const user = await requireUser();
+  const user = await requireOwner("fornecedores");
 
   const variantId = String(formData.get("variantId") ?? "");
   const supplierId = z.uuid().safeParse(formData.get("supplierId"));

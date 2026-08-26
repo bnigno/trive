@@ -5,7 +5,7 @@ import { asc } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema";
 import { getFileStorage } from "@/adapters/storage";
-import { requireUser } from "@/services/auth";
+import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
@@ -18,6 +18,7 @@ import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, Td, Tr } from "@/components/ui/table";
+import { OwnerOnly } from "../../owner-only";
 import { removeImageAction, setProductStatusAction } from "./actions";
 import { EditProductForm } from "./edit-product-form";
 import { ImageUploadForm } from "./image-upload-form";
@@ -71,6 +72,7 @@ export default async function ProdutoDetalhePage({
   params: Promise<{ id: string }>;
 }) {
   await requireUser();
+  const owner = await isOwner();
   const { id } = await params;
 
   const db = getDb();
@@ -87,11 +89,13 @@ export default async function ProdutoDetalhePage({
     .from(categories)
     .orderBy(asc(categories.name));
 
-  const supplierRows = await listSuppliers(db);
-  const supplierOptions = supplierRows.map((supplier) => ({
-    id: supplier.id,
-    name: supplier.name,
-  }));
+  // Fornecedor é dado do dono: a equipe nem consulta a lista.
+  const supplierOptions = owner
+    ? (await listSuppliers(db)).map((supplier) => ({
+        id: supplier.id,
+        name: supplier.name,
+      }))
+    : [];
 
   const storage = getFileStorage();
   const status = (
@@ -131,56 +135,61 @@ export default async function ProdutoDetalhePage({
               {STATUS_HINTS[status]}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {status !== "active" ? (
-              <form action={setProductStatusAction}>
-                <input type="hidden" name="productId" value={detail.id} />
-                <input type="hidden" name="status" value="active" />
-                <Button type="submit" size="sm">
-                  Ativar produto
-                </Button>
-              </form>
-            ) : null}
-            {status !== "draft" ? (
-              <form action={setProductStatusAction}>
-                <input type="hidden" name="productId" value={detail.id} />
-                <input type="hidden" name="status" value="draft" />
-                <Button type="submit" variant="outline" size="sm">
-                  Voltar para rascunho
-                </Button>
-              </form>
-            ) : null}
-            {status !== "archived" ? (
-              <form action={setProductStatusAction}>
-                <input type="hidden" name="productId" value={detail.id} />
-                <input type="hidden" name="status" value="archived" />
-                <ConfirmButton
-                  size="sm"
-                  confirmMessage="Arquivar este produto? Ele sai do catálogo e não pode mais ser vendido, mas pedidos antigos continuam mostrando ele normalmente. Você pode reativá-lo quando quiser."
-                >
-                  Arquivar
-                </ConfirmButton>
-              </form>
-            ) : null}
-          </div>
+          <OwnerOnly>
+            <div className="flex flex-wrap gap-2">
+              {status !== "active" ? (
+                <form action={setProductStatusAction}>
+                  <input type="hidden" name="productId" value={detail.id} />
+                  <input type="hidden" name="status" value="active" />
+                  <Button type="submit" size="sm">
+                    Ativar produto
+                  </Button>
+                </form>
+              ) : null}
+              {status !== "draft" ? (
+                <form action={setProductStatusAction}>
+                  <input type="hidden" name="productId" value={detail.id} />
+                  <input type="hidden" name="status" value="draft" />
+                  <Button type="submit" variant="outline" size="sm">
+                    Voltar para rascunho
+                  </Button>
+                </form>
+              ) : null}
+              {status !== "archived" ? (
+                <form action={setProductStatusAction}>
+                  <input type="hidden" name="productId" value={detail.id} />
+                  <input type="hidden" name="status" value="archived" />
+                  <ConfirmButton
+                    size="sm"
+                    confirmMessage="Arquivar este produto? Ele sai do catálogo e não pode mais ser vendido, mas pedidos antigos continuam mostrando ele normalmente. Você pode reativá-lo quando quiser."
+                  >
+                    Arquivar
+                  </ConfirmButton>
+                </form>
+              ) : null}
+            </div>
+          </OwnerOnly>
         </div>
       </Card>
 
-      <Card title="Dados básicos">
-        <EditProductForm
-          product={{
-            id: detail.id,
-            name: detail.name,
-            description: detail.description,
-            brand: detail.brand,
-            categoryId: detail.categoryId,
-            supplierId: detail.supplierId,
-            attributesSchema: axes,
-          }}
-          categoryOptions={categoryRows}
-          supplierOptions={supplierOptions}
-        />
-      </Card>
+      {/* Dados básicos incluem o fornecedor: card inteiro só para o dono. */}
+      <OwnerOnly>
+        <Card title="Dados básicos">
+          <EditProductForm
+            product={{
+              id: detail.id,
+              name: detail.name,
+              description: detail.description,
+              brand: detail.brand,
+              categoryId: detail.categoryId,
+              supplierId: detail.supplierId,
+              attributesSchema: axes,
+            }}
+            categoryOptions={categoryRows}
+            supplierOptions={supplierOptions}
+          />
+        </Card>
+      </OwnerOnly>
 
       <Card title="Imagens">
         <div className="flex flex-col gap-4">
@@ -206,23 +215,27 @@ export default async function ProdutoDetalhePage({
                       className="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
                     />
                   </a>
-                  <form action={removeImageAction}>
-                    <input type="hidden" name="imageId" value={image.id} />
-                    <input type="hidden" name="productId" value={detail.id} />
-                    <ConfirmButton
-                      size="sm"
-                      variant="outline"
-                      className="w-full"
-                      confirmMessage="Remover esta imagem? Esta ação não pode ser desfeita."
-                    >
-                      Remover
-                    </ConfirmButton>
-                  </form>
+                  <OwnerOnly>
+                    <form action={removeImageAction}>
+                      <input type="hidden" name="imageId" value={image.id} />
+                      <input type="hidden" name="productId" value={detail.id} />
+                      <ConfirmButton
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        confirmMessage="Remover esta imagem? Esta ação não pode ser desfeita."
+                      >
+                        Remover
+                      </ConfirmButton>
+                    </form>
+                  </OwnerOnly>
                 </div>
               ))}
             </div>
           )}
-          <ImageUploadForm productId={detail.id} />
+          <OwnerOnly>
+            <ImageUploadForm productId={detail.id} />
+          </OwnerOnly>
         </div>
       </Card>
 
@@ -235,14 +248,12 @@ export default async function ProdutoDetalhePage({
             />
           ) : (
             <Table
-              headers={[
-                "SKU",
-                "Atributos",
-                "Custo",
-                "Preço ativo",
-                "Estoque",
-                "Ações",
-              ]}
+              headers={
+                // Custo é dinheiro do negócio: a coluna não existe para a equipe.
+                owner
+                  ? ["SKU", "Atributos", "Custo", "Preço ativo", "Estoque", "Ações"]
+                  : ["SKU", "Atributos", "Preço ativo", "Estoque", "Ações"]
+              }
             >
               {detail.variants.map((variant) => (
                 <Tr key={variant.id}>
@@ -255,9 +266,11 @@ export default async function ProdutoDetalhePage({
                     ) : null}
                   </Td>
                   <Td>{formatAttributes(variant.attributes)}</Td>
-                  <Td>
-                    <Money cents={variant.costCents} />
-                  </Td>
+                  {owner ? (
+                    <Td>
+                      <Money cents={variant.costCents} />
+                    </Td>
+                  ) : null}
                   <Td>
                     {variant.activePriceCents !== null ? (
                       <Money cents={variant.activePriceCents} />
@@ -276,12 +289,14 @@ export default async function ProdutoDetalhePage({
                   </Td>
                   <Td>
                     <div className="flex gap-3 whitespace-nowrap">
-                      <Link
-                        href={`/admin/precos/calculadora?variant=${variant.id}`}
-                        className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                      >
-                        Precificar
-                      </Link>
+                      {owner ? (
+                        <Link
+                          href={`/admin/precos/calculadora?variant=${variant.id}`}
+                          className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          Precificar
+                        </Link>
+                      ) : null}
                       <Link
                         href={`/admin/estoque/${variant.id}`}
                         className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
@@ -295,49 +310,53 @@ export default async function ProdutoDetalhePage({
             </Table>
           )}
 
-          {detail.variants.length > 0 ? (
+          <OwnerOnly>
+            {detail.variants.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Editar variações
+                </h3>
+                {detail.variants.map((variant) => (
+                  <details
+                    key={variant.id}
+                    className="rounded-md border border-zinc-200 dark:border-zinc-800"
+                  >
+                    <summary className="cursor-pointer px-4 py-2 text-sm text-zinc-700 dark:text-zinc-300">
+                      <span className="font-mono text-xs">{variant.sku}</span>
+                      <span className="ml-2 text-zinc-500 dark:text-zinc-400">
+                        {formatAttributes(variant.attributes)}
+                      </span>
+                    </summary>
+                    <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
+                      {axes.length > 0 ||
+                      Object.keys(variant.attributes).length > 0 ? (
+                        <EditVariantForm
+                          productId={detail.id}
+                          variant={variant}
+                          axes={axes}
+                        />
+                      ) : (
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                          Esta variação não tem atributos para editar. O SKU (
+                          <span className="font-mono text-xs">
+                            {variant.sku}
+                          </span>
+                          ) não pode ser alterado depois de criado.
+                        </p>
+                      )}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            ) : null}
+
             <div className="flex flex-col gap-2">
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                Editar variações
+                Adicionar variação
               </h3>
-              {detail.variants.map((variant) => (
-                <details
-                  key={variant.id}
-                  className="rounded-md border border-zinc-200 dark:border-zinc-800"
-                >
-                  <summary className="cursor-pointer px-4 py-2 text-sm text-zinc-700 dark:text-zinc-300">
-                    <span className="font-mono text-xs">{variant.sku}</span>
-                    <span className="ml-2 text-zinc-500 dark:text-zinc-400">
-                      {formatAttributes(variant.attributes)}
-                    </span>
-                  </summary>
-                  <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
-                    {axes.length > 0 ||
-                    Object.keys(variant.attributes).length > 0 ? (
-                      <EditVariantForm
-                        productId={detail.id}
-                        variant={variant}
-                        axes={axes}
-                      />
-                    ) : (
-                      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                        Esta variação não tem atributos para editar. O SKU (
-                        <span className="font-mono text-xs">{variant.sku}</span>
-                        ) não pode ser alterado depois de criado.
-                      </p>
-                    )}
-                  </div>
-                </details>
-              ))}
+              <AddVariantForm productId={detail.id} axes={axes} />
             </div>
-          ) : null}
-
-          <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Adicionar variação
-            </h3>
-            <AddVariantForm productId={detail.id} axes={axes} />
-          </div>
+          </OwnerOnly>
         </div>
       </Card>
     </div>

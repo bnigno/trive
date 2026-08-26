@@ -153,11 +153,14 @@ export function OrderActions({
   status,
   paymentMethod,
   trackingCode,
+  canRefund,
 }: {
   orderId: string;
   status: OrderStatus;
   paymentMethod: string | null;
   trackingCode: string | null;
+  /** Reembolso lança saída no financeiro: só o dono. A action confere de novo. */
+  canRefund: boolean;
 }) {
   if (status === "canceled" || status === "refunded") {
     return (
@@ -253,7 +256,7 @@ export function OrderActions({
         </>
       ) : null}
 
-      {postConsumption ? (
+      {postConsumption && canRefund ? (
         <>
           <Divider />
           <CancelLikeForm

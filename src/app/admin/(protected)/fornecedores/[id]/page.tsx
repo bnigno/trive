@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { ServiceError } from "@/services/catalog";
 import { getSupplierDetail } from "@/services/suppliers";
 import { Card } from "@/components/ui/card";
@@ -64,7 +64,7 @@ export default async function SupplierDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireUser();
+  await requireOwner("fornecedores");
   const { id } = await params;
 
   const db = getDb();

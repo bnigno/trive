@@ -4,7 +4,7 @@ import { count, inArray, isNull, and } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { products } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listSuppliers } from "@/services/suppliers";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/form";
@@ -26,7 +26,7 @@ export default async function SuppliersPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
-  await requireUser();
+  await requireOwner("fornecedores");
   const { q } = await searchParams;
   const search = q?.trim() || undefined;
 

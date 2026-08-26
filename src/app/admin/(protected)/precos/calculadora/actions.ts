@@ -6,7 +6,7 @@ import { z } from "zod";
 import { evaluateApproval, type PriceBreakdown } from "@/core/pricing";
 import { getDb } from "@/db/client";
 import { formatCentsBRL, parseBRLToCents } from "@/lib/money";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   createPriceVersion,
   getPricingContext,
@@ -96,7 +96,7 @@ export async function previewPriceAction(
   _previous: CalculatorState,
   formData: FormData,
 ): Promise<CalculatorState> {
-  await requireUser();
+  await requireOwner("precos");
   const db = getDb();
 
   try {
@@ -152,7 +152,7 @@ export async function savePriceAction(
   _previous: CalculatorState,
   formData: FormData,
 ): Promise<CalculatorState> {
-  const user = await requireUser();
+  const user = await requireOwner("precos");
   const db = getDb();
 
   try {

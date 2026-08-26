@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { requireUser } from "@/services/auth";
+import { isOwner, requireUser } from "@/services/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
+import { OwnerOnly } from "../owner-only";
 
 export const dynamic = "force-dynamic";
 
@@ -16,17 +17,37 @@ export const metadata: Metadata = {
  * quem não é técnico. Versão markdown resumida em docs/runbook.md.
  */
 
-const SECTIONS = [
+/**
+ * `ownerOnly` marca as seções que falam de preço, custo e infraestrutura do
+ * negócio. O índice usa a MESMA lista: filtrar só a seção deixaria um link
+ * morto no topo da página, apontando para um trecho que não existe.
+ */
+const SECTIONS: ReadonlyArray<{
+  id: string;
+  title: string;
+  ownerOnly?: boolean;
+}> = [
   { id: "site-caiu", title: "O site caiu ou está estranho" },
+  // Compartilhada de propósito: quem mais precisa dela é justamente quem não é
+  // proprietário e ficou trancado para fora.
+  { id: "perdi-o-acesso", title: "Perdi o acesso ao painel" },
   { id: "mensagem-nao-chegou", title: "Mensagem ou e-mail não chegou" },
   { id: "whatsapp-desconectou", title: "WhatsApp desconectou" },
-  { id: "preco-nao-atualiza", title: "Preço não atualiza na loja" },
-  { id: "aprovar-em-lote", title: "Aprovar preços em lote" },
+  {
+    id: "preco-nao-atualiza",
+    title: "Preço não atualiza na loja",
+    ownerOnly: true,
+  },
+  { id: "aprovar-em-lote", title: "Aprovar preços em lote", ownerOnly: true },
   { id: "estoque-nao-bate", title: "Estoque não bate" },
-  { id: "backup", title: "Backup e restauração" },
-  { id: "custos", title: "Custos mensais e quando fazer upgrade" },
+  { id: "backup", title: "Backup e restauração", ownerOnly: true },
+  {
+    id: "custos",
+    title: "Custos mensais e quando fazer upgrade",
+    ownerOnly: true,
+  },
   { id: "quem-chamar", title: "Quem chamar" },
-] as const;
+];
 
 function Section({
   id,
@@ -57,6 +78,14 @@ function Steps({ children }: { children: ReactNode }) {
     <ol className="list-decimal space-y-2 pl-5 marker:font-semibold marker:text-zinc-500 dark:marker:text-zinc-400">
       {children}
     </ol>
+  );
+}
+
+function Sub({ children }: { children: ReactNode }) {
+  return (
+    <h3 className="pt-2 text-sm font-semibold text-zinc-900 first:pt-0 dark:text-zinc-100">
+      {children}
+    </h3>
   );
 }
 
@@ -116,6 +145,19 @@ function Callout({ children }: { children: ReactNode }) {
 
 export default async function AjudaPage() {
   await requireUser();
+  const owner = await isOwner();
+  const sections = SECTIONS.filter((section) => owner || !section.ownerOnly);
+
+  /**
+   * "Perdi o acesso" é compartilhada, mas Usuários é do proprietário: para a
+   * equipe o destino vira texto, senão o link levaria direto para a tela de
+   * bloqueio — o oposto de ajudar.
+   */
+  const usuarios = owner ? (
+    <AdminLink href="/admin/usuarios">Usuários</AdminLink>
+  ) : (
+    <strong>Usuários</strong>
+  );
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -129,7 +171,7 @@ export default async function AjudaPage() {
           Nesta página
         </p>
         <ul className="grid gap-2 text-sm sm:grid-cols-2">
-          {SECTIONS.map((section) => (
+          {sections.map((section) => (
             <li key={section.id}>
               <a
                 href={`#${section.id}`}
@@ -181,6 +223,138 @@ export default async function AjudaPage() {
         </Callout>
       </Section>
 
+      <Section id="perdi-o-acesso" title="Perdi o acesso ao painel">
+        <p>
+          Ninguém fica trancado para fora — sempre existe uma saída. Ache
+          abaixo o seu caso.
+        </p>
+
+        <Sub>1. Esqueci minha senha</Sub>
+        <Steps>
+          <li>
+            Na tela de{" "}
+            <AdminLink href="/admin/login">entrada do painel</AdminLink>,
+            clique em <strong>Esqueci minha senha</strong> (ou vá direto em{" "}
+            <AdminLink href="/admin/esqueci-senha">
+              /admin/esqueci-senha
+            </AdminLink>
+            ).
+          </li>
+          <li>
+            Digite o <strong>mesmo e-mail que você usa para entrar</strong> e
+            envie.
+          </li>
+          <li>
+            A tela sempre responde a mesma coisa — que, se aquele e-mail tiver
+            conta, o link foi enviado. É de propósito: assim ninguém descobre
+            quem trabalha na loja ficando testando e-mails ali.
+          </li>
+          <li>
+            Abra o e-mail e clique no link. Ele te leva direto para criar uma
+            senha nova, e funciona em qualquer aparelho — dá para pedir no
+            computador e abrir o link no celular.
+          </li>
+        </Steps>
+        <p>
+          <strong>Não chegou nada?</strong> Espere alguns minutos e confira a
+          caixa de spam / lixo eletrônico. Confirme que digitou o e-mail
+          certinho: se errar, a tela responde a mesma frase de sempre e parece
+          que deu certo. Você pode pedir o link até <strong>3 vezes por
+          hora</strong> — depois disso é preciso esperar (é o que impede alguém
+          de usar essa tela para encher a caixa de entrada de outra pessoa). Se
+          mesmo assim não vier, vá para o item 4 aqui embaixo.
+        </p>
+
+        <Sub>2. Sou o dono e não consigo entrar</Sub>
+        <p>
+          <strong>Se houver outro proprietário</strong>, é rápido: peça para
+          ele abrir {usuarios}, achar o seu nome e clicar em{" "}
+          <strong>Redefinir senha</strong>. Ele escolhe entre gerar um link de
+          acesso ou uma senha provisória, e o resultado aparece na tela dele
+          com botão de copiar — é só te passar na hora, sem depender de e-mail.
+        </p>
+        <p>
+          <strong>Se você é o único proprietário</strong> e o e-mail também não
+          está ajudando, existem dois quebra-galhos de emergência:
+        </p>
+        <Steps>
+          <li>
+            No computador onde o projeto está instalado, abra o{" "}
+            <strong>Claude Code</strong> e peça para rodar{" "}
+            <Code>scripts/create-admin.ts</Code>. Ele recria (ou reativa) o seu
+            acesso e deixa a senha registrada num arquivo local.
+          </li>
+          <li>
+            Ou entre em{" "}
+            <ExternalLink href="https://supabase.com">
+              supabase.com
+            </ExternalLink>{" "}
+            com a sua conta → projeto de produção →{" "}
+            <strong>Authentication</strong> → <strong>Users</strong> → seu
+            e-mail → definir uma senha nova por ali.
+          </li>
+        </Steps>
+        <Callout>
+          Esses dois caminhos são o extintor de incêndio, não a porta da
+          frente: eles escrevem por fora das regras do sistema — não conferem
+          se ainda sobra um proprietário ativo e não deixam registro no
+          histórico de quem fez o quê. Use só quando não houver outro jeito e,
+          depois, volte a usar {usuarios}.
+        </Callout>
+
+        <Sub>3. Alguém saiu da equipe</Sub>
+        <p>
+          Abra {usuarios}, clique na pessoa e use <strong>Desativar</strong>.{" "}
+          <strong>Nunca apague</strong> — na verdade o sistema nem deixa.
+        </p>
+        <p>
+          O motivo: o histórico de custos e de movimentações de estoque aponta
+          para <em>quem</em> fez cada lançamento. Apagar a pessoa apagaria esse
+          rastro (ou quebraria os registros antigos). Desativar resolve o que
+          importa — a pessoa perde o acesso — e mantém a história da loja
+          inteira.
+        </p>
+        <p>
+          Duas coisas boas de saber: o bloqueio vale{" "}
+          <strong>no próximo clique</strong> dela. Se estiver com o painel
+          aberto neste momento, a tela que já está na frente dela continua ali
+          até ela clicar em algo — aí é barrada. E é reversível: se a pessoa
+          voltar, basta <strong>Ativar</strong> de novo (e então redefinir a
+          senha, que só funciona com o acesso ativo).
+        </p>
+        <p>
+          Uma trava proposital: não dá para desativar nem rebaixar o{" "}
+          <strong>último proprietário ativo</strong>, nem desativar você mesmo.
+          Sem proprietário, ninguém entraria no painel para consertar. Para
+          sair da sociedade, promova alguém a proprietário antes.
+        </p>
+
+        <Sub>4. O e-mail de recuperação não chega</Sub>
+        <p>
+          Enviar e-mail depende de um serviço externo (o Resend) estar
+          configurado. Se ele não estiver, o sistema{" "}
+          <strong>avisa na tela</strong> em vez de fingir que enviou — em
+          assunto de senha, silêncio seria pior.
+        </p>
+        <p>
+          <strong>A saída que funciona sempre, com ou sem e-mail:</strong> o
+          proprietário abre {usuarios}, clica na pessoa e usa{" "}
+          <strong>Redefinir senha</strong>. Ele gera ali mesmo um link de
+          acesso ou uma senha provisória, copia com um clique e entrega
+          pessoalmente ou por mensagem direta. A pessoa entra e troca por uma
+          senha dela.
+        </p>
+        <OwnerOnly>
+          <p>
+            Para ligar o e-mail de vez, o passo a passo está em{" "}
+            <Code>docs/setup-externo.md</Code> (seção Resend) — ou peça ao
+            Claude Code. Vale a pena: hoje a mesma configuração que falta aqui
+            também deixa os <strong>clientes sem confirmação de pedido</strong>{" "}
+            e sem aviso de pagamento e de envio.
+          </p>
+        </OwnerOnly>
+      </Section>
+
       <Section id="mensagem-nao-chegou" title="Mensagem ou e-mail não chegou">
         <p>
           Toda mensagem de WhatsApp e todo e-mail passam por uma{" "}
@@ -190,6 +364,18 @@ export default async function AjudaPage() {
           um atraso de alguns minutos é normal e se resolve sem você fazer
           nada.
         </p>
+        <Callout>
+          É o <strong>e-mail de recuperação de senha</strong> que não chegou?
+          Esse não passa pela fila (o link precisa sair na hora), então
+          reprocessar não adianta — a solução está em{" "}
+          <a
+            href="#perdi-o-acesso"
+            className="font-medium underline underline-offset-2"
+          >
+            Perdi o acesso ao painel
+          </a>
+          .
+        </Callout>
         <p>Se depois de um tempo a mensagem ainda não chegou:</p>
         <Steps>
           <li>
@@ -239,57 +425,61 @@ export default async function AjudaPage() {
         </Steps>
       </Section>
 
-      <Section id="preco-nao-atualiza" title="Preço não atualiza na loja">
-        <p>Dois motivos possíveis, ambos simples:</p>
-        <Steps>
-          <li>
-            <strong>O preço ainda espera aprovação.</strong> Mudanças de preço
-            relevantes não entram no ar sozinhas — elas aguardam o seu OK em{" "}
-            <AdminLink href="/admin/precos/pendencias">
-              Preços → Pendências
-            </AdminLink>
-            . Confira se há algo aguardando lá.
-          </li>
-          <li>
-            <strong>A vitrine tem uma memória de 5 minutos.</strong> Para a
-            loja carregar rápido, as páginas ficam &quot;prontas&quot; por até
-            5 minutos (o chamado cache). Um preço recém-aprovado pode demorar
-            esse tempinho para aparecer. Espere 5 minutos e recarregue a
-            página — se aparecer, estava tudo certo.
-          </li>
-        </Steps>
-      </Section>
+      <OwnerOnly>
+        <Section id="preco-nao-atualiza" title="Preço não atualiza na loja">
+          <p>Dois motivos possíveis, ambos simples:</p>
+          <Steps>
+            <li>
+              <strong>O preço ainda espera aprovação.</strong> Mudanças de preço
+              relevantes não entram no ar sozinhas — elas aguardam o seu OK em{" "}
+              <AdminLink href="/admin/precos/pendencias">
+                Preços → Pendências
+              </AdminLink>
+              . Confira se há algo aguardando lá.
+            </li>
+            <li>
+              <strong>A vitrine tem uma memória de 5 minutos.</strong> Para a
+              loja carregar rápido, as páginas ficam &quot;prontas&quot; por até
+              5 minutos (o chamado cache). Um preço recém-aprovado pode demorar
+              esse tempinho para aparecer. Espere 5 minutos e recarregue a
+              página — se aparecer, estava tudo certo.
+            </li>
+          </Steps>
+        </Section>
+      </OwnerOnly>
 
-      <Section id="aprovar-em-lote" title="Aprovar preços em lote">
-        <p>
-          Quando você recalcula preços (por mudança de custo ou de taxa), o
-          sistema gera várias propostas de uma vez. Não precisa aprovar uma
-          por uma:
-        </p>
-        <Steps>
-          <li>
-            Abra{" "}
-            <AdminLink href="/admin/precos/pendencias">
-              Preços → Pendências
-            </AdminLink>
-            .
-          </li>
-          <li>
-            As propostas de um mesmo recálculo aparecem agrupadas como um{" "}
-            <strong>lote</strong>. Revise os valores — a tela mostra o preço
-            atual e o proposto, lado a lado.
-          </li>
-          <li>
-            Clique em <strong>Aprovar lote</strong> para ativar todas de uma
-            vez (ou <strong>Rejeitar lote</strong> informando o motivo, se
-            algo estiver errado).
-          </li>
-        </Steps>
-        <p>
-          Lembre-se: depois de aprovar, a loja pode levar até 5 minutos para
-          mostrar o preço novo (veja a seção anterior).
-        </p>
-      </Section>
+      <OwnerOnly>
+        <Section id="aprovar-em-lote" title="Aprovar preços em lote">
+          <p>
+            Quando você recalcula preços (por mudança de custo ou de taxa), o
+            sistema gera várias propostas de uma vez. Não precisa aprovar uma
+            por uma:
+          </p>
+          <Steps>
+            <li>
+              Abra{" "}
+              <AdminLink href="/admin/precos/pendencias">
+                Preços → Pendências
+              </AdminLink>
+              .
+            </li>
+            <li>
+              As propostas de um mesmo recálculo aparecem agrupadas como um{" "}
+              <strong>lote</strong>. Revise os valores — a tela mostra o preço
+              atual e o proposto, lado a lado.
+            </li>
+            <li>
+              Clique em <strong>Aprovar lote</strong> para ativar todas de uma
+              vez (ou <strong>Rejeitar lote</strong> informando o motivo, se
+              algo estiver errado).
+            </li>
+          </Steps>
+          <p>
+            Lembre-se: depois de aprovar, a loja pode levar até 5 minutos para
+            mostrar o preço novo (veja a seção anterior).
+          </p>
+        </Section>
+      </OwnerOnly>
 
       <Section id="estoque-nao-bate" title="Estoque não bate">
         <p>
@@ -323,83 +513,87 @@ export default async function AjudaPage() {
         </Callout>
       </Section>
 
-      <Section id="backup" title="Backup e restauração">
-        <p>
-          Todos os dias, de madrugada, o GitHub (onde fica o código do
-          projeto) faz uma <strong>cópia de segurança completa do banco</strong>{" "}
-          — pedidos, clientes, estoque, tudo — e guarda por 30 dias. Isso é o
-          workflow <Code>Backup</Code> em{" "}
-          <ExternalLink href="https://github.com/bnigno/trive/actions">
-            github.com/bnigno/trive → Actions
-          </ExternalLink>
-          . Ele usa uma &quot;chave&quot; chamada <Code>DATABASE_URL</Code>{" "}
-          cadastrada nos segredos do repositório — se essa chave mudar (por
-          exemplo, ao trocar a senha do banco), o backup fica vermelho até
-          alguém atualizá-la em Settings → Secrets and variables → Actions.
-        </p>
-        <p>
-          <strong>Backup que nunca foi testado não é backup.</strong> A cada
-          três meses, vale fazer o teste de restauração: baixar o backup mais
-          recente e restaurá-lo em um banco de teste (nunca no de produção)
-          para confirmar que ele funciona. Quem faz isso é o assistente (esta
-          IA, no Claude Code) com o script preparado para isso:
-        </p>
-        <CodeBlock>
-          {`# 1. Baixar o backup mais recente do GitHub
-gh run download --name trive-backup
+      <OwnerOnly>
+        <Section id="backup" title="Backup e restauração">
+          <p>
+            Todos os dias, de madrugada, o GitHub (onde fica o código do
+            projeto) faz uma <strong>cópia de segurança completa do banco</strong>{" "}
+            — pedidos, clientes, estoque, tudo — e guarda por 30 dias. Isso é o
+            workflow <Code>Backup</Code> em{" "}
+            <ExternalLink href="https://github.com/bnigno/trive/actions">
+              github.com/bnigno/trive → Actions
+            </ExternalLink>
+            . Ele usa uma &quot;chave&quot; chamada <Code>DATABASE_URL</Code>{" "}
+            cadastrada nos segredos do repositório — se essa chave mudar (por
+            exemplo, ao trocar a senha do banco), o backup fica vermelho até
+            alguém atualizá-la em Settings → Secrets and variables → Actions.
+          </p>
+          <p>
+            <strong>Backup que nunca foi testado não é backup.</strong> A cada
+            três meses, vale fazer o teste de restauração: baixar o backup mais
+            recente e restaurá-lo em um banco de teste (nunca no de produção)
+            para confirmar que ele funciona. Quem faz isso é o assistente (esta
+            IA, no Claude Code) com o script preparado para isso:
+          </p>
+          <CodeBlock>
+            {`# 1. Baixar o backup mais recente do GitHub
+  gh run download --name trive-backup
 
-# 2. Restaurar no banco de TESTE (o script pede confirmação)
-pnpm tsx scripts/restore-backup.ts trive-backup-AAAA-MM-DD.dump .env.local`}
-        </CodeBlock>
-        <p>
-          O script confere para onde vai a restauração e, se o destino parecer
-          o banco de produção, ele <strong>trava</strong> e só continua se a
-          pessoa digitar uma confirmação por extenso — impossível restaurar em
-          produção sem querer. O passo a passo completo está em{" "}
-          <Code>docs/runbook.md</Code>.
-        </p>
-      </Section>
+  # 2. Restaurar no banco de TESTE (o script pede confirmação)
+  pnpm tsx scripts/restore-backup.ts trive-backup-AAAA-MM-DD.dump .env.local`}
+          </CodeBlock>
+          <p>
+            O script confere para onde vai a restauração e, se o destino parecer
+            o banco de produção, ele <strong>trava</strong> e só continua se a
+            pessoa digitar uma confirmação por extenso — impossível restaurar em
+            produção sem querer. O passo a passo completo está em{" "}
+            <Code>docs/runbook.md</Code>.
+          </p>
+        </Section>
+      </OwnerOnly>
 
-      <Section id="custos" title="Custos mensais e quando fazer upgrade">
-        <p>
-          Hoje a loja roda quase toda em planos gratuitos. O que se paga (ou
-          se pagará) é isto:
-        </p>
-        <Table headers={["Serviço", "Para que serve", "Custo"]}>
-          <Tr>
-            <Td className="font-medium">Vercel Pro</Td>
-            <Td>Hospedagem do site</Td>
-            <Td>US$ 20/mês a partir do lançamento</Td>
-          </Tr>
-          <Tr>
-            <Td className="font-medium">Z-API</Td>
-            <Td>WhatsApp automático (quando sair do modo simulado)</Td>
-            <Td>~R$ 100–150/mês</Td>
-          </Tr>
-          <Tr>
-            <Td className="font-medium">Supabase, Inngest, Resend, GitHub</Td>
-            <Td>Banco de dados, filas, e-mails, código e backups</Td>
-            <Td>Grátis, por enquanto</Td>
-          </Tr>
-        </Table>
-        <p>
-          <strong>Quando fazer upgrade</strong> (antes disso, não gaste):
-        </p>
-        <ul className="list-disc space-y-2 pl-5">
-          <li>
-            <strong>Mais de 1.000 pedidos por mês</strong> ou{" "}
-            <strong>o primeiro susto com dados</strong> (banco pausado, backup
-            que falhou de verdade) → contratar o{" "}
-            <strong>Supabase Pro (US$ 25/mês)</strong>, que traz banco sem
-            pausas e backups próprios da plataforma.
-          </li>
-          <li>
-            <strong>Mais de 100 e-mails por dia</strong> (confirmações de
-            pedido, avisos) → passar para o <strong>plano pago do Resend</strong>
-            .
-          </li>
-        </ul>
-      </Section>
+      <OwnerOnly>
+        <Section id="custos" title="Custos mensais e quando fazer upgrade">
+          <p>
+            Hoje a loja roda quase toda em planos gratuitos. O que se paga (ou
+            se pagará) é isto:
+          </p>
+          <Table headers={["Serviço", "Para que serve", "Custo"]}>
+            <Tr>
+              <Td className="font-medium">Vercel Pro</Td>
+              <Td>Hospedagem do site</Td>
+              <Td>US$ 20/mês a partir do lançamento</Td>
+            </Tr>
+            <Tr>
+              <Td className="font-medium">Z-API</Td>
+              <Td>WhatsApp automático (quando sair do modo simulado)</Td>
+              <Td>~R$ 100–150/mês</Td>
+            </Tr>
+            <Tr>
+              <Td className="font-medium">Supabase, Inngest, Resend, GitHub</Td>
+              <Td>Banco de dados, filas, e-mails, código e backups</Td>
+              <Td>Grátis, por enquanto</Td>
+            </Tr>
+          </Table>
+          <p>
+            <strong>Quando fazer upgrade</strong> (antes disso, não gaste):
+          </p>
+          <ul className="list-disc space-y-2 pl-5">
+            <li>
+              <strong>Mais de 1.000 pedidos por mês</strong> ou{" "}
+              <strong>o primeiro susto com dados</strong> (banco pausado, backup
+              que falhou de verdade) → contratar o{" "}
+              <strong>Supabase Pro (US$ 25/mês)</strong>, que traz banco sem
+              pausas e backups próprios da plataforma.
+            </li>
+            <li>
+              <strong>Mais de 100 e-mails por dia</strong> (confirmações de
+              pedido, avisos) → passar para o <strong>plano pago do Resend</strong>
+              .
+            </li>
+          </ul>
+        </Section>
+      </OwnerOnly>
 
       <Section id="quem-chamar" title="Quem chamar">
         <p>

@@ -9,7 +9,7 @@ import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { getDb } from "@/db/client";
 import { products, productVariants } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   getPricingContext,
   ServiceError,
@@ -124,7 +124,7 @@ export default async function CalculatorPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireUser();
+  await requireOwner("precos");
   const sp = await searchParams;
   const variantParam = (
     typeof sp.variant === "string" ? sp.variant : ""

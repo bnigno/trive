@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import { orders } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listEntries, monthOverview } from "@/services/financial";
 import { listSuppliers } from "@/services/suppliers";
 import { Badge } from "@/components/ui/badge";
@@ -105,7 +105,7 @@ export default async function FinancialPage({
 }: {
   searchParams: Promise<{ m?: string; status?: string; dir?: string }>;
 }) {
-  await requireUser();
+  await requireOwner("financeiro");
   const sp = await searchParams;
 
   const month = sp.m && MONTH_PATTERN.test(sp.m) ? sp.m : currentMonthSP();

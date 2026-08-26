@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { cx } from "@/components/ui/cx";
+import { OwnerOnly } from "../owner-only";
 import { CategoryForm } from "./category-form";
 
 export const dynamic = "force-dynamic";
@@ -155,12 +156,15 @@ export default async function ProdutosPage({
         title="Produtos"
         subtitle="Tudo o que você vende: cadastre, edite e acompanhe estoque e preço."
         actions={
-          <Link
-            href="/admin/produtos/novo"
-            className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-          >
-            Novo produto
-          </Link>
+          // Cadastro de produto pede o custo inicial: área do dono.
+          <OwnerOnly>
+            <Link
+              href="/admin/produtos/novo"
+              className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+            >
+              Novo produto
+            </Link>
+          </OwnerOnly>
         }
       />
 
@@ -227,12 +231,14 @@ export default async function ProdutosPage({
                 Limpar filtros
               </Link>
             ) : (
-              <Link
-                href="/admin/produtos/novo"
-                className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-              >
-                Cadastrar primeiro produto
-              </Link>
+              <OwnerOnly>
+                <Link
+                  href="/admin/produtos/novo"
+                  className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+                >
+                  Cadastrar primeiro produto
+                </Link>
+              </OwnerOnly>
             )
           }
         />
@@ -324,7 +330,9 @@ export default async function ProdutosPage({
               ))}
             </div>
           )}
-          <CategoryForm />
+          <OwnerOnly>
+            <CategoryForm />
+          </OwnerOnly>
         </div>
       </Card>
     </div>

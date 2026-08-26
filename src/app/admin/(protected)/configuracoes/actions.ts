@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ALL_PAYMENT_METHODS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   replaceFeeRule,
   ServiceError,
@@ -80,7 +80,7 @@ export async function replaceFeeRuleAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("configuracoes");
   try {
     const paymentMethod = paymentMethodSchema.parse(formData.get("paymentMethod"));
     const percentRate = parsePercentField(
@@ -135,7 +135,7 @@ export async function updatePolicyAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("configuracoes");
   try {
     const targetMarginRate = parsePercentField(
       String(formData.get("targetMargin") ?? ""),
@@ -178,7 +178,7 @@ export async function updateApprovalRulesAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("configuracoes");
   try {
     const threshold = parsePercentField(
       String(formData.get("changeThreshold") ?? ""),
@@ -211,7 +211,7 @@ export async function updateStockSettingsAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("configuracoes");
   try {
     const lowStockThreshold = parseIntField(
       String(formData.get("lowStockThreshold") ?? ""),
@@ -249,7 +249,7 @@ export async function updateMercadoPagoAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("configuracoes");
   try {
     await updateSetting(getDb(), {
       key: "mp_enabled",
@@ -280,7 +280,7 @@ export async function updateStoreDataAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("configuracoes");
   try {
     const name = String(formData.get("storeName") ?? "").trim();
     const cnpjDigits = String(formData.get("storeCnpj") ?? "").replace(/\D/g, "");

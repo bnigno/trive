@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -10,8 +9,7 @@ import {
 } from "@/core/orders/state-machine";
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
-import { financialEntries, paymentFeeRules } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { isOwner, requireUser } from "@/services/auth";
 import { getOrderDetail } from "@/services/orders";
 import { OrderTimeline } from "@/components/admin/order-timeline";
 import { orderPublicUrl } from "@/services/wa-messaging";
@@ -23,7 +21,10 @@ import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusPill, orderStatusTone } from "@/components/ui/status-pill";
 import { Table, Td, Tr } from "@/components/ui/table";
+import { OwnerOnly } from "../../owner-only";
 import { channelLabel, formatDateTimeSP } from "../format";
+import { OrderFinancialCard } from "./financial-card";
+import { OrderMarginCard } from "./margin-card";
 import { OrderActions } from "./order-actions";
 
 export const dynamic = "force-dynamic";
@@ -32,35 +33,9 @@ export const metadata: Metadata = {
   title: "Detalhe do pedido",
 };
 
-const ENTRY_DIRECTION_LABELS: Record<string, string> = {
-  receivable: "A receber",
-  payable: "A pagar",
-};
-
-const ENTRY_STATUS_LABELS: Record<string, string> = {
-  pending: "Pendente",
-  settled: "Liquidado",
-  canceled: "Cancelado",
-};
-
 /** Label pt-BR do método vindo do core; método desconhecido volta cru. */
 function paymentMethodLabel(method: string): string {
   return (PAYMENT_METHOD_LABELS as Record<string, string>)[method] ?? method;
-}
-
-/** Cor do delta margem real − prevista: verde quando ≥ 0, vermelho abaixo. */
-function deltaClass(deltaCents: number): string {
-  return deltaCents >= 0
-    ? "text-emerald-700 dark:text-emerald-400"
-    : "text-red-700 dark:text-red-400";
-}
-
-function formatDeltaCents(deltaCents: number): string {
-  const abs = (Math.abs(deltaCents) / 100).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-  return `${deltaCents >= 0 ? "+" : "−"}${abs}`;
 }
 
 export default async function PedidoDetalhePage({
@@ -76,62 +51,10 @@ export default async function PedidoDetalhePage({
   const order = await getOrderDetail(db, id);
   if (!order) notFound();
 
-  // Leitura simples (sem mutação): lançamentos financeiros ligados ao pedido.
-  const entries = await db
-    .select()
-    .from(financialEntries)
-    .where(eq(financialEntries.orderId, order.id))
-    .orderBy(financialEntries.createdAt);
-
   const status = order.status as OrderStatus;
-
-  // ----- Pagamento: taxa estimada (regra vigente) × taxa real (mp_fee_cents)
-  // Leitura direta, sem mutação. A regra vigente do MÉTODO do pedido é a
-  // estimativa; sem método definido, usa a regra de referência de preços.
-  const [methodRule] = order.paymentMethod
-    ? await db
-        .select()
-        .from(paymentFeeRules)
-        .where(
-          and(
-            eq(paymentFeeRules.paymentMethod, order.paymentMethod),
-            isNull(paymentFeeRules.effectiveTo),
-          ),
-        )
-        .limit(1)
-    : [undefined];
-  const [referenceRule] = methodRule
-    ? [methodRule]
-    : await db
-        .select()
-        .from(paymentFeeRules)
-        .where(
-          and(
-            eq(paymentFeeRules.isReferenceForPricing, true),
-            isNull(paymentFeeRules.effectiveTo),
-          ),
-        )
-        .limit(1);
-  const feeRule = methodRule ?? referenceRule;
-
-  // Margem dos itens = Σ (preço − custo) × qtd (frete é repasse, fica fora).
-  const itemsMarginCents = order.items.reduce(
-    (total, item) =>
-      total + (item.unitPriceCents - item.unitCostCents) * item.quantity,
-    0,
-  );
-  const estimatedFeeCents = feeRule
-    ? Math.round(order.totalCents * Number(feeRule.percentRate)) +
-      feeRule.fixedFeeCents
-    : null;
-  const expectedMarginCents =
-    estimatedFeeCents !== null ? itemsMarginCents - estimatedFeeCents : null;
-  const realMarginCents =
-    order.mpFeeCents !== null ? itemsMarginCents - order.mpFeeCents : null;
-  const marginDeltaCents =
-    expectedMarginCents !== null && realMarginCents !== null
-      ? realMarginCents - expectedMarginCents
-      : null;
+  // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
+  // também barra pelo servidor — isto aqui é só para não mostrar botão morto.
+  const owner = await isOwner();
 
   return (
     <div className="flex flex-col gap-6">
@@ -206,30 +129,32 @@ export default async function PedidoDetalhePage({
           </Card>
 
           <Card title="Pagamento">
-            <div className="flex flex-col gap-4">
-              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
-                  <dt className="text-zinc-500 dark:text-zinc-400">Método</dt>
-                  <dd className="text-zinc-900 dark:text-zinc-100">
-                    {order.paymentMethod
-                      ? paymentMethodLabel(order.paymentMethod)
-                      : "—"}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
-                  <dt className="text-zinc-500 dark:text-zinc-400">Parcelas</dt>
-                  <dd className="text-zinc-900 dark:text-zinc-100">
-                    {order.installments !== null ? `${order.installments}×` : "—"}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
-                  <dt className="text-zinc-500 dark:text-zinc-400">
-                    Pagamento no Mercado Pago
-                  </dt>
-                  <dd className="font-mono text-xs text-zinc-900 dark:text-zinc-100">
-                    {order.mpPaymentId ?? "—"}
-                  </dd>
-                </div>
+            <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+              <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
+                <dt className="text-zinc-500 dark:text-zinc-400">Método</dt>
+                <dd className="text-zinc-900 dark:text-zinc-100">
+                  {order.paymentMethod
+                    ? paymentMethodLabel(order.paymentMethod)
+                    : "—"}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
+                <dt className="text-zinc-500 dark:text-zinc-400">Parcelas</dt>
+                <dd className="text-zinc-900 dark:text-zinc-100">
+                  {order.installments !== null ? `${order.installments}×` : "—"}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
+                <dt className="text-zinc-500 dark:text-zinc-400">
+                  Pagamento no Mercado Pago
+                </dt>
+                <dd className="font-mono text-xs text-zinc-900 dark:text-zinc-100">
+                  {order.mpPaymentId ?? "—"}
+                </dd>
+              </div>
+              {/* Método, parcelas e id do MP são operacionais; o valor da taxa
+                  é dinheiro do negócio e fica só com o dono. */}
+              <OwnerOnly>
                 <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
                   <dt className="text-zinc-500 dark:text-zinc-400">
                     Taxa real do MP
@@ -242,115 +167,13 @@ export default async function PedidoDetalhePage({
                     )}
                   </dd>
                 </div>
-              </dl>
-
-              <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-                <p className="mb-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  Margem do pedido — prevista × real
-                </p>
-                <dl className="flex flex-col gap-1.5 text-sm">
-                  <div className="flex justify-between gap-8">
-                    <dt className="text-zinc-500 dark:text-zinc-400">
-                      Itens (preço − custo)
-                    </dt>
-                    <dd className="text-zinc-900 dark:text-zinc-100">
-                      <Money cents={itemsMarginCents} />
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-8">
-                    <dt className="text-zinc-500 dark:text-zinc-400">
-                      Taxa estimada (regra vigente)
-                    </dt>
-                    <dd className="text-zinc-900 dark:text-zinc-100">
-                      {estimatedFeeCents !== null ? (
-                        <>
-                          − <Money cents={estimatedFeeCents} />
-                        </>
-                      ) : (
-                        "sem regra vigente"
-                      )}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-8 border-t border-zinc-200 pt-1.5 dark:border-zinc-800">
-                    <dt className="font-medium text-zinc-700 dark:text-zinc-300">
-                      Margem prevista
-                    </dt>
-                    <dd className="font-medium text-zinc-900 dark:text-zinc-100">
-                      {expectedMarginCents !== null ? (
-                        <Money cents={expectedMarginCents} />
-                      ) : (
-                        "—"
-                      )}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-8">
-                    <dt className="font-medium text-zinc-700 dark:text-zinc-300">
-                      Margem real (taxa do MP)
-                    </dt>
-                    <dd className="font-medium text-zinc-900 dark:text-zinc-100">
-                      {realMarginCents !== null ? (
-                        <Money cents={realMarginCents} />
-                      ) : (
-                        "aguardando pagamento"
-                      )}
-                    </dd>
-                  </div>
-                  {marginDeltaCents !== null ? (
-                    <div className="flex justify-between gap-8">
-                      <dt className="text-zinc-500 dark:text-zinc-400">
-                        Diferença (real − prevista)
-                      </dt>
-                      <dd
-                        className={`font-semibold ${deltaClass(marginDeltaCents)}`}
-                      >
-                        {formatDeltaCents(marginDeltaCents)}
-                      </dd>
-                    </div>
-                  ) : null}
-                </dl>
-              </div>
-            </div>
+              </OwnerOnly>
+            </dl>
           </Card>
 
-          <Card title="Financeiro do pedido">
-            {entries.length === 0 ? (
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Nenhum lançamento financeiro ainda. Ao marcar o pedido como
-                pago, a venda é lançada automaticamente.
-              </p>
-            ) : (
-              <Table headers={["Descrição", "Tipo", "Valor", "Situação", "Data"]}>
-                {entries.map((entry) => (
-                  <Tr key={entry.id}>
-                    <Td>{entry.description}</Td>
-                    <Td>
-                      {ENTRY_DIRECTION_LABELS[entry.direction] ??
-                        entry.direction}
-                    </Td>
-                    <Td>
-                      <Money cents={entry.amountCents} className="font-medium" />
-                    </Td>
-                    <Td>
-                      {ENTRY_STATUS_LABELS[entry.status] ?? entry.status}
-                    </Td>
-                    <Td className="whitespace-nowrap">
-                      {formatDateTimeSP(entry.createdAt)}
-                    </Td>
-                  </Tr>
-                ))}
-              </Table>
-            )}
-            <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Veja tudo em{" "}
-              <Link
-                href="/admin/financeiro"
-                className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-              >
-                Financeiro
-              </Link>
-              .
-            </p>
-          </Card>
+          <OrderMarginCard order={order} />
+
+          <OrderFinancialCard orderId={order.id} />
 
           <Card title="Linha do tempo">
             <OrderTimeline
@@ -473,6 +296,7 @@ export default async function PedidoDetalhePage({
               status={status}
               paymentMethod={order.paymentMethod}
               trackingCode={order.shippingTrackingCode}
+              canRefund={owner}
             />
           </Card>
         </div>

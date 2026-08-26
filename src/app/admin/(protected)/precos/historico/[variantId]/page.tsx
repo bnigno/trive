@@ -14,7 +14,7 @@ import type { PriceBreakdown } from "@/core/pricing";
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
 import { products, productVariants, users } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listPriceVersions } from "@/services/pricing";
 import {
   formatDateTime,
@@ -47,7 +47,7 @@ export default async function PriceHistoryPage({
 }: {
   params: Promise<{ variantId: string }>;
 }) {
-  await requireUser();
+  await requireOwner("precos");
   const { variantId } = await params;
   const parsed = z.uuid().safeParse(variantId);
   if (!parsed.success) notFound();

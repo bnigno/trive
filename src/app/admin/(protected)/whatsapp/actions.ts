@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
 import { sendToOwner, type WaSkipReason } from "@/services/wa-messaging";
 import { updateWaTemplate } from "@/services/wa-templates";
@@ -29,7 +29,7 @@ export async function saveWaSettingsAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("whatsapp");
   try {
     const rawMinutes = String(formData.get("recoveryAfterMinutes") ?? "").trim();
     const minutes = Number(rawMinutes);
@@ -72,7 +72,7 @@ export async function saveBotSettingsAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("whatsapp");
   try {
     const db = getDb();
     await updateSetting(db, {
@@ -118,7 +118,7 @@ export async function sendTestMessageAction(
   _prev: FormState,
   _formData: FormData,
 ): Promise<FormState> {
-  await requireUser();
+  await requireOwner("whatsapp");
   try {
     const result = await sendToOwner(getDb(), getMessagingProvider(), {
       bodyOverride: "Teste do TRIVË ✓ — seu WhatsApp de avisos está funcionando.",
@@ -156,7 +156,7 @@ export async function updateWaTemplateAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("whatsapp");
   try {
     await updateWaTemplate(getDb(), {
       key: String(formData.get("key") ?? ""),

@@ -5,12 +5,12 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { auditLog, outboxEvents } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 
 const eventIdSchema = z.uuid();
 
 export async function requeueDeadEvent(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireOwner("fila");
   const parsed = eventIdSchema.safeParse(formData.get("id"));
   if (!parsed.success) return;
   const id = parsed.data;
@@ -55,7 +55,7 @@ export async function requeueDeadEvent(formData: FormData): Promise<void> {
 }
 
 export async function discardDeadEvent(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireOwner("fila");
   const parsed = eventIdSchema.safeParse(formData.get("id"));
   if (!parsed.success) return;
   const id = parsed.data;

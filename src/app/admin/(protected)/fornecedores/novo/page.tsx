@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { SupplierForm } from "../supplier-form";
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default async function NewSupplierPage() {
-  await requireUser();
+  await requireOwner("fornecedores");
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">

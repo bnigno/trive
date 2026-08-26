@@ -11,7 +11,7 @@ import {
   stockLevels,
   suppliers,
 } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { isOwner, requireUser } from "@/services/auth";
 import { listMovements } from "@/services/stock";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
@@ -53,6 +53,7 @@ export default async function StockVariantPage({
   params: Promise<{ variantId: string }>;
 }) {
   await requireUser();
+  const owner = await isOwner();
   const { variantId } = await params;
   if (!z.uuid().safeParse(variantId).success) notFound();
 
@@ -87,12 +88,14 @@ export default async function StockVariantPage({
 
   const movements = await listMovements(db, { variantId, limit: 100 });
 
-  // Fornecedores ativos para o select de entrada de compra.
-  const supplierRows = await listSuppliers(db);
-  const supplierOptions = supplierRows.map((supplier) => ({
-    id: supplier.id,
-    name: supplier.name,
-  }));
+  // Fornecedores ativos para o select de entrada de compra. Compra é do dono:
+  // para a equipe a lista nem é consultada.
+  const supplierOptions = owner
+    ? (await listSuppliers(db)).map((supplier) => ({
+        id: supplier.id,
+        name: supplier.name,
+      }))
+    : [];
 
   // Números dos pedidos referenciados, para o link "Pedido nº X".
   const orderIds = [
@@ -178,6 +181,7 @@ export default async function StockVariantPage({
           <ReceiveStockForm
             variantId={item.variantId}
             supplierOptions={supplierOptions}
+            canBuy={owner}
           />
         </Card>
         <Card title="Ajustar estoque">
@@ -196,7 +200,12 @@ export default async function StockVariantPage({
           />
         ) : (
           <Table
-            headers={["Data", "Tipo", "Quantidade", "Custo unit.", "Referência", "Nota"]}
+            headers={
+              // Custo unitário é dinheiro do negócio: coluna só para o dono.
+              owner
+                ? ["Data", "Tipo", "Quantidade", "Custo unit.", "Referência", "Nota"]
+                : ["Data", "Tipo", "Quantidade", "Referência", "Nota"]
+            }
           >
             {movements.map((movement) => (
               <Tr key={movement.id}>
@@ -215,13 +224,15 @@ export default async function StockVariantPage({
                     ? `+${movement.quantityDelta}`
                     : movement.quantityDelta}
                 </Td>
-                <Td>
-                  {movement.unitCostCents !== null ? (
-                    <Money cents={movement.unitCostCents} />
-                  ) : (
-                    "—"
-                  )}
-                </Td>
+                {owner ? (
+                  <Td>
+                    {movement.unitCostCents !== null ? (
+                      <Money cents={movement.unitCostCents} />
+                    ) : (
+                      "—"
+                    )}
+                  </Td>
+                ) : null}
                 <Td>
                   {movement.referenceType === "order" && movement.referenceId ? (
                     <Link
@@ -234,13 +245,20 @@ export default async function StockVariantPage({
                     </Link>
                   ) : movement.referenceType === "supplier" &&
                     movement.referenceId ? (
-                    <Link
-                      href={`/admin/fornecedores/${movement.referenceId}`}
-                      className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                    >
-                      {supplierNameById.get(movement.referenceId) ??
-                        "Ver fornecedor"}
-                    </Link>
+                    // Fornecedores é área do dono: para a equipe o nome vira
+                    // texto, senão o link levaria direto para o "sem acesso".
+                    owner ? (
+                      <Link
+                        href={`/admin/fornecedores/${movement.referenceId}`}
+                        className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                      >
+                        {supplierNameById.get(movement.referenceId) ??
+                          "Ver fornecedor"}
+                      </Link>
+                    ) : (
+                      (supplierNameById.get(movement.referenceId) ??
+                      "Fornecedor")
+                    )
                   ) : (
                     "—"
                   )}

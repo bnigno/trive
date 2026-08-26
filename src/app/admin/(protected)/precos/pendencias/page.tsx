@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { formatCentsBRL } from "@/lib/money";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   listBatchSummary,
   listPendingApprovals,
@@ -125,7 +125,7 @@ export default async function PendingApprovalsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireUser();
+  await requireOwner("precos");
   const sp = await searchParams;
   const db = getDb();
 

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { asc } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { NewProductForm } from "./new-product-form";
 
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 };
 
 export default async function NovoProdutoPage() {
-  await requireUser();
+  await requireOwner("produtos");
   const db = getDb();
   const categoryRows = await db
     .select({ id: categories.id, name: categories.name })

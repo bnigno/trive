@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   approveBatch,
   approvePriceVersion,
@@ -35,7 +35,7 @@ export async function approveVersionAction(
   _previous: ApprovalState,
   formData: FormData,
 ): Promise<ApprovalState> {
-  const user = await requireUser();
+  const user = await requireOwner("precos");
   try {
     const versionId = parseUuid(
       formData,
@@ -60,7 +60,7 @@ export async function rejectVersionAction(
   _previous: ApprovalState,
   formData: FormData,
 ): Promise<ApprovalState> {
-  const user = await requireUser();
+  const user = await requireOwner("precos");
   try {
     const versionId = parseUuid(
       formData,
@@ -87,7 +87,7 @@ export async function approveBatchAction(
   _previous: ApprovalState,
   formData: FormData,
 ): Promise<ApprovalState> {
-  const user = await requireUser();
+  const user = await requireOwner("precos");
   try {
     const batchId = parseUuid(
       formData,
@@ -111,7 +111,7 @@ export async function rejectBatchAction(
   _previous: ApprovalState,
   formData: FormData,
 ): Promise<ApprovalState> {
-  const user = await requireUser();
+  const user = await requireOwner("precos");
   try {
     const batchId = parseUuid(
       formData,

@@ -1,5 +1,6 @@
 // Banco Postgres REAL em memória (PGlite) para testes de integração:
 // aplica as migrações de drizzle/ (incluindo triggers) e oferece fixtures mínimas.
+import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -43,6 +44,35 @@ export async function createTestDb(): Promise<{ db: TestDb; close: () => Promise
   ]);
 
   return { db, close: () => client.close() };
+}
+
+/**
+ * Usuário do painel além do FIXED_USER_ID (que já é proprietário ativo).
+ * `id` é o mesmo id da conta de acesso no provedor de identidade — quando o
+ * teste precisar dos dois lados, passe o mesmo valor para `identity.seed`.
+ */
+export async function createTestUser(
+  db: TestDb,
+  opts: {
+    id?: string;
+    email?: string;
+    fullName?: string | null;
+    role?: "owner" | "staff";
+    isActive?: boolean;
+  } = {},
+): Promise<typeof schema.users.$inferSelect> {
+  const id = opts.id ?? randomUUID();
+  const [user] = await db
+    .insert(schema.users)
+    .values({
+      id,
+      email: opts.email ?? `user-${id.slice(0, 8)}@trive.local`,
+      fullName: opts.fullName === undefined ? "Pessoa Teste" : opts.fullName,
+      role: opts.role ?? "staff",
+      isActive: opts.isActive ?? true,
+    })
+    .returning();
+  return user;
 }
 
 export async function createTestFeeRuleAndPolicy(db: TestDb): Promise<{ feeRuleId: string; policyId: string }> {

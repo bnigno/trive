@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# O exemplo é documentação, não segredo: só nomes de variáveis e placeholders.
+# Sem esta exceção ele fica de fora do repositório e o docs/setup-externo.md
+# manda o dono preencher um arquivo que um clone novo não tem.
+!.env.example
 
 # vercel
 .vercel

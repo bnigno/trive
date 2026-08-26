@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   recalculateAllPrices,
   type RecalculateAllPricesResult,
@@ -21,7 +21,7 @@ export async function recalculateAllAction(
   _previous: RecalcState,
   _formData: FormData,
 ): Promise<RecalcState> {
-  const user = await requireUser();
+  const user = await requireOwner("precos");
   const db = getDb();
 
   let result: RecalculateAllPricesResult | undefined;

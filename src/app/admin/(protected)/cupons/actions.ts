@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { ServiceError } from "@/services/orders";
 import { createCoupon, updateCoupon } from "@/services/coupons";
 import { parseBRLToCents } from "@/lib/money";
@@ -82,7 +82,7 @@ export async function createCouponAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("cupons");
   try {
     const code = String(formData.get("code") ?? "").trim().toUpperCase();
     if (!code) {
@@ -146,7 +146,7 @@ export async function updateCouponAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("cupons");
   try {
     const couponId = idSchema.parse(formData.get("id"));
     const expiresAt = parseDatetimeField(
@@ -170,7 +170,7 @@ export async function updateCouponAction(
 
 /** Alterna ativo/inativo; o valor novo vem do form (nextActive). */
 export async function toggleCouponAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireOwner("cupons");
   const couponId = idSchema.parse(formData.get("id"));
   const nextActive = formData.get("nextActive") === "true";
   await updateCoupon(getDb(), {

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listCoupons, type Coupon } from "@/services/coupons";
 import { formatCentsBRL } from "@/lib/money";
 import { PageHeader } from "@/components/ui/page-header";
@@ -68,7 +68,7 @@ async function loadCoupons(): Promise<Coupon[] | null> {
 }
 
 export default async function CuponsPage() {
-  await requireUser();
+  await requireOwner("cupons");
   const coupons = await loadCoupons();
 
   if (!coupons) {

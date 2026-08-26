@@ -24,9 +24,16 @@ export type SupplierOption = { id: string; name: string };
 export function ReceiveStockForm({
   variantId,
   supplierOptions,
+  canBuy,
 }: {
   variantId: string;
   supplierOptions: SupplierOption[];
+  /**
+   * Compra (fornecedor, custo, conta a pagar) é do dono. Com `false` sobra a
+   * entrada simples — e a action ignora custo de quem não é dono, então um
+   * campo reenviado por fora não muda o preço de nada.
+   */
+  canBuy: boolean;
 }) {
   const [receiveState, receiveFormAction] = useActionState(
     receiveStockAction,
@@ -40,7 +47,7 @@ export function ReceiveStockForm({
 
   // Com fornecedor o form vira uma COMPRA: custo obrigatório, conta a pagar
   // e sugestão de reprecificação. Sem fornecedor, entrada simples como antes.
-  const isPurchase = supplierId !== "";
+  const isPurchase = canBuy && supplierId !== "";
   const state = isPurchase ? purchaseState : receiveState;
 
   return (
@@ -49,27 +56,29 @@ export function ReceiveStockForm({
       className="flex flex-col gap-4"
     >
       <input type="hidden" name="variantId" value={variantId} />
-      <Field
-        label="Fornecedor (opcional)"
-        hint={
-          isPurchase
-            ? "Compra com fornecedor: gera conta a pagar no financeiro e sugestão de reprecificação."
-            : "Escolha o fornecedor para registrar a compra com conta a pagar; deixe em branco para entrada simples."
-        }
-      >
-        <Select
-          name="supplierId"
-          value={supplierId}
-          onChange={(event) => setSupplierId(event.target.value)}
+      {canBuy ? (
+        <Field
+          label="Fornecedor (opcional)"
+          hint={
+            isPurchase
+              ? "Compra com fornecedor: gera conta a pagar no financeiro e sugestão de reprecificação."
+              : "Escolha o fornecedor para registrar a compra com conta a pagar; deixe em branco para entrada simples."
+          }
         >
-          <option value="">Sem fornecedor</option>
-          {supplierOptions.map((supplier) => (
-            <option key={supplier.id} value={supplier.id}>
-              {supplier.name}
-            </option>
-          ))}
-        </Select>
-      </Field>
+          <Select
+            name="supplierId"
+            value={supplierId}
+            onChange={(event) => setSupplierId(event.target.value)}
+          >
+            <option value="">Sem fornecedor</option>
+            {supplierOptions.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
       <Field label="Quantidade recebida" hint="Número inteiro, ex.: 10">
         <Input name="quantity" inputMode="numeric" placeholder="Ex.: 10" required />
       </Field>
@@ -98,14 +107,14 @@ export function ReceiveStockForm({
             </Field>
           </div>
         </>
-      ) : (
+      ) : canBuy ? (
         <Field
           label="Custo unitário — R$ (opcional)"
           hint="Quanto você pagou por unidade. Se preencher, esse valor passa a ser o custo atual do produto e pode gerar uma sugestão de reprecificação."
         >
           <Input name="unitCost" inputMode="decimal" placeholder="Ex.: 1.234,56" />
         </Field>
-      )}
+      ) : null}
       <Field label="Nota (opcional)">
         <TextArea
           name="note"

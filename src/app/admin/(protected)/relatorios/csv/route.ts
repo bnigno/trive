@@ -1,5 +1,5 @@
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { monthlyAccountantReport, reportToCsv } from "@/services/reports";
 
 export const dynamic = "force-dynamic";
@@ -20,10 +20,13 @@ function currentMonthSP(): string {
 
 /**
  * Baixa o CSV mensal para o contador. `?m=YYYY-MM` (default: mês atual SP).
- * requireUser() redireciona para o login se a sessão não for válida.
+ * requireOwner() redireciona (307) para o login ou para /admin/sem-acesso —
+ * num download isso vira uma página aberta no lugar do arquivo, que é o
+ * comportamento desejado: o funcionário vê o aviso em vez de baixar o
+ * faturamento do mês.
  */
 export async function GET(request: Request): Promise<Response> {
-  await requireUser();
+  await requireOwner("relatorios");
 
   const requested = new URL(request.url).searchParams.get("m");
   if (requested !== null && !MONTH_PATTERN.test(requested)) {

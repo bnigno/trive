@@ -68,6 +68,16 @@ function firstName(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] ?? fullName;
 }
 
+/**
+ * Primeiro nome para o "Olá, ...". Devolve string VAZIA quando não há nome
+ * utilizável — quem chama decide entre "Olá, Maria!" e "Olá!" (nunca
+ * "Olá, !"). Sai sem escape: quem monta HTML precisa passar por escapeHtml.
+ */
+export function greetingName(fullName: string | null): string {
+  const trimmed = fullName?.trim() ?? "";
+  return trimmed === "" ? "" : firstName(trimmed);
+}
+
 function itemsTableHtml(items: EmailOrderItem[], totalCents: number): string {
   const rows = items
     .map(
@@ -109,19 +119,21 @@ function renderLayout(opts: {
   heading: string;
   greeting: string;
   introHtml: string;
-  itemsHtml: string;
+  /** Tabela de itens do pedido; ausente nos e-mails que não são de pedido. */
+  itemsHtml?: string;
   ctaLabel: string;
-  publicUrl: string;
+  /** Destino do botão (pedido público, convite de acesso, recuperação…). */
+  ctaUrl: string;
   outroHtml?: string;
 }): string {
-  const url = escapeHtml(opts.publicUrl);
+  const url = escapeHtml(opts.ctaUrl);
   return `
   <div style="margin:0 auto;max-width:560px;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;background-color:#ffffff;color:#333;">
     <p style="margin:0 0 24px;font-size:18px;font-weight:bold;color:#111;">${escapeHtml(opts.storeName)}</p>
     <h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;color:#111;">${opts.heading}</h1>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${opts.greeting}</p>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${opts.introHtml}</p>
-    ${opts.itemsHtml}
+    ${opts.itemsHtml ?? ""}
     ${opts.outroHtml ?? ""}
     <p style="margin:24px 0;">
       <a href="${url}" style="display:inline-block;padding:12px 24px;background-color:#111111;color:#ffffff;font-size:15px;text-decoration:none;border-radius:6px;">${escapeHtml(opts.ctaLabel)}</a>
@@ -155,7 +167,7 @@ export function orderConfirmedEmail(
     itemsHtml: itemsTableHtml(input.items, input.totalCents),
     outroHtml: `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${escapeHtml(dueLine)}</p>`,
     ctaLabel: "Acompanhar meu pedido",
-    publicUrl: input.publicUrl,
+    ctaUrl: input.publicUrl,
   });
 
   const text = [
@@ -188,7 +200,7 @@ export function paymentApprovedEmail(
       "Boa notícia: seu pagamento foi aprovado e o pedido está confirmado. Vamos preparar tudo com muito cuidado e avisamos assim que ele for enviado.",
     itemsHtml: itemsTableHtml(input.items, input.totalCents),
     ctaLabel: "Acompanhar meu pedido",
-    publicUrl: input.publicUrl,
+    ctaUrl: input.publicUrl,
   });
 
   const text = [
@@ -222,7 +234,7 @@ export function orderShippedEmail(input: OrderShippedEmailInput): EmailTemplate 
     itemsHtml: itemsTableHtml(input.items, input.totalCents),
     outroHtml: trackingHtml,
     ctaLabel: "Acompanhar meu pedido",
-    publicUrl: input.publicUrl,
+    ctaUrl: input.publicUrl,
   });
 
   const textLines = [
@@ -243,4 +255,112 @@ export function orderShippedEmail(input: OrderShippedEmailInput): EmailTemplate 
   );
 
   return { subject, html, text: textLines.join("\n") };
+}
+
+// ---------------------------------------------------------------------------
+// Acesso ao painel (usuários internos, não clientes)
+// ---------------------------------------------------------------------------
+
+export interface AccessInviteEmailInput {
+  /** Nome de quem recebe; null quando ainda não foi cadastrado. */
+  fullName: string | null;
+  storeName: string;
+  /** Link NOSSO: ${siteUrl()}/admin/acesso?token_hash=...&type=invite */
+  inviteUrl: string;
+  /** Quem convidou (aparece no texto); opcional. */
+  invitedByName?: string | null;
+}
+
+export interface PasswordRecoveryEmailInput {
+  fullName: string | null;
+  storeName: string;
+  /** Link NOSSO: ${siteUrl()}/admin/acesso?token_hash=...&type=recovery */
+  recoveryUrl: string;
+}
+
+// Frase repetida nos dois e-mails de credencial: quem não pediu precisa saber
+// que basta ignorar, e ninguém pode achar que o link fica valendo para sempre.
+const ACCESS_LINK_NOTICE =
+  "Este link vale por tempo limitado. Se não foi você quem pediu, ignore este e-mail.";
+
+function greetingHtml(fullName: string | null): string {
+  const name = greetingName(fullName);
+  return name === "" ? "Olá!" : `Olá, ${escapeHtml(name)}!`;
+}
+
+function greetingText(fullName: string | null): string {
+  const name = greetingName(fullName);
+  return name === "" ? "Olá!" : `Olá, ${name}!`;
+}
+
+function noticeHtml(): string {
+  return `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${escapeHtml(ACCESS_LINK_NOTICE)}</p>`;
+}
+
+/** Convite para uma pessoa da equipe criar a senha e entrar no painel. */
+export function accessInviteEmail(input: AccessInviteEmailInput): EmailTemplate {
+  const subject = `Seu acesso ao painel da ${input.storeName}`;
+  const invitedBy = input.invitedByName?.trim() ?? "";
+  const intro =
+    (invitedBy === "" ? "Criamos" : `${invitedBy} criou`) +
+    ` um acesso para você no painel da ${input.storeName}.` +
+    " Clique no botão abaixo para criar sua senha e entrar.";
+
+  const html = renderLayout({
+    storeName: input.storeName,
+    heading: "Seu acesso ao painel está pronto",
+    greeting: greetingHtml(input.fullName),
+    introHtml: escapeHtml(intro),
+    outroHtml: noticeHtml(),
+    ctaLabel: "Criar minha senha",
+    ctaUrl: input.inviteUrl,
+  });
+
+  const text = [
+    greetingText(input.fullName),
+    "",
+    intro,
+    "",
+    `Criar minha senha: ${input.inviteUrl}`,
+    "",
+    ACCESS_LINK_NOTICE,
+    "",
+    `Com carinho, ${input.storeName}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** Recuperação de senha do painel (pedida pela própria pessoa ou pelo dono). */
+export function passwordRecoveryEmail(
+  input: PasswordRecoveryEmailInput,
+): EmailTemplate {
+  const subject = `Redefinir a senha do painel — ${input.storeName}`;
+  const intro =
+    `Recebemos um pedido para redefinir a senha do seu acesso ao painel da ${input.storeName}.` +
+    " Clique no botão abaixo para escolher uma senha nova.";
+
+  const html = renderLayout({
+    storeName: input.storeName,
+    heading: "Redefinir sua senha",
+    greeting: greetingHtml(input.fullName),
+    introHtml: escapeHtml(intro),
+    outroHtml: noticeHtml(),
+    ctaLabel: "Definir nova senha",
+    ctaUrl: input.recoveryUrl,
+  });
+
+  const text = [
+    greetingText(input.fullName),
+    "",
+    intro,
+    "",
+    `Definir nova senha: ${input.recoveryUrl}`,
+    "",
+    ACCESS_LINK_NOTICE,
+    "",
+    `Com carinho, ${input.storeName}`,
+  ].join("\n");
+
+  return { subject, html, text };
 }

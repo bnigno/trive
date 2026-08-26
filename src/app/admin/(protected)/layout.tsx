@@ -35,7 +35,7 @@ export default async function AdminLayout({
           </p>
         </div>
 
-        <AdminNav />
+        <AdminNav role={user.role} />
 
         <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
           <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
@@ -44,14 +44,22 @@ export default async function AdminLayout({
           <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
             {user.role === "owner" ? "Proprietário" : "Equipe"}
           </p>
-          <form action={signOut} className="mt-3">
-            <button
-              type="submit"
-              className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          <div className="mt-3 flex gap-2">
+            <Link
+              href="/admin/nova-senha"
+              className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 text-center text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-              Sair
-            </button>
-          </form>
+              Minha senha
+            </Link>
+            <form action={signOut} className="flex-1">
+              <button
+                type="submit"
+                className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Sair
+              </button>
+            </form>
+          </div>
         </div>
       </aside>
 

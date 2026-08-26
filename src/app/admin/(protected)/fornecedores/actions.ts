@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { ServiceError } from "@/services/catalog";
 import { settleEntry } from "@/services/financial";
 import { ServiceError as StockServiceError } from "@/services/stock";
@@ -46,7 +46,7 @@ export async function createSupplierAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("fornecedores");
 
   const name = text(formData, "name");
   if (!name) return { error: "Informe o nome do fornecedor." };
@@ -81,7 +81,7 @@ export async function updateSupplierAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("fornecedores");
 
   const supplierId = z.uuid().safeParse(formData.get("supplierId"));
   if (!supplierId.success) {
@@ -122,7 +122,7 @@ export async function deactivateSupplierAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("fornecedores");
 
   const supplierId = z.uuid().safeParse(formData.get("supplierId"));
   if (!supplierId.success) {
@@ -151,7 +151,7 @@ export async function settleSupplierEntryAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("fornecedores");
 
   const supplierId = z.uuid().safeParse(formData.get("supplierId"));
   const entryId = z.uuid().safeParse(formData.get("entryId"));

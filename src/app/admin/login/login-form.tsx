@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -19,7 +20,16 @@ function translateAuthError(message: string): string {
   return "Não foi possível entrar. Tente novamente em instantes.";
 }
 
-export function LoginForm({ notice }: { notice?: string }) {
+/** Aviso vindo da URL: "aviso" é problema a resolver, "ok" é confirmação. */
+export type LoginNotice = { tone: "aviso" | "ok"; text: string };
+
+const noticeClasses: Record<LoginNotice["tone"], string> = {
+  aviso:
+    "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200",
+  ok: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+};
+
+export function LoginForm({ notice }: { notice?: LoginNotice }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -61,8 +71,11 @@ export function LoginForm({ notice }: { notice?: string }) {
       </div>
 
       {notice ? (
-        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-          {notice}
+        <p
+          role={notice.tone === "ok" ? "status" : "alert"}
+          className={`mb-4 rounded-md border px-3 py-2 text-sm ${noticeClasses[notice.tone]}`}
+        >
+          {notice.text}
         </p>
       ) : null}
 
@@ -109,6 +122,13 @@ export function LoginForm({ notice }: { notice?: string }) {
         >
           {submitting ? "Entrando…" : "Entrar"}
         </button>
+
+        <Link
+          href="/admin/esqueci-senha"
+          className="text-center text-sm text-indigo-600 hover:underline dark:text-indigo-400"
+        >
+          Esqueci minha senha
+        </Link>
       </form>
     </div>
   );

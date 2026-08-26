@@ -1,5 +1,18 @@
+// LEGADO — emergência/bootstrap. O caminho normal é /admin/usuarios no painel.
+//
+// Existe para dois casos em que o painel não ajuda: (1) instalação nova, ainda
+// sem nenhum proprietário para logar; (2) o único proprietário perdeu o acesso
+// e o e-mail de recuperação não chega. Fora disso, use a tela.
+//
+// AVISO: este script escreve DIRETO no provedor de acesso e no banco, por fora
+// das regras de negócio de src/services/users.ts. Ele NÃO valida se sobra um
+// proprietário ativo, NÃO impede rebaixar a si mesmo, NÃO grava audit (o
+// histórico não registra que este acesso foi criado nem por quem) e NÃO
+// respeita o estado de "desativado" — o upsert reativa quem estiver inativo.
+// É o extintor de incêndio, não a porta da frente.
+//
 // Cria (ou garante) um usuário administrador: conta no Supabase Auth + registro em public.users.
-// Uso: npx tsx scripts/create-admin.ts <arquivo-env> <email> [role]
+// Uso: npx tsx scripts/create-admin.ts <arquivo-env> <email> [role] [nome]
 // A senha é gerada uma vez e guardada em .env.admin.local (coberto pelo .gitignore via .env*);
 // execuções seguintes reutilizam a mesma senha, então dev e prod ficam com login idêntico.
 import { randomBytes } from "node:crypto";
@@ -7,11 +20,17 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 
-const [envFile, email, role = "owner"] = process.argv.slice(2);
+const [envFile, email, role = "owner", fullNameArg] = process.argv.slice(2);
 if (!envFile || !email) {
-  console.error("Uso: npx tsx scripts/create-admin.ts <arquivo-env> <email> [role]");
+  console.error(
+    "Uso: npx tsx scripts/create-admin.ts <arquivo-env> <email> [role] [nome]",
+  );
   process.exit(1);
 }
+
+// Sem nome informado, o e-mail vira o rótulo: some um "Fabiano" chapado no
+// registro de quem lançou cada custo quando o script cria outra pessoa.
+const fullName = fullNameArg?.trim() || email;
 
 const root = process.cwd();
 const env: Record<string, string> = {};
@@ -77,12 +96,16 @@ async function main() {
   const sql = postgres(databaseUrl, { prepare: false, max: 1 });
   await sql`
     insert into users (id, email, full_name, role, is_active)
-    values (${userId!}, ${email}, ${"Fabiano"}, ${role}, true)
+    values (${userId!}, ${email}, ${fullName}, ${role}, true)
     on conflict (id) do update set email = excluded.email, role = excluded.role, is_active = true
   `;
   await sql.end();
   console.log(`Banco: registro em users garantido com role '${role}'.`);
   console.log(`Credenciais em .env.admin.local`);
+  console.log(
+    "Lembrete: este atalho não gera audit. Daqui para frente, crie e " +
+      "gerencie usuários em /admin/usuarios.",
+  );
 }
 
 void main();

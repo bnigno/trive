@@ -5,7 +5,7 @@ import { z, ZodError } from "zod";
 
 import { InvalidTransitionError, type OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner, requireUser } from "@/services/auth";
 import {
   ServiceError,
   transitionOrder,
@@ -127,10 +127,16 @@ export async function cancelOrderAction(
   });
 }
 
+/**
+ * Reembolso é dinheiro saindo do caixa (cria lançamento no financeiro): só o
+ * proprietário. As demais transições do pedido seguem com a equipe — o
+ * requireUser de runTransition continua valendo para elas.
+ */
 export async function refundOrderAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireOwner("financeiro");
   const reason = String(formData.get("reason") ?? "").trim();
   const restock = formData.get("restock") === "on";
   return runTransition(

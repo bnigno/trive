@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   createShippingRate,
   listShippingRates,
@@ -91,7 +91,7 @@ export async function createShippingRateAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("frete");
   try {
     await createShippingRate(getDb(), {
       ...rateFieldsFromForm(formData),
@@ -110,7 +110,7 @@ export async function updateShippingRateAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("frete");
   try {
     const id = idSchema.parse(formData.get("id"));
     await updateShippingRate(getDb(), {
@@ -128,7 +128,7 @@ export async function updateShippingRateAction(
 
 /** Alterna ativa/inativa mantendo os demais campos como estão. */
 export async function toggleShippingRateAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireOwner("frete");
   const id = idSchema.parse(formData.get("id"));
   const db = getDb();
   const rate = (await listShippingRates(db)).find((r) => r.id === id);

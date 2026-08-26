@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { monthlyAccountantReport } from "@/services/reports";
 import { Card, StatCard } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -60,7 +60,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<{ m?: string }>;
 }) {
-  await requireUser();
+  await requireOwner("relatorios");
   const sp = await searchParams;
 
   const month = sp.m && MONTH_PATTERN.test(sp.m) ? sp.m : currentMonthSP();

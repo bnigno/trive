@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
+import type { AdminArea } from "@/core/auth/access";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -67,6 +68,30 @@ export async function requireUser(): Promise<AuthUser> {
     redirect("/admin/login?motivo=inativo");
   }
   redirect("/admin/login");
+}
+
+/**
+ * Guard das áreas exclusivas do proprietário (páginas, route handlers e
+ * server actions). Fecha por papel, não por área: chamar isto num lugar
+ * compartilhado bloqueia a equipe (bug visível) em vez de liberar dado de
+ * dinheiro por engano (falha silenciosa). `area` só decide a mensagem.
+ */
+export async function requireOwner(area: AdminArea): Promise<AuthUser> {
+  const user = await requireUser();
+  if (user.role !== "owner") {
+    redirect(`/admin/sem-acesso?de=${area}`);
+  }
+  return user;
+}
+
+/**
+ * Versão sem redirect, para esconder blocos dentro de página compartilhada
+ * (ver o componente OwnerOnly). Nunca use como única proteção de um dado:
+ * a consulta que traz custo/margem também tem que ficar de fora.
+ */
+export async function isOwner(): Promise<boolean> {
+  const resolution = await resolveAuthUser();
+  return resolution.user?.role === "owner";
 }
 
 /**

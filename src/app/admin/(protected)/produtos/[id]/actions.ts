@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { ZodError } from "zod";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   addProductImage,
   addVariant,
@@ -48,7 +48,7 @@ export async function updateProductAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
   const productId = String(formData.get("productId") ?? "");
 
   const name = String(formData.get("name") ?? "").trim();
@@ -85,7 +85,7 @@ export async function updateProductAction(
 export async function setProductStatusAction(
   formData: FormData,
 ): Promise<void> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
   const productId = String(formData.get("productId") ?? "");
   const status = String(formData.get("status") ?? "");
   if (status !== "draft" && status !== "active" && status !== "archived") {
@@ -111,7 +111,7 @@ export async function uploadImagesAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
   const productId = String(formData.get("productId") ?? "");
 
   const files = formData
@@ -153,7 +153,7 @@ export async function uploadImagesAction(
 }
 
 export async function removeImageAction(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
   const imageId = String(formData.get("imageId") ?? "");
   const productId = String(formData.get("productId") ?? "");
 
@@ -176,7 +176,7 @@ export async function addVariantAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
   const productId = String(formData.get("productId") ?? "");
   const sku = String(formData.get("sku") ?? "").trim();
   if (!sku) return { error: "Informe o SKU da variação." };
@@ -203,7 +203,7 @@ export async function updateVariantAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
   const productId = String(formData.get("productId") ?? "");
   const variantId = String(formData.get("variantId") ?? "");
 

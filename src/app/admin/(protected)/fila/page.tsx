@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { count, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { outboxEvents } from "@/db/schema";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { discardDeadEvent, requeueDeadEvent } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -70,7 +70,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
 }
 
 export default async function QueuePage() {
-  await requireUser();
+  await requireOwner("fila");
   const data = await loadQueue();
 
   return (

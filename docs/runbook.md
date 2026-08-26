@@ -12,12 +12,94 @@ leiga e com links clicáveis, está no painel: **/admin/ajuda**.
    anterior → **Promote to Production**. Volta em ~1 minuto e não apaga dados
    (o banco é separado do site).
 
+## Perdi o acesso ao painel
+
+### 1. Esqueci minha senha (self-service)
+
+**/admin/login** → **Esqueci minha senha** (ou **/admin/esqueci-senha**) →
+e-mail com link → cria senha nova. O link é `token_hash` verificado em
+**/admin/acesso**, então funciona em qualquer aparelho (pedir no computador e
+abrir no celular é ok).
+
+- A resposta da tela é **sempre genérica** ("se existir conta, enviamos"),
+  inclusive para e-mail inexistente ou acesso desativado — anti-enumeração.
+- Limite de **3 pedidos por hora** por conta, contado nos audits
+  (`user.password_reset_requested`). Pedido bloqueado não grava audit.
+- Não chegou: esperar alguns minutos, olhar spam, conferir o e-mail digitado.
+  Persistindo → item 4.
+
+### 2. O dono não consegue entrar
+
+- **Há outro proprietário**: ele resolve em **/admin/usuarios** → pessoa →
+  **Redefinir senha** (link de acesso ou senha provisória, ambos com botão de
+  copiar na tela). Não depende de e-mail.
+- **É o único proprietário** e o e-mail não ajuda — dois quebra-galhos:
+
+  ```sh
+  npx tsx scripts/create-admin.ts <arquivo-env> <email> [role] [nome]
+  ```
+
+  ou Supabase → projeto de produção → Authentication → Users → e-mail →
+  definir senha.
+
+> O script é **legado/emergência**: escreve direto no provedor e no banco, por
+> fora de `src/services/users.ts`. Não valida último proprietário ativo, não
+> grava audit e o upsert **reativa** quem estiver desativado. Depois do
+> incidente, voltar a usar /admin/usuarios.
+
+### 3. Alguém saiu da equipe
+
+**/admin/usuarios** → pessoa → **Desativar**. **Nunca apagar** — e o banco
+concorda: `variant_costs.created_by → users.id` é `RESTRICT`, então o DELETE
+falharia (e apagar destruiria o rastro de quem lançou cada custo).
+
+- Efeito: banido no provedor **e** `is_active = false`; o guard de
+  `services/auth` lê o banco a cada request → a pessoa é barrada **no próximo
+  clique** (a tela já renderizada na frente dela continua até ela clicar).
+- Reversível: **Ativar** de novo. Redefinir senha exige acesso **ativo**
+  (`usuario_inativo`), então a ordem é ativar → redefinir.
+- Travas: não dá para desativar/rebaixar o **último proprietário ativo**, nem
+  para desativar ou rebaixar a si mesmo.
+
+### 4. O e-mail de recuperação não chega
+
+Depende de `RESEND_API_KEY` + `EMAIL_FROM` (`isEmailConfigured()`). Sem elas,
+o self-service fica **indisponível com aviso na tela** — nunca skip silencioso
+em autenticação.
+
+- **Saída que funciona sempre**: o dono gera link/senha na hora em
+  **/admin/usuarios** → **Redefinir senha**, copia e entrega.
+- Para ligar o canal: `docs/setup-externo.md`, seção **Resend**. A mesma
+  configuração destrava as confirmações de pedido dos clientes.
+
+### Checklist manual (rodar após mudanças em usuários/permissões)
+
+1. Como dono, criar um usuário **staff** em /admin/usuarios no modo
+   **convite** — a tela deve mostrar o link com botão de copiar.
+2. Abrir o link em **outro navegador** (ou janela anônima), para não
+   aproveitar a sessão do dono.
+3. Definir a senha na tela que abrir (/admin/nova-senha).
+4. Entrar com o staff: menu **sem** Fornecedores, Preços, Frete, Financeiro,
+   Configurações, WhatsApp(config), Relatórios, Cupons, Fila e Usuários; URL
+   direta nessas áreas cai em **/admin/sem-acesso**; pedido **sem** margem e
+   **sem** taxa do MP.
+5. Com o dono (no outro navegador), **desativar** o staff.
+6. No navegador do staff, clicar em qualquer link: deve cair em
+   **/admin/login?motivo=inativo**.
+7. Self-service ponta a ponta: /admin/esqueci-senha com um e-mail real →
+   receber → abrir o link → definir senha → entrar. (Só passa com o Resend
+   configurado; sem ele, conferir que a tela **avisa** em vez de fingir.)
+
 ## Mensagem ou e-mail não chegou
 
 Mensagens e e-mails passam por uma fila com **retry automático** (tentativas
 repetidas com espera crescente) — atraso de minutos é normal. Se não chegar:
 **/admin/fila** → **Reprocessar** os itens em falha definitiva e ler o motivo
 mostrado no item.
+
+E-mail de **recuperação de senha** não passa pela outbox (o payload é uma
+credencial e o feedback precisa ser imediato): reprocessar não se aplica — ver
+**Perdi o acesso ao painel**, item 4.
 
 ## WhatsApp desconectou
 

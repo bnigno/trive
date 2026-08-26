@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { ZodError } from "zod";
 import { getDb } from "@/db/client";
 import { parseBRLToCents } from "@/lib/money";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   createProduct,
   ServiceError,
@@ -32,7 +32,7 @@ export async function createProductAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("produtos");
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { error: "Informe o nome do produto." };

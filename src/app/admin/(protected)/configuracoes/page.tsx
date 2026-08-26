@@ -5,7 +5,7 @@ import {
   PAYMENT_METHOD_LABELS,
 } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   getDefaultPolicy,
   getFeeRules,
@@ -134,7 +134,7 @@ async function loadSettings(): Promise<SettingsData | null> {
 }
 
 export default async function ConfiguracoesPage() {
-  await requireUser();
+  await requireOwner("configuracoes");
   const data = await loadSettings();
 
   if (!data) {

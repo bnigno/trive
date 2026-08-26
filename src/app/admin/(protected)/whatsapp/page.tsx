@@ -11,7 +11,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import type { BadgeTone } from "@/components/ui/badge";
 import { getDb } from "@/db/client";
 import { formatDateTimeSP } from "@/emails/templates";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
 import { siteBaseUrl } from "@/services/wa-messaging";
 import {
@@ -135,7 +135,7 @@ async function loadPageData(): Promise<PageData | null> {
 // ---------------------------------------------------------------------------
 
 export default async function WhatsappPage() {
-  await requireUser();
+  await requireOwner("whatsapp");
   const data = await loadPageData();
 
   if (!data) {

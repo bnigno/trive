@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getDb } from "@/db/client";
 import { parseBRLToCents } from "@/lib/money";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import {
   cancelEntry,
   createManualEntry,
@@ -47,7 +47,7 @@ export async function createEntryAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("financeiro");
 
   const direction = text(formData, "direction");
   if (!(DIRECTIONS as readonly string[]).includes(direction)) {
@@ -114,7 +114,7 @@ export async function settleEntryAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("financeiro");
 
   const entryId = z.uuid().safeParse(formData.get("entryId"));
   if (!entryId.success) {
@@ -140,7 +140,7 @@ export async function cancelEntryAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireOwner("financeiro");
 
   const entryId = z.uuid().safeParse(formData.get("entryId"));
   if (!entryId.success) {

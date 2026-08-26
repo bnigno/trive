@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listShippingRates, type ShippingRate } from "@/services/shipping";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -70,7 +70,7 @@ async function loadRates(): Promise<ShippingRate[] | null> {
 }
 
 export default async function FretePage() {
-  await requireUser();
+  await requireOwner("frete");
   const rates = await loadRates();
 
   if (!rates) {
