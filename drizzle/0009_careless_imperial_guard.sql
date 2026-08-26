@@ -1,0 +1,1 @@
+ALTER TABLE "wa_conversations" ADD COLUMN "owner_last_seen_at" timestamp with time zone;

@@ -1,19 +1,13 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
-import { Table, Td, Tr } from "@/components/ui/table";
 import { getDb } from "@/db/client";
-import { formatDateTimeSP } from "@/emails/templates";
 import { requireUser } from "@/services/auth";
 import {
+  getWaConversationThread,
   listWaConversations,
-  type WaConversationListItem,
 } from "@/services/wa-conversations";
-import { attendantBadge, maskPhone } from "./format";
+import { ChatShell } from "./chat-shell";
+import type { ChatConversation, ChatThread } from "./use-chat-poll";
 
 export const dynamic = "force-dynamic";
 
@@ -21,91 +15,81 @@ export const metadata: Metadata = {
   title: "Conversas do WhatsApp",
 };
 
-function preview(item: WaConversationListItem): string {
-  if (!item.lastMessagePreview) return "—";
-  const body = item.lastMessagePreview;
-  return body.length > 70 ? `${body.slice(0, 70)}…` : body;
-}
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export default async function WaConversationsPage() {
+// Datas viram ISO na fronteira RSC→client: mesmo formato do poll (JSON).
+const iso = (date: Date | null): string | null =>
+  date ? date.toISOString() : null;
+
+export default async function WaConversationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ c?: string }>;
+}) {
   await requireUser();
+  const { c } = await searchParams;
+  const selectedId = c && UUID_RE.test(c) ? c : null;
 
-  let conversations: WaConversationListItem[] | null = null;
+  let conversations: ChatConversation[] = [];
+  let thread: ChatThread | null = null;
+  let threadMeta: { phoneE164: string; customerName: string | null } | null =
+    null;
   try {
-    conversations = await listWaConversations(getDb());
+    const db = getDb();
+    const rows = await listWaConversations(db);
+    conversations = rows.map((row) => ({
+      ...row,
+      botDisabledUntil: iso(row.botDisabledUntil),
+      lastMessageAt: iso(row.lastMessageAt),
+    }));
+    if (selectedId) {
+      const full = await getWaConversationThread(db, selectedId);
+      if (full) {
+        threadMeta = {
+          phoneE164: full.conversation.phoneE164,
+          customerName: full.conversation.customerName,
+        };
+        thread = {
+          conversation: {
+            id: full.conversation.id,
+            status: full.conversation.status,
+            botDisabledUntil: iso(full.conversation.botDisabledUntil),
+            ownerLastSeenAt: null,
+          },
+          messages: full.messages.map((message) => ({
+            id: message.id,
+            direction: message.direction,
+            origin: message.origin,
+            kind: message.kind,
+            body: message.body,
+            mediaUrl: message.mediaUrl,
+            status: message.status,
+            errorDetail: message.errorDetail,
+            createdAt: message.createdAt.toISOString(),
+          })),
+        };
+      }
+    }
   } catch {
-    conversations = null;
+    // Banco indisponível: a casca renderiza vazia e o poll repovoa a tela
+    // quando a conexão voltar.
+    conversations = [];
+    thread = null;
+    threadMeta = null;
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Conversas do WhatsApp"
-        subtitle="Acompanhe o robô vendendo em tempo real. Abra uma conversa para ler a troca completa, assumir o atendimento ou responder na mão."
-        actions={
-          <Link
-            href="/admin/whatsapp"
-            className="inline-flex items-center justify-center rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            ← Configurações do WhatsApp
-          </Link>
-        }
+    // -m-8 cancela o p-8 do <main> do layout admin (layout.tsx) para o chat
+    // ocupar a janela inteira, sem scroll da página. Mudou o padding lá,
+    // mude aqui junto.
+    <div className="-m-8 flex h-dvh min-h-0 flex-col overflow-hidden">
+      <ChatShell
+        initialConversations={conversations}
+        initialThread={thread}
+        initialThreadMeta={threadMeta}
+        initialSelectedId={selectedId}
       />
-
-      <Card title="Conversas recentes">
-        {conversations === null ? (
-          <EmptyState
-            title="Não foi possível carregar as conversas"
-            hint="O banco de dados está indisponível no momento. Tente recarregar a página."
-          />
-        ) : conversations.length === 0 ? (
-          <EmptyState
-            title="Nenhuma conversa ainda"
-            hint="Quando um cliente mandar mensagem para o WhatsApp da loja, a conversa aparece aqui — com o robô respondendo, se estiver ligado."
-          />
-        ) : (
-          <Table
-            headers={["Última atividade", "Telefone", "Cliente", "Atendimento", "Última mensagem"]}
-          >
-            {conversations.map((item) => {
-              const badge = attendantBadge(item.status, item.botDisabledUntil);
-              return (
-                <Tr key={item.id}>
-                  <Td className="whitespace-nowrap">
-                    <Link
-                      href={`/admin/whatsapp/conversas/${item.id}`}
-                      className="text-emerald-700 hover:underline dark:text-emerald-400"
-                    >
-                      {item.lastMessageAt
-                        ? formatDateTimeSP(item.lastMessageAt)
-                        : "—"}
-                    </Link>
-                  </Td>
-                  <Td className="whitespace-nowrap">
-                    {maskPhone(item.phoneE164)}
-                  </Td>
-                  <Td>{item.customerName ?? "—"}</Td>
-                  <Td>
-                    <Badge tone={badge.tone}>{badge.label}</Badge>
-                  </Td>
-                  <Td className="max-w-sm truncate">
-                    {item.lastMessageDirection === "inbound" ? "↓ " : ""}
-                    {item.lastMessageDirection === "outbound" ? "↑ " : ""}
-                    {preview(item)}
-                  </Td>
-                </Tr>
-              );
-            })}
-          </Table>
-        )}
-        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-          <strong>Robô ativo</strong> = a IA responde sozinha;{" "}
-          <strong>Com você</strong> = você assumiu (ou o robô transferiu) e as
-          respostas dos clientes chegam no seu WhatsApp;{" "}
-          <strong>Robô em pausa</strong> = transferência recente, o robô volta
-          sozinho depois do prazo ou quando você devolver a conversa.
-        </p>
-      </Card>
     </div>
   );
 }

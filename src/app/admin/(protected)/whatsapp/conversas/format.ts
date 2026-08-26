@@ -26,14 +26,3 @@ export function attendantBadge(
   }
   return { label: "Robô ativo", tone: "success" };
 }
-
-export const MESSAGE_STATUS_BADGE: Record<
-  string,
-  { label: string; tone: BadgeTone }
-> = {
-  queued: { label: "Na fila", tone: "warning" },
-  sent: { label: "Enviada", tone: "info" },
-  delivered: { label: "Entregue", tone: "success" },
-  read: { label: "Lida", tone: "success" },
-  failed: { label: "Falhou", tone: "danger" },
-};

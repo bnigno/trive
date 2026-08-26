@@ -32,6 +32,10 @@ export const waConversations = pgTable(
     botDisabledUntil: timestamp("bot_disabled_until", { withTimezone: true }),
     lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
     lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
+    // Telemetria de leitura do painel: última vez que o dono viu esta thread.
+    // Atualizada por markConversationSeen SEM bumpar updated_at (senão a
+    // lista reordenaria a cada leitura). Sem índice: ~centenas de conversas.
+    ownerLastSeenAt: timestamp("owner_last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

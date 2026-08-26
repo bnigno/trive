@@ -3,12 +3,26 @@
 // Resposta manual SEMPRE assume a conversa: com duas "vozes" ativas (dono e
 // bot) o cliente receberia respostas conflitantes. O envio em si vai pela
 // fila ('wa.send'), nunca inline — se a sessão Z-API cair, nada se perde.
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import {
+  deriveWaMessageOrigin,
+  type WaMessageOrigin,
+} from "@/core/whatsapp/origin";
 import { auditLog, customers, waConversations, waMessages } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/settings";
+
+// "Não vista" = inbound criada depois da última leitura do dono; conversa
+// nunca aberta (owner_last_seen_at NULL) conta tudo desde a época.
+const unseenInboundFilter = and(
+  eq(waMessages.direction, "inbound"),
+  gt(
+    waMessages.createdAt,
+    sql`coalesce(${waConversations.ownerLastSeenAt}, 'epoch'::timestamptz)`,
+  ),
+);
 
 // ---------------------------------------------------------------------------
 // Leitura — lista e thread
@@ -23,6 +37,7 @@ export interface WaConversationListItem {
   lastMessageAt: Date | null;
   lastMessageDirection: "inbound" | "outbound" | null;
   lastMessagePreview: string | null;
+  unreadCount: number;
 }
 
 export async function listWaConversations(
@@ -64,6 +79,24 @@ export async function listWaConversations(
     lastMessages.map((message) => [message.conversationId, message]),
   );
 
+  // Não-lidas de todas as conversas da página em UMA query agregada
+  // (nunca N+1): inbound criada depois da última leitura do dono.
+  const unreadRows = await db
+    .select({
+      conversationId: waMessages.conversationId,
+      unreadCount: count(),
+    })
+    .from(waMessages)
+    .innerJoin(
+      waConversations,
+      eq(waConversations.id, waMessages.conversationId),
+    )
+    .where(and(inArray(waMessages.conversationId, ids), unseenInboundFilter))
+    .groupBy(waMessages.conversationId);
+  const unreadByConversation = new Map(
+    unreadRows.map((row) => [row.conversationId, row.unreadCount]),
+  );
+
   return rows.map((row) => {
     const last = byConversation.get(row.id) ?? null;
     return {
@@ -78,6 +111,7 @@ export async function listWaConversations(
           ? last.direction
           : null,
       lastMessagePreview: last?.body ?? null,
+      unreadCount: unreadByConversation.get(row.id) ?? 0,
     };
   });
 }
@@ -85,6 +119,8 @@ export async function listWaConversations(
 export interface WaThreadMessage {
   id: string;
   direction: "inbound" | "outbound";
+  /** Quem falou: cliente, robô, dono (manual) ou automação. */
+  origin: WaMessageOrigin;
   /** 'text' | 'image' (body é a legenda) | 'option_list' (body traz o menu). */
   kind: string;
   body: string;
@@ -128,6 +164,8 @@ export async function getWaConversationThread(
     .limit(1);
   if (!conversation) return null;
 
+  // Tie-break por id: mensagens do bot nascem na mesma transação com
+  // created_at idêntico — sem ele a ordem oscilaria entre leituras.
   const rows = await db
     .select({
       id: waMessages.id,
@@ -136,21 +174,202 @@ export async function getWaConversationThread(
       body: waMessages.body,
       mediaUrl: waMessages.mediaUrl,
       templateKey: waMessages.templateKey,
+      dedupeKey: waMessages.dedupeKey,
       status: waMessages.status,
       errorDetail: waMessages.errorDetail,
       createdAt: waMessages.createdAt,
     })
     .from(waMessages)
     .where(eq(waMessages.conversationId, conversationId))
-    .orderBy(waMessages.createdAt);
+    .orderBy(asc(waMessages.createdAt), asc(waMessages.id));
 
   return {
     conversation,
     messages: rows.map((row) => ({
-      ...row,
+      id: row.id,
       direction: row.direction === "inbound" ? "inbound" : "outbound",
+      origin: deriveWaMessageOrigin(row),
+      kind: row.kind,
+      body: row.body,
+      mediaUrl: row.mediaUrl,
+      templateKey: row.templateKey,
+      status: row.status,
+      errorDetail: row.errorDetail,
+      createdAt: row.createdAt,
     })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Poll do chat — cauda da thread, "visto" e conversas aguardando o dono
+// ---------------------------------------------------------------------------
+
+export interface WaThreadTailMessage {
+  id: string;
+  direction: "inbound" | "outbound";
+  origin: WaMessageOrigin;
+  kind: string;
+  body: string;
+  mediaUrl: string | null;
+  status: string;
+  errorDetail: string | null;
+  createdAt: Date;
+}
+
+export interface WaThreadTail {
+  conversation: {
+    id: string;
+    status: string;
+    botDisabledUntil: Date | null;
+    ownerLastSeenAt: Date | null;
+  };
+  messages: WaThreadTailMessage[];
+}
+
+const threadTailSchema = z.object({
+  conversationId: z.uuid(),
+  limit: z.number().int().min(1).max(100).default(30),
+});
+
+/**
+ * Últimas N mensagens da conversa para o poll (sincronização por cauda: o
+ * cliente faz upsert por id, então a mesma resposta cobre mensagem nova E
+ * tick de status). Ordem estável mesmo com created_at empatado (tie-break
+ * por id na MESMA direção do sort principal + reverse).
+ */
+export async function getWaThreadTail(
+  db: DbOrTx,
+  input: z.input<typeof threadTailSchema>,
+): Promise<WaThreadTail | null> {
+  const parsed = threadTailSchema.parse(input);
+
+  const [conversation] = await db
+    .select({
+      id: waConversations.id,
+      status: waConversations.status,
+      botDisabledUntil: waConversations.botDisabledUntil,
+      ownerLastSeenAt: waConversations.ownerLastSeenAt,
+    })
+    .from(waConversations)
+    .where(eq(waConversations.id, parsed.conversationId))
+    .limit(1);
+  if (!conversation) return null;
+
+  const rows = await db
+    .select({
+      id: waMessages.id,
+      direction: waMessages.direction,
+      kind: waMessages.kind,
+      body: waMessages.body,
+      mediaUrl: waMessages.mediaUrl,
+      templateKey: waMessages.templateKey,
+      dedupeKey: waMessages.dedupeKey,
+      status: waMessages.status,
+      errorDetail: waMessages.errorDetail,
+      createdAt: waMessages.createdAt,
+    })
+    .from(waMessages)
+    .where(eq(waMessages.conversationId, parsed.conversationId))
+    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+    .limit(parsed.limit);
+  rows.reverse();
+
+  return {
+    conversation,
+    messages: rows.map((row) => ({
+      id: row.id,
+      direction: row.direction === "inbound" ? "inbound" : "outbound",
+      origin: deriveWaMessageOrigin(row),
+      kind: row.kind,
+      body: row.body,
+      mediaUrl: row.mediaUrl,
+      status: row.status,
+      errorDetail: row.errorDetail,
+      createdAt: row.createdAt,
+    })),
+  };
+}
+
+const markSeenSchema = z.object({ conversationId: z.uuid() });
+
+/**
+ * Telemetria de leitura do painel: registra que o dono viu a thread agora.
+ * NÃO bumpa updated_at (senão a lista reordenaria a cada leitura), NÃO
+ * audita e aceita conversa fechada — ler não é uma ação de atendimento.
+ */
+export async function markConversationSeen(
+  db: DbOrTx,
+  input: z.input<typeof markSeenSchema>,
+): Promise<{ seenAt: Date }> {
+  const parsed = markSeenSchema.parse(input);
+  const seenAt = new Date();
+
+  const updated = await db
+    .update(waConversations)
+    .set({ ownerLastSeenAt: seenAt })
+    .where(eq(waConversations.id, parsed.conversationId))
+    .returning({ id: waConversations.id });
+  if (updated.length === 0) {
+    throw new ServiceError("conversa_inexistente", "Conversa não encontrada.");
+  }
+  return { seenAt };
+}
+
+function existsUnseenInbound(db: DbOrTx) {
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(waMessages)
+      .where(
+        and(eq(waMessages.conversationId, waConversations.id), unseenInboundFilter),
+      ),
+  );
+}
+
+/**
+ * Badge da sidebar: conversas transferidas para o dono ('human') que ainda
+ * têm inbound não vista — apaga ao ler e reacende com mensagem nova.
+ */
+export async function countConversationsAwaitingOwner(
+  db: DbOrTx,
+): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(waConversations)
+    .where(
+      and(eq(waConversations.status, "human"), existsUnseenInbound(db)),
+    );
+  return row?.value ?? 0;
+}
+
+export interface WaAwaitingConversation {
+  id: string;
+  phoneE164: string;
+  customerName: string | null;
+}
+
+/**
+ * Versão com identidade (nome do cliente, se houver) das conversas que
+ * aguardam o dono — alimenta o toast/notificação do poll light.
+ */
+export async function listConversationsAwaitingOwner(
+  db: DbOrTx,
+  options: { limit?: number } = {},
+): Promise<WaAwaitingConversation[]> {
+  const limit = options.limit ?? 10;
+  return await db
+    .select({
+      id: waConversations.id,
+      phoneE164: waConversations.phoneE164,
+      customerName: customers.fullName,
+    })
+    .from(waConversations)
+    .leftJoin(customers, eq(customers.id, waConversations.customerId))
+    .where(
+      and(eq(waConversations.status, "human"), existsUnseenInbound(db)),
+    )
+    .orderBy(desc(waConversations.updatedAt))
+    .limit(limit);
 }
 
 // ---------------------------------------------------------------------------

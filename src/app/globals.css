@@ -382,3 +382,45 @@ body {
     visibility: hidden;
   }
 }
+
+/* ==========================================================================
+   Admin — chat WhatsApp: rabinhos das bolhas.
+   Acoplamento: message-bubble.tsx (whatsapp/conversas/) aplica .wa-tail-out /
+   .wa-tail-in na PRIMEIRA bolha de cada grupo. A bolha precisa ser `relative`
+   e as cores abaixo devem espelhar as utilitárias das bolhas — outbound
+   bg-[#d9fdd3] / dark bg-[#005c4b], inbound bg-white / dark bg-[#202c33].
+   Mudou a cor da bolha lá, mude aqui junto.
+   ========================================================================== */
+
+.wa-tail-out::before,
+.wa-tail-in::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 13px;
+}
+
+/* Saída (direita): triângulo colado na borda esquerda, ponta para fora. */
+.wa-tail-out::before {
+  right: -8px;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  background: #d9fdd3;
+}
+
+/* Entrada (esquerda): espelhado, colado na borda direita da bolha. */
+.wa-tail-in::before {
+  left: -8px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+  background: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .wa-tail-out::before {
+    background: #005c4b;
+  }
+
+  .wa-tail-in::before {
+    background: #202c33;
+  }
+}

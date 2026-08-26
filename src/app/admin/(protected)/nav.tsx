@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ComponentType } from "react";
 import { cx } from "@/components/ui/cx";
+import { WaNavBadge } from "./wa-nav-badge";
 
-type NavItem = { label: string; href: string };
+type NavItem = { label: string; href: string; badge?: ComponentType };
 type NavGroup = { title: string; items: NavItem[] };
 
 const NAV_GROUPS: NavGroup[] = [
@@ -30,7 +32,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Financeiro", href: "/admin/financeiro" },
       { label: "Configurações", href: "/admin/configuracoes" },
-      { label: "WhatsApp", href: "/admin/whatsapp" },
+      { label: "WhatsApp", href: "/admin/whatsapp", badge: WaNavBadge },
       { label: "Relatórios", href: "/admin/relatorios" },
       { label: "Cupons", href: "/admin/cupons" },
       { label: "Ajuda", href: "/admin/ajuda" },
@@ -64,13 +66,14 @@ export function AdminNav() {
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={cx(
-                  "rounded-md px-3 py-2 font-medium transition-colors",
+                  "flex items-center gap-2 rounded-md px-3 py-2 font-medium transition-colors",
                   active
                     ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                     : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
                 )}
               >
                 {item.label}
+                {item.badge ? <item.badge /> : null}
               </Link>
             );
           })}
