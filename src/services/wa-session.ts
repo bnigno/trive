@@ -4,8 +4,11 @@
 // e avisamos o dono por E-Mail (o WhatsApp está fora do ar, afinal).
 import { and, count, desc, eq, gt, inArray } from "drizzle-orm";
 
-import { getAdapterMode } from "@/adapters/adapter-mode";
-import { getEmailProvider, type EmailProvider } from "@/adapters/email";
+import {
+  getEmailProvider,
+  isEmailConfigured,
+  type EmailProvider,
+} from "@/adapters/email";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { auditLog, users, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -112,10 +115,10 @@ export async function checkSessionAndAlert(
   if (!owner) return { connected: false };
 
   const adminUrl = `${siteBaseUrl()}/admin/whatsapp`;
-  // Sem Resend configurado em modo real, não há como avisar por e-mail —
-  // o alerta fica só no banner do /admin/whatsapp (skip silencioso, sem
-  // poluir o cron com falhas a cada 5 minutos).
-  if (getAdapterMode() === "real" && !process.env.RESEND_API_KEY) {
+  // Sem canal de e-mail utilizável, não há como avisar por e-mail — o alerta
+  // fica só no banner do /admin/whatsapp (skip silencioso, sem poluir o cron
+  // com falhas a cada 5 minutos).
+  if (!isEmailConfigured()) {
     return { connected: false };
   }
 
