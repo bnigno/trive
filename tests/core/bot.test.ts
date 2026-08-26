@@ -30,6 +30,27 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("WhatsApp");
   });
 
+  it("descreve a personalidade descolada e o elogio específico", () => {
+    const prompt = buildBotSystemPrompt(promptOptions);
+    expect(prompt).toContain("JEITO DE FALAR");
+    expect(prompt).toContain("brincalhão");
+    // Elogio tem que apontar algo REAL: elogio genérico repetido soa falso.
+    expect(prompt).toContain("REAL e específico");
+    // O tom formal de call center é justamente o que o dono não quer.
+    expect(prompt).toContain("prezado cliente");
+  });
+
+  it("subordina a personalidade à exatidão e manda baixar a brincadeira em problema", () => {
+    const prompt = buildBotSystemPrompt(promptOptions);
+    // 16: exatidão ganha da graça; elogio nunca vira pressão de venda.
+    expect(prompt).toContain("16.");
+    expect(prompt).toContain("seja exato");
+    expect(prompt).toContain("pressionar a compra");
+    // 17: cliente irritado não recebe piada.
+    expect(prompt).toContain("17.");
+    expect(prompt).toContain("baixe a brincadeira");
+  });
+
   it("contém as regras-chave numeradas", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
     expect(prompt).toContain("REGRAS DURAS");
