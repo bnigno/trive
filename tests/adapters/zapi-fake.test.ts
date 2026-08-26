@@ -31,8 +31,10 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
       body: "Pedido enviado!",
     });
 
-    expect(first.providerMessageId).toBe("fake-zapi-msg-1");
-    expect(second.providerMessageId).toBe("fake-zapi-msg-2");
+    // Sufixo por instância evita colisão de zapi_message_id (UNIQUE) entre
+    // execuções contra um banco persistente; a sequência continua 1, 2, …
+    expect(first.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-1$/);
+    expect(second.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-2$/);
     expect(provider.sentMessages).toHaveLength(2);
     expect(provider.sentMessages[0]).toMatchObject({
       toE164: "+5511999990000",
@@ -88,6 +90,6 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
     expect(provider.sentMessages).toHaveLength(0);
     await expect(provider.getSessionStatus()).resolves.toEqual({ connected: true });
     const sent = await provider.sendText({ toE164: "+5511999990000", body: "De novo" });
-    expect(sent.providerMessageId).toBe("fake-zapi-msg-1");
+    expect(sent.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-1$/);
   });
 });

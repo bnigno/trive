@@ -8,10 +8,12 @@ import {
   FormError,
   FormSuccess,
   Input,
+  Select,
   SubmitButton,
   TextArea,
 } from "@/components/ui/form";
 import {
+  saveBotSettingsAction,
   saveWaSettingsAction,
   sendTestMessageAction,
   updateWaTemplateAction,
@@ -85,6 +87,76 @@ export function WaSettingsForm({
       <FormSuccess message={state.success} />
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar configurações</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export function BotSettingsForm({
+  botEnabled,
+  botModel,
+  botExtraInstructions,
+}: {
+  botEnabled: boolean;
+  botModel: string;
+  botExtraInstructions: string;
+}) {
+  const [state, formAction] = useActionState(
+    saveBotSettingsAction,
+    INITIAL_STATE,
+  );
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          name="botEnabled"
+          defaultChecked={botEnabled}
+          className="mt-0.5 h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+        />
+        <span>
+          Deixar o robô vender sozinho no WhatsApp da loja
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+            Ligado, a IA apresenta os produtos, calcula o frete, monta o pedido
+            e envia o link de pagamento — tudo registrado nas conversas e nos
+            pedidos. Desligado, as mensagens dos clientes continuam chegando no
+            seu WhatsApp como hoje.
+          </span>
+        </span>
+      </label>
+
+      <Field
+        label="Modelo de IA"
+        hint="O modelo recomendado vende melhor; o econômico custa menos por conversa. Nos dois casos, uma conversa completa custa centavos (cobrado pela Anthropic, fora do sistema)."
+      >
+        <Select name="botModel" defaultValue={botModel}>
+          <option value="claude-sonnet-5">
+            Recomendado — vendedor mais habilidoso (Claude Sonnet)
+          </option>
+          <option value="claude-haiku-4-5">
+            Econômico — mais simples e mais barato (Claude Haiku)
+          </option>
+        </Select>
+      </Field>
+
+      <Field
+        label="Instruções extras para o robô (opcional)"
+        hint="Escreva como se orientasse um vendedor novo: tom de voz, o que destacar, o que evitar. Ex.: “Trate os clientes por você. Destaque que a produção é artesanal. Prazo de produção: até 3 dias úteis antes do envio.” Preços, estoque e frete ele SEMPRE busca do sistema — instruções não mudam isso."
+      >
+        <TextArea
+          name="botExtraInstructions"
+          rows={4}
+          maxLength={2000}
+          defaultValue={botExtraInstructions}
+          placeholder="Ex.: Seja simpático e direto. Sugira o produto mais vendido quando o cliente estiver em dúvida."
+        />
+      </Field>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar vendedor com IA</SubmitButton>
       </div>
     </form>
   );

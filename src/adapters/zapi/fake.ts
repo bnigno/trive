@@ -20,13 +20,17 @@ export class FakeMessagingProvider implements MessagingProvider {
   readonly sentMessages: FakeSentMessage[] = [];
   private connected = true;
   private sequence = 0;
+  // Sufixo único por instância: zapi_message_id é UNIQUE no banco, e um
+  // contador que reinicia a cada processo colide com execuções anteriores
+  // quando o fake roda contra um banco persistente (demos no dev).
+  private runId = Math.random().toString(36).slice(2, 8);
 
   async sendText(message: OutboundTextMessage): Promise<SentMessage> {
     if (!this.connected) {
       throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
     }
     this.sequence += 1;
-    const providerMessageId = `fake-zapi-msg-${this.sequence}`;
+    const providerMessageId = `fake-zapi-msg-${this.runId}-${this.sequence}`;
     this.sentMessages.push({
       providerMessageId,
       toE164: message.toE164,
@@ -70,6 +74,7 @@ export class FakeMessagingProvider implements MessagingProvider {
     this.sentMessages.length = 0;
     this.connected = true;
     this.sequence = 0;
+    this.runId = Math.random().toString(36).slice(2, 8);
     this.nonexistentPhones.clear();
   }
 }

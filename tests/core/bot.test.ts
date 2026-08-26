@@ -146,10 +146,13 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     expect(schema.safeParse({ produto: "" }).success).toBe(false);
   });
 
-  it("cotar_frete: CEP com 8 dígitos, sem máscara", () => {
+  it("cotar_frete: CEP com 8 dígitos; máscara comum é aceita e normalizada", () => {
     const schema = BOT_TOOL_INPUT_SCHEMAS.cotar_frete;
     expect(schema.safeParse({ cep: "01310100" }).success).toBe(true);
-    expect(schema.safeParse({ cep: "01310-100" }).success).toBe(false);
+    // O modelo repassa o que o cliente digitou: "01310-100" vira "01310100".
+    const mascarado = schema.safeParse({ cep: "01310-100" });
+    expect(mascarado.success).toBe(true);
+    expect((mascarado as { data: { cep: string } }).data.cep).toBe("01310100");
     expect(schema.safeParse({ cep: "0131010" }).success).toBe(false);
     expect(schema.safeParse({}).success).toBe(false);
   });
@@ -171,9 +174,16 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     expect(schema.safeParse({ ...pedidoValido, cpf: "1234567890" }).success).toBe(
       false,
     );
-    expect(
-      schema.safeParse({ ...pedidoValido, cpf: "123.456.789-01" }).success,
-    ).toBe(false);
+    // CPF mascarado é normalizado para 11 dígitos aqui; o dígito verificador
+    // (isValidCpf) continua sendo checado pelo executor de criar_pedido.
+    const cpfMascarado = schema.safeParse({
+      ...pedidoValido,
+      cpf: "123.456.789-01",
+    });
+    expect(cpfMascarado.success).toBe(true);
+    expect((cpfMascarado as { data: { cpf: string } }).data.cpf).toBe(
+      "12345678901",
+    );
     expect(
       schema.safeParse({
         ...pedidoValido,

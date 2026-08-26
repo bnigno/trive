@@ -65,6 +65,40 @@ export async function saveWaSettingsAction(
 }
 
 // ---------------------------------------------------------------------------
+// Vendedor com IA (bot_enabled / bot_model / bot_extra_instructions)
+// ---------------------------------------------------------------------------
+
+export async function saveBotSettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const db = getDb();
+    await updateSetting(db, {
+      key: "bot_enabled",
+      value: formData.get("botEnabled") === "on",
+      userId: user.id,
+    });
+    await updateSetting(db, {
+      key: "bot_model",
+      value: String(formData.get("botModel") ?? ""),
+      userId: user.id,
+    });
+    await updateSetting(db, {
+      key: "bot_extra_instructions",
+      value: String(formData.get("botExtraInstructions") ?? ""),
+      userId: user.id,
+    });
+
+    revalidatePath("/admin/whatsapp");
+    return { success: "Configurações do vendedor com IA salvas." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Mensagem de teste para o dono
 // ---------------------------------------------------------------------------
 

@@ -218,10 +218,21 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
 ];
 
 // Validação de runtime (source of truth) usada pelo executor antes de agir.
+// Máscaras comuns ("01310-100", "390.533.447-05") são aceitas e normalizadas:
+// o modelo tende a repassar o que o cliente digitou, e recusar por pontuação
+// só alonga a conversa sem proteger nada.
 const digitos = (tamanho: number, rotulo: string) =>
   z
     .string()
-    .regex(new RegExp(`^[0-9]{${tamanho}}$`), `${rotulo} deve ter ${tamanho} dígitos`);
+    .transform((valor) => valor.replace(/\D/g, ""))
+    .pipe(
+      z
+        .string()
+        .regex(
+          new RegExp(`^[0-9]{${tamanho}}$`),
+          `${rotulo} deve ter ${tamanho} dígitos`,
+        ),
+    );
 
 export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   listar_produtos: z.strictObject({

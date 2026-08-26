@@ -178,7 +178,8 @@ async function handOffToHuman(
     aggregateId: ctx.conversationId,
     payload: {
       phoneE164: ctx.phoneE164,
-      body: `🤖→👤 Bot transferiu: ${motivo}`,
+      body: `🤖→👤 O robô transferiu a conversa com ${ctx.phoneE164}: ${motivo}. Responda pelo painel ou aqui mesmo.`,
+      raw: true,
     },
   });
 }

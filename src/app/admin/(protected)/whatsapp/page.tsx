@@ -19,7 +19,9 @@ import {
   type WaSessionOverview,
 } from "@/services/wa-session";
 import { listWaTemplates, type WaTemplate } from "@/services/wa-templates";
+import { getAdapterMode } from "@/adapters/adapter-mode";
 import {
+  BotSettingsForm,
   SendTestMessageForm,
   TemplateEditForm,
   WaSettingsForm,
@@ -67,6 +69,9 @@ interface PageData {
   waEnabledSetting: boolean;
   ownerPhone: string;
   recoveryAfterMinutes: number;
+  botEnabledSetting: boolean;
+  botModel: string;
+  botExtraInstructions: string;
   templates: WaTemplate[];
 }
 
@@ -81,6 +86,9 @@ async function loadPageData(): Promise<PageData | null> {
         "wa_enabled",
         "owner_whatsapp_phone",
         "wa_recovery_after_minutes",
+        "bot_enabled",
+        "bot_model",
+        "bot_extra_instructions",
       ]),
       listWaTemplates(db),
     ]);
@@ -109,6 +117,15 @@ async function loadPageData(): Promise<PageData | null> {
       typeof rawMinutes === "number" && Number.isFinite(rawMinutes)
         ? rawMinutes
         : 60,
+    botEnabledSetting: settingsMap["bot_enabled"] === true,
+    botModel:
+      typeof settingsMap["bot_model"] === "string"
+        ? (settingsMap["bot_model"] as string)
+        : "claude-sonnet-5",
+    botExtraInstructions:
+      typeof settingsMap["bot_extra_instructions"] === "string"
+        ? (settingsMap["bot_extra_instructions"] as string)
+        : "",
     templates,
   };
 }
@@ -136,8 +153,22 @@ export default async function WhatsappPage() {
     );
   }
 
-  const { overview, waEnabledSetting, ownerPhone, recoveryAfterMinutes, templates } =
-    data;
+  const {
+    overview,
+    waEnabledSetting,
+    ownerPhone,
+    recoveryAfterMinutes,
+    botEnabledSetting,
+    botModel,
+    botExtraInstructions,
+    templates,
+  } = data;
+
+  // O toggle sozinho não liga o robô em produção: sem a chave da Anthropic
+  // na hospedagem, o inbound segue para o dono (isBotEnabled em wa-bot.ts).
+  const anthropicKeyMissing =
+    getAdapterMode() !== "fake" &&
+    !(process.env.ANTHROPIC_API_KEY ?? "").trim();
 
   const siteUrl = siteBaseUrl();
   const webhookSecret = process.env.ZAPI_WEBHOOK_SECRET?.trim() || null;
@@ -150,6 +181,14 @@ export default async function WhatsappPage() {
       <PageHeader
         title="WhatsApp"
         subtitle="Mensagens automáticas para clientes e avisos internos — tudo passa pela fila: nada se perde se a conexão cair."
+        actions={
+          <Link
+            href="/admin/whatsapp/conversas"
+            className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
+          >
+            Ver conversas
+          </Link>
+        }
       />
 
       <Card title="Status da conexão">
@@ -230,6 +269,40 @@ export default async function WhatsappPage() {
             </p>
             <SendTestMessageForm />
           </div>
+        </div>
+      </Card>
+
+      <Card title="Vendedor com IA (robô)">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {botEnabledSetting && !anthropicKeyMissing ? (
+              <Badge tone="success">Ligado</Badge>
+            ) : (
+              <Badge tone="neutral">Desligado</Badge>
+            )}
+            <Link
+              href="/admin/whatsapp/conversas"
+              className="ml-auto inline-flex items-center justify-center rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Acompanhar conversas
+            </Link>
+          </div>
+
+          {botEnabledSetting && anthropicKeyMissing ? (
+            <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+              O robô está marcado como ligado, mas a chave da Anthropic
+              (ANTHROPIC_API_KEY) ainda não foi configurada na hospedagem — por
+              segurança ele fica desligado e as mensagens dos clientes seguem
+              para o seu WhatsApp, como sempre. Crie a chave em
+              console.anthropic.com e peça para configurá-la.
+            </p>
+          ) : null}
+
+          <BotSettingsForm
+            botEnabled={botEnabledSetting}
+            botModel={botModel}
+            botExtraInstructions={botExtraInstructions}
+          />
         </div>
       </Card>
 

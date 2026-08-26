@@ -377,10 +377,15 @@ describe("runBotTurn", () => {
       .from(schema.outboxEvents)
       .where(eq(schema.outboxEvents.eventType, "wa.owner_forward"));
     expect(forwards).toHaveLength(1);
-    expect(forwards[0].payload).toMatchObject({
-      phoneE164: PHONE,
-      body: "🤖→👤 Bot transferiu: cliente pediu atendimento humano",
-    });
+    // raw: true — o aviso já chega formatado e o handler NÃO deve embrulhá-lo
+    // como fala de cliente ('💬 X respondeu: …').
+    expect(forwards[0].payload).toMatchObject({ phoneE164: PHONE, raw: true });
+    expect(String((forwards[0].payload as { body: string }).body)).toContain(
+      "cliente pediu atendimento humano",
+    );
+    expect(String((forwards[0].payload as { body: string }).body)).toContain(
+      "🤖→👤",
+    );
 
     // Resposta do turno + mensagem de cortesia da transferência.
     const bodies = provider.sentMessages.map((m) => m.body);

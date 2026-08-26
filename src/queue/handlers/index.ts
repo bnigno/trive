@@ -100,10 +100,13 @@ const waBotTurnPayloadSchema = z.object({
 });
 
 // Resposta de cliente encaminhada ao dono (bot desligado: humano responde).
+// raw: true envia o corpo como está — avisos do sistema (ex.: transferência
+// do bot) já chegam formatados e não são "fala de cliente".
 const waOwnerForwardPayloadSchema = z.object({
   phoneE164: z.string().optional(),
   customerName: z.string().optional(),
   body: z.string().min(1),
+  raw: z.boolean().optional(),
   dedupeKey: z.string().min(1).optional(),
 });
 
@@ -193,7 +196,9 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const who =
       parsed.customerName?.trim() || parsed.phoneE164?.trim() || "Cliente";
     await sendToOwner(getDb(), getMessagingProvider(), {
-      bodyOverride: `💬 ${who} respondeu: "${parsed.body}"`,
+      bodyOverride: parsed.raw
+        ? parsed.body
+        : `💬 ${who} respondeu: "${parsed.body}"`,
       dedupeKey: parsed.dedupeKey ?? `wa.owner_forward:${event.id}`,
     });
   },
