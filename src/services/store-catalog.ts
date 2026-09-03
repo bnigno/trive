@@ -2,7 +2,7 @@
 // Fase 2: vitrine sem autenticação. Nada aqui muta estado — sem audit/outbox.
 // Regra central: só é visível o que está ativo E tem preço ativo (price_versions
 // status 'active'); preço exibido é sempre o do banco, nunca o do cliente.
-import { and, asc, desc, eq, gte, ilike, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -62,6 +62,8 @@ const activePriceJoin = () =>
 const listPublicProductsSchema = z.object({
   categorySlug: z.string().trim().min(1).optional(),
   q: z.string().trim().min(1).optional(),
+  /** Deixa um produto de fora (ex.: o próprio, na lista de relacionados). */
+  excludeProductId: z.uuid().optional(),
   limit: z.number().int().positive().max(200).default(60),
 });
 
@@ -95,6 +97,7 @@ export async function listPublicProducts(
 
   const filters = [eq(products.status, "active"), isNull(products.deletedAt)];
   if (parsed.categorySlug) filters.push(eq(categories.slug, parsed.categorySlug));
+  if (parsed.excludeProductId) filters.push(ne(products.id, parsed.excludeProductId));
   if (parsed.q) {
     const pattern = `%${parsed.q}%`;
     filters.push(
@@ -141,6 +144,49 @@ export async function listPublicProducts(
     imagePath: row.imagePath,
     available: Number(row.availableSum) > 0,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// 1b. listRelatedPublicProducts — "Também na maison" da página do produto.
+// Duas chamadas de listPublicProducts (uma única fonte da regra "produto
+// público"): a categoria da peça, sem ela mesma; se não sobrar nada (ou a peça
+// não tiver categoria), as mais recentes da loja, sem ela mesma.
+// ---------------------------------------------------------------------------
+
+const relatedProductsSchema = z.object({
+  productId: z.uuid(),
+  categorySlug: z.string().trim().min(1).nullable(),
+  limit: z.number().int().positive().max(12).default(4),
+});
+
+export type RelatedProductsInput = z.input<typeof relatedProductsSchema>;
+
+export interface RelatedProducts {
+  /** "category" = peças da mesma sala; "latest" = novidades da loja (fallback). */
+  scope: "category" | "latest";
+  items: PublicProductListItem[];
+}
+
+export async function listRelatedPublicProducts(
+  db: ServiceDb,
+  input: RelatedProductsInput,
+): Promise<RelatedProducts> {
+  const parsed = relatedProductsSchema.parse(input);
+
+  if (parsed.categorySlug) {
+    const items = await listPublicProducts(db, {
+      categorySlug: parsed.categorySlug,
+      excludeProductId: parsed.productId,
+      limit: parsed.limit,
+    });
+    if (items.length > 0) return { scope: "category", items };
+  }
+
+  const items = await listPublicProducts(db, {
+    excludeProductId: parsed.productId,
+    limit: parsed.limit,
+  });
+  return { scope: "latest", items };
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +260,8 @@ export interface PublicProductDetail {
   description: string | null;
   brand: string | null;
   categoryName: string | null;
+  /** Slug da categoria (link "Coleção / Sala" e relacionados), ou null. */
+  categorySlug: string | null;
   /** Eixos de variação, ex.: ["cor", "tamanho"]. */
   attributesSchema: string[];
   /**
@@ -231,7 +279,11 @@ export async function getPublicProductBySlug(
   const parsedSlug = z.string().trim().min(1).parse(slug);
 
   const [row] = await db
-    .select({ product: products, categoryName: categories.name })
+    .select({
+      product: products,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+    })
     .from(products)
     .leftJoin(categories, eq(categories.id, products.categoryId))
     .where(
@@ -284,6 +336,7 @@ export async function getPublicProductBySlug(
     description: product.description,
     brand: product.brand,
     categoryName: row.categoryName,
+    categorySlug: row.categorySlug,
     attributesSchema: (product.attributesSchema ?? []) as string[],
     images: imageRows.map((image) => ({ path: image.path, color: image.color })),
     variants: variantRows.map((variant) => ({
@@ -403,4 +456,13 @@ export function publicImageUrl(path: string): string {
 /** URL do thumbnail derivada por convenção (-full.webp -> -thumb.webp). */
 export function publicThumbUrl(path: string): string {
   return publicImageUrl(path.replace("-full.webp", "-thumb.webp"));
+}
+
+/**
+ * URL da rendição média (800w, -full.webp -> -md.webp), a que o celular usa na
+ * galeria. Fotos antigas sem -md são cobertas por scripts/backfill-image-md.ts;
+ * o srcset lista thumb/md/full e o navegador escolhe.
+ */
+export function publicMdUrl(path: string): string {
+  return publicImageUrl(path.replace("-full.webp", "-md.webp"));
 }
