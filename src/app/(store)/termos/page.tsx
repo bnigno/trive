@@ -1,6 +1,7 @@
 // Termos de uso e condições de compra — página institucional com ISR.
 // Identificação da loja conforme o Decreto 7.962/2013 (Lei do E-commerce).
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { getDb } from "@/db/client";
@@ -136,12 +137,12 @@ export default async function TermsPage() {
           Você tem 7 dias corridos após o recebimento para desistir da compra
           (art. 49 do CDC), além das garantias legais contra defeitos. Os
           detalhes e o passo a passo estão na nossa página de{" "}
-          <a
+          <Link
             href="/trocas-e-devolucoes"
             className="font-medium text-gold-800 underline underline-offset-4"
           >
             trocas e devoluções
-          </a>
+          </Link>
           .
         </p>
       </Section>

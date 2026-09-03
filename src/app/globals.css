@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tom noir do header: vale enquanto a home tem a "cortina" (.cinema) e o hero
+   ainda não foi coberto (data-tone="ivory" é setado pelo HeroSentinel). Como
+   variante, as utilities noir:* vencem as utilities normais na mesma camada. */
+@custom-variant noir (&:where([data-store]:has(.cinema:not([data-tone="ivory"])) *));
+
 :root {
   --background: #fafafa;
   --foreground: #18181b;
@@ -60,6 +65,30 @@ body {
   --color-claret-600: #963b31;
   --color-claret-700: #7c3129;
 
+  /* "Noite de Estreia": noir dos momentos escuros + cores tiradas do logo.
+     Contraste (WCAG AA, calculado): gold-700 só passa sobre ivory-100 (4,57)
+     e reprova sobre ivory-200 (4,22) — em faixas ivory-200 use gold-800 (6,0);
+     taupe-600 só sobre ivory-50/100 (4,62); rose-700 é o único rosé que serve
+     como texto pequeno em marfim (5,65); ink-400 (3,5) nunca como texto de
+     12px. Sobre noir, gold-brush (6,8), gold-400 (10,3) e gold-200 (15,6)
+     passam folgado. */
+  --color-noir-950: #0b0a09;
+  --color-noir-900: #141210;
+  --color-noir-800: #1e1b17;
+  --color-noir-stage: #030303;
+
+  --color-ivory-150: #f9f2e8;
+  --color-espresso-900: #2f1c16;
+  --color-taupe-600: #806c64;
+
+  --color-rose-200: #ebd3c3;
+  --color-rose-300: #dbbba4;
+  --color-rose-400: #c9a088;
+  --color-rose-700: #865749;
+
+  --color-gold-200: #f1e4c0;
+  --color-gold-brush: #b89153;
+
   /* Tipografia (fontes declaradas em src/app/(store)/layout.tsx) */
   --font-display: var(--font-cormorant), Georgia, "Times New Roman", serif;
   --font-store: var(--font-jost), system-ui, -apple-system, sans-serif;
@@ -73,10 +102,20 @@ body {
   --text-title--line-height: 1.15;
   --text-heading: 1.375rem;
   --text-heading--line-height: 1.3;
+  --text-hero: clamp(3.25rem, 2rem + 7vw, 8.5rem);
+  --text-hero--line-height: 0.95;
+  --text-hero--letter-spacing: 0.3em;
+  --text-manifesto: clamp(1.5rem, 1.15rem + 1.8vw, 2.5rem);
+  --text-manifesto--line-height: 1.25;
 
   /* Raios (boutique = quase reto) */
   --radius-hair: 2px;
   --radius-soft: 6px;
+
+  /* Malha */
+  --header-h: 3.5rem;
+  /* Trocar para 4 / 5 quando as fotos de moda (retrato) entrarem. */
+  --aspect-product: 1 / 1;
 
   /* Movimento */
   --ease-silk: cubic-bezier(0.22, 1, 0.36, 1);
@@ -85,16 +124,40 @@ body {
   --dur-base: 300ms;
   --dur-slow: 700ms;
   --dur-veil: 1500ms;
+  --dur-ribbon: 1100ms;
+  --dur-drift: 48s;
 
   --animate-gallery-in: gallery-in var(--dur-slow) var(--ease-silk);
   --animate-cart-bump: cart-bump 320ms var(--ease-silk);
   --animate-step-fill: step-fill var(--dur-slow) var(--ease-silk) both;
   --animate-step-halo: step-halo 2000ms ease-in-out infinite;
+  --animate-hero-in: hero-in 700ms var(--ease-silk) both;
+  --animate-cue-pulse: cue-pulse 2200ms ease-in-out infinite;
+  --animate-ribbon-check: ribbon-check 420ms var(--ease-silk) both;
+  --animate-ribbon-drift: ribbon-drift var(--dur-drift) ease-in-out infinite
+    alternate;
+  --animate-mark-pulse: mark-pulse 1800ms ease-in-out infinite;
 }
 
-/* Vitrine é claro único: controles nativos claros mesmo com o SO em dark. */
+/* Vitrine é claro único: controles nativos claros mesmo com o SO em dark.
+   Os momentos escuros (.noir-stage) são seções com fundo explícito. */
 [data-store] {
   color-scheme: light;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Âncoras (#colecao, #busca) param abaixo do header sticky. */
+[data-store] [id] {
+  scroll-margin-top: calc(var(--header-h) + 1rem);
+}
+
+/* Feedback de toque no lugar do highlight nativo: opacidade é compositor e
+   não dispara ao rolar (escala/borda disparam). */
+@media (hover: none) {
+  [data-store] .group:active {
+    opacity: 0.85;
+    transition: opacity 120ms ease;
+  }
 }
 
 [data-store] ::selection {
@@ -380,6 +443,299 @@ body {
   100% {
     opacity: 0;
     visibility: hidden;
+  }
+}
+
+/* Véu já visto nesta sessão: um <script> inline na home marca o <html> antes
+   do primeiro paint (ler sessionStorage só na hidratação deixaria o véu rodar
+   centenas de ms em 4G). */
+[data-veil-seen] .veil {
+  display: none;
+}
+
+/* ==========================================================================
+   "Noite de Estreia" — sistema de movimento da vitrine.
+   Compositor puro (transform/opacity) em tudo que roda durante a rolagem.
+   Exceções curtas e fora da rolagem: stroke-dashoffset (fitas ≤ 400×80px) e
+   o sheen do wordmark (uma passada, ligada pela classe is-lit depois do véu).
+   ========================================================================== */
+
+/* O Laço: a fita rosé + o filete dourado se desenham ao entrar na tela.
+   Gatilho = <Reveal> existente, que remove data-reveal ao intersectar.
+   Path com pathLength="1". Acima da dobra (sem data-reveal) já nasce pronto. */
+.ribbon-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.reveal:not([data-reveal]) .ribbon-draw {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset var(--dur-ribbon) var(--ease-silk) 120ms;
+}
+
+.reveal:not([data-reveal]) .ribbon-draw-gold {
+  transition-delay: 320ms;
+}
+
+/* Fita de hover: só onde existe hover de verdade (iOS dispara :active ao rolar). */
+@media (hover: hover) {
+  .ribbon-hover {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transition: stroke-dashoffset 500ms var(--ease-silk);
+  }
+
+  .group:hover .ribbon-hover,
+  .group:focus-visible .ribbon-hover {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (hover: none) {
+  .ribbon-hover {
+    display: none;
+  }
+}
+
+/* Palco noir: vinheta radial a partir do preto de palco. */
+.noir-stage {
+  position: relative;
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    var(--color-noir-stage) 0%,
+    var(--color-noir-950) 70%
+  );
+  color-scheme: dark;
+}
+
+.noir-stage ::selection {
+  background: var(--color-gold-500);
+  color: var(--color-ink-950);
+}
+
+.noir-stage :focus-visible {
+  outline-color: var(--color-gold-200);
+}
+
+/* Grão fino em tile de 200px (sem o tile o SVG é rasterizado no tamanho do
+   hero inteiro a cada rotação). Só ≥ 640px; sem mix-blend-mode. */
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  background-repeat: repeat;
+}
+
+@media (max-width: 639px) {
+  .grain::before {
+    display: none;
+  }
+}
+
+/* Brilho varrendo o ouro do wordmark: uma passada só, ligada pelo BrandVeil
+   (classe is-lit) depois do véu e da hidratação — nunca em cima do parse do JS. */
+.gold-sheen {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-gold-700) 0%,
+    var(--color-gold-brush) 35%,
+    var(--color-gold-200) 50%,
+    var(--color-gold-brush) 65%,
+    var(--color-gold-700) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 50% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gold-sheen.is-lit {
+  animation: sheen-once 2400ms var(--ease-silk) 1 both;
+}
+
+@keyframes sheen-once {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+/* Feedback tátil dos botões de conversão: a varredura toca ao SOLTAR
+   (um toque dura ~100ms; em :active o brilho só se arma). Só transform. */
+.press-sheen {
+  position: relative;
+  overflow: hidden;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.press-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgb(255 255 255 / 0.28) 50%,
+    transparent 70%
+  );
+  transform: translateX(130%);
+  transition: transform 900ms var(--ease-silk);
+}
+
+.press-sheen:active::after {
+  transform: translateX(-130%);
+  transition: none;
+}
+
+/* A cortina: o hero fica grudado (sticky) e o "dia" marfim desliza por cima.
+   Hero e .day são filhos diretos de .cinema (o sticky só gruda dentro do pai).
+   Altura declarada duas vezes: motores sem svh ficam com vh. overflow: clip
+   segura grão e fita sem quebrar o sticky — NUNCA overflow-x: hidden em
+   html/body/[data-store]/main (mata position: sticky no Safari). */
+.cinema {
+  position: relative;
+  margin-top: calc(-1 * var(--header-h));
+}
+
+.cinema > .hero {
+  position: sticky;
+  top: 0;
+  z-index: 0;
+  overflow: clip;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding-top: var(--header-h);
+}
+
+.cinema > .day {
+  position: relative;
+  z-index: 1;
+  background: var(--color-ivory-100);
+}
+
+/* Hero visível por padrão; a cascata só existe enquanto o véu toca. */
+.veil:not(.veil-skip) ~ .cinema .hero-content {
+  animation: hero-in 700ms var(--ease-silk) 1100ms both;
+}
+
+.veil.veil-skip ~ .cinema .hero-content {
+  animation-delay: 0ms;
+}
+
+/* Hero coberto pelo dia: para tudo (animation-play-state não herda — por
+   isso o *) e esconde o conteúdo para o compositor não desenhar à toa. */
+.cinema[data-hero="offstage"] .hero,
+.cinema[data-hero="offstage"] .hero * {
+  animation-play-state: paused;
+}
+
+.cinema[data-hero="offstage"] .hero-content {
+  visibility: hidden;
+}
+
+/* Na home o convite noir encosta no rodapé noir. */
+[data-store]:has(.cinema) .site-footer {
+  margin-top: 0;
+}
+
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cue-pulse {
+  0% {
+    transform: scaleY(0);
+    transform-origin: top;
+  }
+  50% {
+    transform: scaleY(1);
+    transform-origin: top;
+  }
+  51% {
+    transform-origin: bottom;
+  }
+  100% {
+    transform: scaleY(0);
+    transform-origin: bottom;
+  }
+}
+
+@keyframes ribbon-check {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes ribbon-drift {
+  from {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  to {
+    transform: translate(3%, -2%) rotate(2deg);
+  }
+}
+
+@keyframes mark-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes veil-fade {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* Reduced motion: o site fica completo e legível, apenas parado. */
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-draw,
+  .ribbon-hover {
+    stroke-dashoffset: 0 !important;
+    transition: none !important;
+  }
+
+  .gold-sheen.is-lit,
+  .animate-ribbon-drift,
+  .animate-cue-pulse,
+  .animate-hero-in,
+  .animate-ribbon-check,
+  .animate-mark-pulse,
+  .hero-content {
+    animation: none !important;
+  }
+
+  .hero-content {
+    opacity: 1;
+    transform: none;
+  }
+
+  .press-sheen::after {
+    display: none;
   }
 }
 

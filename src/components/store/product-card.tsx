@@ -1,8 +1,9 @@
 // Card de produto da vitrine: foto dominante, nome, preço e disponibilidade.
 // Server Component puro — sem interatividade; o clique navega para o PDP.
+// Sem foto, mostra a "etiqueta de ateliê": fita + inicial da peça em serif.
 import Link from "next/link";
 
-import { Monogram } from "@/components/store/brand/monogram";
+import { Ribbon } from "@/components/store/ribbon";
 import { eyebrow } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { formatCentsBRL } from "@/lib/money";
@@ -23,39 +24,56 @@ export function ProductCard({ product }: { product: PublicProductListItem }) {
         soldOut && "opacity-60",
       )}
     >
-      <div className="relative aspect-square w-full overflow-hidden bg-ivory-200">
+      <div className="relative aspect-(--aspect-product) w-full overflow-hidden bg-ivory-150">
         {product.imagePath ? (
           // <img> simples de propósito: o otimizador de imagens da Vercel tem
-          // limites no plano gratuito — servimos o thumb .webp direto do Storage.
+          // limites no plano atual — servimos o thumb .webp direto do Storage.
+          // width/height reservam a caixa antes do download (CLS zero).
           <img
             src={publicThumbUrl(product.imagePath)}
             alt={product.name}
+            width={400}
+            height={400}
             loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover transition-transform duration-700 ease-silk group-hover:scale-[1.04]"
           />
         ) : (
           <div
             aria-hidden="true"
-            className="flex h-full w-full items-center justify-center"
+            className="relative flex h-full w-full items-center justify-center"
           >
-            <Monogram size={56} className="opacity-15" />
+            <Ribbon
+              variant="static"
+              size="md"
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-25"
+            />
+            <span className="relative font-display text-[6rem] leading-none font-semibold text-ivory-400 select-none">
+              {product.name.trim().charAt(0).toUpperCase()}
+            </span>
           </div>
         )}
         {soldOut ? (
-          <span className="absolute left-3 top-3 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50/90 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] text-ink-500">
+          <span className="absolute top-3 left-3 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50/90 px-2.5 py-1 font-store text-[10px] font-medium tracking-[0.2em] text-ink-500 uppercase">
             Esgotado
           </span>
         ) : null}
       </div>
-      <div className="flex flex-1 flex-col gap-1 px-4 py-3">
+      <div className="flex flex-1 flex-col gap-1.5 px-4 py-3">
         {product.brand ? <p className={eyebrow}>{product.brand}</p> : null}
-        <h3 className="font-store text-sm font-medium leading-snug text-ink-900 decoration-gold-500 decoration-1 underline-offset-4 group-hover:underline">
+        <h3 className="relative font-store text-[15px] leading-snug font-medium text-ink-900">
           {product.name}
+          {/* Fita que se desenha no hover, sem ocupar espaço no fluxo. */}
+          <Ribbon
+            variant="hover"
+            size="sm"
+            className="absolute -bottom-2.5 left-0 h-2 w-16"
+          />
         </h3>
-        <p className="mt-auto pt-1 font-store text-base font-medium text-ink-900">
+        <p className="mt-auto pt-1.5 font-store text-base font-medium text-ink-900 tabular-nums">
           {hasRange ? (
             <>
-              <span className="text-xs font-normal text-ink-400">
+              <span className="text-xs font-normal text-ink-500">
                 a partir de{" "}
               </span>
               {formatCentsBRL(product.priceFromCents)}

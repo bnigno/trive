@@ -6,6 +6,21 @@ export function isValidE164(s: string): boolean {
 }
 
 /**
+ * Link wa.me a partir de um telefone em formato livre (ex.: a setting
+ * store_whatsapp). Número nacional (DDD + número) ganha o 55 do Brasil;
+ * E.164 vira só dígitos. `text` vai pré-preenchido na conversa.
+ * Retorna null quando não há dígitos — o caller esconde o link.
+ */
+export function waMeUrl(rawPhone: unknown, text?: string): string | null {
+  if (typeof rawPhone !== "string") return null;
+  let digits = rawPhone.replace(/\D/g, "");
+  if (digits.length === 0) return null;
+  if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
+  const query = text ? `?text=${encodeURIComponent(text)}` : "";
+  return `https://wa.me/${digits}${query}`;
+}
+
+/**
  * Normaliza telefones brasileiros para E.164: '+55' + DDD + número.
  * Aceita formatos comuns ('(11) 99999-8888', '11 99999 8888', '+55...',
  * '5511999998888', '011...'), com ou sem 55, DDD obrigatório.
