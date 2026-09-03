@@ -21,7 +21,7 @@ export function CartButton({ className }: { className?: string }) {
           : "Sacola de compras, vazia"
       }
       className={[
-        "relative inline-flex h-10 w-10 items-center justify-center rounded-full text-ink-800 transition-colors duration-300 hover:bg-ivory-200 hover:text-ink-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
+        "relative inline-flex h-11 w-11 items-center justify-center rounded-full text-ink-800 transition-colors duration-300 hover:bg-ivory-200 hover:text-ink-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
         className ?? "",
       ]
         .join(" ")
@@ -33,7 +33,7 @@ export function CartButton({ className }: { className?: string }) {
         <span
           key={count}
           aria-hidden="true"
-          className="absolute -top-0.5 -right-0.5 flex h-5 min-w-5 animate-cart-bump items-center justify-center rounded-full bg-ink-950 px-1 font-store text-[11px] font-medium text-ivory-50"
+          className="absolute top-0 right-0 flex h-5 min-w-5 animate-cart-bump items-center justify-center rounded-full bg-rose-400 px-1 font-store text-[11px] font-medium text-espresso-900 tabular-nums"
         >
           {count > 99 ? "99+" : count}
         </span>

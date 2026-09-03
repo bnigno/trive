@@ -6,9 +6,30 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { IconCheck } from "@/components/store/icons";
-
 import { useCart, type CartItemInput } from "./cart-context";
+
+/** O check do Laço: a curva se desenha (ribbon-check) ao confirmar a compra. */
+function RibbonCheck() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+    >
+      <path
+        d="M4.5 12.5c3 1.6 5 3.6 6.2 5.5C12.5 12.8 15.6 9 20 5.5"
+        pathLength={1}
+        style={{ strokeDasharray: 1 }}
+        className="animate-ribbon-check"
+      />
+    </svg>
+  );
+}
 
 export function AddToCartButton({
   item,
@@ -49,7 +70,7 @@ export function AddToCartButton({
       className={[
         // Variação do btnPrimary (styles.ts) para a compra: mais tracking,
         // corpo menor e py maior — o CTA mais importante da vitrine.
-        "inline-flex w-full items-center justify-center gap-2 rounded-(--radius-hair) px-7 py-4 font-store text-xs font-medium uppercase tracking-[0.18em] transition duration-300 ease-silk active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600 sm:w-auto sm:min-w-56",
+        "press-sheen inline-flex min-h-13 w-full items-center justify-center gap-2 rounded-(--radius-hair) px-7 py-4 font-store text-xs font-medium uppercase tracking-[0.18em] transition duration-300 ease-silk active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600 sm:w-auto sm:min-w-56",
         added
           ? "bg-gold-600 text-ink-950"
           : "bg-ink-950 text-ivory-50 hover:bg-ink-800 hover:text-gold-300",
@@ -58,7 +79,7 @@ export function AddToCartButton({
     >
       {added ? (
         <span role="status" className="inline-flex items-center gap-2">
-          <IconCheck className="h-4 w-4" />
+          <RibbonCheck />
           Adicionado
         </span>
       ) : soldOut ? (

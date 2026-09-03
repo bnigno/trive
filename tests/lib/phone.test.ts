@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidE164, toE164BR } from "../../src/lib/phone";
+import { isValidE164, toE164BR, waMeUrl } from "../../src/lib/phone";
 
 describe("toE164BR", () => {
   it("normalizes common mobile formats to +55 E.164", () => {
@@ -80,5 +80,29 @@ describe("isValidE164", () => {
     expect(isValidE164("+1")).toBe(false);
     expect(isValidE164("+1234567890123456")).toBe(false);
     expect(isValidE164("+55 11 99999-8888")).toBe(false);
+  });
+});
+
+describe("waMeUrl", () => {
+  it("prefixes national numbers with Brazil's 55", () => {
+    expect(waMeUrl("(11) 99999-8888")).toBe("https://wa.me/5511999998888");
+    expect(waMeUrl("11 3222-1234")).toBe("https://wa.me/551132221234");
+  });
+
+  it("keeps E.164 numbers as digits only", () => {
+    expect(waMeUrl("+5511999998888")).toBe("https://wa.me/5511999998888");
+  });
+
+  it("encodes the prefilled text", () => {
+    expect(waMeUrl("+5511999998888", "Olá! Vim pelo site da TRIVÉ")).toBe(
+      "https://wa.me/5511999998888?text=Ol%C3%A1!%20Vim%20pelo%20site%20da%20TRIV%C3%89",
+    );
+  });
+
+  it("returns null without digits or for non-strings", () => {
+    expect(waMeUrl("")).toBeNull();
+    expect(waMeUrl("   ")).toBeNull();
+    expect(waMeUrl(undefined)).toBeNull();
+    expect(waMeUrl(42)).toBeNull();
   });
 });

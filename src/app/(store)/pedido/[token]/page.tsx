@@ -4,6 +4,7 @@
 // PRIVACIDADE: getPublicOrder NÃO retorna dados pessoais — e esta página
 // não adiciona nenhum (o link circula em encaminhamentos de WhatsApp).
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Monogram } from "@/components/store/brand/monogram";
@@ -13,6 +14,7 @@ import { Ornament } from "@/components/store/ornament";
 import { btnPrimary, eyebrow } from "@/components/store/styles";
 import { Money } from "@/components/ui/money";
 import { getDb } from "@/db/client";
+import { waMeUrl } from "@/lib/phone";
 import { getPublicOrder } from "@/services/store-orders";
 import { isMpEnabled } from "@/services/store-payments";
 import { getSettingsMap } from "@/services/settings";
@@ -43,17 +45,12 @@ function formatDueAt(date: Date): string {
   return `${dateFmt.format(date)} às ${timeFmt.format(date)}`;
 }
 
-/** Monta o link wa.me a partir da setting store_whatsapp (formato livre). */
+/** Link wa.me da setting store_whatsapp com a mensagem do pedido pré-preenchida. */
 function waMeLink(rawPhone: unknown, orderNumber: number): string | null {
-  if (typeof rawPhone !== "string") return null;
-  let digits = rawPhone.replace(/\D/g, "");
-  if (digits.length === 0) return null;
-  // Número nacional (DDD + número) → prefixa o código do Brasil.
-  if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
-  const text = encodeURIComponent(
+  return waMeUrl(
+    rawPhone,
     `Olá! Fiz o pedido #${orderNumber} e quero combinar o pagamento`,
   );
-  return `https://wa.me/${digits}?text=${text}`;
 }
 
 const goldPanel =
@@ -175,9 +172,9 @@ export default async function OrderPage({
             </p>
           )}
           {reservationExpired ? (
-            <a href="/produtos" className={`${btnPrimary} mt-5`}>
+            <Link href="/produtos" className={`${btnPrimary} mt-5`}>
               Refazer meu pedido
-            </a>
+            </Link>
           ) : null}
         </div>
       ) : (
