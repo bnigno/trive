@@ -20,7 +20,14 @@ type MonogramProps = {
   priority?: boolean;
   /** Variante escondida por CSS (ex.: logo alternativo do header): sem caixa visível, lazy não baixa. */
   lazy?: boolean;
+  /** Quando a largura em tela é fluida (hero), o `sizes` real para o srcset. */
+  sizes?: string;
 };
+
+export function markSrcSet(tone: "ink" | "gold"): string {
+  const mark = tone === "gold" ? BRAND.dark.mark : BRAND.light.mark;
+  return srcSetOf(mark);
+}
 
 function srcSetOf(variants: readonly BrandImage[]): string {
   return variants.map((variant) => `${variant.src} ${variant.width}w`).join(", ");
@@ -32,6 +39,7 @@ export function Monogram({
   className,
   priority = false,
   lazy = false,
+  sizes,
 }: MonogramProps) {
   const mark = tone === "gold" ? BRAND.dark.mark : BRAND.light.mark;
   const largest = mark[mark.length - 1];
@@ -43,7 +51,7 @@ export function Monogram({
     <img
       src={fallback.src}
       srcSet={srcSetOf(mark)}
-      sizes={`${size}px`}
+      sizes={sizes ?? `${size}px`}
       width={size}
       height={height}
       alt=""
