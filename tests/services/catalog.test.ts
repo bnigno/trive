@@ -14,6 +14,7 @@ import {
   removeProductImage,
   ServiceError,
   setProductImageColor,
+  mdPathFor,
   thumbPathFor,
   updateProduct,
 } from "@/services/catalog";
@@ -485,7 +486,7 @@ describe("listProducts / getProductDetail", () => {
 });
 
 describe("addProductImage / removeProductImage", () => {
-  it("stores -full and -thumb webp files and creates the row", async () => {
+  it("stores -full, -md and -thumb webp files and creates the row", async () => {
     const storage = new FakeFileStorage();
     const { product } = await createProduct(db, {
       name: "Colar Vento",
@@ -502,13 +503,17 @@ describe("addProductImage / removeProductImage", () => {
     });
 
     const paths = storage.list();
-    expect(paths).toHaveLength(2);
+    expect(paths).toHaveLength(3);
     const fullPath = paths.find((p) => p.endsWith("-full.webp"));
+    const mdPath = paths.find((p) => p.endsWith("-md.webp"));
     const thumbPath = paths.find((p) => p.endsWith("-thumb.webp"));
     expect(fullPath).toBeDefined();
+    expect(mdPath).toBeDefined();
     expect(thumbPath).toBeDefined();
     expect(fullPath).toMatch(new RegExp(`^products/${product.id}/`));
     expect(thumbPathFor(fullPath!)).toBe(thumbPath);
+    expect(mdPathFor(fullPath!)).toBe(mdPath);
+    expect(image.mdUrl).toBe(`memory://${mdPath}`);
 
     // Conteúdo realmente convertido para webp, sem upscale (fonte 10px).
     const stored = storage.get(fullPath!);
@@ -657,7 +662,7 @@ describe("addProductImage / removeProductImage", () => {
       contentType: "image/png",
       userId: FIXED_USER_ID,
     });
-    expect(storage.list()).toHaveLength(2);
+    expect(storage.list()).toHaveLength(3);
 
     await removeProductImage(db, storage, {
       imageId: image.id,

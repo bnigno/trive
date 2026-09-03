@@ -2,33 +2,31 @@
 
 // Seletor de variação por eixo (attributesSchema) + preço + botão de compra.
 // Recebe as variantes já serializadas por props do Server Component da página.
-// A escolha atual vive no componente de cima (product-detail-client): a galeria
-// precisa da mesma cor, e dois donos do mesmo estado sempre desandam.
+// A escolha atual e a variante casada vivem no componente de cima
+// (product-detail-client): galeria, barra fixa e seletor precisam concordar.
 import { useMemo } from "react";
 
 import { AddToCartButton } from "@/components/store/cart/add-to-cart";
 import { cx } from "@/components/ui/cx";
+import { findColorAxis } from "@/core/catalog/product-images";
 import { formatCentsBRL } from "@/lib/money";
 import type { PublicVariant } from "@/services/store-catalog";
 
-/**
- * Escolha inicial de cada eixo: a primeira variação com estoque, ou a primeira
- * de todas se o produto inteiro estiver esgotado.
- */
-export function initialAxisSelection(
-  axes: readonly string[],
-  variants: readonly PublicVariant[],
-): Record<string, string> {
-  const initial =
-    variants.find((variant) => variant.availableQty > 0) ?? variants[0];
-  const selection: Record<string, string> = {};
-  if (initial) {
-    for (const axis of axes) {
-      const value = initial.attributes[axis];
-      if (value) selection[axis] = value;
-    }
-  }
-  return selection;
+function Check() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+    >
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </svg>
+  );
 }
 
 export function VariantPicker({
@@ -38,6 +36,7 @@ export function VariantPicker({
   axes,
   variants,
   selected,
+  matched,
   onSelect,
 }: {
   productName: string;
@@ -46,8 +45,11 @@ export function VariantPicker({
   axes: string[];
   variants: PublicVariant[];
   selected: Record<string, string>;
+  matched: PublicVariant | undefined;
   onSelect: (axis: string, value: string) => void;
 }) {
+  const colorAxis = findColorAxis(axes);
+
   // Valores únicos por eixo, na ordem em que aparecem nas variantes.
   const valuesByAxis = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -61,14 +63,6 @@ export function VariantPicker({
     }
     return map;
   }, [axes, variants]);
-
-  const matched = useMemo(
-    () =>
-      variants.find((variant) =>
-        axes.every((axis) => variant.attributes[axis] === selected[axis]),
-      ) ?? (axes.length === 0 ? variants[0] : undefined),
-    [axes, selected, variants],
-  );
 
   // Um valor é escolhível se existe variante COM ESTOQUE que o combine com os
   // demais eixos já selecionados.
@@ -100,12 +94,12 @@ export function VariantPicker({
     <div className="flex flex-col gap-5">
       {matched ? (
         <div className="flex items-baseline gap-3">
-          <p className="font-store text-2xl text-ink-900">
+          <p className="font-store text-2xl text-ink-900 tabular-nums">
             {formatCentsBRL(matched.priceCents)}
           </p>
           {matched.compareAtPriceCents != null &&
           matched.compareAtPriceCents > matched.priceCents ? (
-            <p className="font-store text-base text-ink-400 line-through">
+            <p className="font-store text-base text-ink-500 line-through tabular-nums">
               {formatCentsBRL(matched.compareAtPriceCents)}
             </p>
           ) : null}
@@ -116,38 +110,46 @@ export function VariantPicker({
         </p>
       )}
 
-      {axes.map((axis) => (
-        <fieldset key={axis}>
-          <legend className="mb-2.5 font-store text-eyebrow font-medium uppercase text-ink-500">
-            {axis}
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {(valuesByAxis.get(axis) ?? []).map((value) => {
-              const isSelected = selected[axis] === value;
-              const enabled = isValueEnabled(axis, value);
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  disabled={!enabled && !isSelected}
-                  aria-pressed={isSelected}
-                  onClick={() => onSelect(axis, value)}
-                  className={cx(
-                    "rounded-(--radius-hair) border px-4 py-2 font-store text-sm transition-colors duration-300 ease-silk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
-                    isSelected
-                      ? "border-ink-950 bg-ink-950 text-ivory-50"
-                      : enabled
-                        ? "border-ivory-400 bg-ivory-50 text-ink-700 hover:border-ink-900"
-                        : "cursor-not-allowed border-ivory-300 bg-transparent text-ink-300 line-through",
-                  )}
-                >
-                  {value}
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-      ))}
+      {axes.map((axis) => {
+        const isColor = axis === colorAxis;
+        return (
+          <fieldset key={axis}>
+            <legend className="mb-2.5 font-store text-eyebrow font-medium text-ink-500 uppercase">
+              {axis}
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {(valuesByAxis.get(axis) ?? []).map((value) => {
+                const isSelected = selected[axis] === value;
+                const enabled = isValueEnabled(axis, value);
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={!enabled && !isSelected}
+                    aria-pressed={isSelected}
+                    onClick={() => onSelect(axis, value)}
+                    className={cx(
+                      "inline-flex min-h-11 items-center gap-1.5 border px-4 py-2 font-store text-sm transition-colors duration-300 ease-silk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
+                      isColor ? "rounded-full" : "rounded-(--radius-hair)",
+                      // Estado escolhido nunca só pela cor: borda 2px + check.
+                      isSelected
+                        ? isColor
+                          ? "border-2 border-espresso-900 bg-rose-300 text-espresso-900"
+                          : "border-ink-950 bg-ink-950 text-ivory-50"
+                        : enabled
+                          ? "border-ivory-400 bg-ivory-50 text-ink-700 hover:border-ink-900"
+                          : "cursor-not-allowed border-ivory-300 bg-transparent text-ink-300 line-through",
+                    )}
+                  >
+                    {isSelected && isColor ? <Check /> : null}
+                    {value}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+        );
+      })}
 
       {matched && soldOut ? (
         <p className="font-store text-sm font-medium text-ink-500">
@@ -155,7 +157,7 @@ export function VariantPicker({
         </p>
       ) : null}
       {matched && lowStock ? (
-        <p className="font-store text-sm font-medium text-gold-800">
+        <p className="font-store text-sm font-medium text-rose-700">
           {matched.availableQty === 1
             ? "Última unidade!"
             : `Últimas ${matched.availableQty} unidades!`}

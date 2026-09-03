@@ -7,7 +7,9 @@ import {
   getPublicProductBySlug,
   listPublicCategories,
   listPublicProducts,
+  listRelatedPublicProducts,
   publicImageUrl,
+  publicMdUrl,
   publicThumbUrl,
   quoteShipping,
   ServiceError,
@@ -508,6 +510,123 @@ describe("publicImageUrl", () => {
     );
     expect(publicThumbUrl("products/p1/img-full.webp")).toBe(
       "https://abc.supabase.co/storage/v1/object/public/product-images/products/p1/img-thumb.webp",
+    );
+  });
+});
+
+describe("categorySlug e excludeProductId", () => {
+  it("getPublicProductBySlug devolve o slug da categoria (ou null sem categoria)", async () => {
+    const [category] = await db
+      .insert(schema.categories)
+      .values({ name: "Brincos", slug: "brincos" })
+      .returning({ id: schema.categories.id });
+    await createPublicProduct({
+      name: "Brinco Laço",
+      categoryId: category.id,
+      variants: [{ sku: "BL-1", priceCents: 9900, onHand: 2 }],
+    });
+    await createPublicProduct({
+      name: "Peça Solta",
+      variants: [{ sku: "PS-1", priceCents: 5900, onHand: 1 }],
+    });
+
+    await expect(getPublicProductBySlug(db, "brinco-laço")).resolves.toMatchObject({
+      categoryName: "Brincos",
+      categorySlug: "brincos",
+    });
+    await expect(getPublicProductBySlug(db, "peça-solta")).resolves.toMatchObject({
+      categoryName: null,
+      categorySlug: null,
+    });
+  });
+
+  it("listPublicProducts deixa de fora o excludeProductId", async () => {
+    const { productId } = await createPublicProduct({
+      name: "Fora",
+      variants: [{ sku: "F-1", priceCents: 1000, onHand: 1 }],
+    });
+    await createPublicProduct({
+      name: "Dentro",
+      variants: [{ sku: "D-1", priceCents: 1000, onHand: 1 }],
+    });
+
+    const rows = await listPublicProducts(db, { excludeProductId: productId });
+    expect(rows.map((row) => row.name)).toEqual(["Dentro"]);
+  });
+});
+
+describe("listRelatedPublicProducts", () => {
+  async function seedCategory(name: string, slug: string): Promise<string> {
+    const [category] = await db
+      .insert(schema.categories)
+      .values({ name, slug })
+      .returning({ id: schema.categories.id });
+    return category.id;
+  }
+
+  it("prefere peças da mesma categoria, sem a própria peça, respeitando o limite", async () => {
+    const brincos = await seedCategory("Brincos", "brincos");
+    const { productId } = await createPublicProduct({
+      name: "Brinco A",
+      categoryId: brincos,
+      variants: [{ sku: "BA", priceCents: 1000, onHand: 1 }],
+    });
+    for (const name of ["Brinco B", "Brinco C", "Brinco D"]) {
+      await createPublicProduct({
+        name,
+        categoryId: brincos,
+        variants: [{ sku: name.replace(/\s/g, "-"), priceCents: 1000, onHand: 1 }],
+      });
+    }
+
+    const related = await listRelatedPublicProducts(db, {
+      productId,
+      categorySlug: "brincos",
+      limit: 2,
+    });
+    expect(related.scope).toBe("category");
+    expect(related.items).toHaveLength(2);
+    expect(related.items.map((item) => item.name)).not.toContain("Brinco A");
+  });
+
+  it("cai nas novidades da loja quando a categoria só tem a própria peça ou não existe", async () => {
+    const brincos = await seedCategory("Brincos", "brincos");
+    const { productId } = await createPublicProduct({
+      name: "Brinco Único",
+      categoryId: brincos,
+      variants: [{ sku: "BU", priceCents: 1000, onHand: 1 }],
+    });
+    await createPublicProduct({
+      name: "Bolsa Nova",
+      variants: [{ sku: "BN", priceCents: 1000, onHand: 1 }],
+    });
+    await createPublicProduct({
+      name: "Rascunho",
+      status: "draft",
+      variants: [{ sku: "RS", priceCents: 1000, onHand: 1 }],
+    });
+
+    const byCategory = await listRelatedPublicProducts(db, {
+      productId,
+      categorySlug: "brincos",
+    });
+    expect(byCategory.scope).toBe("latest");
+    expect(byCategory.items.map((item) => item.name)).toEqual(["Bolsa Nova"]);
+
+    const noCategory = await listRelatedPublicProducts(db, {
+      productId,
+      categorySlug: null,
+    });
+    expect(noCategory.scope).toBe("latest");
+    expect(noCategory.items.map((item) => item.name)).toEqual(["Bolsa Nova"]);
+  });
+});
+
+describe("publicMdUrl", () => {
+  it("deriva a rendição média por convenção (-full.webp -> -md.webp)", () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
+    expect(publicMdUrl("products/p1/abc-full.webp")).toBe(
+      "https://x.supabase.co/storage/v1/object/public/product-images/products/p1/abc-md.webp",
     );
   });
 });

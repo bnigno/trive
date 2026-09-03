@@ -810,11 +810,33 @@ export async function getProductDetail(db: ServiceDb, productId: string) {
 // ---------------------------------------------------------------------------
 
 const FULL_SUFFIX = "-full.webp";
+const MD_SUFFIX = "-md.webp";
 const THUMB_SUFFIX = "-thumb.webp";
+
+/** Larguras das rendições geradas no upload (a vitrine escolhe via srcset). */
+export const IMAGE_RENDITIONS = {
+  full: 1600,
+  md: 800,
+  thumb: 400,
+} as const;
 
 /** Deriva por convenção o path do thumbnail a partir do path gravado (-full). */
 export function thumbPathFor(storagePath: string): string {
   return storagePath.replace(/-full\.webp$/, THUMB_SUFFIX);
+}
+
+/** Deriva por convenção o path da rendição média (800w) a partir do -full. */
+export function mdPathFor(storagePath: string): string {
+  return storagePath.replace(/-full\.webp$/, MD_SUFFIX);
+}
+
+/** Converte a imagem enviada para webp na largura pedida (sem upscale, com EXIF). */
+export async function renderWebp(source: Buffer, width: number): Promise<Buffer> {
+  return sharp(source)
+    .rotate()
+    .resize({ width, withoutEnlargement: true })
+    .webp({ quality: 80 })
+    .toBuffer();
 }
 
 /**
@@ -912,19 +934,13 @@ export async function addProductImage(
     : Buffer.from(parsed.data);
 
   let fullBuffer: Buffer;
+  let mdBuffer: Buffer;
   let thumbBuffer: Buffer;
   try {
-    // rotate() aplica a orientação EXIF; withoutEnlargement evita upscale.
-    fullBuffer = await sharp(source)
-      .rotate()
-      .resize({ width: 1600, withoutEnlargement: true })
-      .webp({ quality: 80 })
-      .toBuffer();
-    thumbBuffer = await sharp(source)
-      .rotate()
-      .resize({ width: 400, withoutEnlargement: true })
-      .webp({ quality: 80 })
-      .toBuffer();
+    // Três rendições: full (desktop/2×), md (celular) e thumb (cards).
+    fullBuffer = await renderWebp(source, IMAGE_RENDITIONS.full);
+    mdBuffer = await renderWebp(source, IMAGE_RENDITIONS.md);
+    thumbBuffer = await renderWebp(source, IMAGE_RENDITIONS.thumb);
   } catch {
     throw new ServiceError(
       "imagem_invalida",
@@ -934,10 +950,12 @@ export async function addProductImage(
 
   const basePath = `products/${parsed.productId}/${randomUUID()}`;
   const fullPath = `${basePath}${FULL_SUFFIX}`;
+  const mdPath = `${basePath}${MD_SUFFIX}`;
   const thumbPath = `${basePath}${THUMB_SUFFIX}`;
 
   // Upload antes do INSERT: a linha só existe se os arquivos existirem.
   await storage.upload({ path: fullPath, data: fullBuffer, contentType: "image/webp" });
+  await storage.upload({ path: mdPath, data: mdBuffer, contentType: "image/webp" });
   await storage.upload({ path: thumbPath, data: thumbBuffer, contentType: "image/webp" });
 
   const image = await db.transaction(async (tx) => {
@@ -979,7 +997,9 @@ export async function addProductImage(
   return {
     ...image,
     thumbPath,
+    mdPath,
     fullUrl: storage.publicUrl(fullPath),
+    mdUrl: storage.publicUrl(mdPath),
     thumbUrl: storage.publicUrl(thumbPath),
   };
 }
@@ -1070,5 +1090,6 @@ export async function removeProductImage(
   });
 
   await storage.remove(image.storagePath);
+  await storage.remove(mdPathFor(image.storagePath));
   await storage.remove(thumbPathFor(image.storagePath));
 }

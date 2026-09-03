@@ -35,10 +35,13 @@ export function AddToCartButton({
   item,
   quantity = 1,
   disabled = false,
+  compact = false,
 }: {
   item: CartItemInput;
   quantity?: number;
   disabled?: boolean;
+  /** Versão curta para a barra fixa de compra do celular. */
+  compact?: boolean;
 }) {
   const { addItem } = useCart();
   const [added, setAdded] = useState(false);
@@ -70,7 +73,10 @@ export function AddToCartButton({
       className={[
         // Variação do btnPrimary (styles.ts) para a compra: mais tracking,
         // corpo menor e py maior — o CTA mais importante da vitrine.
-        "press-sheen inline-flex min-h-13 w-full items-center justify-center gap-2 rounded-(--radius-hair) px-7 py-4 font-store text-xs font-medium uppercase tracking-[0.18em] transition duration-300 ease-silk active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600 sm:w-auto sm:min-w-56",
+        "press-sheen inline-flex items-center justify-center gap-2 rounded-(--radius-hair) font-store text-xs font-medium uppercase tracking-[0.18em] transition duration-300 ease-silk active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
+        compact
+          ? "min-h-12 shrink-0 px-5 py-3"
+          : "min-h-13 w-full px-7 py-4 sm:w-auto sm:min-w-56",
         added
           ? "bg-gold-600 text-ink-950"
           : "bg-ink-950 text-ivory-50 hover:bg-ink-800 hover:text-gold-300",
