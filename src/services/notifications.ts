@@ -12,13 +12,14 @@ import {
   paymentApprovedEmail,
   type EmailTemplate,
 } from "@/emails/templates";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/settings";
 
 export { ServiceError };
 
 const DEFAULT_SITE_URL = "https://trivemaison.com.br";
-const DEFAULT_STORE_NAME = "TRIVË";
+const DEFAULT_STORE_NAME = STORE_NAME_DEFAULT;
 
 export const ORDER_EMAIL_KINDS = ["confirmed", "paid", "shipped"] as const;
 export type OrderEmailKind = (typeof ORDER_EMAIL_KINDS)[number];

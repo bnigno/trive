@@ -1,4 +1,4 @@
-# TRIVË — guia para sessões de IA
+# TRIVÉ — guia para sessões de IA
 
 ## Visão (3 linhas)
 

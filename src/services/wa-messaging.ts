@@ -21,6 +21,7 @@ import {
   waTemplates,
 } from "@/db/schema";
 import { formatDateTimeSP } from "@/emails/templates";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
 import { isValidE164 } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -100,7 +101,7 @@ export function buildOrderVars(input: {
     link: orderPublicUrl(input.publicToken),
     prazo: input.paymentDueAt ? formatDateTimeSP(input.paymentDueAt) : "",
     rastreio: input.trackingCode ?? "",
-    loja: input.storeName ?? "TRIVË",
+    loja: input.storeName ?? STORE_NAME_DEFAULT,
     metodo: input.paymentMethod
       ? (PAYMENT_METHOD_LABELS[input.paymentMethod] ?? input.paymentMethod)
       : "",

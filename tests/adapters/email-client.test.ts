@@ -32,7 +32,7 @@ function createFakeFetch(payload: unknown, status = 200) {
 describe("ResendEmailProvider (client real com fetch fake)", () => {
   beforeEach(() => {
     vi.stubEnv("RESEND_API_KEY", "re_test");
-    vi.stubEnv("EMAIL_FROM", "TRIVË <contato@trivemaison.com.br>");
+    vi.stubEnv("EMAIL_FROM", "TRIVÉ <contato@trivemaison.com.br>");
   });
 
   afterEach(() => {
@@ -71,7 +71,7 @@ describe("ResendEmailProvider (client real com fetch fake)", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.body).toEqual({
-      from: "TRIVË <contato@trivemaison.com.br>",
+      from: "TRIVÉ <contato@trivemaison.com.br>",
       to: ["cliente@example.com"],
       subject: "Re: Pedido #12",
       html: "<p>Já separamos.</p>",
@@ -98,7 +98,7 @@ describe("ResendEmailProvider (client real com fetch fake)", () => {
     });
 
     expect(calls[0]?.body).toEqual({
-      from: "TRIVË <contato@trivemaison.com.br>",
+      from: "TRIVÉ <contato@trivemaison.com.br>",
       to: ["cliente@example.com"],
       subject: "Pedido confirmado",
       html: "<p>Obrigado!</p>",

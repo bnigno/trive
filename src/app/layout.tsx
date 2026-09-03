@@ -7,24 +7,26 @@ const geistSans = Geist({
   subsets: ["latin"],
 });
 
+// A mono quase não aparece (só trechos técnicos do admin): sem preload, para
+// não disputar banda com a imagem LCP da vitrine.
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  preload: false,
 });
 
+// A imagem de compartilhamento vem da convenção src/app/opengraph-image.png
+// (+ .alt.txt), que emite og:image com tipo, largura e altura sozinha.
 export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL || "https://trivemaison.com.br",
   ),
   title: {
-    default: "TRIVË",
-    template: "%s | TRIVË",
+    default: "TRIVÉ — Maison Féminine",
+    template: "%s | TRIVÉ",
   },
   description:
-    "TRIVË — peças escolhidas com carinho. Envio para todo o Brasil.",
-  openGraph: {
-    images: ["/brand/og.png"],
-  },
+    "TRIVÉ — Maison Féminine. Peças escolhidas com calma, para a mulher que se veste de si. Envio para todo o Brasil.",
 };
 
 export default function RootLayout({

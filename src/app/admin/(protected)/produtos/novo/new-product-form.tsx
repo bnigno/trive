@@ -331,7 +331,7 @@ export function NewProductForm({
               />
             </Field>
             <Field label="Marca">
-              <Input name="brand" placeholder="Ex.: TRIVË (opcional)" />
+              <Input name="brand" placeholder="Ex.: TRIVÉ (opcional)" />
             </Field>
             <Field label="Categoria">
               <Select name="categoryId" defaultValue="">

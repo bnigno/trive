@@ -65,7 +65,7 @@ Divisão de papéis, para não confundir: **Hostinger = caixa humana** (você l�
 5. **API Key**: <https://resend.com/api-keys> → Create API Key → permissão *Sending access*. A chave aparece **uma única vez** — guarde no gerenciador de senhas.
 6. Cadastre na Vercel (Settings → Environment Variables, escopo **Production**):
    - `RESEND_API_KEY` = a chave criada.
-   - `EMAIL_FROM` = remetente **no domínio verificado**, no formato com nome: `TRIVË <pedidos@trivemaison.com.br>` (ou `@send.trivemaison.com.br`, se você verificou o subdomínio). Remetente fora do domínio verificado é recusado no envio.
+   - `EMAIL_FROM` = remetente **no domínio verificado**, no formato com nome: `TRIVÉ <pedidos@trivemaison.com.br>` (ou `@send.trivemaison.com.br`, se você verificou o subdomínio). Remetente fora do domínio verificado é recusado no envio.
    - Confira também que `NEXT_PUBLIC_SITE_URL` está cadastrada — é ela que monta o link dentro do e-mail de convite/recuperação.
 7. Faça um **redeploy** (variável nova só vale para deploy novo) e teste: `/admin/esqueci-senha` com o seu e-mail, ou crie um usuário de teste em `/admin/usuarios` marcando "enviar por e-mail".
 

@@ -1,6 +1,6 @@
-# TRIVË
+# TRIVÉ
 
-Loja virtual própria + sistema de gestão (ERP) + automação de WhatsApp, feitos sob medida para a operação da TRIVË (~500 produtos, ~300 pedidos/mês).
+Loja virtual própria + sistema de gestão (ERP) + automação de WhatsApp, feitos sob medida para a operação da TRIVÉ (~500 produtos, ~300 pedidos/mês).
 
 Este README serve para duas pessoas: o **dono** (que opera a loja sem programar) e o **dev/IA** (que mantém o código). A parte técnica detalhada para agentes de IA está em [CLAUDE.md](./CLAUDE.md).
 

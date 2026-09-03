@@ -52,7 +52,7 @@ describe("createProduct", () => {
   it("creates product with 2 variants and 2 zeroed stock levels", async () => {
     const { product, variants } = await createProduct(db, {
       name: "Colar Lua",
-      brand: "TRIVË",
+      brand: "TRIVÉ",
       variants: [
         { sku: "COL-LUA-PRATA", attributes: { cor: "prata" }, costCents: 1500 },
         { sku: "COL-LUA-DOURADO", attributes: { cor: "dourado" } },

@@ -22,7 +22,7 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   // Fase 2 — dados da loja. PREENCHER em /admin/configuracoes: identificação
   // do fornecedor (nome, CNPJ, endereço e contato) no rodapé da loja é
   // obrigatória por lei no e-commerce (Decreto 7.962/2013, art. 2º).
-  { key: "store_name", value: "TRIVË" },
+  { key: "store_name", value: "TRIVÉ" },
   { key: "store_cnpj", value: "" },
   { key: "store_address", value: "" },
   { key: "store_email", value: "" },

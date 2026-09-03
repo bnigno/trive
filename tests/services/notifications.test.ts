@@ -175,7 +175,7 @@ describe("sendOrderEmail", () => {
   it("usa o store_name das settings no assunto quando configurado", async () => {
     await db
       .insert(schema.settings)
-      .values({ key: "store_name", value: "Ateliê TRIVË" });
+      .values({ key: "store_name", value: "Ateliê TRIVÉ" });
     const { variantId, shippingRateId } = await setupStore();
     const order = await createStoreOrder(sdb, baseInput(variantId, shippingRateId));
 
@@ -184,6 +184,6 @@ describe("sendOrderEmail", () => {
       kind: "paid",
     });
 
-    expect(emailProvider.sentEmails[0].subject).toContain("Ateliê TRIVË");
+    expect(emailProvider.sentEmails[0].subject).toContain("Ateliê TRIVÉ");
   });
 });

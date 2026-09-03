@@ -28,7 +28,7 @@ export default async function AdminLayout({
             href="/admin"
             className="text-lg font-semibold tracking-[0.2em] text-zinc-900 dark:text-zinc-100"
           >
-            TRIVË
+            TRIVÉ
           </Link>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
             Painel administrativo

@@ -4,20 +4,22 @@
 // A animação é 100% CSS (classes .veil-* em globals.css): roda antes do JS
 // hidratar e o keyframe final do contêiner seta visibility:hidden, então o
 // véu morre até sem JS. Aqui só há o mínimo de JS: pular por clique/tecla e
-// desmontar no fim. Importa só React (regra do plano).
+// desmontar no fim. Importa só React e as constantes de marca (assets.ts).
 import { useEffect, useState } from "react";
+
+import { BRAND } from "./brand/assets";
 
 // Flag de módulo (browser): navegação SPA de volta à home não repete o véu.
 // Nunca é mutada durante SSR (só dentro de useEffect) — sem hydration mismatch.
 let played = false;
 
-// Réplica do desenho de brand/monogram.tsx (o véu não pode importá-lo — só
-// React). Na troca pelo logo real, atualizar aqui também.
-const T_PATH =
-  "M 20.2 24.6 L 43.8 24.6 L 43.8 30.2 C 43.3 27.9 42.4 27.1 39.8 27 " +
-  "L 34.3 27 L 34.3 42.4 C 34.3 44.3 35.2 44.8 38.1 45 L 38.1 45.9 " +
-  "L 25.9 45.9 L 25.9 45 C 28.8 44.8 29.7 44.3 29.7 42.4 L 29.7 27 " +
-  "L 24.2 27 C 21.6 27.1 20.7 27.9 20.2 30.2 Z";
+const MARK_WIDTH = 72;
+const mark = BRAND.light.mark;
+const markLargest = mark[mark.length - 1];
+const markHeight = Math.round((MARK_WIDTH * markLargest.height) / markLargest.width);
+const markSrcSet = mark
+  .map((variant) => `${variant.src} ${variant.width}w`)
+  .join(", ");
 
 export function BrandVeil() {
   const [skipped, setSkipped] = useState(false);
@@ -56,23 +58,36 @@ export function BrandVeil() {
         <div className="veil-panel veil-panel-bottom" />
         <div className="veil-seam" />
         <div className="veil-center">
-          <svg viewBox="0 0 64 64" width={88} height={88}>
-            <g className="veil-mark">
-              <circle cx="32" cy="32" r="31" fill="var(--color-ink-950)" />
-              <path d={T_PATH} fill="var(--color-gold-400)" />
-              <circle cx="28.8" cy="20.8" r="1.5" fill="var(--color-gold-400)" />
-              <circle cx="35.2" cy="20.8" r="1.5" fill="var(--color-gold-400)" />
-            </g>
-            <circle
-              className="veil-ring"
-              cx="32"
-              cy="32"
-              r="26"
-              fill="none"
-              stroke="var(--color-gold-500)"
-              strokeWidth="1"
+          <div className="relative grid h-[120px] w-[120px] place-items-center">
+            <img
+              className="veil-mark"
+              src={(mark.find((variant) => variant.width >= MARK_WIDTH * 2) ?? markLargest).src}
+              srcSet={markSrcSet}
+              sizes={`${MARK_WIDTH}px`}
+              width={MARK_WIDTH}
+              height={markHeight}
+              alt=""
+              decoding="async"
+              draggable={false}
             />
-          </svg>
+            {/* Anel hairline se desenhando em volta da marca (o vetor não traz o círculo). */}
+            <svg
+              className="absolute inset-0"
+              viewBox="0 0 64 64"
+              width={120}
+              height={120}
+            >
+              <circle
+                className="veil-ring"
+                cx="32"
+                cy="32"
+                r="26"
+                fill="none"
+                stroke="var(--color-gold-500)"
+                strokeWidth="0.6"
+              />
+            </svg>
+          </div>
           <p className="veil-hint font-store text-eyebrow uppercase text-ink-500">
             Toque para entrar
           </p>

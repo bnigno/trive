@@ -114,7 +114,7 @@ async function main() {
     const created = await createProduct(db, {
       name: p.name,
       description: p.description,
-      brand: "TRIVË",
+      brand: "TRIVÉ",
       categoryId: categories.get(p.category),
       attributesSchema: p.axes ?? [],
       variants: p.variants.map((v) => ({
