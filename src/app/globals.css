@@ -243,10 +243,12 @@ body {
 }
 
 /* --------------------------------------------------------------------------
-   O Véu da maison — abertura da vitrine, 100% CSS (roda antes do JS hidratar).
-   Timeline (1500ms): monograma 0–350 → anel 200–700 → costura 700–1000 →
-   cortina em 2 painéis 1000–1500. O keyframe final do contêiner seta
-   visibility: hidden com fill both — o véu morre até sem JS.
+   O Véu — abertura da home, 100% CSS (roda antes do JS hidratar).
+   Timeline (1600ms): monograma 0–400 → anel 200–800 → fita 500–1200 → o véu
+   inteiro esmaece 1200–1600 (veil-fade termina em visibility: hidden com
+   fill both — morre até sem JS). O hero tem o monograma no mesmo lugar: a
+   marca "fica" e a sala escurece ao redor. O elemento nunca é desmontado
+   (fica invisível): a cascata do hero depende dele como irmão (.veil ~ .cinema).
    -------------------------------------------------------------------------- */
 
 .veil {
@@ -255,16 +257,12 @@ body {
   z-index: 100;
   overflow: hidden;
   cursor: pointer;
-  animation: veil-done var(--dur-veil) linear both;
-}
-
-@keyframes veil-done {
-  from {
-    visibility: visible;
-  }
-  to {
-    visibility: hidden;
-  }
+  background: radial-gradient(
+    ellipse at 50% 42%,
+    var(--color-noir-stage) 0%,
+    var(--color-noir-950) 70%
+  );
+  animation: veil-fade 400ms ease-out 1200ms both;
 }
 
 .veil-inner {
@@ -272,59 +270,7 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
-}
-
-.veil-panel {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 50.5%;
-  background: var(--color-ivory-100);
-}
-
-.veil-panel-top {
-  top: 0;
-  animation: veil-panel-up 500ms var(--ease-curtain) 1000ms both;
-}
-
-.veil-panel-bottom {
-  bottom: 0;
-  animation: veil-panel-down 500ms var(--ease-curtain) 1000ms both;
-}
-
-@keyframes veil-panel-up {
-  to {
-    transform: translateY(-101%);
-  }
-}
-
-@keyframes veil-panel-down {
-  to {
-    transform: translateY(101%);
-  }
-}
-
-/* Costura dourada de 1px no eixo da cortina */
-.veil-seam {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(320px, 64vw);
-  height: 1px;
-  background: var(--color-gold-500);
-  transform: translate(-50%, -50%) scaleX(0);
-  animation:
-    veil-seam-in 300ms var(--ease-silk) 700ms both,
-    veil-center-out 200ms ease-out 1000ms both;
-}
-
-@keyframes veil-seam-in {
-  from {
-    transform: translate(-50%, -50%) scaleX(0);
-  }
-  to {
-    transform: translate(-50%, -50%) scaleX(1);
-  }
+  padding-top: var(--header-h);
 }
 
 .veil-center {
@@ -332,24 +278,17 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.75rem;
-  animation: veil-center-out 200ms ease-out 1000ms both;
-}
-
-@keyframes veil-center-out {
-  to {
-    opacity: 0;
-  }
+  gap: 1.5rem;
 }
 
 .veil-mark {
-  animation: veil-mark-in 350ms var(--ease-silk) both;
+  animation: veil-mark-in 400ms var(--ease-silk) both;
 }
 
 @keyframes veil-mark-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.97);
+    transform: scale(0.96);
   }
   to {
     opacity: 1;
@@ -363,7 +302,7 @@ body {
   stroke-dashoffset: 163.5;
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
-  animation: veil-ring-draw 500ms var(--ease-silk) 200ms both;
+  animation: veil-ring-draw 600ms var(--ease-silk) 200ms both;
 }
 
 @keyframes veil-ring-draw {
@@ -372,7 +311,19 @@ body {
   }
 }
 
+/* A fita se desenha logo abaixo da marca (paths com pathLength="1"). */
+.veil-ribbon path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: ribbon-check 700ms var(--ease-silk) 500ms both;
+}
+
 .veil-hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(2rem + env(safe-area-inset-bottom));
+  left: 0;
+  text-align: center;
   animation: veil-hint-in 400ms ease 600ms both;
 }
 
@@ -385,7 +336,7 @@ body {
   }
 }
 
-/* Pular (clique/tecla): fade rápido; o JS desmonta no animationend. */
+/* Pular (toque/clique/tecla): fade rápido, sem desmontar. */
 .veil-skip,
 .veil-skip * {
   animation: none !important;
@@ -406,25 +357,19 @@ body {
   }
 }
 
-/* Reduced motion: sem movimento espacial — monograma estático + fade do véu. */
+/* Reduced motion: sem movimento espacial — marca estática + fade do véu. */
 @media (prefers-reduced-motion: reduce) {
   .veil {
     animation: veil-reduced 1100ms ease both;
   }
 
-  .veil-panel-top,
-  .veil-panel-bottom,
-  .veil-center,
   .veil-mark,
   .veil-hint {
     animation: none;
   }
 
-  .veil-seam {
-    display: none;
-  }
-
-  .veil-ring {
+  .veil-ring,
+  .veil-ribbon path {
     animation: none;
     stroke-dashoffset: 0;
   }
@@ -448,9 +393,13 @@ body {
 
 /* Véu já visto nesta sessão: um <script> inline na home marca o <html> antes
    do primeiro paint (ler sessionStorage só na hidratação deixaria o véu rodar
-   centenas de ms em 4G). */
+   centenas de ms em 4G). O hero então nasce pronto, sem cascata. */
 [data-veil-seen] .veil {
   display: none;
+}
+
+[data-veil-seen] .hero-content {
+  animation: none !important;
 }
 
 /* ==========================================================================
@@ -537,7 +486,8 @@ body {
 }
 
 /* Brilho varrendo o ouro do wordmark: uma passada só, ligada pelo BrandVeil
-   (classe is-lit) depois do véu e da hidratação — nunca em cima do parse do JS. */
+   (atributo data-veil-done no <html>) depois do véu e da hidratação — nunca
+   em cima do parse do JS. */
 .gold-sheen {
   background-image: linear-gradient(
     100deg,
@@ -554,7 +504,7 @@ body {
   color: transparent;
 }
 
-.gold-sheen.is-lit {
+[data-veil-done] .gold-sheen {
   animation: sheen-once 2400ms var(--ease-silk) 1 both;
 }
 
@@ -719,7 +669,7 @@ body {
     transition: none !important;
   }
 
-  .gold-sheen.is-lit,
+  [data-veil-done] .gold-sheen,
   .animate-ribbon-drift,
   .animate-cue-pulse,
   .animate-hero-in,
