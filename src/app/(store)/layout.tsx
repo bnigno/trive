@@ -14,13 +14,16 @@ import { IconSearch } from "@/components/store/icons";
 import { Ornament } from "@/components/store/ornament";
 import { eyebrow } from "@/components/store/styles";
 import { getDb } from "@/db/client";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
 
+// Cada peso × estilo vira um arquivo pré-carregado que disputa banda com a
+// imagem LCP: 400 (hero, manifesto, itálicos) e 600 (títulos) bastam.
 const cormorant = Cormorant_Garamond({
   variable: "--font-cormorant",
   subsets: ["latin", "latin-ext"],
-  weight: ["500", "600"],
+  weight: ["400", "600"],
   style: ["normal", "italic"],
   display: "swap",
 });
@@ -28,7 +31,7 @@ const cormorant = Cormorant_Garamond({
 const jost = Jost({
   variable: "--font-jost",
   subsets: ["latin", "latin-ext"],
-  weight: ["300", "400", "500"],
+  weight: ["400", "500"],
   display: "swap",
 });
 
@@ -62,7 +65,7 @@ export default async function StoreLayout({
   const settings = await tryOrBuildFallback({}, () =>
     getSettingsMap(getDb(), [...STORE_SETTING_KEYS]),
   );
-  const storeName = asText(settings.store_name) || "TRIVË";
+  const storeName = asText(settings.store_name) || STORE_NAME_DEFAULT;
   const cnpj = asText(settings.store_cnpj);
   const address = asText(settings.store_address);
   const email = asText(settings.store_email);

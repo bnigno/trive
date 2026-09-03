@@ -49,6 +49,7 @@ import {
   waMessages,
 } from "@/db/schema";
 import { formatDateTimeSP } from "@/emails/templates";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -83,7 +84,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BOT_MODEL = "claude-sonnet-5";
-const DEFAULT_STORE_NAME = "TRIVË";
+const DEFAULT_STORE_NAME = STORE_NAME_DEFAULT;
 const HISTORY_LIMIT = 20;
 const MAX_LISTED_PRODUCTS = 8;
 const HANDOFF_SILENCE_HOURS = 24;

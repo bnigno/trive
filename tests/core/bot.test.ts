@@ -19,7 +19,7 @@ import {
 import { formatCentsBRL } from "../../src/lib/money";
 
 const promptOptions = {
-  storeName: "TRIVË",
+  storeName: "TRIVÉ",
   extraInstructions: "",
   siteUrl: "https://trive.com.br",
 };
@@ -33,7 +33,7 @@ describe("buildBotSystemPrompt", () => {
 
   it("contém a persona com o nome da loja e o site", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
-    expect(prompt).toContain("TRIVË");
+    expect(prompt).toContain("TRIVÉ");
     expect(prompt).toContain("https://trive.com.br");
     expect(prompt).toContain("WhatsApp");
   });

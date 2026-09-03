@@ -78,7 +78,7 @@ export function StoreDataForm({
             name="storeName"
             maxLength={120}
             defaultValue={defaults.name}
-            placeholder="TRIVË"
+            placeholder="TRIVÉ"
           />
         </Field>
         <Field

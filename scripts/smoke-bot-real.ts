@@ -27,7 +27,7 @@ async function main() {
 
   const turn = await assistant.respondTurn({
     system: buildBotSystemPrompt({
-      storeName: "TRIVË",
+      storeName: "TRIVÉ",
       extraInstructions: "",
       siteUrl: siteBaseUrl(),
     }),

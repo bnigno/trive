@@ -1,4 +1,4 @@
-# Runbook TRIVË — o que fazer quando algo der errado
+# Runbook TRIVÉ — o que fazer quando algo der errado
 
 Versão resumida para leitura fora do admin. A versão completa, em linguagem
 leiga e com links clicáveis, está no painel: **/admin/ajuda**.

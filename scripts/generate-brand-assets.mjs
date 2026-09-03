@@ -1,10 +1,16 @@
-// Gera os PNGs de marca a partir do monograma provisório (rodar manualmente,
+// Gera os assets de marca a partir dos SVGs de brand-source/ (rodar à mão,
 // nunca no build): node scripts/generate-brand-assets.mjs
-//   → src/app/apple-icon.png   (180×180, monograma dourado sobre ink sólido)
-//   → public/brand/og.png      (1200×630, fundo marfim, monograma + wordmark)
-// Fonte da verdade da arte: src/components/store/brand/monogram.tsx — na troca
-// pelo logo real, atualizar também os SVGs abaixo e re-rodar.
-import { mkdir } from "node:fs/promises";
+//
+// Os SVGs entregues pelo designer são um traçado automático (milhares de
+// <path>, ~0,5–1 MB cada): servem como FONTE, nunca vão ao navegador. Daqui
+// saem rasters leves com fundo transparente, todos commitados:
+//   public/brand/mark-{light,dark}-{96,192,400,800}.webp  só o monograma
+//   public/brand/lockup-{light,dark}.webp                 lockup inteiro (1200w)
+//   src/app/icon.png (64) e src/app/apple-icon.png (180)  monograma escuro sobre noir
+//   src/app/opengraph-image.png (1200×630) + .alt.txt     lockup escuro sobre noir
+//   src/components/store/brand/assets.ts                  caminhos + dimensões reais
+// Trocar o logo = substituir os arquivos em brand-source/ e rodar de novo.
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,63 +18,189 @@ import sharp from "sharp";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Paleta da vitrine (hex fechados dos tokens em src/app/globals.css).
-const INK_950 = "#171512";
-const INK_900 = "#201D18";
-const GOLD_300 = "#E6D3A3";
-const GOLD_400 = "#D4B96A";
-const GOLD_500 = "#C0A050";
-const IVORY_100 = "#FAF7F0";
+const SOURCES = {
+  light: "brand-source/lockup-light.svg",
+  dark: "brand-source/lockup-dark.svg",
+};
+const VIEWBOX = "0 0 1800 800";
+const VIEWBOX_WIDTH = 1800;
+const MONOGRAM_LABEL = 'aria-label="Monograma TRIVÉ"';
+const MARK_WIDTHS = [96, 192, 400, 800];
+const LOCKUP_WIDTH = 1200;
+// Rasteriza a 2× o viewBox e reduz: o antialias do sharp suaviza o traçado.
+const RENDER_WIDTH = 3600;
 
-const T_PATH =
-  "M 20.2 24.6 L 43.8 24.6 L 43.8 30.2 C 43.3 27.9 42.4 27.1 39.8 27 " +
-  "L 34.3 27 L 34.3 42.4 C 34.3 44.3 35.2 44.8 38.1 45 L 38.1 45.9 " +
-  "L 25.9 45.9 L 25.9 45 C 28.8 44.8 29.7 44.3 29.7 42.4 L 29.7 27 " +
-  "L 24.2 27 C 21.6 27.1 20.7 27.9 20.2 30.2 Z";
+// Hex fechados dos tokens noir da vitrine (src/app/globals.css).
+const NOIR_STAGE = "#030303";
+const NOIR_950 = "#0b0a09";
 
-/** Miolo do monograma (caixa 64×64). tone "ink" = disco escuro; "gold" = sem
- *  disco, para fundos já escuros (mesma regra do componente React). */
-function monogramGroup(tone) {
-  const onDark = tone === "gold";
-  const ring = onDark ? GOLD_400 : GOLD_500;
-  const mark = onDark ? GOLD_300 : GOLD_400;
-  const disc = onDark
-    ? ""
-    : `<circle cx="32" cy="32" r="31" fill="${INK_950}"/>`;
-  return `${disc}
-    <circle cx="32" cy="32" r="26" fill="none" stroke="${ring}" stroke-width="1"/>
-    <path d="${T_PATH}" fill="${mark}"/>
-    <circle cx="28.8" cy="20.8" r="1.5" fill="${mark}"/>
-    <circle cx="35.2" cy="20.8" r="1.5" fill="${mark}"/>`;
+function assertViewBox(svg, file) {
+  if (!svg.includes(`viewBox="${VIEWBOX}"`)) {
+    throw new Error(
+      `${file}: esperado viewBox="${VIEWBOX}". O designer reexportou em outro tamanho? Ajuste VIEWBOX e confira os crops.`,
+    );
+  }
 }
 
-// 180×180 — monograma dourado sobre ink sólido (iOS arredonda os cantos).
-const appleIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
-  <rect width="180" height="180" fill="${INK_950}"/>
-  <g transform="translate(26 26) scale(2)">${monogramGroup("gold")}</g>
-</svg>`;
+/** Devolve o <g …aria-label…>…</g> inteiro (com filhos), contando aberturas e fechamentos. */
+function extractGroup(svg, label) {
+  const at = svg.indexOf(label);
+  if (at < 0) throw new Error(`grupo ${label} não encontrado no SVG`);
+  const start = svg.lastIndexOf("<g", at);
+  const tags = /<g\b|<\/g>/g;
+  tags.lastIndex = start;
+  let depth = 0;
+  let match;
+  while ((match = tags.exec(svg))) {
+    depth += match[0] === "<g" ? 1 : -1;
+    if (depth === 0) return svg.slice(start, match.index + match[0].length);
+  }
+  throw new Error(`grupo ${label} sem fechamento`);
+}
 
-// 1200×630 — fundo marfim, monograma grande centrado + wordmark serifado.
-// <text> com serif do sistema (Georgia): o PNG congela a fonte, sem webfont.
-const ogSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <rect width="1200" height="630" fill="${IVORY_100}"/>
-  <g transform="translate(488 108) scale(3.5)">${monogramGroup("ink")}</g>
-  <text x="612" y="472" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="76" letter-spacing="24" fill="${INK_900}">TRIVË</text>
-  <line x1="450" y1="524" x2="558" y2="524" stroke="${GOLD_500}" stroke-width="1.5"/>
-  <line x1="642" y1="524" x2="750" y2="524" stroke="${GOLD_500}" stroke-width="1.5"/>
-  <rect x="592" y="516" width="16" height="16" transform="rotate(45 600 524)" fill="none" stroke="${GOLD_500}" stroke-width="1.5"/>
-</svg>`;
+function extractDefs(svg) {
+  const match = svg.match(/<defs[\s\S]*?<\/defs>/);
+  return match ? match[0] : "";
+}
+
+function wrapSvg(inner) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="800" viewBox="${VIEWBOX}">${inner}</svg>`;
+}
+
+/** Rasteriza o SVG em alta e recorta o fundo transparente. */
+async function rasterTrimmed(svg) {
+  const density = (72 * RENDER_WIDTH) / VIEWBOX_WIDTH;
+  const raster = await sharp(Buffer.from(svg), { density }).png().toBuffer();
+  return sharp(raster).trim().png().toBuffer();
+}
+
+async function writeWebp(buffer, width, outFile) {
+  const info = await sharp(buffer)
+    .resize({ width, withoutEnlargement: true })
+    .webp({ quality: 88, alphaQuality: 90 })
+    .toFile(outFile);
+  return { width: info.width, height: info.height };
+}
+
+/** Monograma centrado sobre um quadrado noir (ícones). */
+async function iconOn(markBuffer, size, inner, background, outFile) {
+  const mark = await sharp(markBuffer)
+    .resize({ width: inner, height: inner, fit: "inside" })
+    .png()
+    .toBuffer();
+  await sharp({
+    create: { width: size, height: size, channels: 4, background },
+  })
+    .composite([{ input: mark, gravity: "centre" }])
+    .png()
+    .toFile(outFile);
+}
 
 async function main() {
-  const appleIconOut = path.join(root, "src/app/apple-icon.png");
-  const ogOut = path.join(root, "public/brand/og.png");
-  await mkdir(path.dirname(ogOut), { recursive: true });
+  const publicDir = path.join(root, "public/brand");
+  const appDir = path.join(root, "src/app");
+  await mkdir(publicDir, { recursive: true });
 
-  await sharp(Buffer.from(appleIconSvg)).png().toFile(appleIconOut);
-  await sharp(Buffer.from(ogSvg)).png().toFile(ogOut);
+  const manifest = {};
+  const trimmedMarks = {};
+  const trimmedLockups = {};
 
-  console.log("gerado:", path.relative(root, appleIconOut));
-  console.log("gerado:", path.relative(root, ogOut));
+  for (const [tone, source] of Object.entries(SOURCES)) {
+    const file = path.join(root, source);
+    const svg = await readFile(file, "utf8");
+    assertViewBox(svg, source);
+
+    const defs = extractDefs(svg);
+    const markSvg = wrapSvg(defs + extractGroup(svg, MONOGRAM_LABEL));
+    trimmedMarks[tone] = await rasterTrimmed(markSvg);
+    trimmedLockups[tone] = await rasterTrimmed(svg);
+
+    const variants = [];
+    for (const width of MARK_WIDTHS) {
+      const name = `mark-${tone}-${width}.webp`;
+      const dims = await writeWebp(
+        trimmedMarks[tone],
+        width,
+        path.join(publicDir, name),
+      );
+      variants.push({ src: `/brand/${name}`, ...dims });
+      console.log("gerado: public/brand/" + name, dims);
+    }
+
+    const lockupName = `lockup-${tone}.webp`;
+    const lockupDims = await writeWebp(
+      trimmedLockups[tone],
+      LOCKUP_WIDTH,
+      path.join(publicDir, lockupName),
+    );
+    console.log("gerado: public/brand/" + lockupName, lockupDims);
+
+    manifest[tone] = {
+      mark: variants,
+      lockup: { src: `/brand/${lockupName}`, ...lockupDims },
+    };
+  }
+
+  // Ícones: monograma escuro sobre noir puro (iOS arredonda os cantos sozinho).
+  await iconOn(
+    trimmedMarks.dark,
+    64,
+    52,
+    NOIR_STAGE,
+    path.join(appDir, "icon.png"),
+  );
+  await iconOn(
+    trimmedMarks.dark,
+    180,
+    136,
+    NOIR_STAGE,
+    path.join(appDir, "apple-icon.png"),
+  );
+  console.log("gerado: src/app/icon.png, src/app/apple-icon.png");
+
+  // Open Graph: lockup escuro centrado sobre noir. A convenção de arquivo do
+  // Next emite og:image com tipo/largura/altura (o WhatsApp exige dimensões).
+  const ogLockup = await sharp(trimmedLockups.dark)
+    .resize({ width: 900, height: 420, fit: "inside" })
+    .png()
+    .toBuffer();
+  await sharp({
+    create: { width: 1200, height: 630, channels: 4, background: NOIR_950 },
+  })
+    .composite([{ input: ogLockup, gravity: "centre" }])
+    .png({ compressionLevel: 9 })
+    .toFile(path.join(appDir, "opengraph-image.png"));
+  await writeFile(
+    path.join(appDir, "opengraph-image.alt.txt"),
+    "TRIVÉ — Maison Féminine\n",
+  );
+  console.log("gerado: src/app/opengraph-image.png (+ .alt.txt)");
+
+  const assetsTs = `// GERADO por scripts/generate-brand-assets.mjs — não editar à mão.
+// Fonte da verdade: brand-source/*.svg. Dimensões lidas do raster final, para
+// que todo <img> da marca nasça com width/height (zero CLS).
+
+export interface BrandImage {
+  src: string;
+  width: number;
+  height: number;
+}
+
+export interface BrandTone {
+  /** Só o monograma, do menor para o maior (srcset). */
+  mark: readonly BrandImage[];
+  /** Monograma + wordmark + tagline. */
+  lockup: BrandImage;
+}
+
+export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
+  ${JSON.stringify(manifest, null, 2)};
+`;
+  await writeFile(
+    path.join(root, "src/components/store/brand/assets.ts"),
+    assetsTs,
+  );
+  console.log("gerado: src/components/store/brand/assets.ts");
 }
 
 main().catch((err) => {

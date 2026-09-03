@@ -17,6 +17,7 @@ import { ProductCard } from "@/components/store/product-card";
 import { Reveal } from "@/components/store/reveal";
 import { btnPrimary, eyebrow } from "@/components/store/styles";
 import { getDb } from "@/db/client";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
 import {
@@ -59,7 +60,7 @@ export default async function HomePage() {
   const storeName =
     typeof settings.store_name === "string" && settings.store_name.trim()
       ? settings.store_name.trim()
-      : "TRIVË";
+      : STORE_NAME_DEFAULT;
 
   return (
     <>

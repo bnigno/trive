@@ -157,7 +157,7 @@ describe("listPublicProducts", () => {
   it("calcula menor/maior preço entre 2 variantes, disponibilidade e primeira imagem", async () => {
     const { productId } = await createPublicProduct({
       name: "Colar Sol",
-      brand: "TRIVË",
+      brand: "TRIVÉ",
       variants: [
         { sku: "CS-P", priceCents: 5000, onHand: 3, reserved: 1 },
         { sku: "CS-G", priceCents: 8990, onHand: 0 },
@@ -175,7 +175,7 @@ describe("listPublicProducts", () => {
     const rows = await listPublicProducts(db);
     const colar = rows.find((row) => row.name === "Colar Sol");
     expect(colar).toMatchObject({
-      brand: "TRIVË",
+      brand: "TRIVÉ",
       priceFromCents: 5000,
       priceToCents: 8990,
       imagePath: "products/x/a-full.webp",
@@ -276,7 +276,7 @@ describe("getPublicProductBySlug", () => {
     const { productId } = await createPublicProduct({
       name: "Brinco Lua",
       slug: "brinco-lua",
-      brand: "TRIVË",
+      brand: "TRIVÉ",
       categoryId,
       attributesSchema: ["cor"],
       variants: [
@@ -303,7 +303,7 @@ describe("getPublicProductBySlug", () => {
     expect(detail).toMatchObject({
       name: "Brinco Lua",
       slug: "brinco-lua",
-      brand: "TRIVË",
+      brand: "TRIVÉ",
       categoryName: "Brincos",
       attributesSchema: ["cor"],
       images: [

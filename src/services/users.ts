@@ -25,6 +25,7 @@ import {
   passwordRecoveryEmail,
   type EmailTemplate,
 } from "@/emails/templates";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { siteUrl } from "@/lib/site-url";
 import { ServiceError, type ServiceDb } from "./catalog";
 import { getSettingsMap } from "./settings";
@@ -104,7 +105,7 @@ export type RequestPasswordResetResult = {
   status: "enviado" | "email_nao_configurado";
 };
 
-const DEFAULT_STORE_NAME = "TRIVË";
+const DEFAULT_STORE_NAME = STORE_NAME_DEFAULT;
 
 /** Teto de pedidos de recuperação por conta, por hora (contado no audit). */
 const PASSWORD_RESET_MAX_PER_HOUR = 3;

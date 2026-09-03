@@ -121,7 +121,7 @@ export async function sendTestMessageAction(
   await requireOwner("whatsapp");
   try {
     const result = await sendToOwner(getDb(), getMessagingProvider(), {
-      bodyOverride: "Teste do TRIVË ✓ — seu WhatsApp de avisos está funcionando.",
+      bodyOverride: "Teste do TRIVÉ ✓ — seu WhatsApp de avisos está funcionando.",
       dedupeKey: `wa.test:${Date.now()}`,
     });
 

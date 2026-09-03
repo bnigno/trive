@@ -21,7 +21,7 @@ async function main() {
   console.log("1) Categoria e produto com 2 variações…");
   const category = await createCategory(db, { name: `Demonstração ${stamp}`, userId });
   const product = await createProduct(db, {
-    name: `Camiseta TRIVË ${stamp}`,
+    name: `Camiseta TRIVÉ ${stamp}`,
     description: "Produto de demonstração da Fase 1.",
     categoryId: category.id,
     attributesSchema: ["tamanho"],

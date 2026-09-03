@@ -31,7 +31,7 @@ function makeHistory(lastUserText: string): BotChatMessage[] {
 
 function makeInput(executeTool: ToolExecutor, lastUserText = "Quero ver os produtos") {
   return {
-    system: "Você é o assistente de vendas do TRIVË.",
+    system: "Você é o assistente de vendas do TRIVÉ.",
     history: makeHistory(lastUserText),
     model: "claude-sonnet-5",
     executeTool,

@@ -7,7 +7,7 @@ const ROOT = process.cwd();
 const PROJECT_NAME = "trive";
 
 // Tira as aspas que envolvem o valor. SEM isto, um valor escrito como
-// EMAIL_FROM="TRIVË <contato@…>" chega à Vercel COM as aspas literais e o
+// EMAIL_FROM="TRIVÉ <contato@…>" chega à Vercel COM as aspas literais e o
 // vendor recusa — foi exatamente assim que a confirmação do pedido #1007
 // morreu na fila com "Invalid `from` field" enquanto o dev local funcionava
 // (o Node tira as aspas ao ler .env, a Vercel não tem .env nenhum).

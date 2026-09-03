@@ -15,7 +15,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-semibold tracking-[0.25em] text-zinc-900 dark:text-zinc-100">
-            TRIVË
+            TRIVÉ
           </h1>
           <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
             Recuperar acesso ao painel
