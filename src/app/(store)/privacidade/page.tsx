@@ -1,9 +1,13 @@
 // Política de privacidade (LGPD) — página institucional com ISR.
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
 
+import {
+  LegalArticle,
+  LegalSection,
+} from "@/components/store/legal/legal-article";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
+import { describeContact, settingText } from "@/lib/settings-text";
 import { getSettingsMap } from "@/services/settings";
 
 export const revalidate = 3600;
@@ -14,54 +18,47 @@ export const metadata: Metadata = {
     "Quais dados coletamos, para quê, por quanto tempo e quais são os seus direitos segundo a LGPD.",
 };
 
-function settingText(map: Record<string, unknown>, key: string): string {
-  const value = map[key];
-  return typeof value === "string" && value.trim() !== ""
-    ? value.trim()
-    : "[preencher nas Configurações]";
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="mt-12">
-      <div aria-hidden className="h-px w-10 bg-gold-500" />
-      <h2 className="mt-4 font-display text-heading font-semibold text-ink-900">
-        {title}
-      </h2>
-      <div className="mt-3 space-y-3 text-[15px] leading-7 text-ink-700">
-        {children}
-      </div>
-    </section>
-  );
-}
+const TOC = [
+  { id: "dados", title: "Quais dados coletamos" },
+  { id: "uso", title: "Para que usamos os seus dados" },
+  { id: "whatsapp", title: "Novidades no WhatsApp: só com o seu sim" },
+  { id: "prazo", title: "Por quanto tempo guardamos" },
+  { id: "direitos", title: "Seus direitos" },
+  { id: "seguranca", title: "Segurança" },
+  { id: "controlador", title: "Quem responde pelos seus dados" },
+];
 
 export default async function PrivacyPage() {
   const s = await tryOrBuildFallback({}, () =>
     getSettingsMap(getDb(), [
-    "store_name",
-    "store_cnpj",
-    "store_email",
-    "store_whatsapp",
-  ]),
+      "store_name",
+      "store_cnpj",
+      "store_email",
+      "store_whatsapp",
+    ]),
   );
-  const storeName = settingText(s, "store_name");
+  const storeName = settingText(s, "store_name", "a maison");
   const cnpj = settingText(s, "store_cnpj");
   const email = settingText(s, "store_email");
   const whatsapp = settingText(s, "store_whatsapp");
+  const hasStoreData = Boolean(cnpj || email || whatsapp);
+  const contact = describeContact(whatsapp, email);
 
   return (
-    <article className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
-      <h1 className="font-display text-title font-semibold tracking-tight text-ink-950">
-        Política de privacidade
-      </h1>
-      <p className="mt-4 font-display text-xl leading-relaxed text-ink-700 italic">
-        A {storeName} coleta apenas o necessário para entregar o seu pedido — e
-        esta página explica, em português claro, o que é coletado, por quê e
-        quais são os seus direitos, conforme a Lei Geral de Proteção de Dados
-        (LGPD, Lei 13.709/2018).
-      </p>
-
-      <Section title="Quais dados coletamos">
+    <LegalArticle
+      eyebrow="Seus dados, com cuidado"
+      title="Política de privacidade"
+      lede={
+        <>
+          A {storeName} coleta apenas o necessário para entregar o seu pedido —
+          e esta página explica, em português claro, o que é coletado, por quê
+          e quais são os seus direitos, conforme a Lei Geral de Proteção de
+          Dados (LGPD, Lei 13.709/2018).
+        </>
+      }
+      toc={TOC}
+    >
+      <LegalSection id="dados" number="01" title="Quais dados coletamos">
         <p>Quando você faz um pedido, pedimos:</p>
         <ul className="list-disc space-y-2 pl-5">
           <li>
@@ -85,9 +82,9 @@ export default async function PrivacyPage() {
           Não coletamos dados de cartão de crédito no site: o pagamento é
           combinado diretamente com você (via Pix, na maioria dos casos).
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Para que usamos os seus dados">
+      <LegalSection id="uso" number="02" title="Para que usamos os seus dados">
         <ul className="list-disc space-y-2 pl-5">
           <li>Processar, faturar e entregar o seu pedido;</li>
           <li>Falar com você sobre o pagamento e o andamento da entrega;</li>
@@ -98,10 +95,18 @@ export default async function PrivacyPage() {
             se você autorizar (veja abaixo).
           </li>
         </ul>
-        <p>Não vendemos nem alugamos seus dados a terceiros. Compartilhamos apenas o mínimo necessário com quem participa da entrega (transportadora/Correios) e com obrigações legais (nota fiscal).</p>
-      </Section>
+        <p>
+          Não vendemos nem alugamos seus dados a terceiros. Compartilhamos
+          apenas o mínimo necessário com quem participa da entrega
+          (transportadora/Correios) e com obrigações legais (nota fiscal).
+        </p>
+      </LegalSection>
 
-      <Section title="Novidades no WhatsApp: só com o seu sim">
+      <LegalSection
+        id="whatsapp"
+        number="03"
+        title="Novidades no WhatsApp: só com o seu sim"
+      >
         <p>
           Ao finalizar a compra você pode marcar (ou não) a opção de receber
           novidades pelo WhatsApp. Esse consentimento é sempre uma escolha sua e
@@ -109,21 +114,22 @@ export default async function PrivacyPage() {
         </p>
         <p>
           Para parar de receber, basta responder <strong>SAIR</strong> a
-          qualquer mensagem nossa — ou pedir pelo e-mail {email}. A saída vale
+          qualquer mensagem nossa
+          {email ? <> — ou pedir pelo e-mail {email}</> : null}. A saída vale
           na hora e não afeta em nada seus pedidos.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Por quanto tempo guardamos">
+      <LegalSection id="prazo" number="04" title="Por quanto tempo guardamos">
         <p>
           Dados de pedidos e notas fiscais são guardados pelo prazo exigido pela
           legislação fiscal e de defesa do consumidor (em geral, 5 anos). Dados
           usados apenas para comunicação de ofertas são mantidos enquanto durar
           o seu consentimento — e apagados quando você pedir.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Seus direitos">
+      <LegalSection id="direitos" number="05" title="Seus direitos">
         <p>A LGPD garante a você, a qualquer momento:</p>
         <ul className="list-disc space-y-2 pl-5">
           <li>Saber quais dados seus nós temos e como são usados;</li>
@@ -139,27 +145,39 @@ export default async function PrivacyPage() {
           Para exercer qualquer um desses direitos, é só falar com a gente —
           respondemos em até 15 dias.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Segurança">
+      <LegalSection id="seguranca" number="06" title="Segurança">
         <p>
           Seus dados ficam em ambiente protegido, com acesso restrito à equipe
           da loja. A página pública de acompanhamento do pedido não exibe nenhum
           dado pessoal — apenas os itens, os valores e o status da entrega.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Quem responde pelos seus dados">
+      <LegalSection
+        id="controlador"
+        number="07"
+        title="Quem responde pelos seus dados"
+      >
         <p>
-          O controlador dos dados é <strong>{storeName}</strong>, CNPJ{" "}
-          <strong>{cnpj}</strong>. Canal de contato para assuntos de
-          privacidade: {email} ou WhatsApp {whatsapp}.
+          O controlador dos dados é <strong>{storeName}</strong>
+          {cnpj ? (
+            <>
+              , CNPJ <strong>{cnpj}</strong>
+            </>
+          ) : null}
+          . Canal de contato para assuntos de privacidade: fale com a gente{" "}
+          {contact}.
+          {hasStoreData && !cnpj
+            ? " Os dados completos da maison estão no rodapé."
+            : null}
         </p>
         <p>
           Esta política pode ser atualizada de tempos em tempos; a versão
           publicada nesta página é sempre a vigente.
         </p>
-      </Section>
-    </article>
+      </LegalSection>
+    </LegalArticle>
   );
 }

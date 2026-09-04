@@ -1,9 +1,13 @@
 // Política de trocas e devoluções — página institucional com ISR.
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
 
+import {
+  LegalArticle,
+  LegalSection,
+} from "@/components/store/legal/legal-article";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
+import { describeContact, settingText } from "@/lib/settings-text";
 import { getSettingsMap } from "@/services/settings";
 
 export const revalidate = 3600;
@@ -14,51 +18,40 @@ export const metadata: Metadata = {
     "Como trocar ou devolver um produto: direito de arrependimento de 7 dias, troca por defeito e passo a passo do reembolso.",
 };
 
-function settingText(map: Record<string, unknown>, key: string): string {
-  const value = map[key];
-  return typeof value === "string" && value.trim() !== ""
-    ? value.trim()
-    : "[preencher nas Configurações]";
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="mt-12">
-      <div aria-hidden className="h-px w-10 bg-gold-500" />
-      <h2 className="mt-4 font-display text-heading font-semibold text-ink-900">
-        {title}
-      </h2>
-      <div className="mt-3 space-y-3 text-[15px] leading-7 text-ink-700">
-        {children}
-      </div>
-    </section>
-  );
-}
+const TOC = [
+  { id: "arrependimento", title: "Me arrependi da compra. E agora?" },
+  { id: "defeito", title: "O produto veio com defeito" },
+  { id: "como-iniciar", title: "Como iniciar uma troca ou devolução" },
+  { id: "dicas", title: "Dicas para agilizar" },
+];
 
 export default async function ReturnsPage() {
   const s = await tryOrBuildFallback({}, () =>
-    getSettingsMap(getDb(), [
-    "store_name",
-    "store_email",
-    "store_whatsapp",
-  ]),
+    getSettingsMap(getDb(), ["store_name", "store_email", "store_whatsapp"]),
   );
-  const storeName = settingText(s, "store_name");
+  const storeName = settingText(s, "store_name", "a maison");
   const email = settingText(s, "store_email");
   const whatsapp = settingText(s, "store_whatsapp");
+  const contact = describeContact(whatsapp, email);
 
   return (
-    <article className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
-      <h1 className="font-display text-title font-semibold tracking-tight text-ink-950">
-        Trocas e devoluções
-      </h1>
-      <p className="mt-4 font-display text-xl leading-relaxed text-ink-700 italic">
-        Queremos que você fique feliz com a sua compra na {storeName}. Se algo
-        não deu certo, aqui está tudo o que você precisa saber — de forma
-        simples e sem pegadinhas.
-      </p>
-
-      <Section title="Me arrependi da compra. E agora?">
+    <LegalArticle
+      eyebrow="Se algo não ficou perfeito"
+      title="Trocas e devoluções"
+      lede={
+        <>
+          Queremos que você fique feliz com a sua compra na {storeName}. Se algo
+          não deu certo, aqui está tudo o que você precisa saber — de forma
+          simples e sem pegadinhas.
+        </>
+      }
+      toc={TOC}
+    >
+      <LegalSection
+        id="arrependimento"
+        number="01"
+        title="Me arrependi da compra. E agora?"
+      >
         <p>
           Comprou pela internet e mudou de ideia? Tudo bem. A lei garante a você
           o <strong>direito de arrependimento</strong>: até{" "}
@@ -69,8 +62,8 @@ export default async function ReturnsPage() {
         <p>Funciona assim:</p>
         <ol className="list-decimal space-y-2 pl-5">
           <li>
-            Fale com a gente pelo WhatsApp ({whatsapp}) ou pelo e-mail ({email})
-            dentro dos 7 dias, informando o número do pedido.
+            Fale com a gente {contact} dentro dos 7 dias, informando o número
+            do pedido.
           </li>
           <li>
             Combinamos com você a forma de devolução do produto. O custo do
@@ -86,9 +79,9 @@ export default async function ReturnsPage() {
             você pagou (Pix, na maioria dos casos).
           </li>
         </ol>
-      </Section>
+      </LegalSection>
 
-      <Section title="O produto veio com defeito">
+      <LegalSection id="defeito" number="02" title="O produto veio com defeito">
         <p>
           Se o produto apresentar defeito, você tem direito à solução garantida
           pelo Código de Defesa do Consumidor (art. 26): prazo de{" "}
@@ -105,26 +98,39 @@ export default async function ReturnsPage() {
           <strong>abatimento proporcional do preço</strong>. O envio da troca ou
           devolução por defeito é sempre por nossa conta.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Como iniciar uma troca ou devolução">
-        <p>É só falar com a gente por um destes canais, com o número do pedido em mãos:</p>
-        <ul className="list-disc space-y-2 pl-5">
-          <li>
-            <strong>WhatsApp:</strong> {whatsapp}
-          </li>
-          <li>
-            <strong>E-mail:</strong> {email}
-          </li>
-        </ul>
+      <LegalSection
+        id="como-iniciar"
+        number="03"
+        title="Como iniciar uma troca ou devolução"
+      >
+        <p>
+          É só falar com a gente com o número do pedido em mãos
+          {whatsapp || email ? ", por um destes canais:" : "."}
+        </p>
+        {whatsapp || email ? (
+          <ul className="list-disc space-y-2 pl-5">
+            {whatsapp ? (
+              <li>
+                <strong>WhatsApp:</strong> {whatsapp}
+              </li>
+            ) : null}
+            {email ? (
+              <li>
+                <strong>E-mail:</strong> {email}
+              </li>
+            ) : null}
+          </ul>
+        ) : null}
         <p>
           Respondemos em até 2 dias úteis e conduzimos todo o processo com você,
           passo a passo. Nenhuma troca ou devolução é recusada dentro dos prazos
           e condições acima.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Dicas para agilizar">
+      <LegalSection id="dicas" number="04" title="Dicas para agilizar">
         <ul className="list-disc space-y-2 pl-5">
           <li>Guarde a embalagem até ter certeza de que vai ficar com o produto.</li>
           <li>
@@ -133,7 +139,7 @@ export default async function ReturnsPage() {
           </li>
           <li>Guarde o link de acompanhamento do seu pedido.</li>
         </ul>
-      </Section>
-    </article>
+      </LegalSection>
+    </LegalArticle>
   );
 }
