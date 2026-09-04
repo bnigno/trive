@@ -82,6 +82,17 @@ const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "link"],
   },
   {
+    // Comprovante de pagamento em imagem (legenda da foto): sai depois do
+    // payment_approved, só com opt-in, e sempre com a saída (SAIR).
+    key: "payment_receipt",
+    label: "Comprovante de pagamento (legenda da imagem)",
+    bodyTemplate:
+      "{{nome}}, este é o comprovante do pagamento do pedido #{{pedido}}. A maison agradece. 🤍\n" +
+      "Acompanhe: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "link"],
+  },
+  {
     key: "order_shipped",
     label: "Pedido enviado",
     bodyTemplate:

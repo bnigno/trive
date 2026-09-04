@@ -13,19 +13,29 @@ import { checkSessionAndAlert } from "@/services/wa-session";
 
 const SWEEP_BATCH_LIMIT = 25;
 const SWEEP_MAX_BATCHES = 10;
+// Orçamento de tempo por invocação, abaixo do maxDuration (60 s) da rota
+// /api/inngest: um lote de comprovantes (1–3 s cada) não pode derrubar a
+// função no meio de um evento. O que sobrar sai no sweep seguinte (1 min).
+const SWEEP_BUDGET_MS = 40_000;
 
 export const outboxSweep = inngest.createFunction(
   { id: "outbox-sweep", triggers: [{ cron: "* * * * *" }] },
   async () => {
     const db = getDb();
-    const totals: DrainOutboxResult = {
+    const startedAt = Date.now();
+    const totals: DrainOutboxResult & { budgetExceeded: boolean } = {
       recovered: 0,
       claimed: 0,
       done: 0,
       failed: 0,
       dead: 0,
+      budgetExceeded: false,
     };
     for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch++) {
+      if (Date.now() - startedAt > SWEEP_BUDGET_MS) {
+        totals.budgetExceeded = true;
+        break;
+      }
       const result = await drainOutbox(db, { limit: SWEEP_BATCH_LIMIT });
       totals.recovered += result.recovered;
       totals.claimed += result.claimed;

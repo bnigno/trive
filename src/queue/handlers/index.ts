@@ -5,12 +5,17 @@ import { getSalesAssistant } from "@/adapters/assistant";
 import { getEmailProvider } from "@/adapters/email";
 import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
+import { enqueueOutboxEvent } from "@/queue/enqueue";
+import { loadReceiptAssets } from "@/receipts/assets";
+import { renderReceiptPng } from "@/receipts/render";
 import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
+import { sendReceiptWa } from "@/services/receipts";
 import { runBotTurn } from "@/services/wa-bot";
 import {
   isWaEnabled,
@@ -167,11 +172,39 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     await sendOrderWa(String(event.payload.orderId), "store_created");
   },
   "order.paid": async (event) => {
+    const orderId = String(event.payload.orderId);
     await sendOrderEmail(getDb(), getEmailProvider(), {
-      orderId: String(event.payload.orderId),
+      orderId,
       kind: "paid",
     });
-    await sendOrderWa(String(event.payload.orderId), "paid");
+    await sendOrderWa(orderId, "paid");
+    // O comprovante em imagem tem evento próprio: uma falha do desenho
+    // (Satori) tem retry e status só dele e nunca derruba o aviso de
+    // pagamento para 'dead'. dedupe_key = uma vez por pedido.
+    await enqueueOutboxEvent(getDb(), {
+      eventType: "order.receipt",
+      dedupeKey: `order.receipt:${orderId}`,
+      aggregateType: "order",
+      aggregateId: orderId,
+      payload: { orderId },
+    });
+  },
+  // Comprovante de pagamento pelo WhatsApp (imagem). Skips (desligado, sem
+  // opt-in, já enviado…) não lançam; a duração fica no log para o dono
+  // conferir o primeiro pagamento real.
+  "order.receipt": async (event) => {
+    const orderId = String(event.payload.orderId);
+    const startedAt = Date.now();
+    const result = await sendReceiptWa(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      async (data) => renderReceiptPng(data, await loadReceiptAssets()),
+      { orderId },
+    );
+    console.info(
+      `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
+    );
   },
   "order.shipped": async (event) => {
     await sendOrderEmail(getDb(), getEmailProvider(), {

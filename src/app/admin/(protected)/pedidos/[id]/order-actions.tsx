@@ -34,12 +34,15 @@ function AdvanceForm({
   label,
   pendingLabel,
   hint,
+  confirmMessage,
 }: {
   orderId: string;
   action: ActionFn;
   label: string;
   pendingLabel: string;
   hint?: string;
+  /** Pede confirmação antes de enviar (ações com efeito imediato no cliente). */
+  confirmMessage?: string;
 }) {
   const [state, formAction] = useActionState(action, initialState);
   return (
@@ -47,7 +50,13 @@ function AdvanceForm({
       <input type="hidden" name="orderId" value={orderId} />
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
-      <SubmitButton pendingLabel={pendingLabel}>{label}</SubmitButton>
+      {confirmMessage ? (
+        <ConfirmButton variant="primary" confirmMessage={confirmMessage}>
+          {label}
+        </ConfirmButton>
+      ) : (
+        <SubmitButton pendingLabel={pendingLabel}>{label}</SubmitButton>
+      )}
       {hint ? (
         <p className="text-xs text-zinc-500 dark:text-zinc-400">{hint}</p>
       ) : null}
@@ -197,8 +206,13 @@ export function OrderActions({
           pendingLabel="Marcando…"
           hint={
             paymentMethod === "cash"
-              ? "Pedido em dinheiro na entrega: marque como pago SOMENTE com o dinheiro na mão. Baixa o estoque em definitivo e liquida a venda no financeiro."
+              ? "Pedido em dinheiro na entrega: marque como pago SOMENTE com o dinheiro na mão. Baixa o estoque em definitivo, liquida a venda no financeiro e o cliente recebe o comprovante na hora."
               : "Baixa o estoque em definitivo e lança a venda no financeiro."
+          }
+          confirmMessage={
+            paymentMethod === "cash"
+              ? "Confirme só depois de receber o dinheiro: o cliente recebe o comprovante de pagamento na hora. Marcar como pago?"
+              : undefined
           }
         />
       ) : null}

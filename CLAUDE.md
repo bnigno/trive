@@ -23,7 +23,7 @@ O lint de fronteiras (eslint-plugin-boundaries) bloqueia importações na direç
 
 ## As 12 regras de ouro
 
-1. Todo vendor externo tem adapter com interface própria + `fake.ts`. Nunca importe SDK de vendor fora de `adapters/`.
+1. Todo vendor externo tem adapter com interface própria + `fake.ts`. Nunca importe SDK de vendor fora de `adapters/`. Exceção registrada: bibliotecas de processamento local sem rede (`sharp`, `next/og`) podem viver em `services/` e em `src/receipts/`; vendor com rede continua só em `adapters/`.
 2. Dinheiro é SEMPRE inteiro em centavos (sufixo `_cents`/`Cents`). Nunca float, nunca `number` com decimais.
 3. Transição de status (pedido, pagamento, evento) só passa pela máquina de estados em `core/`. Nunca faça `UPDATE status` direto.
 4. Estoque é ledger append-only: saldo é derivado das movimentações; nunca sobrescreva quantidade.

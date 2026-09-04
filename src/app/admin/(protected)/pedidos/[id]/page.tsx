@@ -7,6 +7,7 @@ import {
   ORDER_STATUS_LABELS,
   type OrderStatus,
 } from "@/core/orders/state-machine";
+import { getFileStorage } from "@/adapters/storage";
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { isOwner, requireUser } from "@/services/auth";
@@ -238,6 +239,23 @@ export default async function PedidoDetalhePage({
                   <span className="font-mono text-xs text-zinc-900 dark:text-zinc-100">
                     {order.shippingTrackingCode}
                   </span>
+                </div>
+              ) : null}
+              {order.receiptPath ? (
+                // Comprovante gerado quando o pagamento confirmou: o dono
+                // abre/encaminha à mão quem não recebeu pelo WhatsApp.
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    Comprovante
+                  </span>
+                  <a
+                    href={`${getFileStorage().publicUrl(order.receiptPath)}?v=${order.paidAt?.getTime() ?? 0}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                  >
+                    Ver comprovante
+                  </a>
                 </div>
               ) : null}
               {order.cancelReason ? (
