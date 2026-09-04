@@ -114,8 +114,8 @@ body {
 
   /* Malha */
   --header-h: 3.5rem;
-  /* Trocar para 4 / 5 quando as fotos de moda (retrato) entrarem. */
-  --aspect-product: 1 / 1;
+  /* Fotos de moda em retrato; as quadradas antigas ganham leve corte lateral. */
+  --aspect-product: 4 / 5;
 
   /* Movimento */
   --ease-silk: cubic-bezier(0.22, 1, 0.36, 1);
@@ -422,6 +422,18 @@ body {
   transition-delay: 320ms;
 }
 
+/* Fita de entrada: desenha-se ao carregar (capas de página, acima da dobra,
+   onde o <Reveal> já nasceria pronto). */
+.ribbon-enter {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: ribbon-check var(--dur-ribbon) var(--ease-silk) 200ms forwards;
+}
+
+.ribbon-enter-gold {
+  animation-delay: 420ms;
+}
+
 /* Fita de hover: só onde existe hover de verdade (iOS dispara :active ao rolar). */
 @media (hover: hover) {
   .ribbon-hover {
@@ -644,9 +656,11 @@ body {
 /* Reduced motion: o site fica completo e legível, apenas parado. */
 @media (prefers-reduced-motion: reduce) {
   .ribbon-draw,
-  .ribbon-hover {
+  .ribbon-hover,
+  .ribbon-enter {
     stroke-dashoffset: 0 !important;
     transition: none !important;
+    animation: none !important;
   }
 
   [data-veil-done] .gold-sheen,

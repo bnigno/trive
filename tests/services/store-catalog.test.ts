@@ -181,10 +181,31 @@ describe("listPublicProducts", () => {
       priceFromCents: 5000,
       priceToCents: 8990,
       imagePath: "products/x/a-full.webp",
+      hoverImagePath: "products/x/b-full.webp",
       available: true,
     });
     const esgotado = rows.find((row) => row.name === "Esgotado");
-    expect(esgotado).toMatchObject({ available: false, imagePath: null });
+    expect(esgotado).toMatchObject({
+      available: false,
+      imagePath: null,
+      hoverImagePath: null,
+    });
+  });
+
+  it("produto com uma única foto não tem segunda foto para o hover", async () => {
+    const { productId } = await createPublicProduct({
+      name: "Uma Foto",
+      variants: [{ sku: "UF-1", priceCents: 1000 }],
+    });
+    await db
+      .insert(schema.productImages)
+      .values({ productId, storagePath: "products/u/a-full.webp", sortOrder: 0 });
+
+    const [row] = await listPublicProducts(db);
+    expect(row).toMatchObject({
+      imagePath: "products/u/a-full.webp",
+      hoverImagePath: null,
+    });
   });
 
   it("usa como capa a primeira foto por sort_order, mesmo que ela seja de uma cor", async () => {
@@ -263,8 +284,39 @@ describe("listPublicCategories", () => {
 
     const rows = await listPublicCategories(db);
     expect(rows).toEqual([
-      { id: comProduto, name: "Anéis", slug: "aneis", productCount: 2 },
+      {
+        id: comProduto,
+        name: "Anéis",
+        slug: "aneis",
+        productCount: 2,
+        coverPath: null,
+        coverFocalY: 50,
+      },
     ]);
+  });
+
+  it("devolve a capa e o foco da sala quando existem", async () => {
+    const [category] = await db
+      .insert(schema.categories)
+      .values({
+        name: "Vestidos",
+        slug: "vestidos",
+        coverPath: "categories/v/capa-full.webp",
+        coverFocalY: 15,
+      })
+      .returning({ id: schema.categories.id });
+    await createPublicProduct({
+      name: "Vestido Um",
+      categoryId: category.id,
+      variants: [{ sku: "VE-1", priceCents: 1500 }],
+    });
+
+    const [row] = await listPublicCategories(db);
+    expect(row).toMatchObject({
+      slug: "vestidos",
+      coverPath: "categories/v/capa-full.webp",
+      coverFocalY: 15,
+    });
   });
 });
 

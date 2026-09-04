@@ -11,11 +11,14 @@ import {
   createProduct,
   getProductDetail,
   listProducts,
+  removeCategoryCover,
   removeProductImage,
   ServiceError,
+  setCategoryCover,
   setProductImageColor,
   mdPathFor,
   thumbPathFor,
+  updateCategoryCoverFocus,
   updateProduct,
 } from "@/services/catalog";
 import {
@@ -784,5 +787,189 @@ describe("setProductImageColor", () => {
         userId: FIXED_USER_ID,
       }),
     ).rejects.toThrow("Imagem não encontrada.");
+  });
+});
+
+describe("setCategoryCover / updateCategoryCoverFocus / removeCategoryCover", () => {
+  async function coverFiles(storage: FakeFileStorage, categoryId: string) {
+    return storage.list().filter((path) => path.startsWith(`categories/${categoryId}/`));
+  }
+
+  async function categoryRow(categoryId: string) {
+    const [row] = await db
+      .select({
+        coverPath: schema.categories.coverPath,
+        coverFocalY: schema.categories.coverFocalY,
+      })
+      .from(schema.categories)
+      .where(eq(schema.categories.id, categoryId));
+    return row;
+  }
+
+  it("stores the 3 renditions under categories/<id>/, updates the row and writes audit", async () => {
+    const storage = new FakeFileStorage();
+    const category = await createCategory(db, { name: "Vestidos", userId: FIXED_USER_ID });
+
+    const result = await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/jpeg",
+      focalY: 15,
+      userId: FIXED_USER_ID,
+    });
+
+    const files = await coverFiles(storage, category.id);
+    expect(files).toHaveLength(3);
+    expect(files).toContain(result.coverPath);
+    expect(files).toContain(mdPathFor(result.coverPath));
+    expect(files).toContain(thumbPathFor(result.coverPath));
+    expect(storage.get(result.coverPath)?.contentType).toBe("image/webp");
+    expect(result.thumbUrl).toBe(`memory://${thumbPathFor(result.coverPath)}`);
+
+    expect(await categoryRow(category.id)).toEqual({
+      coverPath: result.coverPath,
+      coverFocalY: 15,
+    });
+
+    const audits = await db
+      .select({ action: schema.auditLog.action })
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, category.id));
+    expect(audits.map((row) => row.action)).toContain("category.set_cover");
+  });
+
+  it("replacing the cover deletes the previous 3 files", async () => {
+    const storage = new FakeFileStorage();
+    const category = await createCategory(db, { name: "Saias", userId: FIXED_USER_ID });
+    const first = await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    const second = await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/webp",
+      focalY: 85,
+      userId: FIXED_USER_ID,
+    });
+
+    expect(second.coverPath).not.toBe(first.coverPath);
+    const files = await coverFiles(storage, category.id);
+    expect(files).toHaveLength(3);
+    expect(storage.has(first.coverPath)).toBe(false);
+    expect((await categoryRow(category.id)).coverPath).toBe(second.coverPath);
+  });
+
+  it("keeps the new cover when the old files fail to delete (best effort)", async () => {
+    class FlakyStorage extends FakeFileStorage {
+      failures = 0;
+      override async remove(path: string): Promise<void> {
+        this.failures += 1;
+        throw new Error(`storage indisponível (${path})`);
+      }
+    }
+    const storage = new FlakyStorage();
+    const category = await createCategory(db, { name: "Blusas", userId: FIXED_USER_ID });
+    await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+
+    const second = await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+
+    expect(storage.failures).toBe(3);
+    expect((await categoryRow(category.id)).coverPath).toBe(second.coverPath);
+  });
+
+  it("rejects HEIC, unsupported types, broken images and a focus out of range without leaving files", async () => {
+    const storage = new FakeFileStorage();
+    const category = await createCategory(db, { name: "Casacos", userId: FIXED_USER_ID });
+    const base = { categoryId: category.id, userId: FIXED_USER_ID };
+
+    await expect(
+      setCategoryCover(db, storage, { ...base, data: await makePng(), contentType: "image/heic" }),
+    ).rejects.toThrow(/HEIC/);
+    await expect(
+      setCategoryCover(db, storage, { ...base, data: await makePng(), contentType: "image/gif" }),
+    ).rejects.toThrow(/JPG, PNG ou WebP/);
+    await expect(
+      setCategoryCover(db, storage, {
+        ...base,
+        data: Buffer.from("isto não é uma imagem"),
+        contentType: "image/png",
+      }),
+    ).rejects.toMatchObject({ code: "imagem_invalida" });
+    await expect(
+      setCategoryCover(db, storage, {
+        ...base,
+        data: await makePng(),
+        contentType: "image/png",
+        focalY: 120,
+      }),
+    ).rejects.toThrow();
+
+    expect(storage.list()).toHaveLength(0);
+    expect((await categoryRow(category.id)).coverPath).toBeNull();
+  });
+
+  it("rejects an unknown category", async () => {
+    const storage = new FakeFileStorage();
+    await expect(
+      setCategoryCover(db, storage, {
+        categoryId: "00000000-0000-4000-8000-000000000000",
+        data: await makePng(),
+        contentType: "image/png",
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toMatchObject({ code: "nao_encontrado" });
+    expect(storage.list()).toHaveLength(0);
+  });
+
+  it("updates only the focus of an existing cover and refuses without cover", async () => {
+    const storage = new FakeFileStorage();
+    const category = await createCategory(db, { name: "Calças", userId: FIXED_USER_ID });
+    await expect(
+      updateCategoryCoverFocus(db, { categoryId: category.id, focalY: 85, userId: FIXED_USER_ID }),
+    ).rejects.toMatchObject({ code: "sem_capa" });
+
+    const cover = await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    await updateCategoryCoverFocus(db, { categoryId: category.id, focalY: 85, userId: FIXED_USER_ID });
+
+    expect(await categoryRow(category.id)).toEqual({ coverPath: cover.coverPath, coverFocalY: 85 });
+    expect(await coverFiles(storage, category.id)).toHaveLength(3);
+  });
+
+  it("removes the cover, deletes the files and is a no-op the second time", async () => {
+    const storage = new FakeFileStorage();
+    const category = await createCategory(db, { name: "Acessórios", userId: FIXED_USER_ID });
+    await setCategoryCover(db, storage, {
+      categoryId: category.id,
+      data: await makePng(),
+      contentType: "image/png",
+      focalY: 15,
+      userId: FIXED_USER_ID,
+    });
+
+    expect(await removeCategoryCover(db, storage, { categoryId: category.id, userId: FIXED_USER_ID }))
+      .toEqual({ removed: true });
+    expect(storage.list()).toHaveLength(0);
+    expect(await categoryRow(category.id)).toEqual({ coverPath: null, coverFocalY: 50 });
+
+    expect(await removeCategoryCover(db, storage, { categoryId: category.id, userId: FIXED_USER_ID }))
+      .toEqual({ removed: false });
   });
 });

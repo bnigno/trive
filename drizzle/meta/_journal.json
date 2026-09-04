@@ -85,6 +85,13 @@
       "when": 1787773990770,
       "tag": "0011_sharp_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788487040688,
+      "tag": "0012_uneven_gunslinger",
+      "breakpoints": true
     }
   ]
 }

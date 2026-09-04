@@ -25,6 +25,11 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { cx } from "@/components/ui/cx";
 import { OwnerOnly } from "../owner-only";
+import {
+  CategoryCoverFocusForm,
+  CategoryCoverForm,
+  RemoveCategoryCoverForm,
+} from "./category-cover-form";
 import { CategoryForm } from "./category-form";
 
 export const dynamic = "force-dynamic";
@@ -322,13 +327,59 @@ export default async function ProdutosPage({
               produtos.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {categoryRows.map((category) => (
-                <Badge key={category.id} tone="info">
-                  {category.name}
-                </Badge>
-              ))}
-            </div>
+            <Table headers={["", "Sala", "Capa na vitrine"]}>
+              {categoryRows.map((category) => {
+                const coverThumb = category.coverPath
+                  ? storage.publicUrl(thumbPathFor(category.coverPath))
+                  : null;
+                return (
+                  <Tr key={category.id}>
+                    <Td className="w-14 align-top">
+                      {coverThumb ? (
+                        <img
+                          src={coverThumb}
+                          alt=""
+                          className="h-12 w-10 rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
+                          style={{ objectPosition: `50% ${category.coverFocalY}%` }}
+                        />
+                      ) : (
+                        <span className="flex h-12 w-10 items-center justify-center rounded-md bg-zinc-100 text-sm font-semibold uppercase text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                          {category.name.charAt(0)}
+                        </span>
+                      )}
+                    </Td>
+                    <Td className="align-top">
+                      <p className="font-medium text-zinc-900 dark:text-zinc-100">
+                        {category.name}
+                      </p>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {category.coverPath ? "Com foto de capa" : "Capa tipográfica"}
+                      </p>
+                    </Td>
+                    <Td className="align-top">
+                      <OwnerOnly>
+                        <div className="flex flex-col gap-3">
+                          <CategoryCoverForm
+                            categoryId={category.id}
+                            hasCover={Boolean(category.coverPath)}
+                            focalY={category.coverFocalY}
+                          />
+                          {category.coverPath ? (
+                            <div className="flex flex-wrap items-start gap-3">
+                              <CategoryCoverFocusForm
+                                categoryId={category.id}
+                                focalY={category.coverFocalY}
+                              />
+                              <RemoveCategoryCoverForm categoryId={category.id} />
+                            </div>
+                          ) : null}
+                        </div>
+                      </OwnerOnly>
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </Table>
           )}
           <OwnerOnly>
             <CategoryForm />
