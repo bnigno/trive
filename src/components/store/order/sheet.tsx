@@ -4,7 +4,7 @@
 // (sticky) com rolagem interna — o overflow fica no próprio elemento sticky,
 // nunca num ancestral, senão o Safari solta a folha. Sem hooks: pode ser
 // usada por componentes cliente.
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { Ornament } from "@/components/store/ornament";
 import { eyebrow as eyebrowClass, sheet } from "@/components/store/styles";
@@ -17,8 +17,11 @@ export function Sheet({
   sticky = false,
   className,
   children,
+  ref,
   ...rest
 }: {
+  /** Ref do <section> (React 19: ref é prop comum) — a sacola observa a folha. */
+  ref?: Ref<HTMLElement>;
   eyebrow?: string;
   /** id do h2 (use no aria-labelledby de quem precisar). */
   headingId?: string;
@@ -31,6 +34,7 @@ export function Sheet({
 }) {
   return (
     <section
+      ref={ref}
       className={cx(
         sheet,
         "px-5 py-6 sm:px-6",
