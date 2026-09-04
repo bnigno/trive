@@ -52,3 +52,11 @@ export const numeral = "font-store text-eyebrow font-medium text-gold-800 tabula
 
 /** Hairline sobre noir: ouro a 20%. */
 export const hairlineNoir = "border-gold-500/20";
+
+/** Painel dourado suave (Como pagar): borda ouro, fundo ouro a 8%. */
+export const panelGold =
+  "rounded-(--radius-hair) border border-gold-600/50 bg-gold-500/8 px-5 py-6";
+
+/** Link em ouro escuro (o único ouro que serve como texto pequeno em marfim). */
+export const linkGold =
+  "font-medium text-gold-800 underline decoration-gold-500/50 underline-offset-4 transition-colors duration-300 hover:decoration-gold-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600";

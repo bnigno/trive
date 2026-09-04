@@ -1,19 +1,31 @@
-// Página pública de acompanhamento do pedido, por token. Sempre dinâmica:
-// o status muda a qualquer momento (pagamento, envio, expiração da reserva)
-// e getPublicOrder já expira reservas vencidas antes de responder.
-// PRIVACIDADE: getPublicOrder NÃO retorna dados pessoais — e esta página
-// não adiciona nenhum (o link circula em encaminhamentos de WhatsApp).
+// Página pública de acompanhamento do pedido, por token — "seu pedido" no
+// papel timbrado da maison. Sempre dinâmica: o status muda a qualquer momento
+// (pagamento, envio, expiração da reserva) e getPublicOrder já expira
+// reservas vencidas antes de responder.
+// PRIVACIDADE: getPublicOrder NÃO retorna dados pessoais — e esta página não
+// adiciona nenhum (o link circula em encaminhamentos de WhatsApp).
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Monogram } from "@/components/store/brand/monogram";
-import { IconCheck, IconParcel } from "@/components/store/icons";
+import { IconParcel } from "@/components/store/icons";
+import { NoirStage } from "@/components/store/noir-stage";
+import { Notice } from "@/components/store/order/notice";
+import { Sheet } from "@/components/store/order/sheet";
+import { TotalsList } from "@/components/store/order/totals";
 import { OrderStatusSteps } from "@/components/store/order-status-steps";
 import { Ornament } from "@/components/store/ornament";
-import { btnPrimary, eyebrow } from "@/components/store/styles";
-import { Money } from "@/components/ui/money";
+import {
+  btnPrimary,
+  eyebrow,
+  linkGold,
+  numeral,
+  panelGold,
+} from "@/components/store/styles";
+import { cx } from "@/components/ui/cx";
 import { getDb } from "@/db/client";
+import { formatCentsBRL } from "@/lib/money";
 import { waMeUrl } from "@/lib/phone";
 import { getPublicOrder } from "@/services/store-orders";
 import { isMpEnabled } from "@/services/store-payments";
@@ -53,11 +65,35 @@ function waMeLink(rawPhone: unknown, orderNumber: number): string | null {
   );
 }
 
-const goldPanel =
-  "mb-8 rounded-(--radius-hair) border border-gold-600/50 bg-gold-500/8 px-5 py-6";
+/** "Reserva válida até …" quando o pedido tem prazo de pagamento. */
+function DueAt({ date }: { date: Date | null }) {
+  if (!date) return null;
+  return (
+    <>
+      {" "}
+      Reserva válida até{" "}
+      <strong className="font-medium whitespace-nowrap text-ink-900">
+        {formatDueAt(date)}
+      </strong>
+      .
+    </>
+  );
+}
 
-const whatsappLinkClasses =
-  "font-medium text-gold-800 underline decoration-gold-500/50 underline-offset-4 transition-colors duration-300 hover:decoration-gold-700";
+function WhatsAppLink({
+  href,
+  children,
+}: {
+  href: string | null;
+  children: string;
+}) {
+  if (!href) return <>{children}</>;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={linkGold}>
+      {children}
+    </a>
+  );
+}
 
 export default async function OrderPage({
   params,
@@ -115,334 +151,265 @@ export default async function OrderPage({
     ? waMeLink(settings["store_whatsapp"], order.orderNumber)
     : null;
 
+  const total = formatCentsBRL(order.totalCents);
+  const showTracking =
+    (order.status === "shipped" || order.status === "delivered") &&
+    Boolean(order.trackingCode);
+
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-8 sm:py-12">
+    <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+      {/* O único momento noir da página: o agradecimento, sem nenhum input. */}
       {novo === "1" && !isCanceled ? (
-        <div
+        <NoirStage
+          as="div"
+          grain
           role="status"
-          className="mb-8 flex items-start gap-4 rounded-(--radius-hair) border border-gold-600/40 bg-ivory-50 px-5 py-4"
+          className="mb-10 rounded-(--radius-hair) px-6 py-10 text-center sm:py-14"
         >
-          <Monogram size={34} className="mt-0.5" />
-          <div>
-            <p className="font-display text-heading font-semibold text-ink-950">
-              Pedido recebido
-            </p>
-            <p className="mt-1 text-sm leading-relaxed text-ink-700">
-              Obrigado pela sua compra. Acompanhe tudo por esta página.
-            </p>
-          </div>
-        </div>
+          <Monogram tone="gold" size={56} className="mx-auto" />
+          <p className="mt-5 font-display text-title font-semibold text-balance text-ivory-100 italic">
+            A maison agradece. Recebemos o seu pedido.
+          </p>
+          <p className="mt-3 font-store text-sm text-ivory-300">
+            Acompanhe tudo por esta página — e guarde o link.
+          </p>
+        </NoirStage>
       ) : null}
 
-      <header className="mb-10">
+      <header className="mb-10 flex flex-col items-start gap-2">
         <p className={eyebrow}>Seu pedido</p>
-        <h1 className="mt-2 font-display text-5xl font-semibold tracking-tight text-ink-950">
-          #{order.orderNumber}
+        <h1 className="font-display font-semibold text-espresso-900">
+          <span className="text-heading text-gold-800">Nº</span>{" "}
+          <span className="text-display tabular-nums">{order.orderNumber}</span>
         </h1>
-        <p className="mt-3 text-sm text-ink-500">
+        <p className="font-display text-lg text-ink-700 italic">
           Feito em {formatDueAt(order.createdAt)}
         </p>
+        <Ornament className="mt-2 text-gold-500" />
       </header>
 
-      {isCanceled ? (
-        <div
-          role="alert"
-          className="mb-8 rounded-(--radius-hair) border border-claret-600/30 bg-claret-50 px-5 py-5"
-        >
-          <p className="font-display text-heading font-semibold text-claret-700">
-            {order.status === "refunded"
-              ? "Este pedido foi reembolsado"
-              : "Este pedido foi cancelado"}
-          </p>
-          {reservationExpired ? (
-            <p className="mt-2 text-sm leading-relaxed text-claret-700">
-              A reserva dos produtos expirou porque o pagamento não foi
-              confirmado dentro do prazo. Não se preocupe: nada foi cobrado, e
-              você pode refazer o pedido quando quiser — é rapidinho.
-            </p>
-          ) : order.canceledReason ? (
-            <p className="mt-2 text-sm leading-relaxed text-claret-700">
-              Motivo: {order.canceledReason}. Se ficou alguma dúvida, fale com a
-              gente — teremos prazer em ajudar.
-            </p>
-          ) : (
-            <p className="mt-2 text-sm leading-relaxed text-claret-700">
-              Se ficou alguma dúvida, fale com a gente — teremos prazer em
-              ajudar.
-            </p>
-          )}
-          {reservationExpired ? (
-            <Link href="/produtos" className={`${btnPrimary} mt-5`}>
-              Refazer meu pedido
-            </Link>
-          ) : null}
-        </div>
-      ) : (
-        <section
-          aria-label="Andamento do pedido"
-          className="mb-8 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-4 py-6 sm:px-6"
-        >
-          <OrderStatusSteps status={order.status} />
-        </section>
-      )}
-
-      {mpApproved ? (
-        <div
-          role="status"
-          className="mb-8 rounded-(--radius-hair) border border-laurel-600/40 bg-ivory-50 px-5 py-5"
-        >
-          <p className="flex items-center gap-2.5 font-display text-heading font-semibold text-laurel-700">
-            <IconCheck className="h-5 w-5 shrink-0 text-laurel-600" />
-            Pagamento recebido! Processando confirmação…
-          </p>
-          <p className="mt-2 text-sm leading-relaxed text-ink-700">
-            O Mercado Pago aprovou o seu pagamento. Em instantes o pedido
-            aparece como pago aqui — pode atualizar a página para conferir.
-          </p>
-        </div>
-      ) : null}
-
-      {isPendingPayment && !mpApproved ? (
-        isCash ? (
-          <section className={goldPanel}>
-            <h2 className="font-display text-heading font-semibold text-ink-950">
-              Como pagar
-            </h2>
-            <p className="mt-2 text-[15px] leading-7 text-ink-800">
-              Você paga em{" "}
-              <strong className="font-medium text-ink-900">
-                dinheiro na entrega
-              </strong>{" "}
-              — vamos combinar os detalhes pelo WhatsApp. Tenha{" "}
-              <strong className="font-medium whitespace-nowrap text-ink-900">
-                <Money cents={order.totalCents} />
-              </strong>{" "}
-              em mãos ao receber.
-            </p>
-            {whatsappLink ? (
-              <a
-                href={whatsappLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`${btnPrimary} mt-5`}
-              >
-                Chamar no WhatsApp
-              </a>
-            ) : null}
-          </section>
-        ) : showPixManual ? (
-          <section className={goldPanel}>
-            <h2 className="font-display text-heading font-semibold text-ink-950">
-              Como pagar
-            </h2>
-            <p className="mt-2 text-[15px] leading-7 text-ink-800">
-              Faça um Pix de{" "}
-              <strong className="font-medium whitespace-nowrap text-ink-900">
-                <Money cents={order.totalCents} />
-              </strong>{" "}
-              para a chave abaixo.
-              {order.paymentDueAt ? (
-                <>
-                  {" "}
-                  Reserva válida até{" "}
-                  <strong className="font-medium whitespace-nowrap text-ink-900">
-                    {formatDueAt(order.paymentDueAt)}
-                  </strong>
-                  .
-                </>
-              ) : null}
-            </p>
-            <div className="mt-4">
-              <CopyCode code={pixKey} />
-            </div>
-            <p className="mt-4 text-sm leading-relaxed text-ink-700">
-              Depois de fazer o Pix,{" "}
-              {whatsappLink ? (
-                <a
-                  href={whatsappLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={whatsappLinkClasses}
-                >
-                  avise a gente no WhatsApp
-                </a>
-              ) : (
-                "avise a gente no WhatsApp"
-              )}{" "}
-              — a confirmação é manual e o pedido aparece como pago aqui em
-              seguida.
-            </p>
-          </section>
-        ) : mpEnabled ? (
-          <section className={goldPanel}>
-            <h2 className="font-display text-heading font-semibold text-ink-950">
-              Como pagar
-            </h2>
-            <p className="mt-2 text-[15px] leading-7 text-ink-800">
-              Pague com segurança pelo Mercado Pago.
-              {order.paymentDueAt ? (
-                <>
-                  {" "}
-                  Reserva válida até{" "}
-                  <strong className="font-medium whitespace-nowrap text-ink-900">
-                    {formatDueAt(order.paymentDueAt)}
-                  </strong>
-                  .
-                </>
-              ) : null}
-            </p>
-            {mpUnavailable ? (
-              <p
-                role="alert"
-                className="mt-3 rounded-(--radius-soft) border border-claret-600/40 bg-claret-50 px-3 py-2 text-sm text-claret-700"
-              >
-                Não foi possível iniciar o pagamento online agora. Tente de
-                novo em instantes — ou combine pelo WhatsApp aqui embaixo.
-              </p>
-            ) : null}
-            <form action={payNowAction.bind(null, token)} className="mt-5">
-              <button
-                type="submit"
-                className={`${btnPrimary} w-full sm:w-auto sm:min-w-72`}
-              >
-                Pagar agora (Pix ou cartão)
-              </button>
-            </form>
-            <p className="mt-5 text-sm text-ink-700">
-              Prefere combinar pelo WhatsApp?{" "}
-              {whatsappLink ? (
-                <a
-                  href={whatsappLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={whatsappLinkClasses}
-                >
-                  Fale com a gente
-                </a>
-              ) : (
-                "Fale com a gente"
-              )}{" "}
-              e pague via Pix manual, como preferir.
-            </p>
-          </section>
-        ) : (
-          <section className={goldPanel}>
-            <h2 className="font-display text-heading font-semibold text-ink-950">
-              Como pagar
-            </h2>
-            <p className="mt-2 text-[15px] leading-7 text-ink-800">
-              Vamos te chamar no WhatsApp para combinar o pagamento via Pix.
-              {order.paymentDueAt ? (
-                <>
-                  {" "}
-                  Reserva válida até{" "}
-                  <strong className="font-medium whitespace-nowrap text-ink-900">
-                    {formatDueAt(order.paymentDueAt)}
-                  </strong>
-                  .
-                </>
-              ) : null}
-            </p>
-            {whatsappLink ? (
-              <a
-                href={whatsappLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`${btnPrimary} mt-5`}
-              >
-                Chamar no WhatsApp agora
-              </a>
-            ) : null}
-          </section>
-        )
-      ) : null}
-
-      {(order.status === "shipped" || order.status === "delivered") &&
-      order.trackingCode ? (
-        <section className="mb-8 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-5 py-5">
-          <h2 className="flex items-center gap-2.5 font-display text-heading font-semibold text-ink-950">
-            <IconParcel className="h-5 w-5 shrink-0 text-gold-700" />
-            {order.status === "delivered"
-              ? "Rastreamento da entrega"
-              : "Seu pedido está a caminho"}
-          </h2>
-          <p className="mt-2 text-sm leading-relaxed text-ink-700">
-            Use o código abaixo para rastrear a entrega no site dos Correios ou
-            da transportadora.
-          </p>
-          <div className="mt-4">
-            <CopyCode code={order.trackingCode} />
-          </div>
-        </section>
-      ) : null}
-
-      <section className="mb-10 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50">
-        <h2 className="border-b border-ivory-300 px-5 py-4 font-display text-heading font-semibold text-ink-950">
-          Itens do pedido
-        </h2>
-        <ul className="divide-y divide-ivory-200">
-          {order.items.map((item) => (
-            <li
-              key={item.sku}
-              className="flex items-start justify-between gap-4 px-5 py-4"
+      <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-x-16">
+        <div className="flex flex-col gap-8">
+          {isCanceled ? (
+            <Notice
+              tone="claret"
+              role="alert"
+              title={
+                order.status === "refunded"
+                  ? "Este pedido foi reembolsado"
+                  : "Este pedido foi cancelado"
+              }
             >
-              <div className="min-w-0">
-                <p className="font-medium text-ink-900">{item.name}</p>
-                <p className="mt-0.5 text-xs text-ink-500">Cód. {item.sku}</p>
-                <p className="mt-1 text-sm text-ink-700">
-                  {item.quantity} × <Money cents={item.unitPriceCents} />
+              {reservationExpired ? (
+                <p>
+                  A reserva dos produtos expirou porque o pagamento não foi
+                  confirmado dentro do prazo. Não se preocupe: nada foi cobrado,
+                  e você pode refazer o pedido quando quiser — é rapidinho.
                 </p>
-              </div>
-              <Money
-                cents={item.totalCents}
-                className="shrink-0 font-medium text-ink-900"
-              />
-            </li>
-          ))}
-        </ul>
-        <dl className="space-y-2 border-t border-ivory-300 px-5 py-4 text-sm">
-          <div className="flex justify-between text-ink-700">
-            <dt>Subtotal</dt>
-            <dd>
-              <Money cents={order.subtotalCents} />
-            </dd>
-          </div>
-          {order.discountCents > 0 ? (
-            <div className="flex justify-between text-ink-700">
-              <dt>Desconto</dt>
-              <dd>
-                − <Money cents={order.discountCents} />
-              </dd>
-            </div>
-          ) : null}
-          <div className="flex justify-between text-ink-700">
-            <dt>Frete</dt>
-            <dd>
-              {order.shippingCents === 0 ? (
-                "Grátis"
+              ) : order.canceledReason ? (
+                <p>
+                  Motivo: {order.canceledReason}. Se ficou alguma dúvida, fale
+                  com a gente — teremos prazer em ajudar.
+                </p>
               ) : (
-                <Money cents={order.shippingCents} />
+                <p>
+                  Se ficou alguma dúvida, fale com a gente — teremos prazer em
+                  ajudar.
+                </p>
               )}
-            </dd>
-          </div>
-          <div className="flex justify-between border-t border-ivory-300 pt-3 text-base">
-            <dt className="font-medium text-ink-900">Total</dt>
-            <dd>
-              <Money
-                cents={order.totalCents}
-                className="font-semibold text-ink-900"
-              />
-            </dd>
-          </div>
-        </dl>
-      </section>
+              {reservationExpired ? (
+                <Link href="/produtos" className={cx(btnPrimary, "mt-5")}>
+                  Refazer meu pedido
+                </Link>
+              ) : null}
+            </Notice>
+          ) : (
+            <Sheet
+              eyebrow="Andamento"
+              headingId="andamento-title"
+              aria-labelledby="andamento-title"
+            >
+              <div className="mt-5">
+                <OrderStatusSteps status={order.status} />
+              </div>
+            </Sheet>
+          )}
 
-      <footer className="flex flex-col items-center gap-4 pb-4 text-center">
-        <Ornament className="text-gold-500" />
-        <p className="text-sm text-ink-500">
-          Guarde este link para acompanhar seu pedido.
-        </p>
-      </footer>
+          {mpApproved ? (
+            <Notice tone="laurel" role="status" title="Pagamento recebido! Confirmando…">
+              <p>
+                O Mercado Pago aprovou o seu pagamento. Em instantes o pedido
+                aparece como pago aqui — pode atualizar a página para conferir.
+              </p>
+            </Notice>
+          ) : null}
+
+          {isPendingPayment && !mpApproved ? (
+            <section aria-labelledby="pagar-title" className={panelGold}>
+              <h2 id="pagar-title" className={eyebrow}>
+                Como pagar
+              </h2>
+              <p className="mt-2 font-display text-3xl font-semibold text-ink-900 tabular-nums">
+                {total}
+              </p>
+              {isCash ? (
+                <>
+                  <p className="mt-3 font-store text-[15px] leading-7 text-ink-800">
+                    Você paga em dinheiro ao receber — combinamos os detalhes
+                    pelo WhatsApp. Tenha{" "}
+                    <strong className="font-medium whitespace-nowrap text-ink-900">
+                      {total}
+                    </strong>{" "}
+                    em mãos.
+                  </p>
+                  {whatsappLink ? (
+                    <a
+                      href={whatsappLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cx(btnPrimary, "mt-5")}
+                    >
+                      Chamar no WhatsApp
+                    </a>
+                  ) : null}
+                </>
+              ) : showPixManual ? (
+                <>
+                  <p className="mt-3 font-store text-[15px] leading-7 text-ink-800">
+                    Faça um Pix de{" "}
+                    <strong className="font-medium whitespace-nowrap text-ink-900">
+                      {total}
+                    </strong>{" "}
+                    para a chave abaixo.
+                    <DueAt date={order.paymentDueAt} />
+                  </p>
+                  <div className="mt-4">
+                    <CopyCode code={pixKey} />
+                  </div>
+                  <p className="mt-4 font-store text-sm leading-relaxed text-ink-700">
+                    Depois do Pix,{" "}
+                    <WhatsAppLink href={whatsappLink}>
+                      avise a gente no WhatsApp
+                    </WhatsAppLink>{" "}
+                    — a confirmação é feita à mão e o pedido aparece como pago
+                    aqui em seguida.
+                  </p>
+                </>
+              ) : mpEnabled ? (
+                <>
+                  <p className="mt-3 font-store text-[15px] leading-7 text-ink-800">
+                    Pague com segurança pelo Mercado Pago.
+                    <DueAt date={order.paymentDueAt} />
+                  </p>
+                  {mpUnavailable ? (
+                    <Notice tone="claret" role="alert" className="mt-3">
+                      Não foi possível iniciar o pagamento online agora. Tente
+                      de novo em instantes — ou combine pelo WhatsApp aqui
+                      embaixo.
+                    </Notice>
+                  ) : null}
+                  <form action={payNowAction.bind(null, token)} className="mt-5">
+                    <button
+                      type="submit"
+                      className={cx(btnPrimary, "w-full sm:w-auto sm:min-w-72")}
+                    >
+                      Pagar agora — Pix ou cartão
+                    </button>
+                  </form>
+                  <p className="mt-5 font-store text-sm text-ink-700">
+                    Prefere combinar pelo WhatsApp?{" "}
+                    <WhatsAppLink href={whatsappLink}>Fale com a gente</WhatsAppLink>{" "}
+                    e pague via Pix manual, como preferir.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-3 font-store text-[15px] leading-7 text-ink-800">
+                    Vamos te chamar no WhatsApp para combinar o pagamento via
+                    Pix.
+                    <DueAt date={order.paymentDueAt} />
+                  </p>
+                  {whatsappLink ? (
+                    <a
+                      href={whatsappLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cx(btnPrimary, "mt-5")}
+                    >
+                      Chamar no WhatsApp agora
+                    </a>
+                  ) : null}
+                </>
+              )}
+            </section>
+          ) : null}
+
+          {showTracking ? (
+            <Sheet
+              eyebrow={order.status === "delivered" ? "Rastrear a entrega" : "A caminho"}
+              headingId="rastreio-title"
+              aria-labelledby="rastreio-title"
+            >
+              <p className="mt-3 flex items-center gap-2.5 font-display text-heading font-semibold text-espresso-900">
+                <IconParcel className="h-5 w-5 shrink-0 text-gold-700" />
+                {order.status === "delivered"
+                  ? "Entregue. O código continua aqui."
+                  : "Seu pedido está a caminho"}
+              </p>
+              <p className="mt-2 font-store text-sm leading-relaxed text-ink-700">
+                Use o código abaixo para rastrear a entrega no site dos Correios
+                ou da transportadora.
+              </p>
+              <div className="mt-4">
+                <CopyCode code={order.trackingCode!} />
+              </div>
+            </Sheet>
+          ) : null}
+        </div>
+
+        <Sheet
+          eyebrow="Resumo do pedido"
+          headingId="resumo-title"
+          aria-labelledby="resumo-title"
+          ornament
+          sticky
+        >
+          <ol className="mt-4 divide-y divide-ivory-200">
+            {order.items.map((item, index) => (
+              <li key={item.sku} className="flex items-start gap-4 py-4 first:pt-0">
+                <span className={cx(numeral, "pt-1")}>
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-display text-lg leading-tight font-semibold text-espresso-900">
+                    {item.name}
+                  </p>
+                  <p className={cx(eyebrow, "mt-1")}>Cód. {item.sku}</p>
+                  <p className="mt-1 font-store text-sm text-ink-700 tabular-nums">
+                    {item.quantity} × {formatCentsBRL(item.unitPriceCents)}
+                  </p>
+                </div>
+                <p className="shrink-0 font-store text-sm font-medium text-ink-900 tabular-nums">
+                  {formatCentsBRL(item.totalCents)}
+                </p>
+              </li>
+            ))}
+          </ol>
+          <TotalsList
+            className="border-t border-ivory-300 pt-4"
+            subtotalCents={order.subtotalCents}
+            discountCents={order.discountCents}
+            shippingCents={order.shippingCents}
+            totalCents={order.totalCents}
+          />
+          <footer className="mt-6 flex flex-col items-center gap-3 border-t border-ivory-300 pt-5 text-center">
+            <Ornament className="text-gold-500" />
+            <p className="font-store text-sm text-ink-500">
+              Guarde este link: ele é a sua chave para acompanhar o pedido.
+            </p>
+          </footer>
+        </Sheet>
+      </div>
     </div>
   );
 }
