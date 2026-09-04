@@ -80,10 +80,11 @@ export default async function WaConversationsPage({
   }
 
   return (
-    // -m-8 cancela o p-8 do <main> do layout admin (layout.tsx) para o chat
+    // -m-4 md:-m-8 cancela o padding do <main> do layout admin (layout.tsx); no
+    // celular a barra superior (3.5rem) fica fora da altura do chat para o chat
     // ocupar a janela inteira, sem scroll da página. Mudou o padding lá,
     // mude aqui junto.
-    <div className="-m-8 flex h-dvh min-h-0 flex-col overflow-hidden">
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden md:-m-8 md:h-dvh">
       <ChatShell
         initialConversations={conversations}
         initialThread={thread}

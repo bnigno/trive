@@ -523,12 +523,12 @@ describe("runBotTurn — mídia", () => {
 
     // O texto da ferramenta mantém os fatos e instrui a NÃO repetir a lista.
     expect(toolText).toContain("Caneca Azul");
-    expect(toolText).toContain("[Um menu interativo com os produtos foi enviado");
+    expect(toolText).toContain("[A lista tocável do catálogo foi enviada ao cliente");
 
     expect(provider.sentOptionLists).toHaveLength(1);
     const list = provider.sentOptionLists[0];
     expect(list.toE164).toBe(PHONE);
-    expect(list.buttonLabel).toBe("Ver produtos");
+    expect(list.buttonLabel).toBe("Ver o catálogo");
     expect(list.title).toBe("Nossos produtos");
     expect(list.options).toEqual([
       {
@@ -769,7 +769,7 @@ describe("runBotTurn — cor e tamanho", () => {
     const inboundId = await addInbound(conversationId, "Quero ver a polo");
 
     const toolText = await detalhar(conversationId, { produto: "Camisa Polo" });
-    expect(toolText).toContain("[Um menu interativo com as variações foi enviado");
+    expect(toolText).toContain("[A lista tocável de cores e tamanhos foi enviada ao cliente");
 
     // Chegou ao provedor de verdade: passou pelo Zod de sendMediaMessage
     // (estourar 10 opções ou 24 caracteres de título faria o menu sumir).
@@ -807,7 +807,7 @@ describe("runBotTurn — cor e tamanho", () => {
     const toolText = await detalhar(conversationId, { produto: "Caneca Azul" });
 
     expect(toolText).toContain("SKU: CANECA-AZUL");
-    expect(toolText).not.toContain("menu interativo com as variações");
+    expect(toolText).not.toContain("lista tocável de cores e tamanhos");
     expect(provider.sentOptionLists).toHaveLength(0);
   });
 
@@ -1281,7 +1281,7 @@ describe("historyTextFor", () => {
   // lista de produtos copiável.
   it("troca o menu renderizado por um marcador sem produtos nem preços", () => {
     const menuRenderizado = [
-      "Toque abaixo para ver os produtos 👇",
+      "Toque abaixo e veja o catálogo 👇",
       "• Camiseta Essencial — R$ 44,90",
       "• Moletom Canguru — R$ 85,90",
     ].join("\n");
@@ -1291,7 +1291,7 @@ describe("historyTextFor", () => {
     expect(texto).not.toContain("Camiseta Essencial");
     expect(texto).not.toContain("R$ 44,90");
     expect(texto).not.toContain("•");
-    expect(texto).toContain("menu interativo");
+    expect(texto).toContain("lista tocável do catálogo");
   });
 
   it("mantém a legenda da foto, que é contexto útil e não vira menu falso", () => {

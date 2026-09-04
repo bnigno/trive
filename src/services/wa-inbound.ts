@@ -274,6 +274,18 @@ export async function processZapiInbound(
       .onConflictDoNothing({ target: waMessages.zapiMessageId })
       .returning({ id: waMessages.id });
 
+    // Nome do perfil do WhatsApp: a vendedora chama a cliente pelo nome sem
+    // precisar perguntar. Vai para o bot_state (jsonb livre), só se houver.
+    const senderName = parsed.senderName?.trim();
+    if (senderName && senderName.length <= 80) {
+      await tx
+        .update(waConversations)
+        .set({
+          botState: sql`coalesce(${waConversations.botState}, '{}'::jsonb) || jsonb_build_object('displayName', ${senderName}::text)`,
+        })
+        .where(eq(waConversations.id, conversation.id));
+    }
+
     if (!message) {
       return { action: "duplicate", duplicate: true } as const;
     }

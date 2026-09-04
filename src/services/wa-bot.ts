@@ -37,6 +37,7 @@ import {
   pickImagePath,
 } from "@/core/bot/variants";
 import { buildBotSystemPrompt, truncateForWhatsApp } from "@/core/bot/prompt";
+import { polishBotReply } from "@/core/bot/reply";
 import {
   auditLog,
   customerAddresses,
@@ -192,7 +193,7 @@ async function saveBotState(
  */
 async function handOffToHuman(
   db: DbOrTx,
-  ctx: { conversationId: string; phoneE164: string },
+  ctx: { conversationId: string; phoneE164: string; lastInboundId: string },
   motivo: string,
 ): Promise<void> {
   const now = new Date();
@@ -217,7 +218,9 @@ async function handOffToHuman(
 
   await enqueueOutboxEvent(db, {
     eventType: "wa.owner_forward",
-    dedupeKey: `wa.handoff:${ctx.conversationId}:${Date.now()}`,
+    // Determinístico pela última inbound: o retry do turno (ou o rollback da
+    // transação) nunca duplica o aviso ao dono.
+    dedupeKey: `wa.handoff:${ctx.conversationId}:${ctx.lastInboundId}`,
     aggregateType: "wa_conversation",
     aggregateId: ctx.conversationId,
     payload: {
@@ -251,7 +254,7 @@ function formatDeliveryDays(min: number, max: number): string {
  */
 export function historyTextFor(kind: string, body: string): string {
   if (kind === "option_list") {
-    return "[menu interativo enviado ao cliente]";
+    return "[lista tocável do catálogo enviada ao cliente]";
   }
   if (kind === "image") {
     return `[foto enviada ao cliente] ${body}`;
@@ -298,9 +301,9 @@ async function execListarProdutos(
         : "Nossos produtos";
     ctx.onAttachment({
       kind: "option_list",
-      message: "Toque abaixo para ver os produtos 👇",
+      message: "Toque abaixo e veja o catálogo 👇",
       title,
-      buttonLabel: "Ver produtos",
+      buttonLabel: "Ver o catálogo",
       options: items.slice(0, OPTION_LIST_MAX_OPTIONS).map((item) => ({
         id: `produto:${item.slug}`,
         title: truncateOptionTitle(item.name),
@@ -308,7 +311,7 @@ async function execListarProdutos(
       })),
     });
     lines.push(
-      "[Um menu interativo com os produtos foi enviado ao cliente. Responda em 1 frase curta convidando a tocar em Ver produtos — NÃO repita a lista de preços.]",
+      "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 frase curta convidando a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
     );
   }
   return { ok: true, text: lines.join("\n") };
@@ -446,7 +449,7 @@ async function execDetalharProduto(
   }
   if (menuEmitted) {
     lines.push(
-      "[Um menu interativo com as variações foi enviado ao cliente. Responda em 1 frase curta convidando a tocar na opção desejada — NÃO repita a lista de variações.]",
+      "[A lista tocável de cores e tamanhos foi enviada ao cliente. Responda em 1 frase curta convidando a tocar na opção desejada — NÃO repita a lista de variações.]",
     );
   }
   return { ok: true, text: lines.join("\n") };
@@ -1052,7 +1055,11 @@ async function execTransferir(
 ): Promise<ToolResult> {
   await handOffToHuman(
     db,
-    { conversationId: ctx.conversationId, phoneE164: ctx.phoneE164 },
+    {
+      conversationId: ctx.conversationId,
+      phoneE164: ctx.phoneE164,
+      lastInboundId: ctx.lastInboundId,
+    },
     input.motivo,
   );
   return { ok: true, text: "transferido", endsTurn: true };
@@ -1227,6 +1234,7 @@ export async function runBotTurn(
       : {};
 
     let turn: AssistantTurn;
+    const startedAt = Date.now();
     try {
       turn = await assistant.respondTurn({ system, history, model, executeTool });
     } catch (error) {
@@ -1242,7 +1250,11 @@ export async function runBotTurn(
         });
         await handOffToHuman(
           tx,
-          { conversationId, phoneE164: conversation.phoneE164 },
+          {
+            conversationId,
+            phoneE164: conversation.phoneE164,
+            lastInboundId: lastInbound.id,
+          },
           "Assistente de IA indisponível",
         );
         return { replied: "sent" in sent, handedOff: true };
@@ -1289,10 +1301,30 @@ export async function runBotTurn(
       }
     }
 
+    // Trilha do turno para o painel e para o custo por conversa: quais
+    // ferramentas rodaram, tokens gastos, tempo e se transferiu. Nunca guarda
+    // o texto (ele já está em wa_messages).
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "wa.bot_turn",
+      entityType: "wa_conversation",
+      entityId: conversationId,
+      after: {
+        inboundId: lastInbound.id,
+        model,
+        toolCalls: turn.toolCalls,
+        usage: turn.usage,
+        handedOff: turn.handedOff,
+        attachments: attachments.map((attachment) => attachment.kind),
+        durationMs: Date.now() - startedAt,
+      },
+    });
+
     let replied = false;
     if (turn.reply !== null && turn.reply.trim() !== "") {
       const sent = await sendTemplateMessage(tx, provider, {
-        bodyOverride: truncateForWhatsApp(turn.reply),
+        bodyOverride: truncateForWhatsApp(polishBotReply(turn.reply)),
         phoneE164: conversation.phoneE164,
         ...customerRef,
         dedupeKey: replyDedupeKey,

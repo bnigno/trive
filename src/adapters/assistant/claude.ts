@@ -22,7 +22,10 @@ export class ClaudeSalesAssistant implements SalesAssistant {
           "Assistente de IA não configurado — informe a ANTHROPIC_API_KEY",
         );
       }
-      this.client = new Anthropic();
+      // A rota do Inngest tem 60 s: um turno lento precisa falhar dentro
+      // desse teto (o default do SDK é 10 min com 2 tentativas — a função
+      // morreria antes e o evento ficaria preso até o lease expirar).
+      this.client = new Anthropic({ timeout: 40_000, maxRetries: 1 });
     }
     return this.client;
   }
