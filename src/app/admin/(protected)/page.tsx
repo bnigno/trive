@@ -371,7 +371,7 @@ export default async function AdminDashboardPage() {
             ) : (
               <Table headers={["Produto", "SKU", "Qtde", "Receita"]}>
                 {ownerData.top.map((product) => (
-                  <Tr key={product.sku}>
+                  <Tr key={product.variantId}>
                     <Td className="font-medium text-zinc-900 dark:text-zinc-100">
                       {product.name}
                     </Td>

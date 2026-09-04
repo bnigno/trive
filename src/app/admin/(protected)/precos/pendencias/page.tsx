@@ -96,6 +96,14 @@ function BatchCard({ batch }: { batch: BatchSummary }) {
               >
                 {item.sku}
               </Link>
+              <p className="text-xs">
+                <Link
+                  href={`/admin/produtos/${item.productId}`}
+                  className="text-zinc-500 hover:underline dark:text-zinc-400"
+                >
+                  {item.productName}
+                </Link>
+              </p>
             </Td>
             <Td>
               {item.currentPriceCents !== null ? (
@@ -196,8 +204,13 @@ export default async function PendingApprovalsPage({
                       >
                         {item.sku}
                       </Link>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        {item.productName}
+                      <p className="text-xs">
+                        <Link
+                          href={`/admin/produtos/${item.productId}`}
+                          className="text-zinc-500 hover:underline dark:text-zinc-400"
+                        >
+                          {item.productName}
+                        </Link>
                       </p>
                     </Td>
                     <Td>

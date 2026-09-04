@@ -596,6 +596,8 @@ describe("consultas", () => {
     expect(detail).not.toBeNull();
     expect(detail?.customer?.fullName).toBe("Cliente Teste");
     expect(detail?.items).toHaveLength(1);
+    // O código atual da variação viaja junto do snapshot da venda.
+    expect(detail?.items[0].currentSku).toBe(detail?.items[0].skuSnapshot);
     expect(detail?.history.map((h) => h.toStatus)).toEqual([
       "draft",
       "pending_payment",

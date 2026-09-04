@@ -6,7 +6,11 @@ import {
   abbreviateAxisValue,
   buildSku,
   dedupeSkus,
+  normalizeSkuInput,
   skuBaseFromName,
+  skuMaxLength,
+  suggestSkuForVariant,
+  validateSku,
 } from "@/core/catalog/sku";
 
 describe("skuBaseFromName", () => {
@@ -121,5 +125,43 @@ describe("dedupeSkus", () => {
 
   it("lista vazia devolve lista vazia", () => {
     expect(dedupeSkus([], new Set(["X"]))).toEqual([]);
+  });
+});
+
+describe("normalizeSkuInput / validateSku", () => {
+  it("normaliza o que o dono digita: caixa alta, espaço vira hífen", () => {
+    expect(normalizeSkuInput("  longo dunas-pret-m ")).toBe("LONGO-DUNAS-PRET-M");
+    expect(normalizeSkuInput("baby  look--bella")).toBe("BABY-LOOK-BELLA");
+  });
+
+  it("aceita códigos válidos e recusa vazio, curto, longo e caracteres estranhos", () => {
+    expect(validateSku("LONGO-DUNAS-PRET-M")).toBeNull();
+    expect(validateSku("GG")).toBeNull();
+    expect(validateSku("")).toMatch(/Informe/);
+    expect(validateSku("A")).toMatch(/Informe/);
+    expect(validateSku("LONGO_DUNAS")).toMatch(/letras, números e hífen/);
+    expect(validateSku("LONGO%DUNAS")).toMatch(/letras, números e hífen/);
+    expect(validateSku("-LONGO")).toMatch(/letras, números e hífen/);
+    expect(validateSku("A".repeat(skuMaxLength()))).toBeNull();
+    expect(validateSku("A".repeat(skuMaxLength() + 1))).toMatch(/longo demais/);
+  });
+
+  it("o teto cabe no id do menu tocável do WhatsApp", () => {
+    expect(skuMaxLength()).toBe(55);
+  });
+});
+
+describe("suggestSkuForVariant", () => {
+  it("repete a regra do cadastro com o nome atual do produto", () => {
+    expect(
+      suggestSkuForVariant("LONGO DUNAS", ["cor", "tamanho"], { cor: "Preto", tamanho: "M" }),
+    ).toBe("LONGO-DUNAS-PRET-M");
+  });
+
+  it("ignora eixo sem valor e produto sem eixos", () => {
+    expect(suggestSkuForVariant("Baby Look Bella", ["cor", "tamanho"], { cor: "Marrom" })).toBe(
+      "BABY-LOOK-BELLA-MARR",
+    );
+    expect(suggestSkuForVariant("Caneca", [], {})).toBe("CANECA");
   });
 });

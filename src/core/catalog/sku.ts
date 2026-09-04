@@ -78,3 +78,55 @@ export function dedupeSkus(
   }
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Código digitado à mão (edição/adição de variação): normalização e validação.
+// O menu tocável do WhatsApp usa o id `variante:<sku>`; acima do limite da
+// Z-API o menu some em silêncio, por isso o teto do código é derivado dele.
+// ---------------------------------------------------------------------------
+
+import { OPTION_ID_MAX_CHARS } from "@/core/bot/option-list";
+import { VARIANT_OPTION_ID_PREFIX } from "@/core/bot/variants";
+
+const SKU_MIN_LENGTH = 2;
+
+/** Teto do código para caber em `variante:<sku>` (64 − 9 = 55). */
+export function skuMaxLength(): number {
+  return OPTION_ID_MAX_CHARS - VARIANT_OPTION_ID_PREFIX.length;
+}
+
+/** "  longo dunas-pret-m " → "LONGO-DUNAS-PRET-M" (espaço vira hífen). */
+export function normalizeSkuInput(raw: string): string {
+  return raw
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "-")
+    .replace(/-{2,}/g, "-");
+}
+
+/** Mensagem de erro (pt-BR) ou null quando o código é aceitável. */
+export function validateSku(sku: string): string | null {
+  if (sku.length < SKU_MIN_LENGTH) return "Informe o código (SKU) da variação.";
+  if (sku.length > skuMaxLength()) {
+    return `O código (SKU) ficou longo demais: use até ${skuMaxLength()} caracteres, senão o menu de escolha no WhatsApp deixa de aparecer.`;
+  }
+  if (!/^[A-Z0-9][A-Z0-9-]*$/.test(sku)) {
+    return "Use só letras, números e hífen no código (SKU).";
+  }
+  return null;
+}
+
+/**
+ * A mesma sugestão do cadastro, para a tela de edição: nome atual + valores
+ * dos eixos na ordem do produto (eixo sem valor é ignorado).
+ */
+export function suggestSkuForVariant(
+  name: string,
+  axes: readonly string[],
+  attributes: Readonly<Record<string, string>>,
+): string {
+  return buildSku(
+    skuBaseFromName(name),
+    axes.map((axis) => attributes[axis] ?? ""),
+  );
+}

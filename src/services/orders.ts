@@ -501,10 +501,14 @@ export async function getOrderDetail(db: DbOrTx, orderId: string) {
     .from(customers)
     .where(eq(customers.id, order.customerId));
 
-  const items = await db
-    .select()
+  // O snapshot é registro da época; o código ATUAL da variação vem junto
+  // para a tela mostrar "hoje X" quando o dono trocou o SKU depois da venda.
+  const itemRows = await db
+    .select({ item: orderItems, currentSku: productVariants.sku })
     .from(orderItems)
+    .leftJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
     .where(eq(orderItems.orderId, order.id));
+  const items = itemRows.map((row) => ({ ...row.item, currentSku: row.currentSku }));
 
   const history = await db
     .select()

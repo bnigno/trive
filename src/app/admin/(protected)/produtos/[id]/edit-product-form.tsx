@@ -39,8 +39,13 @@ export function EditProductForm({
   return (
     <form action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="productId" value={product.id} />
+      <input type="hidden" name="currentName" value={product.name} />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Nome" className="sm:col-span-2">
+        <Field
+          label="Nome"
+          className="sm:col-span-2"
+          hint="Mudar o nome não altera os códigos (SKU) das variações; para ajustá-los, use “Editar variações” logo abaixo."
+        >
           <Input name="name" defaultValue={product.name} required />
         </Field>
         <Field label="Descrição" className="sm:col-span-2">

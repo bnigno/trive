@@ -28,6 +28,11 @@ function toErrorState(error: unknown): FormState {
 function revalidateProduct(productId: string): void {
   revalidatePath("/admin/produtos");
   revalidatePath(`/admin/produtos/${productId}`);
+  // A vitrine tem ISR de 5 min: nome e código novos precisam chegar à loja
+  // na hora (a home lista peças, a coleção e a página da peça mostram o Cód.).
+  revalidatePath("/");
+  revalidatePath("/produtos");
+  revalidatePath("/produto/[slug]", "page");
 }
 
 /** Reconstrói atributos a partir de inputs nomeados "attr:<eixo>". */
@@ -54,6 +59,7 @@ export async function updateProductAction(
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { error: "Informe o nome do produto." };
+  const currentName = String(formData.get("currentName") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const brand = String(formData.get("brand") ?? "").trim();
   const categoryId = String(formData.get("categoryId") ?? "").trim();
@@ -80,6 +86,13 @@ export async function updateProductAction(
   }
 
   revalidateProduct(productId);
+  if (currentName && currentName !== name) {
+    // A dúvida nasce aqui: o nome mudou e os códigos ficaram. Dizer na hora.
+    return {
+      success:
+        "Produto atualizado. Os códigos (SKU) das variações continuam os mesmos — ajuste em “Editar variações”, se quiser.",
+    };
+  }
   return { success: "Produto atualizado." };
 }
 
@@ -234,16 +247,17 @@ export async function addVariantAction(
     if (!value) return { error: `Preencha o campo "${axis}".` };
   }
 
+  let created: { sku: string };
   try {
     const db = getDb();
-    await addVariant(db, { productId, userId: user.id, sku, attributes });
+    created = await addVariant(db, { productId, userId: user.id, sku, attributes });
   } catch (error) {
     return toErrorState(error);
   }
 
   revalidateProduct(productId);
   return {
-    success: `Variação "${sku}" criada. Defina o custo e o preço na calculadora de preços.`,
+    success: `Variação "${created.sku}" criada. Defina o custo e o preço na calculadora de preços.`,
   };
 }
 
@@ -254,19 +268,32 @@ export async function updateVariantAction(
   const user = await requireOwner("produtos");
   const productId = String(formData.get("productId") ?? "");
   const variantId = String(formData.get("variantId") ?? "");
+  const currentSku = String(formData.get("currentSku") ?? "");
+  const typedSku = String(formData.get("sku") ?? "").trim();
 
   const attributes = attributesFromForm(formData);
   for (const [axis, value] of Object.entries(attributes)) {
     if (!value) return { error: `Preencha o campo "${axis}".` };
   }
 
+  // O código só viaja quando o dono mexeu nele (o service normaliza e valida).
+  const skuChanged = typedSku !== "" && typedSku !== currentSku;
+  let updated: { sku: string };
   try {
     const db = getDb();
-    await updateVariant(db, { variantId, userId: user.id, attributes });
+    updated = await updateVariant(db, {
+      variantId,
+      userId: user.id,
+      attributes,
+      ...(skuChanged ? { sku: typedSku } : {}),
+    });
   } catch (error) {
     return toErrorState(error);
   }
 
   revalidateProduct(productId);
+  if (skuChanged && updated.sku !== currentSku) {
+    return { success: `Código alterado de ${currentSku} para ${updated.sku}.` };
+  }
   return { success: "Variação atualizada." };
 }

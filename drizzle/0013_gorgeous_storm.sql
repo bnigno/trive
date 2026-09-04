@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "product_variants_sku_lower_unique_idx" ON "product_variants" USING btree (lower("sku"));

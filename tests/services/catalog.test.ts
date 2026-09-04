@@ -20,8 +20,10 @@ import {
   thumbPathFor,
   updateCategoryCoverFocus,
   updateProduct,
+  updateVariant,
 } from "@/services/catalog";
 import {
+  createTestCustomer,
   createTestDb,
   createTestSupplier,
   FIXED_USER_ID,
@@ -971,5 +973,151 @@ describe("setCategoryCover / updateCategoryCoverFocus / removeCategoryCover", ()
 
     expect(await removeCategoryCover(db, storage, { categoryId: category.id, userId: FIXED_USER_ID }))
       .toEqual({ removed: false });
+  });
+});
+
+describe("updateVariant — código (SKU) editável", () => {
+  async function auditsFor(variantId: string) {
+    return db
+      .select({ action: schema.auditLog.action, before: schema.auditLog.before, after: schema.auditLog.after })
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, variantId));
+  }
+
+  it("troca o código, normaliza o que foi digitado e grava só o de→para no audit", async () => {
+    const { product, variants } = await createProduct(db, {
+      name: "Longo Elen",
+      variants: [{ sku: "LONGO-ELEN-PRET-M", attributes: { cor: "Preto", tamanho: "M" } }],
+      userId: FIXED_USER_ID,
+    });
+    const variant = variants[0];
+
+    const updated = await updateVariant(db, {
+      variantId: variant.id,
+      userId: FIXED_USER_ID,
+      sku: " longo dunas-pret-m ",
+      attributes: { cor: "Preto", tamanho: "M" },
+    });
+    expect(updated.sku).toBe("LONGO-DUNAS-PRET-M");
+    expect(updated.productId).toBe(product.id);
+
+    const audits = (await auditsFor(variant.id)).filter((row) => row.action === "variant.update");
+    expect(audits).toHaveLength(1);
+    expect(audits[0].before).toEqual({ sku: "LONGO-ELEN-PRET-M" });
+    expect(audits[0].after).toEqual({ sku: "LONGO-DUNAS-PRET-M" });
+  });
+
+  it("salvar sem mudar nada não grava UPDATE nem audit", async () => {
+    const { variants } = await createProduct(db, {
+      name: "Blusa Seda",
+      variants: [{ sku: "BLUSA-SEDA-P", attributes: { tamanho: "P" } }],
+      userId: FIXED_USER_ID,
+    });
+    const variant = variants[0];
+    const before = (await auditsFor(variant.id)).length;
+    const [row] = await db
+      .select({ updatedAt: schema.productVariants.updatedAt })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.id, variant.id));
+
+    const same = await updateVariant(db, {
+      variantId: variant.id,
+      userId: FIXED_USER_ID,
+      sku: "blusa-seda-p",
+      attributes: { tamanho: "P" },
+    });
+    expect(same.sku).toBe("BLUSA-SEDA-P");
+    expect(same.updatedAt).toEqual(row.updatedAt);
+    expect((await auditsFor(variant.id)).length).toBe(before);
+  });
+
+  it("recusa código inválido e código de outra variação, mesmo só trocando a caixa", async () => {
+    const { variants } = await createProduct(db, {
+      name: "Saia Midi",
+      variants: [
+        { sku: "SAIA-MIDI-P", attributes: { tamanho: "P" } },
+        { sku: "SAIA-MIDI-M", attributes: { tamanho: "M" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const [p, m] = variants;
+    const base = { variantId: m.id, userId: FIXED_USER_ID };
+
+    await expect(updateVariant(db, { ...base, sku: "SAIA MIDI_M" })).rejects.toThrow(/letras, números e hífen/);
+    await expect(updateVariant(db, { ...base, sku: "A".repeat(56) })).rejects.toThrow(/longo demais/);
+    await expect(updateVariant(db, { ...base, sku: "saia-midi-p" })).rejects.toMatchObject({
+      code: "sku_duplicado",
+      message: expect.stringContaining("«Saia Midi»"),
+    });
+    expect(p.sku).toBe("SAIA-MIDI-P");
+
+    // Produto arquivado continua segurando o código, e a mensagem diz isso.
+    const other = await createProduct(db, {
+      name: "Saia Antiga",
+      variants: [{ sku: "SAIA-ANTIGA-U" }],
+      userId: FIXED_USER_ID,
+    });
+    await updateProduct(db, { productId: other.product.id, status: "archived", userId: FIXED_USER_ID });
+    await expect(updateVariant(db, { ...base, sku: "SAIA-ANTIGA-U" })).rejects.toThrow(/«Saia Antiga» \(arquivado\)/);
+  });
+
+  it("recusa código que já foi vendido em outra peça", async () => {
+    const customerId = await createTestCustomer(db);
+    const sold = await createProduct(db, {
+      name: "Colar Antigo",
+      variants: [{ sku: "COLAR-ANTIGO" }],
+      userId: FIXED_USER_ID,
+    });
+    const [order] = await db
+      .insert(schema.orders)
+      .values({ customerId, status: "paid", channel: "manual", subtotalCents: 1000, totalCents: 1000 })
+      .returning({ id: schema.orders.id });
+    await db.insert(schema.orderItems).values({
+      orderId: order.id,
+      productVariantId: sold.variants[0].id,
+      skuSnapshot: "COLAR-ANTIGO",
+      nameSnapshot: "Colar Antigo",
+      quantity: 1,
+      unitPriceCents: 1000,
+      unitCostCents: 400,
+      totalCents: 1000,
+    });
+    // O código fica livre no cadastro (a peça antiga foi renomeada)…
+    await updateVariant(db, { variantId: sold.variants[0].id, userId: FIXED_USER_ID, sku: "COLAR-NOVO" });
+
+    const mine = await createProduct(db, {
+      name: "Colar Lua",
+      variants: [{ sku: "COLAR-LUA" }],
+      userId: FIXED_USER_ID,
+    });
+    // …mas outra peça não pode assumi-lo: pedidos antigos apontariam para ela.
+    await expect(
+      updateVariant(db, { variantId: mine.variants[0].id, userId: FIXED_USER_ID, sku: "colar-antigo" }),
+    ).rejects.toMatchObject({ code: "sku_reutilizado" });
+  });
+
+  it("addVariant normaliza o código e o banco recusa duplicata só de caixa", async () => {
+    const { product } = await createProduct(db, {
+      name: "Colar Mar",
+      variants: [{ sku: "COL-MAR-P", attributes: { tamanho: "P" } }],
+      userId: FIXED_USER_ID,
+    });
+    const created = await addVariant(db, {
+      productId: product.id,
+      sku: " col mar g ",
+      attributes: { tamanho: "G" },
+      userId: FIXED_USER_ID,
+    });
+    expect(created.sku).toBe("COL-MAR-G");
+
+    // Pelo cadastro em lote o código não passa pela pré-checagem: quem
+    // barra é o índice sem caixa do banco, traduzido para a mensagem amiga.
+    await expect(
+      createProduct(db, {
+        name: "Colar Mar Cópia",
+        variants: [{ sku: "col-mar-p" }],
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toMatchObject({ code: "sku_duplicado" });
   });
 });
