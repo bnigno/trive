@@ -27,6 +27,7 @@ import {
   PolicyForm,
   StockSettingsForm,
   StoreDataForm,
+  StorefrontForm,
 } from "./forms";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,10 @@ type SettingsData = {
     whatsapp: string;
     pixKey: string;
   };
+  storefront: {
+    tagline: string;
+    manifesto: string;
+  };
   mpEnabled: boolean;
 };
 
@@ -94,6 +99,8 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_email",
         "store_whatsapp",
         "store_pix_key",
+        "store_tagline",
+        "store_manifesto",
         "mp_enabled",
       ]),
     ]);
@@ -108,6 +115,10 @@ async function loadSettings(): Promise<SettingsData | null> {
         email: asString(map.store_email),
         whatsapp: asString(map.store_whatsapp),
         pixKey: asString(map.store_pix_key),
+      },
+      storefront: {
+        tagline: asString(map.store_tagline),
+        manifesto: asString(map.store_manifesto),
       },
       settings: {
         changeThresholdRate:
@@ -187,6 +198,21 @@ export default async function ConfiguracoesPage() {
               email: data.store.email,
               whatsapp: data.store.whatsapp,
               pixKey: data.store.pixKey,
+            }}
+          />
+        </div>
+      </Card>
+
+      <Card title="Vitrine">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Textos da abertura da loja. Salvar já atualiza a home; deixe em
+            branco para voltar ao texto padrão.
+          </p>
+          <StorefrontForm
+            defaults={{
+              tagline: data.storefront.tagline,
+              manifesto: data.storefront.manifesto,
             }}
           />
         </div>

@@ -9,6 +9,7 @@ import {
   Input,
   Select,
   SubmitButton,
+  TextArea,
 } from "@/components/ui/form";
 import {
   replaceFeeRuleAction,
@@ -17,6 +18,7 @@ import {
   updatePolicyAction,
   updateStockSettingsAction,
   updateStoreDataAction,
+  updateStorefrontAction,
   type FormState,
 } from "./actions";
 
@@ -506,6 +508,53 @@ export function StockSettingsForm({
 
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar estoque</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vitrine — textos da home (frase do hero e manifesto)
+// ---------------------------------------------------------------------------
+
+export function StorefrontForm({
+  defaults,
+}: {
+  defaults: { tagline: string; manifesto: string };
+}) {
+  const [state, formAction] = useActionState(updateStorefrontAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <Field
+        label="Frase do hero"
+        hint="Aparece abaixo do logo na abertura da home. Vazio = “Para a mulher que se veste de si.”"
+      >
+        <Input
+          name="storeTagline"
+          maxLength={140}
+          defaultValue={defaults.tagline}
+          placeholder="Para a mulher que se veste de si."
+        />
+      </Field>
+      <Field
+        label="Manifesto"
+        hint="Até 600 caracteres. Uma linha em branco separa os parágrafos. Vazio = texto padrão."
+      >
+        <TextArea
+          name="storeManifesto"
+          rows={5}
+          maxLength={600}
+          defaultValue={defaults.manifesto}
+          placeholder={"Vestir é um jeito de contar quem você é — sem precisar dizer uma palavra.\n\nA TRIVÉ nasce de um laço: entre o clássico e o agora…"}
+        />
+      </Field>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar textos da vitrine</SubmitButton>
       </div>
     </form>
   );

@@ -235,3 +235,36 @@ describe("replaceFeeRule — métodos manuais (pix_manual/cash)", () => {
     expect(pixManual.paymentMethod).toBe("pix_manual");
   });
 });
+
+describe("store_tagline / store_manifesto (textos da vitrine)", () => {
+  it("apara espaços, aceita vazio (= texto padrão) e limita o tamanho", async () => {
+    await updateSetting(db, {
+      key: "store_tagline",
+      value: "  Para a mulher que se veste de si.  ",
+      userId: FIXED_USER_ID,
+    });
+    await updateSetting(db, {
+      key: "store_manifesto",
+      value: "",
+      userId: FIXED_USER_ID,
+    });
+    const map = await getSettingsMap(db, ["store_tagline", "store_manifesto"]);
+    expect(map.store_tagline).toBe("Para a mulher que se veste de si.");
+    expect(map.store_manifesto).toBe("");
+
+    await expect(
+      updateSetting(db, {
+        key: "store_tagline",
+        value: "x".repeat(141),
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow("no máximo 140");
+    await expect(
+      updateSetting(db, {
+        key: "store_manifesto",
+        value: "x".repeat(601),
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow("no máximo 600");
+  });
+});
