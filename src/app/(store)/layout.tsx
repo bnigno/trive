@@ -14,14 +14,17 @@ import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
 
-// Cada peso × estilo vira um arquivo pré-carregado que disputa banda com a
-// imagem LCP: 400 (hero, manifesto, itálicos) e 600 (títulos) bastam.
+// Cada peso × estilo vira um arquivo que disputa banda com a imagem LCP:
+// 400 (hero, manifesto, itálicos) e 600 (títulos) bastam. Sem preload: os 4
+// arquivos (~150 KB) saem do caminho crítico e o swap da serif acontece atrás
+// do véu na home (medido no Lighthouse: LCP caía de 4,2 s para a faixa boa).
 const cormorant = Cormorant_Garamond({
   variable: "--font-cormorant",
   subsets: ["latin", "latin-ext"],
   weight: ["400", "600"],
   style: ["normal", "italic"],
   display: "swap",
+  preload: false,
 });
 
 const jost = Jost({

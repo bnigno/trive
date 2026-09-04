@@ -35,6 +35,11 @@ export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
         "height": 471
       },
       {
+        "src": "/brand/mark-light-600.webp",
+        "width": 600,
+        "height": 707
+      },
+      {
         "src": "/brand/mark-light-800.webp",
         "width": 800,
         "height": 942
@@ -62,6 +67,11 @@ export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
         "src": "/brand/mark-dark-400.webp",
         "width": 400,
         "height": 470
+      },
+      {
+        "src": "/brand/mark-dark-600.webp",
+        "width": 600,
+        "height": 706
       },
       {
         "src": "/brand/mark-dark-800.webp",

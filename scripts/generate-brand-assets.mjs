@@ -25,7 +25,9 @@ const SOURCES = {
 const VIEWBOX = "0 0 1800 800";
 const VIEWBOX_WIDTH = 1800;
 const MONOGRAM_LABEL = 'aria-label="Monograma TRIVÉ"';
-const MARK_WIDTHS = [96, 192, 400, 800];
+// 600w existe para telas de DPR ~1,75–2,5 (Android comum): sem ela o
+// navegador pulava de 400 para 800 e o hero baixava 74 KB no lugar de ~45.
+const MARK_WIDTHS = [96, 192, 400, 600, 800];
 const LOCKUP_WIDTH = 1200;
 // Rasteriza a 2× o viewBox e reduz: o antialias do sharp suaviza o traçado.
 const RENDER_WIDTH = 3600;
@@ -77,7 +79,7 @@ async function rasterTrimmed(svg) {
 async function writeWebp(buffer, width, outFile) {
   const info = await sharp(buffer)
     .resize({ width, withoutEnlargement: true })
-    .webp({ quality: 88, alphaQuality: 90 })
+    .webp({ quality: 84, alphaQuality: 90 })
     .toFile(outFile);
   return { width: info.width, height: info.height };
 }

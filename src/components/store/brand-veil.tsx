@@ -4,8 +4,9 @@
 // globals.css): roda antes do JS hidratar e termina em visibility:hidden, então
 // o véu morre até sem JS. Aqui só há o mínimo de JS: pular por toque/tecla,
 // lembrar que já foi visto (sessionStorage) e avisar o CSS que acabou
-// (data-veil-done no <html>, que liga o brilho do wordmark). O elemento nunca é
-// desmontado depois de tocar — a cascata do hero depende dele como irmão.
+// (data-veil-done no <html>, que liga o brilho do wordmark). Depois de tocar o
+// elemento fica no DOM invisível, sem desmontar (o hero já nasce pronto por
+// baixo dele — o LCP não espera o véu).
 // Importa só React e as constantes de marca (assets.ts).
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 

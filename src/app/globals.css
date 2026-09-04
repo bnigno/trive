@@ -131,7 +131,6 @@ body {
   --animate-cart-bump: cart-bump 320ms var(--ease-silk);
   --animate-step-fill: step-fill var(--dur-slow) var(--ease-silk) both;
   --animate-step-halo: step-halo 2000ms ease-in-out infinite;
-  --animate-hero-in: hero-in 700ms var(--ease-silk) both;
   --animate-cue-pulse: cue-pulse 2200ms ease-in-out infinite;
   --animate-ribbon-check: ribbon-check 420ms var(--ease-silk) both;
   --animate-ribbon-drift: ribbon-drift var(--dur-drift) ease-in-out infinite
@@ -247,8 +246,9 @@ body {
    Timeline (1600ms): monograma 0–400 → anel 200–800 → fita 500–1200 → o véu
    inteiro esmaece 1200–1600 (veil-fade termina em visibility: hidden com
    fill both — morre até sem JS). O hero tem o monograma no mesmo lugar: a
-   marca "fica" e a sala escurece ao redor. O elemento nunca é desmontado
-   (fica invisível): a cascata do hero depende dele como irmão (.veil ~ .cinema).
+   marca "fica" e a sala escurece ao redor. Depois de tocar, o elemento fica no
+   DOM invisível (visibility: hidden pelo fill da animação) — sem desmontar,
+   sem re-render.
    -------------------------------------------------------------------------- */
 
 .veil {
@@ -396,10 +396,6 @@ body {
    centenas de ms em 4G). O hero então nasce pronto, sem cascata. */
 [data-veil-seen] .veil {
   display: none;
-}
-
-[data-veil-seen] .hero-content {
-  animation: none !important;
 }
 
 /* ==========================================================================
@@ -572,14 +568,9 @@ body {
   background: var(--color-ivory-100);
 }
 
-/* Hero visível por padrão; a cascata só existe enquanto o véu toca. */
-.veil:not(.veil-skip) ~ .cinema .hero-content {
-  animation: hero-in 700ms var(--ease-silk) 1100ms both;
-}
-
-.veil.veil-skip ~ .cinema .hero-content {
-  animation-delay: 0ms;
-}
+/* O hero nasce pronto (sem cascata de entrada): o véu esmaece sobre ele e a
+   marca "fica" no lugar. Uma cascata atrás do véu só atrasava o LCP (o título
+   ficava invisível ~1,9s no Lighthouse) sem nada visível em troca. */
 
 /* Hero coberto pelo dia: para tudo (animation-play-state não herda — por
    isso o *) e esconde o conteúdo para o compositor não desenhar à toa. */
@@ -595,17 +586,6 @@ body {
 /* Na home o convite noir encosta no rodapé noir. */
 [data-store]:has(.cinema) .site-footer {
   margin-top: 0;
-}
-
-@keyframes hero-in {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @keyframes cue-pulse {
@@ -672,16 +652,9 @@ body {
   [data-veil-done] .gold-sheen,
   .animate-ribbon-drift,
   .animate-cue-pulse,
-  .animate-hero-in,
   .animate-ribbon-check,
-  .animate-mark-pulse,
-  .hero-content {
+  .animate-mark-pulse {
     animation: none !important;
-  }
-
-  .hero-content {
-    opacity: 1;
-    transform: none;
   }
 
   .press-sheen::after {
