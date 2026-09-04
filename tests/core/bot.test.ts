@@ -20,6 +20,7 @@ import { formatCentsBRL } from "../../src/lib/money";
 
 const promptOptions = {
   storeName: "TRIVÉ",
+  sellerName: "Lia",
   extraInstructions: "",
   siteUrl: "https://trive.com.br",
 };
@@ -38,24 +39,25 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("WhatsApp");
   });
 
-  it("descreve a personalidade descolada e o elogio específico", () => {
+  it("descreve a personalidade descolada e o elogio à escolha, com motivo real", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
     expect(prompt).toContain("JEITO DE FALAR");
-    expect(prompt).toContain("brincalhão");
+    expect(prompt).toContain("amiga estilosa");
     // Elogio tem que apontar algo REAL: elogio genérico repetido soa falso.
-    expect(prompt).toContain("REAL e específico");
+    expect(prompt).toContain("Elogie a ESCOLHA, não a pessoa");
+    expect(prompt).toContain("motivo real");
     // O tom formal de call center é justamente o que o dono não quer.
-    expect(prompt).toContain("prezado cliente");
+    expect(prompt).toContain("prezada");
   });
 
   it("subordina a personalidade à exatidão e manda baixar a brincadeira em problema", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
-    // 16: exatidão ganha da graça; elogio nunca vira pressão de venda.
-    expect(prompt).toContain("16.");
-    expect(prompt).toContain("seja exato");
-    expect(prompt).toContain("pressionar a compra");
-    // 17: cliente irritado não recebe piada.
+    // 17: exatidão ganha da graça; elogio nunca vira pressão de venda.
     expect(prompt).toContain("17.");
+    expect(prompt).toContain("seja exata");
+    expect(prompt).toContain("pressionar a compra");
+    // 18: cliente irritada não recebe piada.
+    expect(prompt).toContain("18.");
     expect(prompt).toContain("baixe a brincadeira");
   });
 
@@ -70,15 +72,19 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("1.");
     expect(prompt).toContain("10.");
     expect(prompt).toContain("15.");
+    expect(prompt).toContain("19.");
   });
 
-  it("exige confirmar cor e tamanho antes de criar_pedido em produto com variação", () => {
+  it("exige confirmar cor e tamanho antes de pôr na sacola em peça com variação", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
-    expect(prompt).toContain("18.");
+    expect(prompt).toContain("12.");
     expect(prompt).toContain("COR e TAMANHO");
     expect(prompt).toContain("SKU exato");
     // O bot não pode "chutar" o tamanho para adiantar a venda.
-    expect(prompt).toContain("nunca escolha por ele");
+    expect(prompt).toContain("nunca escolha por ela");
+    // A sacola é a fonte do pedido e o frete escolhido vai em criar_pedido.
+    expect(prompt).toContain("13.");
+    expect(prompt).toContain("passe em frete a opção que a cliente escolheu");
   });
 
   it("contém as regras de Pix manual, aviso ao dono e dinheiro na entrega", () => {
@@ -149,12 +155,12 @@ describe("BOT_TOOLS", () => {
     expect(itens["required"]).toEqual(["sku", "quantidade"]);
   });
 
-  it("required de criar_pedido é só 'itens': os dados pessoais podem vir do cadastro salvo", () => {
+  it("criar_pedido não tem campo sempre obrigatório: itens vêm da sacola e dados do cadastro salvo", () => {
     const criarPedido = BOT_TOOLS.find((tool) => tool.name === "criar_pedido");
     const required = criarPedido?.input_schema["required"] as string[];
     // A exigência de verdade (cadastro salvo OU conjunto completo) vive no
     // superRefine de criarPedidoSchema — o JSON schema só orienta o modelo.
-    expect(required).toEqual(["itens"]);
+    expect(required).toEqual([]);
 
     const properties = criarPedido?.input_schema["properties"] as Record<
       string,
@@ -206,12 +212,22 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     uf: "SP",
   };
 
-  it("listar_produtos: aceita vazio e busca; rejeita extras", () => {
+  it("listar_produtos: aceita vazio, busca e filtros; rejeita extras", () => {
     const schema = BOT_TOOL_INPUT_SCHEMAS.listar_produtos;
     expect(schema.safeParse({}).success).toBe(true);
     expect(schema.safeParse({ busca: "camiseta" }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        categoria: "vestidos",
+        cor: "Preto",
+        tamanho: "M",
+        preco_maximo_reais: 300,
+        pagina: 2,
+      }).success,
+    ).toBe(true);
     expect(schema.safeParse({ busca: 1 }).success).toBe(false);
-    expect(schema.safeParse({ categoria: "x" }).success).toBe(false);
+    expect(schema.safeParse({ pagina: 0 }).success).toBe(false);
+    expect(schema.safeParse({ ordenar: "x" }).success).toBe(false);
   });
 
   it("detalhar_produto: exige produto e aceita cor opcional", () => {

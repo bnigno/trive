@@ -1,5 +1,5 @@
 // Apresentação das variações (cor, tamanho…) de um produto no WhatsApp:
-// listagem agrupada, menu tocável e escolha da foto da cor. Tudo PURO — quem
+// listagem agrupada, lista tocável e escolha da foto da cor. Tudo PURO — quem
 // lê o banco e envia é src/services/wa-bot.ts.
 //
 // Um produto 3 cores × 3 tamanhos tem 9 combinações; despejar 9 linhas com
@@ -37,7 +37,8 @@ export type BotProductImage = {
 /** Prefixo do id de cada linha do menu de variação; espelha 'produto:<slug>'. */
 export const VARIANT_OPTION_ID_PREFIX = "variante:";
 
-export const VARIANT_MENU_BUTTON_LABEL = "Escolher opção";
+// 20 caracteres: teto do WhatsApp para o texto do botão que abre a lista.
+export const VARIANT_MENU_BUTTON_LABEL = "Escolher cor/tamanho";
 
 /**
  * Eixos que as variantes REALMENTE preenchem, na ordem declarada em

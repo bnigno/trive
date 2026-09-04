@@ -62,6 +62,8 @@ const activePriceJoin = () =>
 const listPublicProductsSchema = z.object({
   categorySlug: z.string().trim().min(1).optional(),
   q: z.string().trim().min(1).optional(),
+  /** Busca também na descrição (a vendedora do WhatsApp procura por "linho"). */
+  includeDescription: z.boolean().default(false),
   /** Deixa um produto de fora (ex.: o próprio, na lista de relacionados). */
   excludeProductId: z.uuid().optional(),
   limit: z.number().int().positive().max(200).default(60),
@@ -103,7 +105,11 @@ export async function listPublicProducts(
   if (parsed.q) {
     const pattern = `%${parsed.q}%`;
     filters.push(
-      or(ilike(products.name, pattern), ilike(products.brand, pattern))!,
+      or(
+        ilike(products.name, pattern),
+        ilike(products.brand, pattern),
+        ...(parsed.includeDescription ? [ilike(products.description, pattern)] : []),
+      )!,
     );
   }
 
@@ -482,4 +488,132 @@ export function publicThumbUrl(path: string): string {
  */
 export function publicMdUrl(path: string): string {
   return publicImageUrl(path.replace("-full.webp", "-md.webp"));
+}
+
+// ---------------------------------------------------------------------------
+// 6. Planta da loja e filtro por cor/tamanho — usados pela vendedora do
+// WhatsApp para saber o que existe antes de buscar e para curar por atributo.
+// ---------------------------------------------------------------------------
+
+export interface StoreMapCategory {
+  name: string;
+  slug: string;
+  productCount: number;
+  priceFromCents: number;
+  priceToCents: number;
+}
+
+export interface StoreMap {
+  totalProducts: number;
+  categories: StoreMapCategory[];
+  /** Valores do eixo "cor" com estoque em alguma peça ativa. */
+  colors: string[];
+  /** Valores do eixo "tamanho" com estoque em alguma peça ativa. */
+  sizes: string[];
+}
+
+/** Resumo estável do catálogo vendável (categorias, faixas, cores e tamanhos). */
+export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
+  const categoryRows = await db
+    .select({
+      name: sql<string | null>`${categories.name}`,
+      slug: sql<string | null>`${categories.slug}`,
+      productCount: sql<string>`count(distinct ${products.id})`,
+      priceFromCents: sql<string>`min(${priceVersions.priceCents})`,
+      priceToCents: sql<string>`max(${priceVersions.priceCents})`,
+    })
+    .from(products)
+    .innerJoin(productVariants, sellableVariantJoin())
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(categories, eq(categories.id, products.categoryId))
+    .where(and(eq(products.status, "active"), isNull(products.deletedAt)))
+    .groupBy(categories.id, categories.name, categories.slug)
+    .orderBy(asc(categories.name));
+
+  const axisRows = await db
+    .select({
+      color: sql<string | null>`${productVariants.attributes} ->> 'cor'`,
+      size: sql<string | null>`${productVariants.attributes} ->> 'tamanho'`,
+      available: sql<string>`coalesce(sum(greatest(coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0), 0)), 0)`,
+    })
+    .from(products)
+    .innerJoin(productVariants, sellableVariantJoin())
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
+    .where(and(eq(products.status, "active"), isNull(products.deletedAt)))
+    .groupBy(sql`1`, sql`2`);
+
+  const colors = new Set<string>();
+  const sizes = new Set<string>();
+  for (const row of axisRows) {
+    if (Number(row.available) <= 0) continue;
+    if (row.color) colors.add(row.color);
+    if (row.size) sizes.add(row.size);
+  }
+
+  const mapped = categoryRows.map((row) => ({
+    name: row.name ?? "Sem categoria",
+    slug: row.slug ?? "",
+    productCount: Number(row.productCount),
+    priceFromCents: Number(row.priceFromCents),
+    priceToCents: Number(row.priceToCents),
+  }));
+
+  return {
+    totalProducts: mapped.reduce((sum, row) => sum + row.productCount, 0),
+    categories: mapped,
+    colors: [...colors].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    sizes: [...sizes].sort(compareSizes),
+  };
+}
+
+const SIZE_ORDER = ["PP", "P", "M", "G", "GG", "XG", "XGG"];
+
+function compareSizes(a: string, b: string): number {
+  const ia = SIZE_ORDER.indexOf(a.toUpperCase());
+  const ib = SIZE_ORDER.indexOf(b.toUpperCase());
+  if (ia !== -1 && ib !== -1) return ia - ib;
+  if (ia !== -1) return -1;
+  if (ib !== -1) return 1;
+  const na = Number(a);
+  const nb = Number(b);
+  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  return a.localeCompare(b, "pt-BR");
+}
+
+/**
+ * Ids dos produtos que têm ao menos uma variante vendável COM ESTOQUE na cor
+ * e/ou tamanho pedidos (comparação sem caixa e sem espaços extras). Sem
+ * filtro nenhum, devolve null: quem chama não restringe.
+ */
+export async function listProductIdsWithVariant(
+  db: ServiceDb,
+  input: { cor?: string; tamanho?: string },
+): Promise<Set<string> | null> {
+  const cor = input.cor?.trim();
+  const tamanho = input.tamanho?.trim();
+  if (!cor && !tamanho) return null;
+
+  const filters = [
+    eq(products.status, "active"),
+    isNull(products.deletedAt),
+    sql`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0) > 0`,
+  ];
+  if (cor) {
+    filters.push(sql`lower(trim(${productVariants.attributes} ->> 'cor')) = lower(${cor})`);
+  }
+  if (tamanho) {
+    filters.push(
+      sql`lower(trim(${productVariants.attributes} ->> 'tamanho')) = lower(${tamanho})`,
+    );
+  }
+
+  const rows = await db
+    .selectDistinct({ id: products.id })
+    .from(products)
+    .innerJoin(productVariants, sellableVariantJoin())
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
+    .where(and(...filters));
+  return new Set(rows.map((row) => row.id));
 }

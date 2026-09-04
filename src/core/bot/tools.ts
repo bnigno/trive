@@ -1,18 +1,24 @@
-// Definições das ferramentas do bot de vendas (contrato compartilhado da onda).
-// A IA nunca é fonte de fatos: preço/estoque/frete/pedido vêm destas ferramentas,
-// que devolvem blocos de texto pt-BR prontos para o modelo retransmitir.
+// Definições das ferramentas da vendedora do WhatsApp (contrato compartilhado).
+// A IA nunca é fonte de fatos: preço/estoque/frete/pedido vêm destas
+// ferramentas, que devolvem blocos de texto pt-BR prontos para o modelo
+// retransmitir. Vocabulário da casa em toda descrição: catálogo, peça, look,
+// sacola — nunca "menu".
 
 import { z } from "zod";
 
 export const BOT_TOOL_NAMES = [
   "listar_produtos",
   "detalhar_produto",
+  "adicionar_a_sacola",
+  "ver_sacola",
+  "remover_da_sacola",
   "cotar_frete",
   "buscar_cadastro",
   "criar_pedido",
   "status_do_pedido",
   "enviar_chave_pix",
   "avisar_dono",
+  "anotar",
   "transferir_para_atendente",
 ] as const;
 
@@ -25,12 +31,26 @@ export type BotToolDefinition = {
 };
 
 export type BotToolInputs = {
-  listar_produtos: { busca?: string };
+  listar_produtos: {
+    busca?: string;
+    categoria?: string;
+    cor?: string;
+    tamanho?: string;
+    /** Teto de preço em reais inteiros; o executor converte para centavos. */
+    preco_maximo_reais?: number;
+    pagina?: number;
+  };
   detalhar_produto: { produto: string; cor?: string };
+  adicionar_a_sacola: { sku: string; quantidade: number };
+  ver_sacola: Record<string, never>;
+  remover_da_sacola: { sku: string };
   cotar_frete: { cep: string };
   buscar_cadastro: Record<string, never>;
   criar_pedido: {
-    itens: { sku: string; quantidade: number }[];
+    /** Omitido = fecha com o que está na sacola. */
+    itens?: { sku: string; quantidade: number }[];
+    /** Opção de frete que a cliente escolheu (nome ou número da cotação). */
+    frete?: string;
     /**
      * Reaproveita nome, CPF e endereço já salvos deste telefone. Quando true,
      * os campos pessoais são OPCIONAIS: o serviço lê os dados reais do banco e
@@ -56,7 +76,8 @@ export type BotToolInputs = {
   status_do_pedido: { numero_do_pedido?: number };
   enviar_chave_pix: { numero_do_pedido?: number };
   avisar_dono: { mensagem: string };
-  transferir_para_atendente: { motivo: string };
+  anotar: { nota: string };
+  transferir_para_atendente: { motivo: string; resumo?: string };
 };
 
 /**
@@ -69,18 +90,47 @@ export type ToolExecutor = (
   input: unknown,
 ) => Promise<{ ok: boolean; text: string; endsTurn?: boolean }>;
 
+const skuProperty = {
+  type: "string",
+  description: "SKU exato da combinação, como devolvido por detalhar_produto.",
+};
+
 export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "listar_produtos",
     description:
-      "Lista o catálogo ativo da loja com nomes e preços reais E envia ao cliente um menu interativo com botões. Chame SEMPRE que o cliente quiser ver/escolher produtos — inclusive 'quero ver outro produto' e mesmo que a lista já tenha aparecido na conversa (só a chamada envia o menu). Passe busca para filtrar por nome; sem busca, devolve o catálogo completo.",
+      "Busca peças no catálogo (nomes, preços reais e disponibilidade) E envia à cliente a lista tocável do catálogo com botões. Chame SEMPRE que a cliente quiser ver ou escolher peças — inclusive 'quero ver outra' e mesmo que uma lista já tenha aparecido antes (só a chamada envia os botões). Use os filtros para curar: categoria (ex.: 'vestidos'), cor, tamanho, preço máximo, busca por nome ou descrição. Cabem 10 peças por página; passe pagina para ver as próximas.",
     input_schema: {
       type: "object",
       properties: {
         busca: {
           type: "string",
           description:
-            "Termo para filtrar produtos por nome (ex.: 'camiseta'). Omita para listar tudo.",
+            "Palavra que a cliente usou (ex.: 'linho', 'midi', 'festa'). Procura no nome e na descrição. Omita para não filtrar por texto.",
+        },
+        categoria: {
+          type: "string",
+          description:
+            "Nome ou slug de uma categoria da PLANTA DA LOJA (ex.: 'vestidos'). Omita para todas.",
+        },
+        cor: {
+          type: "string",
+          description: "Só peças disponíveis nesta cor (ex.: 'Preto').",
+        },
+        tamanho: {
+          type: "string",
+          description: "Só peças disponíveis neste tamanho (ex.: 'M', '40').",
+        },
+        preco_maximo_reais: {
+          type: "integer",
+          minimum: 1,
+          description: "Teto de preço em reais (ex.: 300 = até R$ 300,00).",
+        },
+        pagina: {
+          type: "integer",
+          minimum: 1,
+          default: 1,
+          description: "Página da lista (10 peças por página). Padrão 1.",
         },
       },
       required: [],
@@ -90,18 +140,18 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "detalhar_produto",
     description:
-      "Devolve detalhes de um produto: cores e tamanhos disponíveis, estoque, preço exato e o SKU de cada combinação, E envia ao cliente a foto e (quando cabem até 10) um menu tocável com as variações. Chame SEMPRE antes de adicionar um item ao pedido, para confirmar SKU, preço e estoque. Passe cor quando o cliente já tiver dito a cor: a foto enviada passa a ser a daquela cor.",
+      "Devolve tudo sobre uma peça: descrição completa (tecido, caimento, medidas quando o dono cadastrou), categoria, cores e tamanhos com estoque, preço exato (e preço 'de/por' quando houver promoção) e o SKU de cada combinação — E envia à cliente a foto e, quando cabem até 10, a lista tocável de cores e tamanhos. Chame SEMPRE antes de adicionar à sacola. Passe cor quando a cliente já disse a cor: a foto passa a ser a daquela cor. Se houver mais de uma peça com o nome, a ferramenta devolve as candidatas para você perguntar qual.",
     input_schema: {
       type: "object",
       properties: {
         produto: {
           type: "string",
-          description: "Nome do produto ou SKU exato.",
+          description: "Nome da peça, slug (produto:<slug>) ou SKU exato.",
         },
         cor: {
           type: "string",
           description:
-            "Cor que o cliente já escolheu nesta conversa (ex.: 'Verde'). Omita se ele ainda não disse a cor.",
+            "Cor que a cliente já escolheu nesta conversa (ex.: 'Verde'). Omita se ela ainda não disse.",
         },
       },
       required: ["produto"],
@@ -109,9 +159,49 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "adicionar_a_sacola",
+    description:
+      "Coloca uma combinação (SKU) na sacola desta conversa, conferindo preço e estoque na hora. É a memória oficial do que a cliente vai levar: cotar_frete usa o peso real da sacola e criar_pedido fecha com ela. Chame assim que a cliente confirmar cor e tamanho de uma peça.",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: skuProperty,
+        quantidade: {
+          type: "integer",
+          minimum: 1,
+          default: 1,
+          description: "Quantidade (inteiro, mínimo 1). Padrão 1.",
+        },
+      },
+      required: ["sku"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ver_sacola",
+    description:
+      "Mostra o que está na sacola desta conversa, com preços atuais e subtotal. Use antes do resumo final ou quando a cliente perguntar o que já escolheu.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "remover_da_sacola",
+    description: "Tira uma combinação (SKU) da sacola desta conversa.",
+    input_schema: {
+      type: "object",
+      properties: { sku: skuProperty },
+      required: ["sku"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "cotar_frete",
     description:
-      "Devolve as opções reais de entrega (transportadora, prazo e valor) para o CEP do cliente, considerando os itens já escolhidos nesta conversa. Só chame depois de o cliente escolher os itens. Passe apenas o CEP.",
+      "Devolve as opções reais de entrega (transportadora, prazo e valor) para o CEP da cliente, com o peso das peças que estão na sacola. Chame depois de montar a sacola. A cliente ESCOLHE uma das opções; passe a escolha em criar_pedido (campo frete).",
     input_schema: {
       type: "object",
       properties: {
@@ -128,7 +218,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "buscar_cadastro",
     description:
-      "Procura o cadastro já salvo do cliente DESTA conversa (nome, CPF e endereço da última compra). Chame ANTES de começar a pedir dados pessoais: se o cliente já comprou, você confirma tudo em uma pergunta em vez de coletar sete campos. Devolve o CPF mascarado de propósito — os dados reais nunca passam por você.",
+      "Procura o cadastro já salvo da cliente DESTA conversa (nome, CPF e endereço da última compra). Chame ANTES de começar a pedir dados pessoais: se ela já comprou, você confirma tudo em uma pergunta em vez de coletar sete campos. Devolve o CPF mascarado de propósito — os dados reais nunca passam por você.",
     input_schema: {
       type: "object",
       properties: {},
@@ -139,21 +229,19 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "criar_pedido",
     description:
-      "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após confirmar com o cliente TODOS os dados (itens, quantidades, dados pessoais, endereço e frete) e receber o SIM. O resumo devolvido é a única fonte de valores — retransmita sem alterar. TELEFONE: o pedido usa automaticamente o número de WhatsApp desta conversa — NUNCA peça telefone ao cliente.",
+      "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após a cliente ler o resumo (peças, quantidades, dados pessoais, endereço e frete) e dizer SIM. Sem 'itens', fecha com a sacola desta conversa. O resumo devolvido é a única fonte de valores — retransmita sem alterar. TELEFONE: o pedido usa automaticamente o número desta conversa — NUNCA peça telefone.",
     input_schema: {
       type: "object",
       properties: {
         itens: {
           type: "array",
           minItems: 1,
-          description: "Itens confirmados pelo cliente.",
+          description:
+            "Omita para usar a sacola. Só passe quando quiser fechar com outra combinação de peças.",
           items: {
             type: "object",
             properties: {
-              sku: {
-                type: "string",
-                description: "SKU exato confirmado via detalhar_produto.",
-              },
+              sku: skuProperty,
               quantidade: {
                 type: "integer",
                 minimum: 1,
@@ -164,21 +252,26 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
             additionalProperties: false,
           },
         },
+        frete: {
+          type: "string",
+          description:
+            "A opção de entrega que a cliente escolheu entre as de cotar_frete — o nome (ex.: 'SEDEX') ou o número da opção (ex.: '2'). Omita só se houver uma única opção.",
+        },
         usar_cadastro_salvo: {
           type: "boolean",
           default: false,
           description:
-            "true reaproveita nome, CPF e endereço já salvos deste telefone — o serviço lê os dados do banco, então NÃO envie nome_completo, cpf nem endereço. Só use depois de buscar_cadastro e do cliente CONFIRMAR que os dados estão certos. Se ele quiser mudar algo, omita este campo e envie todos os dados normalmente.",
+            "true reaproveita nome, CPF e endereço já salvos deste telefone — o serviço lê os dados do banco, então NÃO envie nome_completo, cpf nem endereço. Só use depois de buscar_cadastro e da cliente CONFIRMAR que os dados estão certos. Se ela quiser mudar algo, omita este campo e envie todos os dados normalmente.",
         },
         nome_completo: {
           type: "string",
           description:
-            "Nome completo do cliente. Obrigatório, exceto quando usar_cadastro_salvo for true.",
+            "Nome completo da cliente. Obrigatório, exceto quando usar_cadastro_salvo for true.",
         },
         cpf: {
           type: "string",
           description:
-            "CPF do cliente, somente os 11 dígitos, sem pontos ou traço (ex.: '12345678901'). Necessário para a nota fiscal.",
+            "CPF da cliente, somente os 11 dígitos, sem pontos ou traço (ex.: '12345678901'). Necessário para a nota fiscal.",
           pattern: "^[0-9]{11}$",
         },
         cep: {
@@ -204,40 +297,40 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         },
         cupom: {
           type: "string",
-          description: "Código de cupom informado pelo cliente. Omita se não houver.",
+          description: "Código de cupom informado pela cliente. Omita se não houver.",
         },
         forma_de_pagamento: {
           type: "string",
           enum: ["online", "dinheiro_na_entrega"],
           default: "online",
           description:
-            "Use 'dinheiro_na_entrega' SOMENTE quando o cliente pedir explicitamente para pagar em dinheiro na entrega. Caso contrário, omita: o padrão é 'online' (link de pagamento).",
+            "Use 'dinheiro_na_entrega' SOMENTE quando a cliente pedir explicitamente para pagar em dinheiro na entrega. Caso contrário, omita: o padrão é 'online' (link de pagamento).",
         },
         telefone: {
           type: "string",
           description:
-            "IGNORADO — o pedido sempre usa o número de WhatsApp da própria conversa. Não peça telefone ao cliente; omita este campo.",
+            "IGNORADO — o pedido sempre usa o número de WhatsApp da própria conversa. Não peça telefone; omita este campo.",
         },
       },
-      // Só 'itens' é sempre obrigatório: com usar_cadastro_salvo os dados
-      // pessoais vêm do banco. A exigência real (ou o cadastro salvo, ou o
-      // conjunto completo de campos) é validada em criarPedidoSchema, que é
-      // quem barra de fato — o JSON schema aqui só orienta o modelo.
-      required: ["itens"],
+      // Nada é sempre obrigatório: os itens vêm da sacola e, com
+      // usar_cadastro_salvo, os dados pessoais vêm do banco. A exigência real
+      // (ou o cadastro salvo, ou o conjunto completo de campos) é validada em
+      // criarPedidoSchema, que é quem barra de fato.
+      required: [],
       additionalProperties: false,
     },
   },
   {
     name: "status_do_pedido",
     description:
-      "Devolve o status atual e o rastreio do pedido do cliente desta conversa. Passe numero_do_pedido se o cliente informar; omita para usar o pedido mais recente da conversa.",
+      "Devolve o status atual e o rastreio do pedido da cliente desta conversa. Passe numero_do_pedido se ela informar; omita para usar o pedido mais recente.",
     input_schema: {
       type: "object",
       properties: {
         numero_do_pedido: {
           type: "integer",
           description:
-            "Número do pedido informado pelo cliente. Omita para o pedido mais recente.",
+            "Número do pedido informado pela cliente. Omita para o pedido mais recente.",
         },
       },
       required: [],
@@ -247,7 +340,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "enviar_chave_pix",
     description:
-      "Envia a chave Pix da loja para o cliente pagar por transferência manual quando houver problema com o link. SÓ oferece se a ferramenta confirmar disponibilidade; o dono confirma o recebimento manualmente.",
+      "Envia a chave Pix da loja para a cliente pagar por transferência manual quando houver problema com o link. SÓ ofereça se a ferramenta confirmar disponibilidade; o dono confirma o recebimento manualmente.",
     input_schema: {
       type: "object",
       properties: {
@@ -255,7 +348,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           type: "integer",
           minimum: 1,
           description:
-            "Número do pedido a pagar, se o cliente informar. Omita para usar o pedido mais recente da conversa.",
+            "Número do pedido a pagar, se a cliente informar. Omita para usar o pedido mais recente.",
         },
       },
       required: [],
@@ -265,7 +358,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "avisar_dono",
     description:
-      "Envia um aviso interno ao dono da loja. Use APENAS para fatos que exigem ação dele — ex.: cliente informa que fez o Pix. Nunca para conversa comum.",
+      "Envia um aviso interno ao dono da loja. Use APENAS para fatos que exigem ação dele — ex.: cliente informa que fez o Pix; cliente quer ser avisada quando uma peça esgotada voltar. Nunca para conversa comum.",
     input_schema: {
       type: "object",
       properties: {
@@ -282,16 +375,39 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "anotar",
+    description:
+      "Escreve no caderninho da vendedora um fato curto e útil para as próximas compras desta cliente: tamanho que usa, cores que ama ou evita, ocasião, para quem compra, peça esgotada que quer ser avisada. NUNCA anote CPF, endereço ou dado de pagamento. Uma frase por chamada.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nota: {
+          type: "string",
+          minLength: 3,
+          maxLength: 140,
+          description: "Ex.: 'veste M em vestidos, prefere tons terrosos'.",
+        },
+      },
+      required: ["nota"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "transferir_para_atendente",
     description:
-      "Passa a conversa para o atendente humano e encerra a sua participação. Use quando o cliente pedir para falar com uma pessoa, quando você não conseguir ajudar após 2 tentativas, ou em reclamação, troca ou reembolso.",
+      "Passa a conversa para a equipe da loja e encerra a sua participação. Use quando a cliente pedir para falar com uma pessoa, quando você não conseguir ajudar após 2 tentativas, ou em reclamação, troca, defeito ou reembolso. Passe um resumo de 3 linhas para a equipe não perguntar nada de novo.",
     input_schema: {
       type: "object",
       properties: {
         motivo: {
           type: "string",
+          description: "Motivo curto da transferência (ex.: 'quer trocar o tamanho').",
+        },
+        resumo: {
+          type: "string",
+          maxLength: 600,
           description:
-            "Resumo curto do motivo da transferência, para o atendente ler.",
+            "Até 3 linhas: o que a cliente quer, tamanho/orçamento/peças já mostradas, e o que ficou pendente.",
         },
       },
       required: ["motivo"],
@@ -320,10 +436,23 @@ const digitos = (tamanho: number, rotulo: string) =>
 export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   listar_produtos: z.strictObject({
     busca: z.string().optional(),
+    categoria: z.string().optional(),
+    cor: z.string().optional(),
+    tamanho: z.string().optional(),
+    preco_maximo_reais: z.number().int().min(1).optional(),
+    pagina: z.number().int().min(1).default(1),
   }),
   detalhar_produto: z.strictObject({
     produto: z.string().min(1),
     cor: z.string().min(1).optional(),
+  }),
+  adicionar_a_sacola: z.strictObject({
+    sku: z.string().min(1),
+    quantidade: z.number().int().min(1).max(20).default(1),
+  }),
+  ver_sacola: z.strictObject({}),
+  remover_da_sacola: z.strictObject({
+    sku: z.string().min(1),
   }),
   cotar_frete: z.strictObject({
     cep: digitos(8, "CEP"),
@@ -336,7 +465,9 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
           quantidade: z.number().int().min(1),
         }),
       )
-      .min(1),
+      .min(1)
+      .optional(),
+    frete: z.string().optional(),
     usar_cadastro_salvo: z.boolean().default(false),
     nome_completo: z.string().min(1).optional(),
     cpf: digitos(11, "CPF").optional(),
@@ -393,7 +524,11 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   avisar_dono: z.strictObject({
     mensagem: z.string().min(1).max(300),
   }),
+  anotar: z.strictObject({
+    nota: z.string().trim().min(3).max(140),
+  }),
   transferir_para_atendente: z.strictObject({
     motivo: z.string().min(1),
+    resumo: z.string().trim().max(600).optional(),
   }),
 };

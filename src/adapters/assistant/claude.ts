@@ -10,12 +10,29 @@ import type {
 import { AssistantUnavailableError } from "./index";
 
 const MAX_ITERATIONS = 6;
-const HANDOFF_FALLBACK_REPLY = "Vou te passar para um atendente 😉";
+const HANDOFF_FALLBACK_REPLY = "Vou te passar para a equipe 😉";
+
+/**
+ * Subconjunto do cliente da Anthropic que o adapter usa. Existe para os
+ * testes injetarem um cliente falso (loop de tool_use, refusal, estouro de
+ * iterações, APIError) sem rede e sem chave.
+ */
+export type MessagesClient = {
+  messages: {
+    create(
+      params: Anthropic.MessageCreateParamsNonStreaming,
+    ): Promise<Anthropic.Message>;
+  };
+};
 
 export class ClaudeSalesAssistant implements SalesAssistant {
-  private client: Anthropic | undefined;
+  private client: MessagesClient | undefined;
 
-  private getClient(): Anthropic {
+  constructor(client?: MessagesClient) {
+    this.client = client;
+  }
+
+  private getClient(): MessagesClient {
     if (!this.client) {
       if (!process.env.ANTHROPIC_API_KEY) {
         throw new AssistantUnavailableError(
@@ -63,28 +80,42 @@ export class ClaudeSalesAssistant implements SalesAssistant {
     }));
 
     const toolCalls: { name: string; ok: boolean }[] = [];
-    const usage = { inputTokens: 0, outputTokens: 0 };
+    const usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    };
     const assistantTexts: string[] = [];
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const request: Anthropic.MessageCreateParamsNonStreaming = {
         model,
-        max_tokens: 1024,
+        max_tokens: 2048,
+        // Cache de 1 h no prefixo (prompt + ferramentas): entre duas mensagens
+        // de WhatsApp costumam passar mais de 5 min, e o prefixo tem ~6 K
+        // tokens — reescrever a cada turno custava mais do que a resposta.
         system: [
-          { type: "text", text: system, cache_control: { type: "ephemeral" } },
+          {
+            type: "text",
+            text: system,
+            cache_control: { type: "ephemeral", ttl: "1h" },
+          },
         ],
         tools,
         messages,
       };
-      // Haiku 4.5 não suporta effort; Sonnet 5+ com effort low e thinking
-      // omitido (= adaptativo).
+      // Haiku 4.5 não suporta effort; Sonnet 5+ com effort medium (raciocínio
+      // suficiente para seguir o método de venda sem pesar na latência).
       if (!model.startsWith("claude-haiku")) {
-        request.output_config = { effort: "low" };
+        request.output_config = { effort: "medium" };
       }
 
       const response = await client.messages.create(request);
       usage.inputTokens += response.usage.input_tokens;
       usage.outputTokens += response.usage.output_tokens;
+      usage.cacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
+      usage.cacheWriteTokens += response.usage.cache_creation_input_tokens ?? 0;
 
       const turnText = response.content
         .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -139,7 +170,7 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       }
     }
 
-    // Estourou o limite de iterações: transfere para atendente.
+    // Estourou o limite de iterações: transfere para a equipe.
     return {
       reply:
         assistantTexts.length > 0
