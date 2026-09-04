@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fixVocabulary, polishBotReply } from "@/core/bot/reply";
+import { fixVocabulary, polishBotReply, splitBotReply } from "@/core/bot/reply";
 
 describe("fixVocabulary", () => {
   it("troca menu e cardápio por catálogo, preservando a caixa e o plural", () => {
@@ -27,5 +27,36 @@ describe("polishBotReply", () => {
     expect(polishBotReply("  Oi!  \n\n\n\nVeja o menu 👇  ")).toBe(
       "Oi!\n\nVeja o catálogo 👇",
     );
+  });
+});
+
+describe("splitBotReply", () => {
+  it("sem separador: um balão só, já polido", () => {
+    expect(splitBotReply("Oi, Maria!\n\n\n\nQual a ocasião?")).toEqual([
+      "Oi, Maria!\n\nQual a ocasião?",
+    ]);
+  });
+
+  it("divide em balões pela linha '---' e descarta blocos vazios", () => {
+    expect(splitBotReply("Amei a ideia 💛\n---\nO Dunas é de linho.\n---\n\n---\nVai de M ou G?")).toEqual([
+      "Amei a ideia 💛",
+      "O Dunas é de linho.",
+      "Vai de M ou G?",
+    ]);
+  });
+
+  it("mais de 3 blocos: o excedente cola no último (nada se perde)", () => {
+    expect(splitBotReply("a\n---\nb\n---\nc\n---\nd\n---\ne")).toEqual([
+      "a",
+      "b",
+      "c\n\nd\n\ne",
+    ]);
+  });
+
+  it("um traço no meio de uma linha não é separador", () => {
+    expect(splitBotReply("Preço --- R$ 10\n---\nok")).toEqual([
+      "Preço --- R$ 10",
+      "ok",
+    ]);
   });
 });

@@ -1,9 +1,13 @@
-// BOT DE VENDAS IA no WhatsApp (Fase 5, Onda B): executa UM turno de conversa
+// VENDEDORA DE IA no WhatsApp (Fase 5 / Onda 3): executa UM turno de conversa
 // por evento 'wa.bot_turn' da fila. A IA nunca é fonte de fatos — preço,
 // estoque, frete e pedido saem das ferramentas deste arquivo, que devolvem
 // blocos pt-BR prontos. Regras duras: resposta idempotente por mensagem
 // inbound (dedupe em wa_messages), transferência para humano SEMPRE audita e
 // silencia o bot por 24h, e nada aqui toca o fluxo SAIR/opt-out (wa-inbound).
+//
+// Memória: o "caderninho" (src/core/bot/memory.ts) vive em
+// wa_conversations.bot_state e entra no turno como primeira mensagem, fora do
+// prompt de sistema — que se mantém idêntico entre turnos para o cache valer.
 import { and, desc, eq, ilike, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 
@@ -16,6 +20,16 @@ import {
 } from "@/adapters/assistant";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import type { MessagingProvider } from "@/adapters/zapi";
+import {
+  addNote,
+  cartAdd,
+  cartRemove,
+  formatCartLines,
+  parseBotState,
+  renderContextNote,
+  type BotCartItem,
+  type BotState,
+} from "@/core/bot/memory";
 import {
   OPTION_LIST_MAX_OPTIONS,
   truncateOptionTitle,
@@ -36,16 +50,25 @@ import {
   formatVariantLines,
   pickImagePath,
 } from "@/core/bot/variants";
-import { buildBotSystemPrompt, truncateForWhatsApp } from "@/core/bot/prompt";
-import { polishBotReply } from "@/core/bot/reply";
+import {
+  buildBotSystemPrompt,
+  DEFAULT_SELLER_NAME,
+  truncateForWhatsApp,
+} from "@/core/bot/prompt";
+import { splitBotReply } from "@/core/bot/reply";
+import { renderStoreMap } from "@/core/bot/store-map";
+import { variantLabel } from "@/core/catalog/attributes";
+import { deriveWaMessageOrigin } from "@/core/whatsapp/origin";
 import {
   auditLog,
+  categories,
   customerAddresses,
   customers,
   orders,
   priceVersions,
   products,
   productVariants,
+  stockLevels,
   waConversations,
   waMessages,
 } from "@/db/schema";
@@ -59,10 +82,13 @@ import {
   computeTotalWeightGrams,
   DEFAULT_ITEM_WEIGHT_GRAMS,
   getPublicProductBySlug,
+  getStoreMap,
+  listProductIdsWithVariant,
   listPublicProducts,
   publicImageUrl,
   quoteShipping,
   type PublicProductDetail,
+  type PublicProductListItem,
   type ShippingQuote,
 } from "@/services/store-catalog";
 import {
@@ -86,17 +112,20 @@ import {
 
 const DEFAULT_BOT_MODEL = "claude-sonnet-5";
 const DEFAULT_STORE_NAME = STORE_NAME_DEFAULT;
-const HISTORY_LIMIT = 20;
-const MAX_LISTED_PRODUCTS = 8;
+// 40 mensagens: uma compra com lista + foto + CEP + frete + cadastro passa
+// fácil de 20, e a peça escolhida no começo saía da janela.
+const HISTORY_LIMIT = 40;
+const PAGE_SIZE = OPTION_LIST_MAX_OPTIONS;
+const DESCRIPTION_MAX_CHARS = 700;
 const HANDOFF_SILENCE_HOURS = 24;
 // Pix manual tem ritmo humano (dono confere o banco): o prazo de reserva de
 // 2h expiraria DEPOIS de o cliente pagar — estendemos para 24h quando menor.
 const PIX_MANUAL_TTL_HOURS = 24;
 
 export const BOT_UNAVAILABLE_REPLY =
-  "Nosso atendimento automático está indisponível — já chamei um atendente 😉";
+  "Nosso atendimento automático está indisponível — já chamei a equipe 😉";
 export const HANDOFF_COURTESY_REPLY =
-  "Um atendente humano vai te responder por aqui em breve! 🙋";
+  "Alguém da equipe vai te responder por aqui em breve! 🙋";
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   draft: "em rascunho",
@@ -109,14 +138,8 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   refunded: "reembolsado",
 };
 
-/** Contexto compacto persistido em wa_conversations.bot_state (jsonb). */
-type BotState = {
-  cart?: { sku: string; quantidade: number }[];
-  lastQuotes?: ShippingQuote[];
-};
-
 /**
- * Mídia que uma ferramenta quer enviar ao cliente NESTE turno (menu interativo
+ * Mídia que uma ferramenta quer enviar ao cliente NESTE turno (lista tocável
  * ou foto). A ferramenta apenas EMITE via ctx.onAttachment; quem envia de fato
  * (com dedupe e melhor esforço) é o runBotTurn, antes do texto da IA.
  */
@@ -141,6 +164,12 @@ export type BotExecutorContext = {
    */
   lastInboundId: string;
   onAttachment?: (attachment: BotAttachment) => void;
+  /**
+   * Ensaio (playground do painel): nada com efeito externo ou de escrita
+   * acontece — criar_pedido, enviar_chave_pix, avisar_dono e transferir
+   * respondem um texto explicando que estão desligados no ensaio.
+   */
+  dryRun?: boolean;
 };
 
 export type RunBotTurnResult =
@@ -162,7 +191,7 @@ export async function isBotEnabled(db: DbOrTx): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers de estado da conversa
+// Helpers de estado da conversa (o caderninho)
 // ---------------------------------------------------------------------------
 
 async function loadBotState(db: DbOrTx, conversationId: string): Promise<BotState> {
@@ -171,8 +200,7 @@ async function loadBotState(db: DbOrTx, conversationId: string): Promise<BotStat
     .from(waConversations)
     .where(eq(waConversations.id, conversationId))
     .limit(1);
-  const state = row?.botState;
-  return state && typeof state === "object" ? (state as BotState) : {};
+  return parseBotState(row?.botState);
 }
 
 async function saveBotState(
@@ -186,24 +214,51 @@ async function saveBotState(
     .where(eq(waConversations.id, conversationId));
 }
 
+/** Lê, aplica a mudança e grava — o padrão de todo executor que lembra algo. */
+async function updateBotState(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  change: (state: BotState) => BotState,
+): Promise<BotState> {
+  const current = await loadBotState(db, ctx.conversationId);
+  const next = change(current);
+  if (!ctx.dryRun) await saveBotState(db, ctx.conversationId, next);
+  return next;
+}
+
 /**
  * Transfere a conversa para atendimento humano: status 'human', bot em
- * silêncio por 24h, audit e aviso ao dono via outbox. Compartilhado entre a
- * ferramenta transferir_para_atendente e o fallback de IA indisponível.
+ * silêncio por 24h, audit (com o resumo para a equipe) e aviso ao dono via
+ * outbox. Compartilhado entre a ferramenta transferir_para_atendente e o
+ * fallback de IA indisponível.
  */
 async function handOffToHuman(
   db: DbOrTx,
   ctx: { conversationId: string; phoneE164: string; lastInboundId: string },
   motivo: string,
+  resumo?: string,
 ): Promise<void> {
   const now = new Date();
   const botDisabledUntil = new Date(
     now.getTime() + HANDOFF_SILENCE_HOURS * 60 * 60_000,
   );
 
+  const state = await loadBotState(db, ctx.conversationId);
   await db
     .update(waConversations)
-    .set({ status: "human", botDisabledUntil, updatedAt: now })
+    .set({
+      status: "human",
+      botDisabledUntil,
+      updatedAt: now,
+      botState: {
+        ...state,
+        handoff: {
+          motivo,
+          ...(resumo ? { resumo } : {}),
+          at: now.toISOString(),
+        },
+      },
+    })
     .where(eq(waConversations.id, ctx.conversationId));
 
   await db.insert(auditLog).values({
@@ -212,7 +267,11 @@ async function handOffToHuman(
     action: "wa.bot_handoff",
     entityType: "wa_conversation",
     entityId: ctx.conversationId,
-    after: { motivo, botDisabledUntil: botDisabledUntil.toISOString() },
+    after: {
+      motivo,
+      ...(resumo ? { resumo } : {}),
+      botDisabledUntil: botDisabledUntil.toISOString(),
+    },
     reason: motivo,
   });
 
@@ -225,7 +284,11 @@ async function handOffToHuman(
     aggregateId: ctx.conversationId,
     payload: {
       phoneE164: ctx.phoneE164,
-      body: `🤖→👤 O robô transferiu a conversa com ${ctx.phoneE164}: ${motivo}. Responda pelo painel ou aqui mesmo.`,
+      body: [
+        `🤖→👤 A vendedora passou a conversa com ${ctx.phoneE164} para você: ${motivo}.`,
+        ...(resumo ? [resumo] : []),
+        "Responda pelo painel ou aqui mesmo.",
+      ].join("\n"),
       raw: true,
     },
   });
@@ -237,6 +300,9 @@ async function handOffToHuman(
 
 type ToolResult = { ok: boolean; text: string; endsTurn?: boolean };
 
+const DRY_RUN_TEXT =
+  "[Ensaio: esta ação fica desligada no teste do painel. Responda à cliente como se tivesse funcionado, sem inventar números.]";
+
 function formatDeliveryDays(min: number, max: number): string {
   return min === max ? `${min} dias úteis` : `${min} a ${max} dias úteis`;
 }
@@ -247,7 +313,7 @@ function formatDeliveryDays(min: number, max: number): string {
  * O body de um option_list é gravado JÁ RENDERIZADO ("Toque abaixo…" + uma
  * linha por produto com preço) porque é o que a thread do admin exibe. Só que
  * isso, no histórico, é uma lista pronta convidando a ser copiada — e o modelo
- * copia: em 26/08 ele reemitiu o menu inteiro como texto puro, sem chamar
+ * copia: em 26/08 ele reemitiu a lista inteira como texto puro, sem chamar
  * listar_produtos, e o cliente ficou sem os botões (a lista interativa só sai
  * quando a ferramenta roda de verdade). Trocar pelo marcador remove a cola:
  * para mostrar produtos, o modelo é OBRIGADO a chamar a ferramenta.
@@ -262,10 +328,57 @@ export function historyTextFor(kind: string, body: string): string {
   return body;
 }
 
+/**
+ * Mensagem de saída que NÃO foi a vendedora (resposta manual da equipe,
+ * aviso automático de pedido, ack de SAIR) entra no histórico com a origem
+ * marcada — senão o modelo "assume" promessas do dono ou repete templates.
+ */
+export function historyTextForOutbound(input: {
+  kind: string;
+  body: string;
+  dedupeKey: string | null;
+  templateKey: string | null;
+}): string {
+  const origin = deriveWaMessageOrigin({
+    direction: "outbound",
+    dedupeKey: input.dedupeKey,
+    templateKey: input.templateKey,
+  });
+  const text = historyTextFor(input.kind, input.body);
+  if (origin === "manual") {
+    return `[mensagem enviada pela equipe da loja, não por você] ${text}`;
+  }
+  if (origin === "auto") {
+    return `[aviso automático da loja] ${text}`;
+  }
+  return text;
+}
+
 function formatPriceRange(fromCents: number, toCents: number): string {
   return fromCents === toCents
     ? formatCentsBRL(fromCents)
     : `a partir de ${formatCentsBRL(fromCents)}`;
+}
+
+/** Categoria por slug exato ou nome aproximado; null quando não existe. */
+async function resolveCategorySlug(
+  db: DbOrTx,
+  term: string,
+): Promise<string | null> {
+  const trimmed = term.trim();
+  if (trimmed === "") return null;
+  const [bySlug] = await db
+    .select({ slug: categories.slug })
+    .from(categories)
+    .where(eq(categories.slug, trimmed.toLowerCase()))
+    .limit(1);
+  if (bySlug) return bySlug.slug;
+  const [byName] = await db
+    .select({ slug: categories.slug })
+    .from(categories)
+    .where(ilike(categories.name, `%${trimmed}%`))
+    .limit(1);
+  return byName?.slug ?? null;
 }
 
 async function execListarProdutos(
@@ -274,44 +387,94 @@ async function execListarProdutos(
   input: BotToolInputs["listar_produtos"],
 ): Promise<ToolResult> {
   const busca = input.busca?.trim();
-  const items = await listPublicProducts(db, busca ? { q: busca } : {});
+  const filtros: string[] = [];
 
+  let categorySlug: string | undefined;
+  if (input.categoria?.trim()) {
+    const slug = await resolveCategorySlug(db, input.categoria);
+    if (!slug) {
+      return {
+        ok: false,
+        text: `Não existe a categoria "${input.categoria}". Use uma das categorias da PLANTA DA LOJA ou busque por palavra (busca).`,
+      };
+    }
+    categorySlug = slug;
+    filtros.push(`categoria ${input.categoria.trim()}`);
+  }
+  if (busca) filtros.push(`"${busca}"`);
+
+  let items: PublicProductListItem[] = await listPublicProducts(db, {
+    ...(busca ? { q: busca, includeDescription: true } : {}),
+    ...(categorySlug ? { categorySlug } : {}),
+    limit: 200,
+  });
+
+  const byAttribute = await listProductIdsWithVariant(db, {
+    ...(input.cor ? { cor: input.cor } : {}),
+    ...(input.tamanho ? { tamanho: input.tamanho } : {}),
+  });
+  if (byAttribute) {
+    items = items.filter((item) => byAttribute.has(item.id));
+    if (input.cor) filtros.push(`cor ${input.cor.trim()}`);
+    if (input.tamanho) filtros.push(`tamanho ${input.tamanho.trim()}`);
+  }
+  if (input.preco_maximo_reais !== undefined) {
+    const tetoCents = input.preco_maximo_reais * 100;
+    items = items.filter((item) => item.priceFromCents <= tetoCents);
+    filtros.push(`até ${formatCentsBRL(tetoCents)}`);
+  }
+
+  const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
     return {
       ok: true,
-      text: busca
-        ? `Não encontrei produtos para "${busca}". Posso mostrar o catálogo completo?`
+      text: filtros.length > 0
+        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra — e diga isso à cliente com honestidade.`
         : "O catálogo está vazio no momento — em breve teremos novidades!",
     };
   }
 
-  const lines = items.slice(0, MAX_LISTED_PRODUCTS).map((item) => {
+  const pagina = input.pagina ?? 1;
+  const totalPaginas = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const paginaEfetiva = Math.min(pagina, totalPaginas);
+  const inicio = (paginaEfetiva - 1) * PAGE_SIZE;
+  const page = items.slice(inicio, inicio + PAGE_SIZE);
+
+  const lines = page.map((item) => {
     const preco = formatPriceRange(item.priceFromCents, item.priceToCents);
-    return `• ${item.name} — ${preco}${item.available ? "" : " (esgotado)"}`;
+    const categoria = item.categoryName ? ` · ${item.categoryName}` : "";
+    return `• ${item.name}${categoria} — ${preco}${item.available ? "" : " (esgotado)"}`;
   });
-  if (items.length > MAX_LISTED_PRODUCTS) {
-    lines.push(`e mais ${items.length - MAX_LISTED_PRODUCTS} no site ${siteBaseUrl()}`);
-  }
+  lines.unshift(
+    `${items.length} ${items.length === 1 ? "peça encontrada" : "peças encontradas"}${descricaoFiltro}${
+      totalPaginas > 1
+        ? ` — mostrando ${inicio + 1} a ${inicio + page.length} (página ${paginaEfetiva} de ${totalPaginas}; passe pagina: ${paginaEfetiva + 1} para as próximas)`
+        : ""
+    }.`,
+  );
 
   if (ctx.onAttachment) {
     const map = await getSettingsMap(db, ["store_name"]);
     const title =
       typeof map["store_name"] === "string" && map["store_name"].trim() !== ""
         ? map["store_name"].trim()
-        : "Nossos produtos";
+        : "Nossas peças";
     ctx.onAttachment({
       kind: "option_list",
-      message: "Toque abaixo e veja o catálogo 👇",
+      message:
+        totalPaginas > 1
+          ? `Toque abaixo e veja o catálogo 👇 (${inicio + 1}–${inicio + page.length} de ${items.length})`
+          : "Toque abaixo e veja o catálogo 👇",
       title,
       buttonLabel: "Ver o catálogo",
-      options: items.slice(0, OPTION_LIST_MAX_OPTIONS).map((item) => ({
+      options: page.map((item) => ({
         id: `produto:${item.slug}`,
         title: truncateOptionTitle(item.name),
         description: formatPriceRange(item.priceFromCents, item.priceToCents),
       })),
     });
     lines.push(
-      "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 frase curta convidando a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
+      "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
     );
   }
   return { ok: true, text: lines.join("\n") };
@@ -319,23 +482,28 @@ async function execListarProdutos(
 
 /**
  * Produto resolvido + a variante EXATA quando o cliente falou por SKU (é o
- * caso do toque no menu de variações): é dela que sai a cor da foto.
+ * caso do toque na lista de variações): é dela que sai a cor da foto.
  */
-type ResolvedProduct = {
-  detail: PublicProductDetail;
-  matchedSku: string | null;
-};
+type ResolvedProduct =
+  | { kind: "found"; detail: PublicProductDetail; matchedSku: string | null }
+  | { kind: "ambiguous"; candidates: PublicProductListItem[] }
+  | { kind: "none" };
 
-/** Resolve por slug exato, depois SKU exato (case-insensitive), depois nome aproximado. */
+/**
+ * Resolve por slug exato (aceita o id 'produto:<slug>' da lista), depois SKU
+ * exato (sem caixa), depois nome aproximado. Mais de uma peça com o termo no
+ * nome NÃO escolhe em silêncio: devolve as candidatas para o modelo perguntar.
+ */
 async function resolveProductDetail(
   db: DbOrTx,
   term: string,
-): Promise<ResolvedProduct | null> {
-  const trimmed = term.trim();
-  if (trimmed === "") return null;
+): Promise<ResolvedProduct> {
+  let trimmed = term.trim();
+  if (trimmed.startsWith("produto:")) trimmed = trimmed.slice("produto:".length);
+  if (trimmed === "") return { kind: "none" };
 
   const bySlug = await getPublicProductBySlug(db, trimmed.toLowerCase());
-  if (bySlug) return { detail: bySlug, matchedSku: null };
+  if (bySlug) return { kind: "found", detail: bySlug, matchedSku: null };
 
   const [bySku] = await db
     .select({ slug: products.slug, sku: productVariants.sku })
@@ -350,17 +518,24 @@ async function resolveProductDetail(
     .limit(1);
   if (bySku) {
     const detail = await getPublicProductBySlug(db, bySku.slug);
-    if (detail) return { detail, matchedSku: bySku.sku };
+    if (detail) return { kind: "found", detail, matchedSku: bySku.sku };
   }
 
-  const list = await listPublicProducts(db, {});
+  const list = await listPublicProducts(db, { limit: 200 });
   const lowered = trimmed.toLowerCase();
-  const match =
-    list.find((p) => p.name.toLowerCase().includes(lowered)) ??
-    list.find((p) => lowered.includes(p.name.toLowerCase()));
-  if (!match) return null;
-  const detail = await getPublicProductBySlug(db, match.slug);
-  return detail ? { detail, matchedSku: null } : null;
+  const exact = list.filter((p) => p.name.toLowerCase() === lowered);
+  const contains =
+    exact.length > 0
+      ? exact
+      : list.filter((p) => p.name.toLowerCase().includes(lowered));
+  const matches =
+    contains.length > 0
+      ? contains
+      : list.filter((p) => lowered.includes(p.name.toLowerCase()));
+  if (matches.length === 0) return { kind: "none" };
+  if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
+  const detail = await getPublicProductBySlug(db, matches[0].slug);
+  return detail ? { kind: "found", detail, matchedSku: null } : { kind: "none" };
 }
 
 async function execDetalharProduto(
@@ -369,17 +544,31 @@ async function execDetalharProduto(
   input: BotToolInputs["detalhar_produto"],
 ): Promise<ToolResult> {
   const resolved = await resolveProductDetail(db, input.produto);
-  if (!resolved) {
+  if (resolved.kind === "none") {
     return {
       ok: false,
-      text: `Não encontrei o produto "${input.produto}". Use listar_produtos para ver o catálogo disponível.`,
+      text: `Não encontrei a peça "${input.produto}". Use listar_produtos para ver o catálogo disponível.`,
+    };
+  }
+  if (resolved.kind === "ambiguous") {
+    return {
+      ok: true,
+      text: [
+        `Há ${resolved.candidates.length} peças com "${input.produto}" no nome — pergunte à cliente qual ela quer (ou chame de novo com o slug exato):`,
+        ...resolved.candidates
+          .slice(0, 8)
+          .map(
+            (item) =>
+              `• ${item.name} (slug ${item.slug}) — ${formatPriceRange(item.priceFromCents, item.priceToCents)}${item.available ? "" : " (esgotado)"}`,
+          ),
+      ].join("\n"),
     };
   }
   const { detail, matchedSku } = resolved;
   const axes = detail.attributesSchema;
 
   // Cor definida na conversa: a que o modelo passou ou, quando o cliente
-  // tocou numa variação do menu, a da própria variante do SKU resolvido.
+  // tocou numa variação da lista, a da própria variante do SKU resolvido.
   const matchedVariant =
     matchedSku === null
       ? undefined
@@ -389,6 +578,12 @@ async function execDetalharProduto(
   const chosenColor =
     input.cor?.trim() ||
     (matchedVariant ? colorOfVariant(matchedVariant.attributes, axes) : null);
+
+  // Peça em vista no caderninho: o próximo turno sabe do que a conversa fala.
+  await updateBotState(db, ctx, (state) => ({
+    ...state,
+    focus: { slug: detail.slug, nome: detail.name, cor: chosenColor ?? null },
+  }));
 
   // Foto da cor escolhida; sem foto daquela cor, cai na genérica.
   let photoEmitted = false;
@@ -417,9 +612,9 @@ async function execDetalharProduto(
     }
   }
 
-  // Menu tocável das variações, espelhando o de produtos ('produto:<slug>').
+  // Lista tocável das variações, espelhando a de produtos ('produto:<slug>').
   // Quando o produto veio POR SKU, o cliente já escolheu a combinação (foi ele
-  // quem tocou no menu): reoferecer a lista só atrapalha.
+  // quem tocou na lista): reoferecer só atrapalha.
   let menuEmitted = false;
   if (ctx.onAttachment && matchedSku === null) {
     const menu = buildVariantMenu(detail.name, detail.variants, axes);
@@ -430,75 +625,54 @@ async function execDetalharProduto(
   }
 
   const lines = [detail.name];
+  const meta = [
+    ...(detail.categoryName ? [`Categoria: ${detail.categoryName}`] : []),
+    ...(detail.brand ? [`Marca: ${detail.brand}`] : []),
+  ];
+  if (meta.length > 0) lines.push(meta.join(" · "));
   const description = detail.description?.trim();
   if (description) {
     lines.push(
-      description.length > 200 ? `${description.slice(0, 200).trimEnd()}…` : description,
+      description.length > DESCRIPTION_MAX_CHARS
+        ? `${description.slice(0, DESCRIPTION_MAX_CHARS).trimEnd()}…`
+        : description,
+    );
+  } else {
+    lines.push(
+      "[Sem descrição cadastrada: não afirme tecido, caimento ou medidas — diga que confere com a equipe se a cliente perguntar.]",
+    );
+  }
+  // Promoção "de/por" quando todas as combinações têm o mesmo preço anterior.
+  const compareAt = detail.variants[0]?.compareAtPriceCents ?? null;
+  if (
+    compareAt !== null &&
+    detail.variants.every(
+      (variant) =>
+        variant.compareAtPriceCents === compareAt &&
+        variant.priceCents < compareAt,
+    )
+  ) {
+    lines.push(
+      `Promoção: de ${formatCentsBRL(compareAt)} por ${formatCentsBRL(detail.variants[0].priceCents)}.`,
     );
   }
   lines.push(...formatVariantLines(detail.variants, axes));
   if (detail.variants.every((variant) => variant.availableQty === 0)) {
-    lines.push("Atenção: este produto está esgotado no momento.");
+    lines.push(
+      "Atenção: esta peça está esgotada no momento. Ofereça outra parecida do catálogo ou anote (anotar + avisar_dono) para avisar quando voltar.",
+    );
   }
   if (photoEmitted) {
     lines.push(
       chosenColor
         ? `[A foto de ${chosenColor} foi enviada ao cliente.]`
-        : "[A foto do produto foi enviada ao cliente.]",
+        : "[A foto da peça foi enviada ao cliente.]",
     );
   }
   if (menuEmitted) {
     lines.push(
       "[A lista tocável de cores e tamanhos foi enviada ao cliente. Responda em 1 frase curta convidando a tocar na opção desejada — NÃO repita a lista de variações.]",
     );
-  }
-  return { ok: true, text: lines.join("\n") };
-}
-
-async function execCotarFrete(
-  db: DbOrTx,
-  ctx: BotExecutorContext,
-  input: BotToolInputs["cotar_frete"],
-): Promise<ToolResult> {
-  const state = await loadBotState(db, ctx.conversationId);
-  const cart = state.cart ?? [];
-
-  // Com itens acumulados no botState, o peso é real; sem carrinho, cotamos
-  // com o peso padrão de 1 item e dizemos com honestidade que é estimativa.
-  let totalWeightGrams = DEFAULT_ITEM_WEIGHT_GRAMS;
-  let isEstimate = true;
-  if (cart.length > 0) {
-    const skus = cart.map((item) => item.sku);
-    const variants = await db
-      .select({ sku: productVariants.sku, weightGrams: productVariants.weightGrams })
-      .from(productVariants)
-      .where(inArray(productVariants.sku, skus));
-    const weightBySku = new Map(variants.map((v) => [v.sku, v.weightGrams]));
-    totalWeightGrams = computeTotalWeightGrams(
-      cart.map((item) => ({
-        weightGrams: weightBySku.get(item.sku) ?? null,
-        quantity: item.quantidade,
-      })),
-    );
-    isEstimate = false;
-  }
-
-  const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams });
-  if (quotes.length === 0) {
-    return {
-      ok: false,
-      text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
-    };
-  }
-
-  await saveBotState(db, ctx.conversationId, { ...state, lastQuotes: quotes });
-
-  const lines = quotes.map(
-    (quote, index) =>
-      `${index + 1}. ${quote.name} — ${formatCentsBRL(quote.priceCents)} (${formatDeliveryDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})`,
-  );
-  if (isEstimate) {
-    lines.push("Estimativa para 1 item — o valor final aparece no resumo do pedido.");
   }
   return { ok: true, text: lines.join("\n") };
 }
@@ -510,6 +684,8 @@ async function resolveVariantBySku(db: DbOrTx, sku: string) {
       variantId: productVariants.id,
       sku: productVariants.sku,
       name: products.name,
+      attributes: productVariants.attributes,
+      attributesSchema: products.attributesSchema,
       weightGrams: productVariants.weightGrams,
       priceCents: priceVersions.priceCents,
     })
@@ -538,6 +714,165 @@ async function resolveVariantBySku(db: DbOrTx, sku: string) {
     )
     .limit(1);
   return row ?? null;
+}
+
+/** Disponível agora (on_hand - reserved) da variante, 0 se não houver linha. */
+async function availableQtyOf(db: DbOrTx, variantId: string): Promise<number> {
+  const [row] = await db
+    .select({ onHand: stockLevels.onHand, reserved: stockLevels.reserved })
+    .from(stockLevels)
+    .where(eq(stockLevels.productVariantId, variantId))
+    .limit(1);
+  if (!row) return 0;
+  return Math.max(0, row.onHand - row.reserved);
+}
+
+async function execAdicionarASacola(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["adicionar_a_sacola"],
+): Promise<ToolResult> {
+  const variant = await resolveVariantBySku(db, input.sku);
+  if (!variant) {
+    return {
+      ok: false,
+      text: `Não encontrei o SKU "${input.sku}" no catálogo. Confirme a peça com detalhar_produto antes de pôr na sacola.`,
+    };
+  }
+  const available = await availableQtyOf(db, variant.variantId);
+  const axes = (variant.attributesSchema ?? []) as string[];
+  const variacao = variantLabel(
+    (variant.attributes ?? {}) as Record<string, string>,
+    axes,
+  );
+  const rotulo = variacao ? `${variant.name} (${variacao})` : variant.name;
+  if (available < input.quantidade) {
+    return {
+      ok: false,
+      text:
+        available === 0
+          ? `${rotulo} está esgotada agora. Ofereça outra cor ou tamanho disponível (detalhar_produto) ou anote para avisar quando voltar.`
+          : `${rotulo} tem só ${available} ${available === 1 ? "unidade" : "unidades"} disponível — pedi ${input.quantidade}. Ajuste a quantidade com a cliente.`,
+    };
+  }
+
+  const item: BotCartItem = {
+    sku: variant.sku,
+    quantidade: input.quantidade,
+    nome: variant.name,
+    variacao,
+    precoCents: variant.priceCents,
+  };
+  const state = await updateBotState(db, ctx, (current) => ({
+    ...current,
+    cart: cartAdd(current.cart, item),
+    // Sacola mudou: a cotação anterior valia para outro peso.
+    lastQuotes: undefined,
+    chosenRateId: undefined,
+  }));
+  return {
+    ok: true,
+    text: [
+      `Adicionei ${input.quantidade}× ${rotulo} à sacola.`,
+      ...formatCartLines(state.cart),
+      "[Se a sacola tiver tudo, siga para o CEP e cotar_frete. Sugira UMA peça que completa o look só depois do pedido fechado.]",
+    ].join("\n"),
+  };
+}
+
+async function execVerSacola(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+): Promise<ToolResult> {
+  const state = await loadBotState(db, ctx.conversationId);
+  return { ok: true, text: formatCartLines(state.cart).join("\n") };
+}
+
+async function execRemoverDaSacola(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["remover_da_sacola"],
+): Promise<ToolResult> {
+  const before = await loadBotState(db, ctx.conversationId);
+  const existed = (before.cart ?? []).some(
+    (item) => item.sku.toLowerCase() === input.sku.trim().toLowerCase(),
+  );
+  if (!existed) {
+    return {
+      ok: false,
+      text: `O SKU "${input.sku}" não está na sacola.\n${formatCartLines(before.cart).join("\n")}`,
+    };
+  }
+  const state = await updateBotState(db, ctx, (current) => ({
+    ...current,
+    cart: cartRemove(current.cart, input.sku),
+    lastQuotes: undefined,
+    chosenRateId: undefined,
+  }));
+  return {
+    ok: true,
+    text: ["Tirei da sacola.", ...formatCartLines(state.cart)].join("\n"),
+  };
+}
+
+async function cartWeightGrams(db: DbOrTx, cart: readonly BotCartItem[]): Promise<number> {
+  const skus = cart.map((item) => item.sku);
+  const variants = await db
+    .select({ sku: productVariants.sku, weightGrams: productVariants.weightGrams })
+    .from(productVariants)
+    .where(inArray(productVariants.sku, skus));
+  const weightBySku = new Map(variants.map((v) => [v.sku, v.weightGrams]));
+  return computeTotalWeightGrams(
+    cart.map((item) => ({
+      weightGrams: weightBySku.get(item.sku) ?? null,
+      quantity: item.quantidade,
+    })),
+  );
+}
+
+async function execCotarFrete(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["cotar_frete"],
+): Promise<ToolResult> {
+  const state = await loadBotState(db, ctx.conversationId);
+  const cart = state.cart ?? [];
+
+  // Com peças na sacola, o peso é real; sem sacola, cotamos com o peso
+  // padrão de 1 peça e dizemos com honestidade que é estimativa.
+  const isEstimate = cart.length === 0;
+  const totalWeightGrams = isEstimate
+    ? DEFAULT_ITEM_WEIGHT_GRAMS
+    : await cartWeightGrams(db, cart);
+
+  const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams });
+  if (quotes.length === 0) {
+    return {
+      ok: false,
+      text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
+    };
+  }
+
+  await updateBotState(db, ctx, (current) => ({
+    ...current,
+    lastCep: input.cep,
+    lastQuotes: quotes,
+    chosenRateId: quotes.length === 1 ? quotes[0].rateId : undefined,
+  }));
+
+  const lines = quotes.map(
+    (quote, index) =>
+      `${index + 1}. ${quote.name} — ${formatCentsBRL(quote.priceCents)} (${formatDeliveryDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})`,
+  );
+  if (isEstimate) {
+    lines.push("Estimativa para 1 peça — o valor final aparece no resumo do pedido.");
+  }
+  if (quotes.length > 1) {
+    lines.push(
+      "[Pergunte à cliente qual opção ela prefere e passe a escolha em criar_pedido (campo frete).]",
+    );
+  }
+  return { ok: true, text: lines.join("\n") };
 }
 
 /**
@@ -618,11 +953,47 @@ type OrderIdentity = {
   state: string;
 };
 
+/**
+ * A opção de frete que a cliente escolheu, entre as cotações REAIS de agora:
+ * pelo nome ("SEDEX"), pelo número da lista ("2") ou pelo id já escolhido no
+ * caderninho. Sem escolha reconhecível e com mais de uma opção: null, e o
+ * executor pede a escolha em vez de decidir sozinho.
+ */
+function pickChosenQuote(
+  quotes: readonly ShippingQuote[],
+  input: string | undefined,
+  chosenRateId: string | undefined,
+): ShippingQuote | null {
+  if (quotes.length === 1) return quotes[0];
+  // Opções com o mesmo nome (duas faixas "PAC") não são uma escolha real:
+  // vale a mais barata, que é a primeira (quoteShipping ordena por preço).
+  if (new Set(quotes.map((quote) => quote.name.toLowerCase())).size === 1) {
+    return quotes[0];
+  }
+  const term = input?.trim().toLowerCase();
+  if (term) {
+    const byIndex = /^\d+$/.test(term) ? quotes[Number(term) - 1] : undefined;
+    if (byIndex) return byIndex;
+    const byName =
+      quotes.find((quote) => quote.name.toLowerCase() === term) ??
+      quotes.find((quote) => quote.name.toLowerCase().includes(term)) ??
+      quotes.find((quote) => term.includes(quote.name.toLowerCase()));
+    if (byName) return byName;
+  }
+  if (chosenRateId) {
+    const byId = quotes.find((quote) => quote.rateId === chosenRateId);
+    if (byId) return byId;
+  }
+  return null;
+}
+
 async function execCriarPedido(
   db: DbOrTx,
   ctx: BotExecutorContext,
   input: BotToolInputs["criar_pedido"],
 ): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+
   let identity: OrderIdentity;
 
   if (input.usar_cadastro_salvo) {
@@ -671,6 +1042,18 @@ async function execCriarPedido(
     };
   }
 
+  // Itens: os passados explicitamente ou, no caminho normal, a sacola.
+  const state = await loadBotState(db, ctx.conversationId);
+  const requested =
+    input.itens ??
+    (state.cart ?? []).map((item) => ({ sku: item.sku, quantidade: item.quantidade }));
+  if (requested.length === 0) {
+    return {
+      ok: false,
+      text: "A sacola está vazia. Confirme a peça com detalhar_produto e coloque-a com adicionar_a_sacola antes de fechar o pedido.",
+    };
+  }
+
   // Resolve cada SKU no catálogo vendável com o preço ativo de AGORA.
   const resolved: {
     variantId: string;
@@ -680,12 +1063,12 @@ async function execCriarPedido(
     unitPriceCents: number;
     weightGrams: number | null;
   }[] = [];
-  for (const item of input.itens) {
+  for (const item of requested) {
     const variant = await resolveVariantBySku(db, item.sku);
     if (!variant) {
       return {
         ok: false,
-        text: `Não encontrei o SKU "${item.sku}" no catálogo. Confirme o produto com detalhar_produto antes de fechar o pedido.`,
+        text: `Não encontrei o SKU "${item.sku}" no catálogo. Confirme a peça com detalhar_produto antes de fechar o pedido.`,
       };
     }
     resolved.push({
@@ -698,8 +1081,7 @@ async function execCriarPedido(
     });
   }
 
-  // Frete: recota com o peso real e escolhe a opção MAIS BARATA (simples e
-  // determinístico — quoteShipping já ordena por preço).
+  // Frete: recota com o peso real e usa a opção que a CLIENTE escolheu.
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
@@ -707,11 +1089,23 @@ async function execCriarPedido(
     cep: identity.postalCode,
     totalWeightGrams,
   });
-  const cheapest = quotes[0];
-  if (!cheapest) {
+  if (quotes.length === 0) {
     return {
       ok: false,
       text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
+    };
+  }
+  const chosen = pickChosenQuote(quotes, input.frete, state.chosenRateId);
+  if (!chosen) {
+    return {
+      ok: false,
+      text: [
+        "Há mais de uma opção de entrega e a escolha da cliente não veio (campo frete). Pergunte qual ela prefere e chame de novo:",
+        ...quotes.map(
+          (quote, index) =>
+            `${index + 1}. ${quote.name} — ${formatCentsBRL(quote.priceCents)} (${formatDeliveryDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})`,
+        ),
+      ].join("\n"),
     };
   }
 
@@ -745,8 +1139,8 @@ async function execCriarPedido(
         quantity: r.quantity,
         expectedUnitPriceCents: r.unitPriceCents,
       })),
-      shippingRateId: cheapest.rateId,
-      expectedShippingCents: cheapest.priceCents,
+      shippingRateId: chosen.rateId,
+      expectedShippingCents: chosen.priceCents,
       ...(input.cupom !== undefined && input.cupom.trim() !== ""
         ? { couponCode: input.cupom }
         : {}),
@@ -770,18 +1164,27 @@ async function execCriarPedido(
     throw error;
   }
 
-  // Vincula o cliente do pedido à conversa (histórico e opt-in coerentes).
+  // Vincula o cliente do pedido à conversa (histórico e opt-in coerentes) e
+  // esvazia a sacola: o pedido é o dono das peças agora.
   const [orderRow] = await db
     .select({ customerId: orders.customerId })
     .from(orders)
     .where(eq(orders.id, created.orderId))
     .limit(1);
-  if (orderRow) {
-    await db
-      .update(waConversations)
-      .set({ customerId: orderRow.customerId, updatedAt: new Date() })
-      .where(eq(waConversations.id, ctx.conversationId));
-  }
+  await db
+    .update(waConversations)
+    .set({
+      ...(orderRow ? { customerId: orderRow.customerId } : {}),
+      botState: {
+        ...state,
+        cart: [],
+        lastQuotes: undefined,
+        chosenRateId: undefined,
+        lastOrderNumber: created.orderNumber,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(waConversations.id, ctx.conversationId));
 
   // Link de pagamento: Mercado Pago quando ligado; senão a página pública do
   // pedido. Falha ao criar a preference NÃO derruba o pedido já criado.
@@ -807,7 +1210,7 @@ async function execCriarPedido(
     (sum, r) => sum + r.unitPriceCents * r.quantity,
     0,
   );
-  const discountCents = subtotalCents + cheapest.priceCents - created.totalCents;
+  const discountCents = subtotalCents + chosen.priceCents - created.totalCents;
 
   const lines = [
     `Pedido #${created.orderNumber} criado! 🎉`,
@@ -815,7 +1218,7 @@ async function execCriarPedido(
       (r) =>
         `• ${r.quantity}× ${r.name} — ${formatCentsBRL(r.unitPriceCents * r.quantity)}`,
     ),
-    `Frete (${cheapest.name}): ${formatCentsBRL(cheapest.priceCents)}`,
+    `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
     ...(discountCents > 0 ? [`Desconto: -${formatCentsBRL(discountCents)}`] : []),
     `TOTAL: ${formatCentsBRL(created.totalCents)}`,
     ...(isCash
@@ -861,7 +1264,7 @@ async function execStatusDoPedido(
   if (!customerId) {
     return {
       ok: false,
-      text: "Ainda não encontrei pedidos para este número de WhatsApp. Se o pedido foi feito com outro telefone, posso chamar um atendente.",
+      text: "Ainda não encontrei pedidos para este número de WhatsApp. Se o pedido foi feito com outro telefone, posso chamar a equipe.",
     };
   }
 
@@ -913,13 +1316,15 @@ async function execEnviarChavePix(
   ctx: BotExecutorContext,
   input: BotToolInputs["enviar_chave_pix"],
 ): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+
   const map = await getSettingsMap(db, ["store_pix_key"]);
   const pixKey =
     typeof map["store_pix_key"] === "string" ? map["store_pix_key"].trim() : "";
   if (pixKey === "") {
     return {
       ok: false,
-      text: "O Pix manual NÃO está disponível (a loja não tem chave Pix cadastrada). Não prometa Pix manual: siga pelo link de pagamento ou transfira para o atendente.",
+      text: "O Pix manual NÃO está disponível (a loja não tem chave Pix cadastrada). Não prometa Pix manual: siga pelo link de pagamento ou transfira para a equipe.",
     };
   }
 
@@ -992,7 +1397,7 @@ async function execEnviarChavePix(
         paymentMethod: "pix_manual",
         paymentDueAt: effectiveDueAt?.toISOString() ?? null,
       },
-      reason: "Chave Pix enviada pelo robô (plano B do link de pagamento)",
+      reason: "Chave Pix enviada pela vendedora (plano B do link de pagamento)",
     });
   }
 
@@ -1031,6 +1436,8 @@ async function execAvisarDono(
   ctx: BotExecutorContext,
   input: BotToolInputs["avisar_dono"],
 ): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+
   await enqueueOutboxEvent(db, {
     eventType: "wa.owner_forward",
     dedupeKey: `wa.avisar_dono:${ctx.lastInboundId}`,
@@ -1038,7 +1445,7 @@ async function execAvisarDono(
     aggregateId: ctx.conversationId,
     payload: {
       phoneE164: ctx.phoneE164,
-      body: `📢 Aviso do robô: ${input.mensagem}`,
+      body: `📢 Aviso da vendedora: ${input.mensagem}`,
       raw: true,
     },
   });
@@ -1048,11 +1455,36 @@ async function execAvisarDono(
   };
 }
 
+async function execAnotar(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["anotar"],
+): Promise<ToolResult> {
+  // Guarda de privacidade: nada que pareça CPF, cartão ou CEP vai para o
+  // caderninho, por mais que o modelo insista.
+  if (/\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{4}\s?\d{4}\s?\d{4}\s?\d{4}|\d{5}-?\d{3}/.test(input.nota)) {
+    return {
+      ok: false,
+      text: "Não anoto documentos, cartões nem endereços — só preferências (tamanho, cores, ocasião, para quem compra).",
+    };
+  }
+  const state = await updateBotState(db, ctx, (current) => ({
+    ...current,
+    notes: addNote(current.notes, input.nota),
+  }));
+  return {
+    ok: true,
+    text: `Anotado. Caderninho: ${(state.notes ?? []).join("; ")}`,
+  };
+}
+
 async function execTransferir(
   db: DbOrTx,
   ctx: BotExecutorContext,
   input: BotToolInputs["transferir_para_atendente"],
 ): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+
   await handOffToHuman(
     db,
     {
@@ -1061,6 +1493,7 @@ async function execTransferir(
       lastInboundId: ctx.lastInboundId,
     },
     input.motivo,
+    input.resumo?.trim() || undefined,
   );
   return { ok: true, text: "transferido", endsTurn: true };
 }
@@ -1096,6 +1529,20 @@ export function buildToolExecutor(
           ctx,
           parsed.data as BotToolInputs["detalhar_produto"],
         );
+      case "adicionar_a_sacola":
+        return execAdicionarASacola(
+          db,
+          ctx,
+          parsed.data as BotToolInputs["adicionar_a_sacola"],
+        );
+      case "ver_sacola":
+        return execVerSacola(db, ctx);
+      case "remover_da_sacola":
+        return execRemoverDaSacola(
+          db,
+          ctx,
+          parsed.data as BotToolInputs["remover_da_sacola"],
+        );
       case "cotar_frete":
         return execCotarFrete(db, ctx, parsed.data as BotToolInputs["cotar_frete"]);
       case "buscar_cadastro":
@@ -1120,6 +1567,8 @@ export function buildToolExecutor(
           ctx,
           parsed.data as BotToolInputs["avisar_dono"],
         );
+      case "anotar":
+        return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
       case "transferir_para_atendente":
         return execTransferir(
           db,
@@ -1128,6 +1577,53 @@ export function buildToolExecutor(
         );
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Prompt do turno: configurações + planta da loja. Compartilhado com o
+// ensaio do painel ("Testar a vendedora").
+// ---------------------------------------------------------------------------
+
+export type BotPromptBundle = {
+  system: string;
+  model: string;
+  sellerName: string;
+};
+
+export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle> {
+  const map = await getSettingsMap(db, [
+    "store_name",
+    "bot_extra_instructions",
+    "bot_model",
+    "bot_seller_name",
+    "store_exchange_policy",
+  ]);
+  const text = (key: string): string =>
+    typeof map[key] === "string" ? (map[key] as string).trim() : "";
+  const storeName = text("store_name") || DEFAULT_STORE_NAME;
+  const model = text("bot_model") || DEFAULT_BOT_MODEL;
+  const sellerName = text("bot_seller_name") || DEFAULT_SELLER_NAME;
+
+  const storeMap = renderStoreMap(await getStoreMap(db));
+
+  const system = buildBotSystemPrompt({
+    storeName,
+    sellerName,
+    extraInstructions: text("bot_extra_instructions"),
+    siteUrl: siteBaseUrl(),
+    ...(storeMap ? { storeMap } : {}),
+    exchangePolicy: text("store_exchange_policy"),
+  });
+  return { system, model, sellerName };
+}
+
+/** Histórico + caderninho como o modelo recebe (primeira mensagem = contexto). */
+export function assembleHistory(
+  state: BotState,
+  messages: BotChatMessage[],
+): BotChatMessage[] {
+  const note = renderContextNote(state);
+  return note ? [{ role: "user", text: note }, ...messages] : messages;
 }
 
 // ---------------------------------------------------------------------------
@@ -1176,49 +1672,34 @@ export async function runBotTurn(
       .limit(1);
     if (!lastInbound) return { skipped: "sem_mensagem_inbound" };
 
-    // Histórico: últimas 20 mensagens em ordem cronológica.
+    // Histórico: últimas mensagens em ordem cronológica, com a origem de cada
+    // saída marcada (equipe/automático) e mídia resumida em marcadores.
     const recent = await tx
       .select({
         direction: waMessages.direction,
         body: waMessages.body,
         kind: waMessages.kind,
+        dedupeKey: waMessages.dedupeKey,
+        templateKey: waMessages.templateKey,
       })
       .from(waMessages)
       .where(eq(waMessages.conversationId, conversationId))
       .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
       .limit(HISTORY_LIMIT);
-    const history: BotChatMessage[] = recent
-      .reverse()
-      .map((message) => ({
-        role: message.direction === "inbound" ? ("user" as const) : ("assistant" as const),
-        text: historyTextFor(message.kind, message.body),
-      }));
+    const messages: BotChatMessage[] = recent.reverse().map((message) =>
+      message.direction === "inbound"
+        ? { role: "user" as const, text: message.body }
+        : {
+            role: "assistant" as const,
+            text: historyTextForOutbound(message),
+          },
+    );
+    const state = parseBotState(conversation.botState);
+    const history = assembleHistory(state, messages);
 
-    const map = await getSettingsMap(tx, [
-      "store_name",
-      "bot_extra_instructions",
-      "bot_model",
-    ]);
-    const storeName =
-      typeof map["store_name"] === "string" && map["store_name"].trim() !== ""
-        ? map["store_name"].trim()
-        : DEFAULT_STORE_NAME;
-    const extraInstructions =
-      typeof map["bot_extra_instructions"] === "string"
-        ? map["bot_extra_instructions"]
-        : "";
-    const model =
-      typeof map["bot_model"] === "string" && map["bot_model"].trim() !== ""
-        ? map["bot_model"]
-        : DEFAULT_BOT_MODEL;
+    const { system, model } = await buildBotPromptBundle(tx);
 
-    const system = buildBotSystemPrompt({
-      storeName,
-      extraInstructions,
-      siteUrl: siteBaseUrl(),
-    });
-
-    // Mídia emitida pelas ferramentas do turno (menu de produtos, foto).
+    // Mídia emitida pelas ferramentas do turno (lista tocável, foto).
     const attachments: BotAttachment[] = [];
     const executeTool = buildToolExecutor(tx, {
       conversationId,
@@ -1239,9 +1720,9 @@ export async function runBotTurn(
       turn = await assistant.respondTurn({ system, history, model, executeTool });
     } catch (error) {
       if (error instanceof AssistantUnavailableError) {
-        // IA fora do ar: resposta fixa gentil + transferência para humano
-        // (mesma lógica da ferramenta, com audit e aviso ao dono).
-        const sent = await sendTemplateMessage(tx, provider, {
+        // Plano B: avisa o cliente, transfere para humano (audit + aviso ao
+        // dono) e encerra o turno sem propagar — o evento da fila conclui.
+        await sendTemplateMessage(tx, provider, {
           bodyOverride: BOT_UNAVAILABLE_REPLY,
           phoneE164: conversation.phoneE164,
           ...customerRef,
@@ -1257,14 +1738,13 @@ export async function runBotTurn(
           },
           "Assistente de IA indisponível",
         );
-        return { replied: "sent" in sent, handedOff: true };
+        return { replied: true, handedOff: true };
       }
       throw error;
     }
 
-    // Mídia sai ANTES do texto, em MELHOR ESFORÇO: falha de envio nunca segura
-    // a resposta da IA. O dedupe determinístico (última inbound + índice)
-    // garante que o retry do evento não duplica menu nem foto.
+    // Mídia ANTES do texto (o cliente vê a lista/foto e depois o convite),
+    // cada uma com dedupe determinístico por índice; falha é melhor esforço.
     for (const [index, attachment] of attachments.entries()) {
       const mediaDedupeKey = `wa.bot_media:${lastInbound.id}:${index}`;
       try {
@@ -1301,6 +1781,10 @@ export async function runBotTurn(
       }
     }
 
+    // Resposta em até 3 balões (o modelo separa com '---'), o primeiro com o
+    // dedupe histórico e os demais com sufixo — retry nunca duplica nenhum.
+    const bubbles = turn.reply === null ? [] : splitBotReply(turn.reply);
+
     // Trilha do turno para o painel e para o custo por conversa: quais
     // ferramentas rodaram, tokens gastos, tempo e se transferiu. Nunca guarda
     // o texto (ele já está em wa_messages).
@@ -1317,20 +1801,21 @@ export async function runBotTurn(
         usage: turn.usage,
         handedOff: turn.handedOff,
         attachments: attachments.map((attachment) => attachment.kind),
+        bubbles: bubbles.length,
         durationMs: Date.now() - startedAt,
       },
     });
 
     let replied = false;
-    if (turn.reply !== null && turn.reply.trim() !== "") {
+    for (const [index, bubble] of bubbles.entries()) {
       const sent = await sendTemplateMessage(tx, provider, {
-        bodyOverride: truncateForWhatsApp(polishBotReply(turn.reply)),
+        bodyOverride: truncateForWhatsApp(bubble),
         phoneE164: conversation.phoneE164,
         ...customerRef,
-        dedupeKey: replyDedupeKey,
+        dedupeKey: index === 0 ? replyDedupeKey : `${replyDedupeKey}:${index}`,
         requireOptIn: false,
       });
-      replied = "sent" in sent;
+      if ("sent" in sent) replied = true;
     }
 
     if (turn.handedOff) {

@@ -22,7 +22,14 @@ export type AssistantTurn = {
   reply: string | null;
   toolCalls: { name: string; ok: boolean }[];
   handedOff: boolean;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    /** Tokens lidos do cache de prompt (custam 10% do normal). */
+    cacheReadTokens?: number;
+    /** Tokens gravados no cache (custam 2× quando ttl 1h). */
+    cacheWriteTokens?: number;
+  };
 };
 
 /**

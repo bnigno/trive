@@ -487,6 +487,25 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .string()
     .trim()
     .max(140, "A chave Pix deve ter no máximo 140 caracteres."),
+  // --- Vendedora do WhatsApp (Onda 3) ---
+  /** Nome da vendedora virtual (vazio = padrão do prompt). */
+  bot_seller_name: z
+    .string()
+    .trim()
+    .max(40, "O nome da vendedora deve ter no máximo 40 caracteres."),
+  /**
+   * Política de troca em texto corrido, anexada ao prompt: é o que permite à
+   * vendedora responder "posso trocar?" sem inventar. Vazia = ela transfere.
+   */
+  store_exchange_policy: z
+    .string()
+    .trim()
+    .max(600, "A política de troca deve ter no máximo 600 caracteres."),
+  /** Respostas rápidas do painel de conversas, uma por linha. */
+  wa_quick_replies: z
+    .string()
+    .trim()
+    .max(2000, "As respostas rápidas devem ter no máximo 2000 caracteres."),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

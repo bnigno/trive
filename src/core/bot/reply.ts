@@ -1,42 +1,60 @@
-// Acabamento da resposta do vendedor antes de sair pelo WhatsApp — PURO.
+// Acabamento da resposta do bot antes de ir ao WhatsApp — PURO.
 //
-// Vocabulário da casa: o que o cliente vê é o CATÁLOGO da maison (nunca
-// "menu" nem "cardápio", palavras de restaurante que o modelo pega das
-// ferramentas e dos próprios hábitos). O prompt já pede isso; este filtro é a
-// rede de segurança para a palavra errada nunca chegar ao cliente.
+// O modelo às vezes escreve "menu" ou "cardápio" (vocabulário de restaurante
+// que ele traz de fábrica) onde a loja diz "catálogo". A regra está no
+// prompt, mas a última palavra é do código: a troca aqui garante que a
+// cliente nunca lê a palavra errada, mesmo num dia ruim do modelo.
 
-const VOCABULARY: ReadonlyArray<{ pattern: RegExp; singular: string; plural: string }> = [
-  { pattern: /\b(cardápios?|cardapios?)\b/giu, singular: "catálogo", plural: "catálogos" },
-  { pattern: /\b(menus?)\b/giu, singular: "catálogo", plural: "catálogos" },
+const VOCABULARY: ReadonlyArray<[RegExp, string]> = [
+  [/\bmenus\b/giu, "catálogos"],
+  [/\bmenu\b/giu, "catálogo"],
+  [/\bcard[áa]pios\b/giu, "catálogos"],
+  [/\bcard[áa]pio\b/giu, "catálogo"],
 ];
 
-function matchCase(source: string, replacement: string): string {
-  if (source === source.toUpperCase() && source.length > 1) return replacement.toUpperCase();
-  if (source[0] === source[0]?.toUpperCase()) {
-    return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+/** Preserva a caixa da palavra original: "Menu" → "Catálogo", "MENU" → "CATÁLOGO". */
+function matchCase(original: string, replacement: string): string {
+  if (original === original.toUpperCase() && original.length > 1) {
+    return replacement.toUpperCase();
+  }
+  if (original[0] === original[0]?.toUpperCase()) {
+    return replacement[0].toUpperCase() + replacement.slice(1);
   }
   return replacement;
 }
 
-/** "menu" → "catálogo", "Cardápios" → "Catálogos", preservando a caixa. */
 export function fixVocabulary(text: string): string {
   let out = text;
-  for (const { pattern, singular, plural } of VOCABULARY) {
-    out = out.replace(pattern, (word) => {
-      const isPlural = /s$/iu.test(word);
-      return matchCase(word, isPlural ? plural : singular);
-    });
+  for (const [pattern, replacement] of VOCABULARY) {
+    out = out.replace(pattern, (match) => matchCase(match, replacement));
   }
   return out;
 }
 
-/**
- * Resposta pronta para o cliente: vocabulário da casa, sem linhas em branco
- * em excesso (o WhatsApp mostra cada uma) e sem espaços nas pontas.
- */
+/** Vocabulário da casa + respiro: nunca mais de uma linha em branco seguida. */
 export function polishBotReply(text: string): string {
   return fixVocabulary(text)
-    .replace(/[ \t]+\n/gu, "\n")
-    .replace(/\n{3,}/gu, "\n\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export const MAX_BUBBLES = 3;
+
+/**
+ * Divide a resposta em até 3 balões quando o modelo separou blocos com uma
+ * linha contendo só "---". Mais de 3 blocos: o excedente é colado ao último
+ * (a cliente nunca perde texto). Sem separador, um balão só.
+ */
+export function splitBotReply(text: string): string[] {
+  const partes = polishBotReply(text)
+    .split(/\n[ \t]*-{3,}[ \t]*\n/)
+    .map((parte) => parte.trim())
+    .filter((parte) => parte !== "");
+  if (partes.length === 0) return [];
+  if (partes.length <= MAX_BUBBLES) return partes;
+  return [
+    ...partes.slice(0, MAX_BUBBLES - 1),
+    partes.slice(MAX_BUBBLES - 1).join("\n\n"),
+  ];
 }

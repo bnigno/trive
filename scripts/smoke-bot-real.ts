@@ -5,10 +5,8 @@
 import { randomUUID } from "node:crypto";
 
 import { ClaudeSalesAssistant } from "@/adapters/assistant/claude";
-import { buildBotSystemPrompt } from "@/core/bot/prompt";
 import { getDb } from "@/db/client";
-import { buildToolExecutor } from "@/services/wa-bot";
-import { siteBaseUrl } from "@/services/wa-messaging";
+import { buildBotPromptBundle, buildToolExecutor } from "@/services/wa-bot";
 
 async function main() {
   if (!process.env.ANTHROPIC_API_KEY?.trim()) {
@@ -23,16 +21,15 @@ async function main() {
     customerId: null,
     // Smoke sem inbound real: id sintético só para os dedupes das ferramentas.
     lastInboundId: randomUUID(),
+    // Ensaio: nada de pedido, Pix, aviso ou transferência de verdade.
+    dryRun: true,
   });
 
+  const { system, model } = await buildBotPromptBundle(db);
   const turn = await assistant.respondTurn({
-    system: buildBotSystemPrompt({
-      storeName: "TRIVÉ",
-      extraInstructions: "",
-      siteUrl: siteBaseUrl(),
-    }),
+    system,
     history: [{ role: "user", text: "Oi! O que vocês vendem?" }],
-    model: "claude-sonnet-5",
+    model,
     executeTool,
   });
 

@@ -7,7 +7,7 @@
 // se a conversa está 'open', o bot não está silenciado (bot_disabled_until)
 // e o bot de vendas está habilitado, enfileira 'wa.bot_turn'; senão o texto
 // é encaminhado ao DONO via outbox — humano responde.
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -54,6 +54,18 @@ const zapiInboundBodySchema = z
         message: z.string().optional(),
       })
       .optional(),
+    // Mídia recebida (a Z-API manda um objeto por tipo). Registramos o fato
+    // para a vendedora responder com honestidade em vez de ignorar a cliente.
+    image: z
+      .object({ imageUrl: z.string().optional(), caption: z.string().optional() })
+      .optional(),
+    audio: z.object({ audioUrl: z.string().optional() }).optional(),
+    video: z.object({ videoUrl: z.string().optional() }).optional(),
+    document: z
+      .object({ documentUrl: z.string().optional(), fileName: z.string().optional() })
+      .optional(),
+    sticker: z.object({ stickerUrl: z.string().optional() }).optional(),
+    location: z.object({ address: z.string().optional() }).optional(),
     // Callback de status de mensagem (webhook update-webhook-message-status):
     // status SENT/RECEIVED/READ/PLAYED + ids das mensagens afetadas.
     status: z.string().optional(),
@@ -118,6 +130,64 @@ function listResponseText(
   return list.title ?? list.message;
 }
 
+export const INBOUND_MEDIA_MARKERS = {
+  image: "[a cliente enviou uma foto]",
+  audio: "[a cliente enviou um áudio]",
+  video: "[a cliente enviou um vídeo]",
+  document: "[a cliente enviou um documento]",
+  sticker: "[a cliente enviou uma figurinha]",
+  location: "[a cliente enviou uma localização]",
+} as const;
+
+type InboundMedia = {
+  /** kind de wa_messages: só imagem tem representação própria no painel. */
+  kind: "image" | "text";
+  body: string;
+  mediaUrl?: string;
+};
+
+/**
+ * Mídia recebida vira uma mensagem inbound com um marcador em português: a
+ * vendedora lê "[a cliente enviou um áudio]" e responde com honestidade que
+ * ainda não ouve áudio por aqui, e o painel mostra o que chegou (a foto,
+ * inclusive) em vez de sumir com a mensagem.
+ */
+function describeInboundMedia(parsed: {
+  image?: { imageUrl?: string; caption?: string };
+  audio?: { audioUrl?: string };
+  video?: { videoUrl?: string };
+  document?: { documentUrl?: string; fileName?: string };
+  sticker?: { stickerUrl?: string };
+  location?: { address?: string };
+}): InboundMedia | undefined {
+  if (parsed.image) {
+    const caption = parsed.image.caption?.trim();
+    return {
+      kind: "image",
+      body: caption
+        ? `${INBOUND_MEDIA_MARKERS.image} ${caption}`
+        : INBOUND_MEDIA_MARKERS.image,
+      ...(parsed.image.imageUrl ? { mediaUrl: parsed.image.imageUrl } : {}),
+    };
+  }
+  if (parsed.audio) return { kind: "text", body: INBOUND_MEDIA_MARKERS.audio };
+  if (parsed.video) return { kind: "text", body: INBOUND_MEDIA_MARKERS.video };
+  if (parsed.document) {
+    const name = parsed.document.fileName?.trim();
+    return {
+      kind: "text",
+      body: name
+        ? `${INBOUND_MEDIA_MARKERS.document} ${name}`
+        : INBOUND_MEDIA_MARKERS.document,
+    };
+  }
+  if (parsed.sticker) return { kind: "text", body: INBOUND_MEDIA_MARKERS.sticker };
+  if (parsed.location) {
+    return { kind: "text", body: INBOUND_MEDIA_MARKERS.location };
+  }
+  return undefined;
+}
+
 /** Z-API manda '5511999998888' (sem '+'): normaliza BR; aceita E.164 estrangeiro. */
 function normalizePhone(raw: string): string | null {
   const br = toE164BR(raw);
@@ -149,11 +219,13 @@ export async function processZapiInbound(
   const messageId =
     parsed.messageId !== undefined ? String(parsed.messageId) : undefined;
   const rawPhone = parsed.phone !== undefined ? String(parsed.phone) : undefined;
+  const media = describeInboundMedia(parsed);
   const text =
     parsed.text?.message ??
     parsed.body?.message ??
     listResponseText(parsed.listResponseMessage) ??
-    parsed.buttonsResponseMessage?.message;
+    parsed.buttonsResponseMessage?.message ??
+    media?.body;
 
   // Callback de STATUS de mensagem (entregue/lida): atualiza wa_messages
   // pelo zapi_message_id de forma MONOTÔNICA (nunca regride) — é o que torna
@@ -190,7 +262,7 @@ export async function processZapiInbound(
     return { action: "status", updated };
   }
 
-  // Sem texto = status/ack/mídia — por ora ignorados (não registram inbound,
+  // Sem texto nem mídia = status/ack — ignorados (não registram inbound,
   // senão o DELIVERED consumiria o dedupe do messageId). Ecos das nossas
   // próprias mensagens (fromMe) e grupos também não entram no fluxo.
   if (!messageId || !rawPhone || !text || parsed.fromMe === true || parsed.isGroup === true) {
@@ -258,6 +330,7 @@ export async function processZapiInbound(
       .returning({
         id: waConversations.id,
         status: waConversations.status,
+        createdAt: waConversations.createdAt,
         botDisabledUntil: waConversations.botDisabledUntil,
       });
 
@@ -267,12 +340,46 @@ export async function processZapiInbound(
         conversationId: conversation.id,
         direction: "inbound",
         zapiMessageId: messageId,
+        kind: media?.kind ?? "text",
         body: text,
+        ...(media?.mediaUrl ? { mediaUrl: media.mediaUrl } : {}),
         status: "delivered",
         deliveredAt: now,
       })
       .onConflictDoNothing({ target: waMessages.zapiMessageId })
       .returning({ id: waMessages.id });
+
+    // Conversa recém-criada (a anterior foi encerrada no painel): o caderninho
+    // da vendedora (anotações) acompanha o telefone, não a conversa.
+    if (conversation.createdAt.getTime() >= now.getTime() - 1000) {
+      const [previous] = await tx
+        .select({ botState: waConversations.botState })
+        .from(waConversations)
+        .where(
+          and(
+            eq(waConversations.phoneE164, phoneE164),
+            eq(waConversations.status, "closed"),
+          ),
+        )
+        .orderBy(desc(waConversations.updatedAt))
+        .limit(1);
+      const notes =
+        previous?.botState &&
+        typeof previous.botState === "object" &&
+        Array.isArray((previous.botState as { notes?: unknown }).notes)
+          ? ((previous.botState as { notes: unknown[] }).notes.filter(
+              (note): note is string => typeof note === "string",
+            ) as string[])
+          : [];
+      if (notes.length > 0) {
+        await tx
+          .update(waConversations)
+          .set({
+            botState: sql`coalesce(${waConversations.botState}, '{}'::jsonb) || jsonb_build_object('notes', ${JSON.stringify(notes)}::jsonb)`,
+          })
+          .where(eq(waConversations.id, conversation.id));
+      }
+    }
 
     // Nome do perfil do WhatsApp: a vendedora chama a cliente pelo nome sem
     // precisar perguntar. Vai para o bot_state (jsonb livre), só se houver.

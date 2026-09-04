@@ -529,7 +529,7 @@ describe("runBotTurn — mídia", () => {
     const list = provider.sentOptionLists[0];
     expect(list.toE164).toBe(PHONE);
     expect(list.buttonLabel).toBe("Ver o catálogo");
-    expect(list.title).toBe("Nossos produtos");
+    expect(list.title).toBe("Nossas peças");
     expect(list.options).toEqual([
       {
         id: "produto:caneca-azul",
@@ -577,7 +577,7 @@ describe("runBotTurn — mídia", () => {
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(result).toEqual({ replied: true, handedOff: false });
 
-    expect(toolText).toContain("[A foto do produto foi enviada ao cliente.]");
+    expect(toolText).toContain("[A foto da peça foi enviada ao cliente.]");
 
     const expectedUrl =
       "https://x.supabase.co/storage/v1/object/public/product-images/caneca-azul/1-full.webp";
@@ -776,7 +776,7 @@ describe("runBotTurn — cor e tamanho", () => {
     expect(provider.sentOptionLists).toHaveLength(1);
     const list = provider.sentOptionLists[0];
     expect(list.toE164).toBe(PHONE);
-    expect(list.buttonLabel).toBe("Escolher opção");
+    expect(list.buttonLabel).toBe("Escolher cor/tamanho");
     expect(list.title).toBe("Camisa Polo");
     // Só as combinações COM estoque (POLO-AM-G está esgotada).
     expect(list.options.map((option) => option.id)).toEqual([
@@ -1094,7 +1094,7 @@ describe("runBotTurn — enviar_chave_pix / avisar_dono / dinheiro na entrega", 
     expect(forwards[0].payload).toMatchObject({
       phoneE164: PHONE,
       raw: true,
-      body: "📢 Aviso do robô: Cliente diz que já pagou o pedido #1000 (R$ 51,80).",
+      body: "📢 Aviso da vendedora: Cliente diz que já pagou o pedido #1000 (R$ 51,80).",
     });
 
     // Retry do turno: aviso não duplica (dedupe no outbox) e a ferramenta
@@ -1248,7 +1248,7 @@ describe("buildToolExecutor", () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("PAC");
     expect(result.text).toContain(formatCentsBRL(1990));
-    expect(result.text).toContain("Estimativa para 1 item");
+    expect(result.text).toContain("Estimativa para 1 peça");
 
     const [conversation] = await db
       .select()
