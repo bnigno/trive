@@ -2,10 +2,11 @@
 // acompanhada de um filete dourado paralelo (como no logo). Server Component;
 // o movimento é CSS (globals.css): "draw" se desenha ao entrar na tela via
 // <Reveal>, "hover" se desenha no hover do .group pai, "drift" flutua devagar
-// (só transform) e "static" só decora. Sempre decorativo (aria-hidden).
+// (só transform), "enter" se desenha ao carregar (sem depender do <Reveal>:
+// capas de página) e "static" só decora. Sempre decorativo (aria-hidden).
 import { cx } from "@/components/ui/cx";
 
-type RibbonVariant = "draw" | "hover" | "drift" | "static";
+type RibbonVariant = "draw" | "hover" | "drift" | "enter" | "static";
 type RibbonTone = "ivory" | "noir";
 type RibbonSize = "sm" | "md" | "xl";
 
@@ -38,13 +39,21 @@ export function Ribbon({
   const rose = tone === "noir" ? "var(--color-rose-200)" : "var(--color-rose-300)";
   const gold = tone === "noir" ? "var(--color-gold-brush)" : "var(--color-gold-500)";
   const roseClass =
-    variant === "draw" ? "ribbon-draw" : variant === "hover" ? "ribbon-hover" : undefined;
+    variant === "draw"
+      ? "ribbon-draw"
+      : variant === "hover"
+        ? "ribbon-hover"
+        : variant === "enter"
+          ? "ribbon-enter"
+          : undefined;
   const goldClass =
     variant === "draw"
       ? "ribbon-draw ribbon-draw-gold"
       : variant === "hover"
         ? "ribbon-hover"
-        : undefined;
+        : variant === "enter"
+          ? "ribbon-enter ribbon-enter-gold"
+          : undefined;
 
   return (
     <svg

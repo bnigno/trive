@@ -71,6 +71,9 @@ export const orders = pgTable(
     shippingTrackingCode: text("shipping_tracking_code"),
     note: text("note"),
     paidAt: timestamp("paid_at", { withTimezone: true }),
+    // Comprovante de pagamento em imagem (receipts/<id>/comprovante.jpg),
+    // gerado quando o pagamento confirma; o dono abre pelo admin.
+    receiptPath: text("receipt_path"),
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),

@@ -10,6 +10,7 @@ import { BrandVeil } from "@/components/store/brand-veil";
 import { Monogram, markSrcSet } from "@/components/store/brand/monogram";
 import { Tagline } from "@/components/store/brand/tagline";
 import { Wordmark } from "@/components/store/brand/wordmark";
+import { CategoryCover } from "@/components/store/category-cover";
 import { HeroSentinel } from "@/components/store/hero-sentinel";
 import {
   IconArrowRight,
@@ -302,30 +303,31 @@ export default async function HomePage() {
                         >
                           <Link
                             href={`/produtos?categoria=${encodeURIComponent(category.slug)}`}
-                            className="group relative flex aspect-[3/4] flex-col justify-end overflow-hidden rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-5 transition-colors duration-300 hover:border-gold-500/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
+                            className="group flex h-full flex-col focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600"
                           >
-                            {/* Marca-d'água editorial: inicial da sala em serif gigante */}
-                            <span
-                              aria-hidden="true"
-                              className="pointer-events-none absolute -top-8 right-1 font-display text-[10rem] leading-none font-semibold text-ivory-400/50 transition-transform duration-700 ease-silk select-none group-hover:-translate-y-1"
-                            >
-                              {category.name.charAt(0)}
-                            </span>
-                            <Ribbon
-                              variant="hover"
-                              size="sm"
-                              className="absolute bottom-16 left-5 h-3"
+                            {/* Foto de capa (ou marca-d'água) e, abaixo, a legenda em marfim sólido. */}
+                            <CategoryCover
+                              category={category}
+                              size="card"
+                              sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 72vw"
                             />
-                            <span className="relative font-display text-heading font-semibold text-espresso-900">
-                              {category.name}
-                            </span>
-                            <span className="relative mt-1 font-store text-eyebrow text-rose-700 uppercase tabular-nums">
-                              {category.productCount}{" "}
-                              {category.productCount === 1 ? "peça" : "peças"}
-                            </span>
-                            <span className="relative mt-3 inline-flex items-center gap-2 font-store text-xs tracking-[0.18em] text-ink-700 uppercase">
-                              Entrar
-                              <IconArrowRight className="h-4 w-4 transition-transform duration-300 ease-silk group-hover:translate-x-1" />
+                            <span className="flex flex-1 flex-col border-b border-ivory-300 pt-3 pb-3">
+                              <span className="relative font-display text-heading font-semibold text-espresso-900">
+                                {category.name}
+                                <Ribbon
+                                  variant="hover"
+                                  size="sm"
+                                  className="absolute -bottom-2.5 left-0 h-2 w-16"
+                                />
+                              </span>
+                              <span className="mt-1 font-store text-eyebrow text-rose-700 uppercase tabular-nums">
+                                {category.productCount}{" "}
+                                {category.productCount === 1 ? "peça" : "peças"}
+                              </span>
+                              <span className="mt-3 inline-flex items-center gap-2 font-store text-xs tracking-[0.18em] text-ink-700 uppercase">
+                                Entrar
+                                <IconArrowRight className="h-4 w-4 transition-transform duration-300 ease-silk group-hover:translate-x-1" />
+                              </span>
                             </span>
                           </Link>
                         </Reveal>

@@ -18,6 +18,7 @@ export function NoirStage({
   className?: string;
   children: ReactNode;
   id?: string;
+  role?: string;
   "aria-label"?: string;
   "aria-labelledby"?: string;
 }) {

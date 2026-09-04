@@ -33,7 +33,7 @@ export function ProductCard({ product }: { product: PublicProductListItem }) {
             src={publicThumbUrl(product.imagePath)}
             alt={product.name}
             width={400}
-            height={400}
+            height={500}
             loading="lazy"
             decoding="async"
             className="h-full w-full object-cover transition-transform duration-700 ease-silk group-hover:scale-[1.04]"

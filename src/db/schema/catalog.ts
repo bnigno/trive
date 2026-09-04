@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
@@ -24,6 +25,11 @@ export const categories = pgTable(
     parentId: uuid("parent_id").references((): AnyPgColumn => categories.id, {
       onDelete: "restrict",
     }),
+    // Foto de capa da sala: path -full.webp no Storage (md/thumb por
+    // convenção). O foco vertical (0–100, object-position) existe porque a
+    // mesma foto serve ao card 4:5 da home e à faixa larga da coleção.
+    coverPath: text("cover_path"),
+    coverFocalY: smallint("cover_focal_y").notNull().default(50),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

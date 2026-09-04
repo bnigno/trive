@@ -31,10 +31,24 @@ export const btnGold =
 export const btnOutlineNoir =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-(--radius-hair) border border-gold-500/60 px-7 py-3.5 font-store text-sm font-medium uppercase tracking-[0.16em] text-gold-200 transition-colors duration-300 ease-silk hover:border-gold-300 hover:bg-gold-400/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-200";
 
+/** Botão compacto escuro (Calcular, Aplicar, Buscar): 44px de altura. */
+export const btnSmallDark =
+  "inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-(--radius-hair) bg-ink-950 px-5 py-2.5 font-store text-xs font-medium uppercase tracking-[0.16em] text-ivory-50 transition-colors duration-300 ease-silk hover:bg-ink-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600 disabled:cursor-not-allowed disabled:opacity-60";
+
+/** CTA desligado (ex.: "Fechar pedido" antes do frete): mesmo tamanho do primário. */
+export const btnDisabled =
+  "inline-flex min-h-11 w-full cursor-not-allowed items-center justify-center gap-2 rounded-(--radius-hair) border border-ivory-300 bg-ivory-200 px-7 py-3.5 font-store text-sm font-medium uppercase tracking-[0.16em] text-ink-500";
+
 export const inputBase =
-  "w-full appearance-none rounded-none border-0 border-b border-ivory-300 bg-transparent px-0.5 py-2 font-store text-sm text-ink-900 placeholder:text-ink-400 transition-colors duration-300 focus:border-gold-600 focus:outline-none";
+  "w-full appearance-none rounded-none border-0 border-b border-ivory-300 bg-transparent px-0.5 py-2 font-store text-sm text-ink-900 placeholder:text-ink-500 transition-colors duration-300 focus:border-gold-600 focus:outline-none aria-invalid:border-claret-600";
 
 export const hairline = "border-ivory-300";
+
+/** A folha de papel timbrado (sacola, checkout, pedido). */
+export const sheet = "rounded-(--radius-hair) border border-ivory-300 bg-ivory-50";
+
+/** Numeral editorial (01, 02…) em ouro escuro: o único ouro pequeno em marfim. */
+export const numeral = "font-store text-eyebrow font-medium text-gold-800 tabular-nums";
 
 /** Hairline sobre noir: ouro a 20%. */
 export const hairlineNoir = "border-gold-500/20";

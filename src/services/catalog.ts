@@ -1093,3 +1093,213 @@ export async function removeProductImage(
   await storage.remove(mdPathFor(image.storagePath));
   await storage.remove(thumbPathFor(image.storagePath));
 }
+
+// ---------------------------------------------------------------------------
+// Capa das salas (categorias): mesma esteira das fotos de produto (3 rendições
+// webp), mas 1 capa por sala. A mesma foto serve ao card 4:5 da home e à
+// faixa larga da coleção, por isso o dono escolhe o foco vertical.
+// ---------------------------------------------------------------------------
+
+const COVER_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function assertCoverContentType(contentType: string): void {
+  const type = contentType.trim().toLowerCase();
+  if (type === "image/heic" || type === "image/heif") {
+    throw new ServiceError(
+      "imagem_invalida",
+      "Fotos HEIC não são aceitas. Converta para JPG no iPhone: Ajustes › Câmera › Formatos › Mais compatível.",
+    );
+  }
+  if (!COVER_CONTENT_TYPES.has(type)) {
+    throw new ServiceError("imagem_invalida", "Envie a capa em JPG, PNG ou WebP.");
+  }
+}
+
+const coverFocalYSchema = z
+  .number()
+  .int()
+  .min(0, "O foco da capa vai de 0 a 100.")
+  .max(100, "O foco da capa vai de 0 a 100.");
+
+async function lockCategory(
+  tx: ServiceDb,
+  categoryId: string,
+): Promise<{ id: string; coverPath: string | null; coverFocalY: number }> {
+  const [row] = await tx
+    .select({
+      id: categories.id,
+      coverPath: categories.coverPath,
+      coverFocalY: categories.coverFocalY,
+    })
+    .from(categories)
+    .where(eq(categories.id, categoryId))
+    .for("update");
+  if (!row) throw new ServiceError("nao_encontrado", "Categoria não encontrada.");
+  return row;
+}
+
+/** Apaga as 3 rendições de uma capa. Melhor esforço: a troca já aconteceu. */
+async function removeCoverFiles(storage: FileStorage, coverPath: string): Promise<void> {
+  for (const path of [coverPath, mdPathFor(coverPath), thumbPathFor(coverPath)]) {
+    try {
+      await storage.remove(path);
+    } catch (error) {
+      console.warn(`Capa antiga não removida do storage (${path}).`, error);
+    }
+  }
+}
+
+const setCategoryCoverSchema = z.object({
+  categoryId: z.uuid(),
+  data: z.custom<Uint8Array | Buffer>(
+    (value) => value instanceof Uint8Array,
+    "Dados da imagem ausentes ou inválidos.",
+  ),
+  contentType: z.string().min(1),
+  focalY: coverFocalYSchema.default(50),
+  userId: z.uuid(),
+});
+
+export type SetCategoryCoverInput = z.input<typeof setCategoryCoverSchema>;
+
+export async function setCategoryCover(
+  db: ServiceDb,
+  storage: FileStorage,
+  input: SetCategoryCoverInput,
+) {
+  const parsed = setCategoryCoverSchema.parse(input);
+  assertCoverContentType(parsed.contentType);
+
+  const [category] = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(eq(categories.id, parsed.categoryId))
+    .limit(1);
+  if (!category) throw new ServiceError("nao_encontrado", "Categoria não encontrada.");
+
+  const source = Buffer.isBuffer(parsed.data) ? parsed.data : Buffer.from(parsed.data);
+  let fullBuffer: Buffer;
+  let mdBuffer: Buffer;
+  let thumbBuffer: Buffer;
+  try {
+    fullBuffer = await renderWebp(source, IMAGE_RENDITIONS.full);
+    mdBuffer = await renderWebp(source, IMAGE_RENDITIONS.md);
+    thumbBuffer = await renderWebp(source, IMAGE_RENDITIONS.thumb);
+  } catch {
+    throw new ServiceError(
+      "imagem_invalida",
+      "Não foi possível processar a imagem. Verifique se o arquivo é uma imagem válida.",
+    );
+  }
+
+  const basePath = `categories/${parsed.categoryId}/${randomUUID()}`;
+  const fullPath = `${basePath}${FULL_SUFFIX}`;
+  const mdPath = `${basePath}${MD_SUFFIX}`;
+  const thumbPath = `${basePath}${THUMB_SUFFIX}`;
+
+  // Upload antes do UPDATE: a capa só aponta para arquivos que existem.
+  await storage.upload({ path: fullPath, data: fullBuffer, contentType: "image/webp" });
+  await storage.upload({ path: mdPath, data: mdBuffer, contentType: "image/webp" });
+  await storage.upload({ path: thumbPath, data: thumbBuffer, contentType: "image/webp" });
+
+  const previousPath = await db.transaction(async (tx) => {
+    const current = await lockCategory(tx, parsed.categoryId);
+    await tx
+      .update(categories)
+      .set({ coverPath: fullPath, coverFocalY: parsed.focalY, updatedAt: new Date() })
+      .where(eq(categories.id, parsed.categoryId));
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "category.set_cover",
+      entityType: "category",
+      entityId: parsed.categoryId,
+      before: { coverPath: current.coverPath, coverFocalY: current.coverFocalY },
+      after: { coverPath: fullPath, coverFocalY: parsed.focalY },
+    });
+    return current.coverPath;
+  });
+
+  if (previousPath && previousPath !== fullPath) {
+    await removeCoverFiles(storage, previousPath);
+  }
+
+  return {
+    coverPath: fullPath,
+    coverFocalY: parsed.focalY,
+    thumbUrl: storage.publicUrl(thumbPath),
+  };
+}
+
+const updateCategoryCoverFocusSchema = z.object({
+  categoryId: z.uuid(),
+  focalY: coverFocalYSchema,
+  userId: z.uuid(),
+});
+
+export type UpdateCategoryCoverFocusInput = z.input<
+  typeof updateCategoryCoverFocusSchema
+>;
+
+/** Só troca o foco vertical da capa já enviada (topo / centro / base). */
+export async function updateCategoryCoverFocus(
+  db: ServiceDb,
+  input: UpdateCategoryCoverFocusInput,
+) {
+  const parsed = updateCategoryCoverFocusSchema.parse(input);
+  return await db.transaction(async (tx) => {
+    const current = await lockCategory(tx, parsed.categoryId);
+    if (!current.coverPath) {
+      throw new ServiceError("sem_capa", "Esta sala ainda não tem capa.");
+    }
+    if (current.coverFocalY === parsed.focalY) return current;
+    await tx
+      .update(categories)
+      .set({ coverFocalY: parsed.focalY, updatedAt: new Date() })
+      .where(eq(categories.id, parsed.categoryId));
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "category.set_cover_focus",
+      entityType: "category",
+      entityId: parsed.categoryId,
+      before: { coverFocalY: current.coverFocalY },
+      after: { coverFocalY: parsed.focalY },
+    });
+    return { ...current, coverFocalY: parsed.focalY };
+  });
+}
+
+const removeCategoryCoverSchema = z.object({
+  categoryId: z.uuid(),
+  userId: z.uuid(),
+});
+
+export type RemoveCategoryCoverInput = z.input<typeof removeCategoryCoverSchema>;
+
+/** Tira a capa da sala (volta à capa tipográfica). Idempotente. */
+export async function removeCategoryCover(
+  db: ServiceDb,
+  storage: FileStorage,
+  input: RemoveCategoryCoverInput,
+) {
+  const parsed = removeCategoryCoverSchema.parse(input);
+  const previousPath = await db.transaction(async (tx) => {
+    const current = await lockCategory(tx, parsed.categoryId);
+    if (!current.coverPath) return null;
+    await tx
+      .update(categories)
+      .set({ coverPath: null, coverFocalY: 50, updatedAt: new Date() })
+      .where(eq(categories.id, parsed.categoryId));
+    await writeAudit(tx, {
+      actorId: parsed.userId,
+      action: "category.remove_cover",
+      entityType: "category",
+      entityId: parsed.categoryId,
+      before: { coverPath: current.coverPath, coverFocalY: current.coverFocalY },
+      after: { coverPath: null, coverFocalY: 50 },
+    });
+    return current.coverPath;
+  });
+
+  if (previousPath) await removeCoverFiles(storage, previousPath);
+  return { removed: previousPath !== null };
+}

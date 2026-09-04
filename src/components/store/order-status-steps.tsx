@@ -55,9 +55,14 @@ export function OrderStatusSteps({ status }: { status: string }) {
   };
 
   return (
-    <ol className="flex items-start" aria-label="Andamento do pedido">
+    <ol
+      className="flex items-start"
+      aria-label={`Andamento do pedido, ${STEPS.length} etapas`}
+    >
       {STEPS.map((step, index) => {
         const state = stateOf(index);
+        const label =
+          step.key === "payment" && state === "done" ? "Pago" : step.label;
         return (
           <li
             key={step.key}
@@ -92,15 +97,22 @@ export function OrderStatusSteps({ status }: { status: string }) {
             </div>
             <span
               className={cx(
-                "mt-2.5 px-0.5 text-center text-[11px] leading-tight tracking-[0.08em]",
+                "mt-2.5 px-0.5 text-center text-[11px] leading-tight tracking-[0.08em] lg:text-xs",
                 state === "current"
                   ? "font-medium text-ink-900"
                   : state === "done"
                     ? "text-ink-700"
-                    : "text-ink-400",
+                    : "text-ink-500",
               )}
             >
-              {step.label}
+              {label}
+              <span className="sr-only">
+                {state === "done"
+                  ? ", concluído"
+                  : state === "current"
+                    ? ", etapa atual"
+                    : ", a seguir"}
+              </span>
             </span>
           </li>
         );

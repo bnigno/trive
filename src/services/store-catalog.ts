@@ -85,6 +85,8 @@ export interface PublicProductListItem {
    * uma capa só, e a escolha de cor acontece na página do produto.
    */
   imagePath: string | null;
+  /** Segunda foto por sort_order (troca no hover do card), ou null. */
+  hoverImagePath: string | null;
   /** true se a soma de disponível (on_hand - reserved) das variantes > 0. */
   available: boolean;
 }
@@ -121,6 +123,12 @@ export async function listPublicProducts(
         order by pi.sort_order asc, pi.created_at asc
         limit 1
       )`,
+      hoverImagePath: sql<string | null>`(
+        select pi.storage_path from product_images pi
+        where pi.product_id = ${products.id}
+        order by pi.sort_order asc, pi.created_at asc
+        offset 1 limit 1
+      )`,
     })
     .from(products)
     // INNER joins: produto sem variante ativa com preço ativo fica de fora.
@@ -142,6 +150,7 @@ export async function listPublicProducts(
     priceFromCents: Number(row.priceFromCents),
     priceToCents: Number(row.priceToCents),
     imagePath: row.imagePath,
+    hoverImagePath: row.hoverImagePath,
     available: Number(row.availableSum) > 0,
   }));
 }
@@ -199,6 +208,10 @@ export interface PublicCategory {
   slug: string;
   /** Quantidade de produtos públicos (ativos com preço ativo) na categoria. */
   productCount: number;
+  /** Foto de capa da sala (path -full.webp), ou null = capa tipográfica. */
+  coverPath: string | null;
+  /** Foco vertical da capa em % (0 = topo, 100 = base) para object-position. */
+  coverFocalY: number;
 }
 
 export async function listPublicCategories(db: ServiceDb): Promise<PublicCategory[]> {
@@ -207,6 +220,8 @@ export async function listPublicCategories(db: ServiceDb): Promise<PublicCategor
       id: categories.id,
       name: categories.name,
       slug: categories.slug,
+      coverPath: categories.coverPath,
+      coverFocalY: categories.coverFocalY,
       productCount: sql<string>`count(distinct ${products.id})`,
     })
     .from(categories)
@@ -228,6 +243,8 @@ export async function listPublicCategories(db: ServiceDb): Promise<PublicCategor
     name: row.name,
     slug: row.slug,
     productCount: Number(row.productCount),
+    coverPath: row.coverPath,
+    coverFocalY: Number(row.coverFocalY),
   }));
 }
 
