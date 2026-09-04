@@ -15,7 +15,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -120,13 +119,16 @@ function clampQty(qty: number, availableQty: number): number {
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartLine[]>([]);
-  const hydratedRef = useRef(false);
+  // Estado (não ref) de propósito: no mesmo commit da hidratação o efeito de
+  // persistência ainda vê `hydrated === false` e não grava o [] inicial por
+  // cima do carrinho salvo (com ref, o StrictMode do dev apagava a sacola).
+  const [hydrated, setHydrated] = useState(false);
 
   // Hidratação: carrega do localStorage só no cliente, após o primeiro paint.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- hidratação do localStorage só no cliente (padrão SSR-safe)
     setItems(readStorage());
-    hydratedRef.current = true;
+    setHydrated(true);
 
     // Sincroniza entre abas: outra aba mexeu no carrinho → refletimos aqui.
     const onStorage = (event: StorageEvent) => {
@@ -143,9 +145,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   // Persiste após qualquer mutação — nunca antes de hidratar, para não
   // sobrescrever o carrinho salvo com o estado inicial vazio.
   useEffect(() => {
-    if (!hydratedRef.current) return;
+    if (!hydrated) return;
     writeStorage(items);
-  }, [items]);
+  }, [items, hydrated]);
 
   const addItem = useCallback((input: CartItemInput, qty = 1) => {
     setItems((current) => {
