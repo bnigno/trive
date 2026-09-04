@@ -8,6 +8,10 @@ import { functions } from "@/inngest/functions";
 // executando código velho após cada publicação (caso real: menu interativo
 // não saía porque o handler rodava o deploy anterior). Em dev a variável
 // não existe e o host da requisição continua valendo.
+// Teto explícito da função (vale em todos os planos da Vercel). O sweep do
+// outbox respeita um orçamento menor que isto (src/inngest/functions.ts).
+export const maxDuration = 60;
+
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions,

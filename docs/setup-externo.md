@@ -102,3 +102,10 @@ Divisão de papéis, para não confundir: **Hostinger = caixa humana** (você l�
 | GitHub / Sentry / UptimeRobot | R$ 0 | Free tier |
 | Mercado Pago | % por venda | Taxa por transação, não mensalidade |
 | **Total** | **~R$ 210–260** | No lançamento (Fases 0–3 sem Z-API: ~R$ 110) |
+
+## Bucket `product-images` e o comprovante de pagamento
+
+Conferido em 2026-09-04: o bucket é público, aceita `image/webp`, `image/png`,
+`image/jpeg` e `image/avif`, com limite de 10 MB por arquivo. O comprovante de
+pagamento (`receipts/<orderId>/comprovante.jpg`, gerado pelo evento
+`order.receipt`) depende de `image/jpeg` estar nessa lista.

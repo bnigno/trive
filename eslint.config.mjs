@@ -20,6 +20,7 @@ const eslintConfig = defineConfig([
         { type: "inngest", pattern: "src/inngest", partialMatch: false },
         { type: "app", pattern: "src/app", partialMatch: false },
         { type: "components", pattern: "src/components", partialMatch: false },
+        { type: "receipts", pattern: "src/receipts", partialMatch: false },
       ],
     },
     rules: {
@@ -41,6 +42,28 @@ const eslintConfig = defineConfig([
         {
           default: "allow",
           policies: [
+            {
+              // src/receipts só apresenta: os dados chegam por parâmetro
+              // (core/receipts/types) e nada de banco, serviços ou app entra aqui.
+              from: { element: { type: "receipts" } },
+              disallow: {
+                to: {
+                  element: {
+                    types: {
+                      anyOf: [
+                        "services",
+                        "adapters",
+                        "db",
+                        "queue",
+                        "inngest",
+                        "app",
+                        "components",
+                      ],
+                    },
+                  },
+                },
+              },
+            },
             {
               from: { element: { type: "core" } },
               disallow: {
