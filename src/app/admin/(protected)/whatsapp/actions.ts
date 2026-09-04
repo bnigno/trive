@@ -3,11 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { getSalesAssistant } from "@/adapters/assistant";
+import { AssistantUnavailableError } from "@/adapters/assistant";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
 import { sendToOwner, type WaSkipReason } from "@/services/wa-messaging";
+import { rehearseBotTurn, type RehearsalTurn } from "@/services/wa-rehearsal";
 import { updateWaTemplate } from "@/services/wa-templates";
 
 export type FormState = { error?: string; success?: string };
@@ -21,8 +24,28 @@ function toErrorMessage(error: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Configuração (settings wa_enabled / owner_whatsapp_phone /
-// wa_recovery_after_minutes)
+// Interruptores (salvam na hora, sem botão): WhatsApp e vendedora
+// ---------------------------------------------------------------------------
+
+const toggleKeySchema = z.enum(["wa_enabled", "bot_enabled"]);
+
+export async function setToggleAction(
+  key: string,
+  value: boolean,
+): Promise<{ ok: true } | { error: string }> {
+  const user = await requireOwner("whatsapp");
+  try {
+    const parsedKey = toggleKeySchema.parse(key);
+    await updateSetting(getDb(), { key: parsedKey, value, userId: user.id });
+    revalidatePath("/admin/whatsapp");
+    return { ok: true };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Conexão (owner_whatsapp_phone / wa_recovery_after_minutes)
 // ---------------------------------------------------------------------------
 
 export async function saveWaSettingsAction(
@@ -42,11 +65,6 @@ export async function saveWaSettingsAction(
 
     const db = getDb();
     await updateSetting(db, {
-      key: "wa_enabled",
-      value: formData.get("waEnabled") === "on",
-      userId: user.id,
-    });
-    await updateSetting(db, {
       key: "owner_whatsapp_phone",
       value: String(formData.get("ownerWhatsappPhone") ?? ""),
       userId: user.id,
@@ -58,14 +76,14 @@ export async function saveWaSettingsAction(
     });
 
     revalidatePath("/admin/whatsapp");
-    return { success: "Configurações do WhatsApp salvas." };
+    return { success: "Configurações da conexão salvas." };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Vendedor com IA (bot_enabled / bot_model / bot_extra_instructions)
+// Vendedora (nome, modelo, política de troca, instruções, respostas rápidas)
 // ---------------------------------------------------------------------------
 
 export async function saveBotSettingsAction(
@@ -75,25 +93,59 @@ export async function saveBotSettingsAction(
   const user = await requireOwner("whatsapp");
   try {
     const db = getDb();
+    const text = (name: string) => String(formData.get(name) ?? "");
+    await updateSetting(db, { key: "bot_seller_name", value: text("botSellerName"), userId: user.id });
+    await updateSetting(db, { key: "bot_model", value: text("botModel"), userId: user.id });
     await updateSetting(db, {
-      key: "bot_enabled",
-      value: formData.get("botEnabled") === "on",
-      userId: user.id,
-    });
-    await updateSetting(db, {
-      key: "bot_model",
-      value: String(formData.get("botModel") ?? ""),
+      key: "store_exchange_policy",
+      value: text("storeExchangePolicy"),
       userId: user.id,
     });
     await updateSetting(db, {
       key: "bot_extra_instructions",
-      value: String(formData.get("botExtraInstructions") ?? ""),
+      value: text("botExtraInstructions"),
+      userId: user.id,
+    });
+    await updateSetting(db, {
+      key: "wa_quick_replies",
+      value: text("waQuickReplies"),
       userId: user.id,
     });
 
     revalidatePath("/admin/whatsapp");
-    return { success: "Configurações do vendedor com IA salvas." };
+    revalidatePath("/admin/whatsapp/conversas");
+    return { success: "Ficha da vendedora salva. Vale a partir da próxima mensagem." };
   } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ensaio: "Testar a vendedora" (API real, sem efeito externo)
+// ---------------------------------------------------------------------------
+
+const rehearsalInputSchema = z.object({
+  history: z.array(
+    z.object({ role: z.enum(["user", "assistant"]), text: z.string() }),
+  ),
+  message: z.string(),
+});
+
+export type RehearsalResult = { ok: true; turn: RehearsalTurn } | { error: string };
+
+export async function rehearseBotAction(input: unknown): Promise<RehearsalResult> {
+  await requireOwner("whatsapp");
+  try {
+    const parsed = rehearsalInputSchema.parse(input);
+    const turn = await rehearseBotTurn(getDb(), getSalesAssistant(), parsed);
+    return { ok: true, turn };
+  } catch (error) {
+    if (error instanceof AssistantUnavailableError) {
+      return {
+        error:
+          "A vendedora não respondeu: a chave da Anthropic não está configurada na hospedagem ou a API está fora do ar. Tente de novo em instantes.",
+      };
+    }
     return { error: toErrorMessage(error) };
   }
 }
@@ -106,9 +158,9 @@ const SKIP_REASON_MESSAGES: Record<WaSkipReason, string> = {
   numero_sem_whatsapp:
     "Este número não tem WhatsApp ativo — confira se digitou certo (com DDD).",
   desabilitado:
-    "O envio está desativado — ative o WhatsApp acima (em modo real, confira também as credenciais Z-API na hospedagem) e salve antes de testar.",
+    "O envio está desligado — ligue o interruptor do WhatsApp (em modo real, confira também as credenciais Z-API na hospedagem) antes de testar.",
   sem_telefone_dono:
-    "Cadastre seu número de WhatsApp acima e salve antes de enviar o teste.",
+    "Cadastre seu número de WhatsApp e salve antes de enviar o teste.",
   ja_enviado: "Esta mensagem de teste já havia sido enviada.",
   sem_opt_in: "O destinatário não autorizou receber mensagens.",
   sem_template: "O modelo de mensagem não existe ou está inativo.",
@@ -143,7 +195,7 @@ export async function sendTestMessageAction(
     // retomada — para o dono, basta saber que não saiu agora.
     return {
       error:
-        "Não conseguimos falar com o WhatsApp agora. A mensagem ficou na fila e será reenviada; verifique a conexão no card de status.",
+        "Não conseguimos falar com o WhatsApp agora. A mensagem ficou na fila e será reenviada; verifique a conexão acima.",
     };
   }
 }
@@ -165,7 +217,7 @@ export async function updateWaTemplateAction(
       userId: user.id,
     });
     revalidatePath("/admin/whatsapp");
-    return { success: "Modelo de mensagem salvo." };
+    return { success: "Mensagem salva." };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }

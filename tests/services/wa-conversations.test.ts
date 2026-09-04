@@ -9,6 +9,7 @@ import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/settings";
 import {
+  closeWaConversation,
   countConversationsAwaitingOwner,
   getWaConversationThread,
   getWaThreadTail,
@@ -505,5 +506,208 @@ describe("wa-conversations (painel do admin)", () => {
     expect(await countConversationsAwaitingOwner(sdb)).toBe(0);
     await addMessage(awaiting, "inbound", "voltei", new Date(Date.now() + 60_000));
     expect(await countConversationsAwaitingOwner(sdb)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onda 3: origem da última mensagem, avisos internos, contexto da cauda
+// (caderninho, sacola, pedidos, transferência), atividade da vendedora e
+// encerramento da conversa.
+// ---------------------------------------------------------------------------
+
+describe("wa-conversations (onda 3)", () => {
+  let db: TestDb;
+  let sdb: DbOrTx;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ db, close } = await createTestDb());
+    sdb = db as unknown as DbOrTx;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  it("lista traz a origem da última mensagem, o nome do WhatsApp e marca a conversa de avisos do dono", async () => {
+    await db.insert(schema.settings).values({
+      key: "owner_whatsapp_phone",
+      value: "+5511900001111",
+    });
+    const [cliente] = await db
+      .insert(schema.waConversations)
+      .values({
+        phoneE164: "+5511999990000",
+        botState: { displayName: "Ana 🌸", notes: ["veste M"] },
+      })
+      .returning({ id: schema.waConversations.id });
+    const [dono] = await db
+      .insert(schema.waConversations)
+      .values({ phoneE164: "+5511900001111" })
+      .returning({ id: schema.waConversations.id });
+    await db.insert(schema.waMessages).values([
+      {
+        conversationId: cliente.id,
+        direction: "outbound",
+        body: "Oi, aqui é a equipe",
+        status: "sent",
+        dedupeKey: "wa.send:1",
+        createdAt: new Date(Date.now() - 2000),
+      },
+      {
+        conversationId: cliente.id,
+        direction: "outbound",
+        body: "Toque no catálogo 👇",
+        status: "sent",
+        dedupeKey: "wa.bot_reply:abc",
+        createdAt: new Date(Date.now() - 1000),
+      },
+      {
+        conversationId: dono.id,
+        direction: "outbound",
+        body: "📢 Aviso",
+        status: "sent",
+        templateKey: "owner_new_order",
+        createdAt: new Date(),
+      },
+    ]);
+
+    const list = await listWaConversations(sdb);
+    const daCliente = list.find((item) => item.id === cliente.id);
+    const doDono = list.find((item) => item.id === dono.id);
+    expect(daCliente).toMatchObject({
+      displayName: "Ana 🌸",
+      lastMessageOrigin: "bot",
+      lastMessagePreview: "Toque no catálogo 👇",
+      isOwnerNotices: false,
+    });
+    expect(doDono).toMatchObject({ lastMessageOrigin: "auto", isOwnerNotices: true });
+  });
+
+  it("cauda expõe caderninho, sacola, transferência, pedidos recentes e a atividade da vendedora", async () => {
+    const [customer] = await db
+      .insert(schema.customers)
+      .values({ fullName: "Maria da Silva", phoneE164: "+5511999990000" })
+      .returning({ id: schema.customers.id });
+    await db.insert(schema.orders).values({
+      customerId: customer.id,
+      status: "pending_payment",
+      channel: "whatsapp",
+      subtotalCents: 28900,
+      totalCents: 28900,
+    });
+    const [conversation] = await db
+      .insert(schema.waConversations)
+      .values({
+        phoneE164: "+5511999990000",
+        customerId: customer.id,
+        status: "human",
+        botState: {
+          displayName: "Maria",
+          notes: ["veste M em vestidos"],
+          cart: [{ sku: "DUNAS-PRET-M", quantidade: 1, nome: "Vestido Dunas", variacao: "Preto · M", precoCents: 28900 }],
+          lastOrderNumber: 1000,
+          handoff: { motivo: "quer trocar", resumo: "Dunas M por G.", at: "2026-09-04T12:00:00.000Z" },
+        },
+      })
+      .returning({ id: schema.waConversations.id });
+    const [inbound] = await db
+      .insert(schema.waMessages)
+      .values({
+        conversationId: conversation.id,
+        direction: "inbound",
+        body: "quero trocar",
+        status: "delivered",
+      })
+      .returning({ id: schema.waMessages.id });
+    await db.insert(schema.auditLog).values({
+      actorType: "system",
+      action: "wa.bot_turn",
+      entityType: "wa_conversation",
+      entityId: conversation.id,
+      after: {
+        inboundId: inbound.id,
+        model: "claude-sonnet-5",
+        toolCalls: [{ name: "buscar_cadastro", ok: true }, { name: "transferir_para_atendente", ok: true }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+        handedOff: true,
+      },
+    });
+
+    const tail = await getWaThreadTail(sdb, { conversationId: conversation.id });
+    expect(tail?.context).toMatchObject({
+      customerId: customer.id,
+      customerName: "Maria da Silva",
+      displayName: "Maria",
+      notes: ["veste M em vestidos"],
+      lastOrderNumber: 1000,
+      handoff: { motivo: "quer trocar", resumo: "Dunas M por G." },
+    });
+    expect(tail?.context.cart).toHaveLength(1);
+    expect(tail?.context.recentOrders).toHaveLength(1);
+    expect(tail?.context.recentOrders[0].totalCents).toBe(28900);
+    expect(tail?.activity).toEqual([
+      expect.objectContaining({
+        inboundId: inbound.id,
+        tools: ["buscar_cadastro", "transferir_para_atendente"],
+        handedOff: true,
+      }),
+    ]);
+  });
+
+  it("cauda de conversa sem cliente nem estado: contexto vazio e sem pedidos", async () => {
+    const [conversation] = await db
+      .insert(schema.waConversations)
+      .values({ phoneE164: "+5511999990000" })
+      .returning({ id: schema.waConversations.id });
+    const tail = await getWaThreadTail(sdb, { conversationId: conversation.id });
+    expect(tail?.context).toEqual({
+      customerId: null,
+      customerName: null,
+      displayName: null,
+      notes: [],
+      cart: [],
+      lastOrderNumber: null,
+      handoff: null,
+      recentOrders: [],
+    });
+    expect(tail?.activity).toEqual([]);
+  });
+
+  it("encerrar: vira closed com audit, limpa o silêncio e recusa ações depois", async () => {
+    const [conversation] = await db
+      .insert(schema.waConversations)
+      .values({
+        phoneE164: "+5511999990000",
+        status: "human",
+        botDisabledUntil: new Date(Date.now() + 3_600_000),
+      })
+      .returning({ id: schema.waConversations.id });
+
+    const userId = randomUUID();
+    await expect(
+      closeWaConversation(sdb, { conversationId: conversation.id, userId }),
+    ).resolves.toEqual({ status: "closed" });
+
+    const [row] = await db
+      .select()
+      .from(schema.waConversations)
+      .where(eq(schema.waConversations.id, conversation.id));
+    expect(row.status).toBe("closed");
+    expect(row.botDisabledUntil).toBeNull();
+
+    const [audit] = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "wa.conversation_close"));
+    expect(audit.actorId).toBe(userId);
+    expect(audit.before).toEqual({ status: "human" });
+
+    await expect(
+      closeWaConversation(sdb, { conversationId: conversation.id, userId }),
+    ).rejects.toBeInstanceOf(ServiceError);
+    await expect(
+      takeOverWaConversation(sdb, { conversationId: conversation.id, userId }),
+    ).rejects.toBeInstanceOf(ServiceError);
   });
 });

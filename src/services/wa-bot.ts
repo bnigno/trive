@@ -614,13 +614,30 @@ async function execDetalharProduto(
 
   // Lista tocável das variações, espelhando a de produtos ('produto:<slug>').
   // Quando o produto veio POR SKU, o cliente já escolheu a combinação (foi ele
-  // quem tocou na lista): reoferecer só atrapalha.
+  // quem tocou na lista): reoferecer só atrapalha. Com a cor já dita, a lista
+  // mostra só aquela cor — e se sobrar UMA combinação disponível, a escolha
+  // está feita: nada de lista, o SKU vai explícito para o modelo.
   let menuEmitted = false;
+  let chosenVariantLine: string | null = null;
   if (ctx.onAttachment && matchedSku === null) {
-    const menu = buildVariantMenu(detail.name, detail.variants, axes);
-    if (menu) {
-      ctx.onAttachment({ kind: "option_list", ...menu });
-      menuEmitted = true;
+    const ofColor = chosenColor
+      ? detail.variants.filter(
+          (variant) =>
+            colorOfVariant(variant.attributes, axes)?.toLowerCase() ===
+            chosenColor.toLowerCase(),
+        )
+      : [];
+    const menuVariants = ofColor.length > 0 ? ofColor : detail.variants;
+    const availableOfColor = ofColor.filter((variant) => variant.availableQty > 0);
+    if (ofColor.length > 0 && availableOfColor.length === 1) {
+      const only = availableOfColor[0];
+      chosenVariantLine = `[Com a cor ${chosenColor}, só existe uma combinação disponível: ${variantLabel(only.attributes, axes)} = SKU ${only.sku}. Confirme com a cliente e siga para adicionar_a_sacola — não peça para escolher de novo.]`;
+    } else {
+      const menu = buildVariantMenu(detail.name, menuVariants, axes);
+      if (menu) {
+        ctx.onAttachment({ kind: "option_list", ...menu });
+        menuEmitted = true;
+      }
     }
   }
 
@@ -674,6 +691,7 @@ async function execDetalharProduto(
       "[A lista tocável de cores e tamanhos foi enviada ao cliente. Responda em 1 frase curta convidando a tocar na opção desejada — NÃO repita a lista de variações.]",
     );
   }
+  if (chosenVariantLine) lines.push(chosenVariantLine);
   return { ok: true, text: lines.join("\n") };
 }
 

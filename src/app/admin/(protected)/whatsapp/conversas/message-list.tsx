@@ -1,8 +1,9 @@
 "use client";
 
-// Lista de mensagens da thread: wallpaper pontilhado, separadores de dia,
-// agrupamento de bolhas, auto-scroll educado (só quando o dono já está no
-// fim) e janela das últimas 100 mensagens com preservação de scroll.
+// Lista de mensagens da thread: papel marfim com grão sutil, separadores de
+// dia, agrupamento de bolhas, linhas do que a vendedora fez em cada turno,
+// auto-scroll educado (só quando o dono já está no fim) e janela das
+// últimas 100 mensagens com preservação de scroll.
 import {
   useCallback,
   useLayoutEffect,
@@ -13,8 +14,10 @@ import {
 } from "react";
 
 import { dayKeySP, daySeparatorLabel } from "./chat-format";
+import { TypingDots } from "./conversation-item";
+import { describeTools } from "./format";
 import { MessageBubble } from "./message-bubble";
-import type { ChatMessage } from "./use-chat-poll";
+import type { ChatActivity, ChatMessage } from "./use-chat-poll";
 
 const WINDOW_STEP = 100;
 const BOTTOM_THRESHOLD_PX = 48;
@@ -35,11 +38,18 @@ function prefersReducedMotion(): boolean {
 export function MessageList({
   messages,
   optimistic,
+  activity,
+  sellerName,
+  sellerTyping,
   scrollSignal,
   onRetry,
 }: {
   messages: ChatMessage[];
   optimistic: OptimisticDisplay[];
+  /** Ferramentas que a vendedora usou por mensagem recebida (trilha do turno). */
+  activity: ChatActivity[];
+  sellerName: string;
+  sellerTyping: boolean;
   /** Incrementado a cada envio do dono: força scroll ao fim mesmo longe dele. */
   scrollSignal: number;
   onRetry: (tempId: string) => void;
@@ -80,6 +90,11 @@ export function MessageList({
       })),
     ],
     [visible, optimistic],
+  );
+
+  const activityByInbound = useMemo(
+    () => new Map(activity.map((turn) => [turn.inboundId, turn])),
+    [activity],
   );
 
   const scrollToBottom = useCallback((smooth: boolean) => {
@@ -169,7 +184,7 @@ export function MessageList({
       if (dayKey !== prevDayKey) {
         built.push(
           <div key={`day-${dayKey}`} className="my-3 flex justify-center">
-            <span className="rounded-md bg-white/90 px-3 py-1 text-xs text-[#54656f] shadow-sm dark:bg-[#182229] dark:text-[#8696a0]">
+            <span className="rounded-full border border-ivory-300 bg-ivory-50/90 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-ink-500 dark:border-ink-700 dark:bg-ink-900/90 dark:text-ink-300">
               {daySeparatorLabel(message.createdAt)}
             </span>
           </div>,
@@ -188,6 +203,7 @@ export function MessageList({
           key={message.id}
           message={message}
           firstOfGroup={!grouped}
+          sellerName={sellerName}
           onRetry={
             isOptimistic && message.status === "failed"
               ? () => onRetry(message.id)
@@ -196,36 +212,69 @@ export function MessageList({
           onImageLoad={handleImageLoad}
         />,
       );
+      // Linha do que a vendedora fez ao responder esta mensagem da cliente.
+      const turn =
+        message.direction === "inbound"
+          ? activityByInbound.get(message.id)
+          : undefined;
+      const described = turn ? describeTools(turn.tools) : null;
+      if (turn && (described || turn.handedOff)) {
+        built.push(
+          <p
+            key={`turn-${message.id}`}
+            className="mt-1.5 flex justify-center px-6 text-center text-[11px] italic text-ink-400 dark:text-ink-400"
+          >
+            <span>
+              <span className="font-medium not-italic text-gold-700 dark:text-gold-400">
+                {sellerName}
+              </span>{" "}
+              {described ?? "passou para você"}
+            </span>
+          </p>,
+        );
+      }
       prev = message;
       prevDayKey = dayKey;
     }
     return built;
-  }, [all, optimisticIds, onRetry, handleImageLoad]);
+  }, [all, optimisticIds, onRetry, handleImageLoad, activityByInbound, sellerName]);
 
   return (
     <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto bg-[#efeae2] px-4 py-3 [background-image:radial-gradient(circle_at_center,rgba(0,0,0,0.04)_1px,transparent_1.5px)] [background-size:22px_22px] md:px-6 dark:bg-[#0b141a] dark:[background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.035)_1px,transparent_1.5px)]"
+        className="wa-paper h-full overflow-y-auto px-4 py-3 md:px-6"
       >
         {hiddenCount > 0 ? (
           <div className="mb-2 flex justify-center">
             <button
               type="button"
               onClick={handleShowMore}
-              className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-[#008069] shadow-sm transition-colors hover:bg-white motion-reduce:transition-none dark:bg-[#182229] dark:text-[#06cf9c] dark:hover:bg-[#202c33]"
+              className="rounded-full border border-ivory-300 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 shadow-sm transition-colors hover:bg-ivory-100 motion-reduce:transition-none dark:border-ink-700 dark:bg-ink-900 dark:text-ink-300 dark:hover:bg-ink-800"
             >
               Mostrar mensagens anteriores ({hiddenCount})
             </button>
           </div>
         ) : null}
         {all.length === 0 ? (
-          <p className="mt-8 text-center text-sm text-[#54656f] dark:text-[#8696a0]">
+          <p className="mt-8 text-center text-sm text-ink-500 dark:text-ink-300">
             Nenhuma mensagem nesta conversa ainda.
           </p>
         ) : (
-          <div className="flex flex-col pb-1">{rows}</div>
+          <div className="flex flex-col pb-1">
+            {rows}
+            {sellerTyping ? (
+              <div className="mt-2.5 flex justify-end">
+                <div className="wa-tail-out relative rounded-xl rounded-tr-none bg-ink-900 px-3 py-2 text-ivory-300 shadow-sm dark:bg-ivory-100 dark:text-ink-500">
+                  <span className="flex items-center gap-2 text-[11px] italic">
+                    <TypingDots />
+                    {sellerName} está respondendo…
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
       {pendingCount > 0 ? (
@@ -235,7 +284,7 @@ export function MessageList({
             setPendingCount(0);
             scrollToBottom(true);
           }}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-[#008069] shadow-md transition-colors hover:bg-zinc-50 motion-reduce:transition-none dark:bg-[#202c33] dark:text-[#06cf9c] dark:hover:bg-[#233138]"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-ink-900 px-3 py-1.5 text-xs font-medium text-ivory-50 shadow-md transition-colors hover:bg-ink-800 motion-reduce:transition-none dark:bg-ivory-100 dark:text-ink-900 dark:hover:bg-ivory-200"
         >
           {pendingCount === 1
             ? "1 nova mensagem ↓"

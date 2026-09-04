@@ -9,6 +9,7 @@ import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
 import { ServiceError } from "@/services/settings";
 import {
+  closeWaConversation,
   markConversationSeen,
   returnWaConversationToBot,
   sendManualWaReply,
@@ -46,6 +47,18 @@ export async function returnConversationToBotAction(
       conversationId,
       userId: user.id,
     });
+    return { ok: true };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+export async function closeConversationAction(
+  conversationId: string,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  try {
+    await closeWaConversation(getDb(), { conversationId, userId: user.id });
     return { ok: true };
   } catch (error) {
     return { error: toErrorMessage(error) };

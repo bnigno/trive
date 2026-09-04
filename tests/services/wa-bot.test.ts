@@ -828,22 +828,43 @@ describe("runBotTurn — cor e tamanho", () => {
       cor: "Amarelo",
     });
     expect(toolText).toContain("[A foto de Amarelo foi enviada ao cliente.]");
+    // Amarelo só tem o M disponível: a escolha está feita, sem lista — o SKU
+    // vai explícito para o modelo seguir para a sacola.
+    expect(toolText).toContain(
+      "[Com a cor Amarelo, só existe uma combinação disponível: Amarelo · M = SKU POLO-AM-M.",
+    );
+    expect(provider.sentOptionLists).toHaveLength(0);
 
     expect(provider.sentImages).toHaveLength(1);
     expect(provider.sentImages[0].imageUrl).toBe(`${base}polo/amarelo-full.webp`);
     expect(provider.sentImages[0].caption).toContain("Camisa Polo (Amarelo)");
 
-    // Toque no menu: o SKU chega no lugar do nome e a cor sai da variante.
+    // Sem cor: a lista completa de cores e tamanhos vai para a cliente.
+    await addInbound(conversationId, "quais cores tem?");
+    await detalhar(conversationId, { produto: "Camisa Polo" });
+    expect(provider.sentOptionLists).toHaveLength(1);
+    expect(provider.sentOptionLists[0].options).toHaveLength(4);
+
+    // Toque na lista: o SKU chega no lugar do nome e a cor sai da variante.
     await addInbound(conversationId, "Escolhi esta opção: Verde · P (SKU POLO-VD-P).");
     await detalhar(conversationId, { produto: "POLO-VD-P" });
-    expect(provider.sentImages[1].imageUrl).toBe(`${base}polo/verde-full.webp`);
-    // Quem já escolheu a combinação não recebe o menu de novo.
+    expect(provider.sentImages[2].imageUrl).toBe(`${base}polo/verde-full.webp`);
+    // Quem já escolheu a combinação não recebe a lista de novo.
     expect(provider.sentOptionLists).toHaveLength(1);
+
+    // Verde tem P e G: a lista sai só com as opções daquela cor.
+    await addInbound(conversationId, "e verde, tem que tamanho?");
+    await detalhar(conversationId, { produto: "Camisa Polo", cor: "Verde" });
+    expect(provider.sentOptionLists).toHaveLength(2);
+    expect(provider.sentOptionLists[1].options.map((option) => option.title)).toEqual([
+      "Verde · P",
+      "Verde · G",
+    ]);
 
     // Preto não tem foto própria: cai na genérica (color null).
     await addInbound(conversationId, "E na cor preta?");
     await detalhar(conversationId, { produto: "Camisa Polo", cor: "Preto" });
-    expect(provider.sentImages[2].imageUrl).toBe(`${base}polo/geral-full.webp`);
+    expect(provider.sentImages[4].imageUrl).toBe(`${base}polo/geral-full.webp`);
   });
 
   it("criar_pedido de combinação esgotada diz QUAL combinação acabou", async () => {

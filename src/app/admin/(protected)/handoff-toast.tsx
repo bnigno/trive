@@ -124,7 +124,7 @@ function HandoffToastCard({
       )}
     >
       <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#25d366]/15 text-[#128c5e] dark:text-[#25d366]">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gold-300/50 text-gold-800 dark:bg-gold-800/40 dark:text-gold-300">
           <svg
             viewBox="0 0 24 24"
             className="h-5 w-5"

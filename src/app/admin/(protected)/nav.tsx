@@ -44,25 +44,12 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: "Gestão",
+    title: "Atendimento",
     items: [
-      { label: "Financeiro", href: "/admin/financeiro", area: "financeiro" },
-      {
-        label: "Configurações",
-        href: "/admin/configuracoes",
-        area: "configuracoes",
-      },
-      { label: "Usuários", href: "/admin/usuarios", area: "usuarios" },
-      {
-        label: "WhatsApp",
-        href: "/admin/whatsapp",
-        area: "whatsapp",
-        exact: true,
-      },
       // O badge (e o viewport de avisos de transferência que ele monta) vive
-      // em Conversas: é o item que a equipe enxerga. Se ficasse na
-      // configuração do WhatsApp — área só do dono — o funcionário deixaria
-      // de receber o aviso de que o robô passou uma conversa para humano.
+      // em Conversas: é o item que a equipe enxerga. Se ficasse na Central do
+      // WhatsApp — área só do dono — o funcionário deixaria de receber o
+      // aviso de que a vendedora passou uma conversa para humano.
       {
         label: "Conversas",
         href: "/admin/whatsapp/conversas",
@@ -79,6 +66,24 @@ const NAV_GROUPS: NavGroup[] = [
         area: "emails",
         badge: EmailNavBadge,
       },
+      {
+        label: "Vendedora & WhatsApp",
+        href: "/admin/whatsapp",
+        area: "whatsapp",
+        exact: true,
+      },
+    ],
+  },
+  {
+    title: "Gestão",
+    items: [
+      { label: "Financeiro", href: "/admin/financeiro", area: "financeiro" },
+      {
+        label: "Configurações",
+        href: "/admin/configuracoes",
+        area: "configuracoes",
+      },
+      { label: "Usuários", href: "/admin/usuarios", area: "usuarios" },
       { label: "Relatórios", href: "/admin/relatorios", area: "relatorios" },
       { label: "Cupons", href: "/admin/cupons", area: "cupons" },
       { label: "Ajuda", href: "/admin/ajuda", area: "ajuda" },
