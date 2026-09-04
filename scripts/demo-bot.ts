@@ -74,6 +74,13 @@ function lastClientMessage(wa: FakeMessagingProvider): string {
 }
 
 async function main() {
+  // O demo apaga turnos pendentes da fila: só roda contra banco LOCAL.
+  const databaseUrl = process.env.DATABASE_URL ?? "";
+  if (!/(localhost|127\.0\.0\.1)/.test(databaseUrl)) {
+    throw new Error(
+      "demo-bot só roda com DATABASE_URL local (localhost/127.0.0.1) — nunca contra produção.",
+    );
+  }
   process.env.ZAPI_WEBHOOK_SECRET = SECRET;
   const db = getDb();
   const wa = getMessagingProvider();
