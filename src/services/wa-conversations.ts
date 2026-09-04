@@ -10,9 +10,10 @@ import {
   deriveWaMessageOrigin,
   type WaMessageOrigin,
 } from "@/core/whatsapp/origin";
-import { auditLog, customers, waConversations, waMessages } from "@/db/schema";
+import { parseBotState, type BotCartItem } from "@/core/bot/memory";
+import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
-import { ServiceError } from "@/services/settings";
+import { getSettingsMap, ServiceError } from "@/services/settings";
 
 // "Não vista" = inbound criada depois da última leitura do dono; conversa
 // nunca aberta (owner_last_seen_at NULL) conta tudo desde a época.
@@ -32,19 +33,29 @@ export interface WaConversationListItem {
   id: string;
   phoneE164: string;
   customerName: string | null;
+  /** Nome do perfil do WhatsApp (caderninho), quando não há cadastro. */
+  displayName: string | null;
   status: string;
   botDisabledUntil: Date | null;
   lastMessageAt: Date | null;
   lastMessageDirection: "inbound" | "outbound" | null;
+  /** Quem falou por último: cliente, vendedora, equipe ou automação. */
+  lastMessageOrigin: WaMessageOrigin | null;
   lastMessagePreview: string | null;
   unreadCount: number;
+  /**
+   * A "conversa" com o próprio WhatsApp do dono: os avisos internos
+   * (sendToOwner) criam uma conversa como qualquer outra. O painel a rotula
+   * como avisos, em vez de mostrá-la como uma cliente.
+   */
+  isOwnerNotices: boolean;
 }
 
 export async function listWaConversations(
   db: DbOrTx,
   options: { limit?: number } = {},
 ): Promise<WaConversationListItem[]> {
-  const limit = options.limit ?? 50;
+  const limit = options.limit ?? 100;
 
   const rows = await db
     .select({
@@ -53,6 +64,7 @@ export async function listWaConversations(
       customerName: customers.fullName,
       status: waConversations.status,
       botDisabledUntil: waConversations.botDisabledUntil,
+      botState: waConversations.botState,
       updatedAt: waConversations.updatedAt,
     })
     .from(waConversations)
@@ -62,6 +74,12 @@ export async function listWaConversations(
 
   if (rows.length === 0) return [];
 
+  const settings = await getSettingsMap(db, ["owner_whatsapp_phone"]);
+  const ownerPhone =
+    typeof settings["owner_whatsapp_phone"] === "string"
+      ? (settings["owner_whatsapp_phone"] as string).trim()
+      : "";
+
   // Última mensagem de cada conversa em uma única consulta (DISTINCT ON).
   const ids = rows.map((row) => row.id);
   const lastMessages = await db
@@ -69,6 +87,8 @@ export async function listWaConversations(
       conversationId: waMessages.conversationId,
       direction: waMessages.direction,
       body: waMessages.body,
+      dedupeKey: waMessages.dedupeKey,
+      templateKey: waMessages.templateKey,
       createdAt: waMessages.createdAt,
     })
     .from(waMessages)
@@ -99,10 +119,12 @@ export async function listWaConversations(
 
   return rows.map((row) => {
     const last = byConversation.get(row.id) ?? null;
+    const state = parseBotState(row.botState);
     return {
       id: row.id,
       phoneE164: row.phoneE164,
       customerName: row.customerName,
+      displayName: state.displayName?.trim() || null,
       status: row.status,
       botDisabledUntil: row.botDisabledUntil,
       lastMessageAt: last?.createdAt ?? null,
@@ -110,8 +132,16 @@ export async function listWaConversations(
         last?.direction === "inbound" || last?.direction === "outbound"
           ? last.direction
           : null,
+      lastMessageOrigin: last
+        ? deriveWaMessageOrigin({
+            direction: last.direction,
+            dedupeKey: last.dedupeKey,
+            templateKey: last.templateKey,
+          })
+        : null,
       lastMessagePreview: last?.body ?? null,
       unreadCount: unreadByConversation.get(row.id) ?? 0,
+      isOwnerNotices: ownerPhone !== "" && row.phoneE164 === ownerPhone,
     };
   });
 }
@@ -216,6 +246,32 @@ export interface WaThreadTailMessage {
   createdAt: Date;
 }
 
+/** O que o painel mostra ao lado da conversa: caderninho, sacola e pedidos. */
+export interface WaConversationContext {
+  customerId: string | null;
+  customerName: string | null;
+  displayName: string | null;
+  notes: string[];
+  cart: BotCartItem[];
+  lastOrderNumber: number | null;
+  handoff: { motivo: string; resumo: string | null; at: Date } | null;
+  recentOrders: {
+    id: string;
+    orderNumber: number;
+    status: string;
+    totalCents: number;
+    createdAt: Date;
+  }[];
+}
+
+/** O que a vendedora fez em cada turno (trilha 'wa.bot_turn' do audit). */
+export interface WaBotTurnActivity {
+  inboundId: string;
+  tools: string[];
+  handedOff: boolean;
+  createdAt: Date;
+}
+
 export interface WaThreadTail {
   conversation: {
     id: string;
@@ -224,6 +280,90 @@ export interface WaThreadTail {
     ownerLastSeenAt: Date | null;
   };
   messages: WaThreadTailMessage[];
+  context: WaConversationContext;
+  activity: WaBotTurnActivity[];
+}
+
+async function loadConversationContext(
+  db: DbOrTx,
+  conversation: {
+    id: string;
+    customerId: string | null;
+    customerName: string | null;
+    botState: unknown;
+  },
+): Promise<WaConversationContext> {
+  const state = parseBotState(conversation.botState);
+  const recentOrders = conversation.customerId
+    ? await db
+        .select({
+          id: orders.id,
+          orderNumber: orders.orderNumber,
+          status: orders.status,
+          totalCents: orders.totalCents,
+          createdAt: orders.createdAt,
+        })
+        .from(orders)
+        .where(eq(orders.customerId, conversation.customerId))
+        .orderBy(desc(orders.createdAt))
+        .limit(3)
+    : [];
+  return {
+    customerId: conversation.customerId,
+    customerName: conversation.customerName,
+    displayName: state.displayName?.trim() || null,
+    notes: state.notes ?? [],
+    cart: state.cart ?? [],
+    lastOrderNumber: state.lastOrderNumber ?? null,
+    handoff: state.handoff
+      ? {
+          motivo: state.handoff.motivo,
+          resumo: state.handoff.resumo ?? null,
+          at: new Date(state.handoff.at),
+        }
+      : null,
+    recentOrders,
+  };
+}
+
+async function loadBotActivity(
+  db: DbOrTx,
+  conversationId: string,
+  limit: number,
+): Promise<WaBotTurnActivity[]> {
+  const rows = await db
+    .select({ after: auditLog.after, createdAt: auditLog.createdAt })
+    .from(auditLog)
+    .where(
+      and(eq(auditLog.action, "wa.bot_turn"), eq(auditLog.entityId, conversationId)),
+    )
+    .orderBy(desc(auditLog.createdAt))
+    .limit(limit);
+  const activity: WaBotTurnActivity[] = [];
+  for (const row of rows) {
+    const after = (row.after ?? {}) as {
+      inboundId?: unknown;
+      toolCalls?: unknown;
+      handedOff?: unknown;
+    };
+    if (typeof after.inboundId !== "string") continue;
+    const tools = Array.isArray(after.toolCalls)
+      ? after.toolCalls
+          .map((call) =>
+            typeof call === "object" && call !== null && "name" in call
+              ? String((call as { name: unknown }).name)
+              : null,
+          )
+          .filter((name): name is string => name !== null)
+      : [];
+    activity.push({
+      inboundId: after.inboundId,
+      tools,
+      handedOff: after.handedOff === true,
+      createdAt: row.createdAt,
+    });
+  }
+  return activity.reverse();
 }
 
 const threadTailSchema = z.object({
@@ -249,8 +389,12 @@ export async function getWaThreadTail(
       status: waConversations.status,
       botDisabledUntil: waConversations.botDisabledUntil,
       ownerLastSeenAt: waConversations.ownerLastSeenAt,
+      customerId: waConversations.customerId,
+      customerName: customers.fullName,
+      botState: waConversations.botState,
     })
     .from(waConversations)
+    .leftJoin(customers, eq(customers.id, waConversations.customerId))
     .where(eq(waConversations.id, parsed.conversationId))
     .limit(1);
   if (!conversation) return null;
@@ -274,8 +418,18 @@ export async function getWaThreadTail(
     .limit(parsed.limit);
   rows.reverse();
 
+  const [context, activity] = await Promise.all([
+    loadConversationContext(db, conversation),
+    loadBotActivity(db, conversation.id, parsed.limit),
+  ]);
+
   return {
-    conversation,
+    conversation: {
+      id: conversation.id,
+      status: conversation.status,
+      botDisabledUntil: conversation.botDisabledUntil,
+      ownerLastSeenAt: conversation.ownerLastSeenAt,
+    },
     messages: rows.map((row) => ({
       id: row.id,
       direction: row.direction === "inbound" ? "inbound" : "outbound",
@@ -287,6 +441,8 @@ export async function getWaThreadTail(
       errorDetail: row.errorDetail,
       createdAt: row.createdAt,
     })),
+    context,
+    activity,
   };
 }
 
@@ -457,6 +613,37 @@ export async function returnWaConversationToBot(
     after: { status: "open", botDisabledUntil: null },
   });
   return { status: "open" };
+}
+
+/**
+ * Encerra a conversa: a vendedora e a equipe param de responder por aqui e a
+ * próxima mensagem da cliente abre uma conversa nova (o caderninho vai junto,
+ * ver wa-inbound). Audita quem encerrou.
+ */
+export async function closeWaConversation(
+  db: DbOrTx,
+  input: z.input<typeof actorSchema>,
+): Promise<{ status: "closed" }> {
+  const parsed = actorSchema.parse(input);
+  const conversation = await loadConversationForAction(
+    db,
+    parsed.conversationId,
+  );
+
+  await db
+    .update(waConversations)
+    .set({ status: "closed", botDisabledUntil: null, updatedAt: new Date() })
+    .where(eq(waConversations.id, conversation.id));
+  await db.insert(auditLog).values({
+    actorType: "user",
+    actorId: parsed.userId,
+    action: "wa.conversation_close",
+    entityType: "wa_conversation",
+    entityId: conversation.id,
+    before: { status: conversation.status },
+    after: { status: "closed" },
+  });
+  return { status: "closed" };
 }
 
 const manualReplySchema = actorSchema.extend({

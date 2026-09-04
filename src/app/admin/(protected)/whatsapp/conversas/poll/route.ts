@@ -3,8 +3,11 @@
 // GET nunca muta nada; o "visto" vai por server action separada.
 import { z } from "zod";
 
+import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
 import { getDb } from "@/db/client";
 import { getAuthUserOrNull } from "@/services/auth";
+import { getSettingsMap } from "@/services/settings";
+import { isBotEnabled } from "@/services/wa-bot";
 import {
   countConversationsAwaitingOwner,
   getWaThreadTail,
@@ -25,7 +28,8 @@ const querySchema = z.object({
 /**
  * `?light=1` (badge/toast em qualquer página do admin): só a contagem e as
  * conversas aguardando o dono — pula as queries pesadas de lista e thread.
- * Sem `light`: lista completa + cauda da thread aberta (`?c=<uuid>`).
+ * Sem `light`: lista completa + cauda da thread aberta (`?c=<uuid>`), mais
+ * o estado global da vendedora (ligada? nome?) para os badges não mentirem.
  * Datas saem como ISO 8601 (serialização JSON de Date).
  */
 export async function GET(request: Request): Promise<Response> {
@@ -69,13 +73,22 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  const conversations = await listWaConversations(db);
-  const thread = parsed.data.c
-    ? await getWaThreadTail(db, { conversationId: parsed.data.c })
-    : null;
+  const [botEnabled, settings, conversations, thread] = await Promise.all([
+    isBotEnabled(db),
+    getSettingsMap(db, ["bot_seller_name"]),
+    listWaConversations(db),
+    parsed.data.c
+      ? getWaThreadTail(db, { conversationId: parsed.data.c })
+      : Promise.resolve(null),
+  ]);
+  const sellerName =
+    typeof settings["bot_seller_name"] === "string" &&
+    (settings["bot_seller_name"] as string).trim() !== ""
+      ? (settings["bot_seller_name"] as string).trim()
+      : DEFAULT_SELLER_NAME;
 
   return Response.json(
-    { serverTime, humanCount, conversations, thread },
+    { serverTime, humanCount, botEnabled, sellerName, conversations, thread },
     { headers: NO_STORE },
   );
 }

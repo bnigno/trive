@@ -8,13 +8,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cx } from "@/components/ui/cx";
 import { useNotify } from "../../use-notify";
-import { markConversationSeenAction, sendManualReplyAction } from "./actions";
-import { ConversationList } from "./conversation-list";
-import { maskPhone } from "./format";
+import {
+  closeConversationAction,
+  markConversationSeenAction,
+  sendManualReplyAction,
+} from "./actions";
+import { ConversationList, type ConversationFilter } from "./conversation-list";
+import { attendantBadge, conversationLabel } from "./format";
 import type { OptimisticDisplay } from "./message-list";
 import { ThreadPanel } from "./thread-panel";
 import {
   useChatPoll,
+  type ChatActivity,
+  type ChatContext,
   type ChatConversation,
   type ChatMessage,
   type ChatPollResponse,
@@ -42,6 +48,17 @@ export interface ChatShellProps {
   initialThread: ChatThread | null;
   initialThreadMeta: { phoneE164: string; customerName: string | null } | null;
   initialSelectedId: string | null;
+  initialBotEnabled: boolean;
+  initialSellerName: string;
+  quickReplies: string[];
+}
+
+function normalizeQuery(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 export function ChatShell({
@@ -49,6 +66,9 @@ export function ChatShell({
   initialThread,
   initialThreadMeta,
   initialSelectedId,
+  initialBotEnabled,
+  initialSellerName,
+  quickReplies,
 }: ChatShellProps) {
   const searchParams = useSearchParams();
   const rawSelected = searchParams.get("c");
@@ -58,8 +78,16 @@ export function ChatShell({
   const { notify } = useNotify();
 
   const [conversations, setConversations] = useState(initialConversations);
+  const [botEnabled, setBotEnabled] = useState(initialBotEnabled);
+  const [sellerName, setSellerName] = useState(initialSellerName);
   const [threadConversation, setThreadConversation] = useState(
     initialThread?.conversation ?? null,
+  );
+  const [threadContext, setThreadContext] = useState<ChatContext | null>(
+    initialThread?.context ?? null,
+  );
+  const [threadActivity, setThreadActivity] = useState<ChatActivity[]>(
+    initialThread?.activity ?? [],
   );
   const [threadLoaded, setThreadLoaded] = useState(initialThread !== null);
   const [threadMissing, setThreadMissing] = useState(false);
@@ -70,6 +98,9 @@ export function ChatShell({
   const [pollFailures, setPollFailures] = useState(0);
   const [scrollSignal, setScrollSignal] = useState(0);
   const [announcement, setAnnouncement] = useState("");
+  const [filter, setFilter] = useState<ConversationFilter>("all");
+  const [query, setQuery] = useState("");
+  const [contextOpen, setContextOpen] = useState(false);
 
   const selectedIdRef = useRef(selectedId);
   useEffect(() => {
@@ -105,7 +136,7 @@ export function ChatShell({
     // aria-live só re-anuncia quando o conteúdo muda: alterna um NBSP no fim
     // para o mesmo aviso repetido ser lido de novo.
     announceSeqRef.current += 1;
-    setAnnouncement(announceSeqRef.current % 2 === 0 ? `${text}\u00A0` : text);
+    setAnnouncement(announceSeqRef.current % 2 === 0 ? `${text} ` : text);
   }, []);
 
   const markSeen = useCallback((conversationId: string) => {
@@ -126,17 +157,19 @@ export function ChatShell({
   const handlePollResult = useCallback(
     (data: ChatPollResponse, requestedId: string | null) => {
       setPollFailures(0);
+      setBotEnabled(data.botEnabled);
+      setSellerName(data.sellerName);
 
       const prevList = prevListRef.current;
       for (const conv of data.conversations) {
         const prev = prevList.get(conv.id) ?? null;
-        const label = conv.customerName ?? maskPhone(conv.phoneE164);
+        const label = conversationLabel(conv);
         const becameHuman =
           conv.status === "human" && (prev === null || prev.status !== "human");
         if (becameHuman) {
           notify({
             kind: "handoff",
-            title: "Robô transferiu uma conversa",
+            title: `${data.sellerName} passou uma conversa para você`,
             body: label,
             conversationId: conv.id,
           });
@@ -176,11 +209,15 @@ export function ChatShell({
         setThreadMissing(true);
         setThreadLoaded(true);
         setThreadConversation(null);
+        setThreadContext(null);
+        setThreadActivity([]);
         return;
       }
       setThreadMissing(false);
       setThreadLoaded(true);
       setThreadConversation(thread.conversation);
+      setThreadContext(thread.context);
+      setThreadActivity(thread.activity);
 
       const prevMap = messagesMapRef.current;
       const newInbound = thread.messages.filter(
@@ -222,9 +259,7 @@ export function ChatShell({
 
       if (newInbound.length > 0) {
         const conv = data.conversations.find((c) => c.id === requestedId);
-        const label = conv
-          ? (conv.customerName ?? maskPhone(conv.phoneE164))
-          : "cliente";
+        const label = conv ? conversationLabel(conv) : "cliente";
         announce(`Nova mensagem de ${label}`);
         if (document.hidden) {
           pendingSeenRef.current = true;
@@ -262,8 +297,11 @@ export function ChatShell({
     messagesMapRef.current = new Map();
     setMessagesMap(new Map());
     setThreadConversation(null);
+    setThreadContext(null);
+    setThreadActivity([]);
     setThreadLoaded(false);
     setThreadMissing(false);
+    setContextOpen(false);
     pendingSeenRef.current = false;
   }, [selectedId]);
 
@@ -403,6 +441,15 @@ export function ChatShell({
     [scheduleSendTimeout, submitSend],
   );
 
+  const handleClose = useCallback(
+    async (conversationId: string): Promise<string | null> => {
+      const result = await closeConversationAction(conversationId);
+      pollNow();
+      return "error" in result ? result.error : null;
+    },
+    [pollNow],
+  );
+
   const handleSelect = useCallback((id: string) => {
     if (id === selectedIdRef.current) return;
     const url = `/admin/whatsapp/conversas?c=${id}`;
@@ -440,6 +487,49 @@ export function ChatShell({
     return arr;
   }, [messagesMap]);
 
+  // Filtros e busca da lista: só sobre o que já está carregado (100
+  // conversas mais recentes) — sem ida ao servidor a cada tecla.
+  const counts = useMemo(() => {
+    const result = { all: 0, you: 0, seller: 0, unread: 0, closed: 0 };
+    for (const c of conversations) {
+      if (c.isOwnerNotices) continue;
+      result.all += 1;
+      const badge = attendantBadge(
+        c.status,
+        c.botDisabledUntil ? new Date(c.botDisabledUntil) : null,
+        { botEnabled, sellerName },
+      );
+      if (c.status === "closed") result.closed += 1;
+      else if (badge.attendant === "you") result.you += 1;
+      else if (badge.attendant === "seller") result.seller += 1;
+      if (c.unreadCount > 0) result.unread += 1;
+    }
+    return result;
+  }, [conversations, botEnabled, sellerName]);
+
+  const visibleConversations = useMemo(() => {
+    const needle = normalizeQuery(query);
+    return conversations.filter((c) => {
+      if (needle !== "") {
+        const haystack = normalizeQuery(
+          [c.customerName ?? "", c.displayName ?? "", c.phoneE164, c.isOwnerNotices ? "avisos internos" : ""].join(" "),
+        );
+        if (!haystack.includes(needle)) return false;
+      }
+      if (filter === "all") return c.status !== "closed" || c.id === selectedId;
+      if (filter === "closed") return c.status === "closed";
+      if (filter === "unread") return c.unreadCount > 0;
+      const badge = attendantBadge(
+        c.status,
+        c.botDisabledUntil ? new Date(c.botDisabledUntil) : null,
+        { botEnabled, sellerName },
+      );
+      if (c.status === "closed") return false;
+      if (filter === "you") return badge.attendant === "you";
+      return badge.attendant === "seller";
+    });
+  }, [conversations, query, filter, botEnabled, sellerName, selectedId]);
+
   const listItem = useMemo(
     () => conversations.find((c) => c.id === selectedId) ?? null,
     [conversations, selectedId],
@@ -469,7 +559,7 @@ export function ChatShell({
   );
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-white dark:bg-zinc-950">
+    <div className="relative flex min-h-0 flex-1 flex-col bg-ivory-50 dark:bg-ink-950">
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
@@ -481,18 +571,26 @@ export function ChatShell({
           Reconectando…
         </div>
       ) : null}
-      <div className="grid min-h-0 flex-1 md:grid-cols-[360px_1fr]">
+      <div className="grid min-h-0 flex-1 md:grid-cols-[340px_1fr]">
         <section
           aria-label="Lista de conversas"
           className={cx(
-            "min-h-0 min-w-0 flex-col border-zinc-200 md:border-r dark:border-zinc-800",
+            "min-h-0 min-w-0 flex-col border-ivory-300 md:border-r dark:border-ink-800",
             selectedId ? "hidden md:flex" : "flex",
           )}
         >
           <ConversationList
-            conversations={conversations}
+            conversations={visibleConversations}
+            totalLoaded={conversations.length}
+            counts={counts}
+            filter={filter}
+            onFilterChange={setFilter}
+            query={query}
+            onQueryChange={setQuery}
             selectedId={selectedId}
             onSelect={handleSelect}
+            botEnabled={botEnabled}
+            sellerName={sellerName}
           />
         </section>
         <section
@@ -505,17 +603,27 @@ export function ChatShell({
           <ThreadPanel
             selectedId={selectedId}
             customerName={customerName}
+            displayName={listItem?.displayName ?? threadContext?.displayName ?? null}
+            isOwnerNotices={listItem?.isOwnerNotices ?? false}
             phoneE164={phoneE164}
             status={status}
             botDisabledUntil={botDisabledUntil}
+            botEnabled={botEnabled}
+            sellerName={sellerName}
             loaded={threadLoaded}
             missing={threadMissing}
             messages={sortedMessages}
             optimistic={optimisticForSelected}
+            context={threadContext}
+            activity={threadActivity}
+            quickReplies={quickReplies}
             scrollSignal={scrollSignal}
+            contextOpen={contextOpen}
+            onToggleContext={() => setContextOpen((open) => !open)}
             onSend={handleSend}
             onRetry={handleRetry}
             onBack={handleBack}
+            onClose={handleClose}
             pollNow={pollNow}
           />
         </section>

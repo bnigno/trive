@@ -10,10 +10,12 @@ import { z } from "zod";
 const POLL_URL = "/admin/whatsapp/conversas/poll";
 const DELAYS_MS = [3_000, 6_000, 12_000, 30_000] as const;
 
+const originSchema = z.enum(["customer", "bot", "manual", "auto"]);
+
 const chatMessageSchema = z.object({
   id: z.string(),
   direction: z.enum(["inbound", "outbound"]),
-  origin: z.enum(["customer", "bot", "manual", "auto"]),
+  origin: originSchema,
   kind: z.string(),
   body: z.string(),
   mediaUrl: z.string().nullable(),
@@ -26,12 +28,55 @@ const chatConversationSchema = z.object({
   id: z.string(),
   phoneE164: z.string(),
   customerName: z.string().nullable(),
+  displayName: z.string().nullable(),
   status: z.string(),
   botDisabledUntil: z.string().nullable(),
   lastMessageAt: z.string().nullable(),
   lastMessageDirection: z.enum(["inbound", "outbound"]).nullable(),
+  lastMessageOrigin: originSchema.nullable(),
   lastMessagePreview: z.string().nullable(),
   unreadCount: z.number(),
+  isOwnerNotices: z.boolean(),
+});
+
+const chatContextSchema = z.object({
+  customerId: z.string().nullable(),
+  customerName: z.string().nullable(),
+  displayName: z.string().nullable(),
+  notes: z.array(z.string()),
+  cart: z.array(
+    z.object({
+      sku: z.string(),
+      quantidade: z.number(),
+      nome: z.string(),
+      variacao: z.string(),
+      precoCents: z.number(),
+    }),
+  ),
+  lastOrderNumber: z.number().nullable(),
+  handoff: z
+    .object({
+      motivo: z.string(),
+      resumo: z.string().nullable(),
+      at: z.string(),
+    })
+    .nullable(),
+  recentOrders: z.array(
+    z.object({
+      id: z.string(),
+      orderNumber: z.number(),
+      status: z.string(),
+      totalCents: z.number(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+
+const chatActivitySchema = z.object({
+  inboundId: z.string(),
+  tools: z.array(z.string()),
+  handedOff: z.boolean(),
+  createdAt: z.string(),
 });
 
 const chatThreadSchema = z.object({
@@ -42,17 +87,23 @@ const chatThreadSchema = z.object({
     ownerLastSeenAt: z.string().nullable(),
   }),
   messages: z.array(chatMessageSchema),
+  context: chatContextSchema,
+  activity: z.array(chatActivitySchema),
 });
 
 const pollResponseSchema = z.object({
   serverTime: z.string(),
   humanCount: z.number(),
+  botEnabled: z.boolean(),
+  sellerName: z.string(),
   conversations: z.array(chatConversationSchema),
   thread: chatThreadSchema.nullable(),
 });
 
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 export type ChatConversation = z.infer<typeof chatConversationSchema>;
+export type ChatContext = z.infer<typeof chatContextSchema>;
+export type ChatActivity = z.infer<typeof chatActivitySchema>;
 export type ChatThread = z.infer<typeof chatThreadSchema>;
 export type ChatPollResponse = z.infer<typeof pollResponseSchema>;
 

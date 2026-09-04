@@ -144,7 +144,7 @@ export function WaNavBadge() {
   return (
     <>
       {humanCount > 0 ? (
-        <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[#25d366] px-1.5 text-[11px] font-semibold text-white">
+        <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-gold-600 px-1.5 text-[11px] font-semibold text-white">
           {humanCount}
         </span>
       ) : null}

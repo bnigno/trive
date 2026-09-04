@@ -86,9 +86,9 @@ export function MessageTicks({ status }: { status: string }) {
   else if (status === "sent") icon = <SingleCheckIcon />;
   else if (status === "delivered") icon = <DoubleCheckIcon />;
   else if (status === "read") {
-    icon = <DoubleCheckIcon className="text-[#53bdeb]" />;
+    icon = <DoubleCheckIcon className="text-gold-400 dark:text-gold-700" />;
   } else if (status === "failed") {
-    icon = <FailedIcon className="text-red-500" />;
+    icon = <FailedIcon className="text-red-400 dark:text-red-600" />;
   }
   if (icon === null) return null;
 
