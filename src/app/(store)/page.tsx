@@ -55,10 +55,25 @@ const HERO_MARK_SRC = "/brand/mark-dark-400.webp";
 // de novo (ler sessionStorage só na hidratação chegaria tarde em 4G).
 const VEIL_SEEN_SCRIPT = `try{if(sessionStorage.getItem(${JSON.stringify(VEIL_SEEN_KEY)}))document.documentElement.setAttribute("data-veil-seen","")}catch(e){}`;
 
-const MANIFESTO = [
+// Textos padrão; o dono pode trocá-los em /admin/configuracoes › Vitrine
+// (settings store_tagline / store_manifesto, vazio = padrão).
+const DEFAULT_TAGLINE = "Para a mulher que se veste de si.";
+const DEFAULT_MANIFESTO = [
   "Vestir é um jeito de contar quem você é — sem precisar dizer uma palavra.",
   "A TRIVÉ nasce de um laço: entre o clássico e o agora, entre a mulher que você é de manhã e a que chega em casa à noite.",
-] as const;
+];
+
+function asText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Manifesto do painel: um parágrafo por linha em branco. */
+function manifestoParagraphs(raw: string): string[] {
+  return raw
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
 
 const CARE = [
   {
@@ -97,14 +112,20 @@ export default async function HomePage() {
       return Promise.all([
         listPublicProducts(db, { limit: 8 }),
         listPublicCategories(db),
-        getSettingsMap(db, ["store_name", "store_whatsapp"]),
+        getSettingsMap(db, [
+          "store_name",
+          "store_whatsapp",
+          "store_tagline",
+          "store_manifesto",
+        ]),
       ]);
     },
   );
-  const storeName =
-    typeof settings.store_name === "string" && settings.store_name.trim()
-      ? settings.store_name.trim()
-      : STORE_NAME_DEFAULT;
+  const storeName = asText(settings.store_name) || STORE_NAME_DEFAULT;
+  const tagline = asText(settings.store_tagline) || DEFAULT_TAGLINE;
+  const manifestoFromPanel = manifestoParagraphs(asText(settings.store_manifesto));
+  const manifesto =
+    manifestoFromPanel.length > 0 ? manifestoFromPanel : DEFAULT_MANIFESTO;
   const whatsappUrl = waMeUrl(
     settings.store_whatsapp,
     `Olá! Vim pelo site da ${storeName}`,
@@ -148,7 +169,7 @@ export default async function HomePage() {
             </h1>
             <Tagline tone="noir" />
             <p className="max-w-md font-display text-xl text-ivory-200 italic sm:text-2xl">
-              Para a mulher que se veste de si.
+              {tagline}
             </p>
             {products.length > 0 ? (
               <Link
@@ -214,14 +235,14 @@ export default async function HomePage() {
                     <Reveal>
                       <Ribbon variant="draw" size="md" />
                     </Reveal>
-                    {MANIFESTO.map((sentence, index) => (
+                    {manifesto.map((sentence, index) => (
                       <Reveal key={sentence} delay={index * 140}>
                         <p className="max-w-3xl font-display text-manifesto text-balance text-ink-800 italic">
                           {sentence}
                         </p>
                       </Reveal>
                     ))}
-                    <Reveal delay={MANIFESTO.length * 140}>
+                    <Reveal delay={manifesto.length * 140}>
                       <p className={eyebrowTaupe}>
                         Uma maison brasileira, com a elegância de quem não
                         precisa provar nada.

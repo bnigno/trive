@@ -425,6 +425,15 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
       }
       return e164;
     }),
+  // --- Vitrine (textos da home editáveis pelo dono; vazio = texto padrão) ---
+  store_tagline: z
+    .string()
+    .trim()
+    .max(140, "A frase da maison deve ter no máximo 140 caracteres."),
+  store_manifesto: z
+    .string()
+    .trim()
+    .max(600, "O manifesto deve ter no máximo 600 caracteres."),
   // --- WhatsApp automático (Fase 4) ---
   /**
    * Mensageria WhatsApp via Z-API. Como mp_enabled: o toggle sozinho não
