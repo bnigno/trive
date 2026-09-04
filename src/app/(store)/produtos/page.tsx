@@ -151,17 +151,24 @@ export default async function ProdutosPage({
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-8 grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-3 sm:gap-x-5 lg:grid-cols-4">
-          {products.map((product, index) =>
-            index < 12 ? (
-              <Reveal key={product.id} delay={index * 60} className="h-full">
-                <ProductCard product={product} />
-              </Reveal>
-            ) : (
-              <ProductCard key={product.id} product={product} />
-            ),
-          )}
-        </div>
+        // h2 invisível: os cards são h3 e a ordem de títulos (h1 → h2 → h3)
+        // é o que leitores de tela e o Lighthouse esperam.
+        <section aria-labelledby="pecas" className="mt-8">
+          <h2 id="pecas" className="sr-only">
+            Peças
+          </h2>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-3 sm:gap-x-5 lg:grid-cols-4">
+            {products.map((product, index) =>
+              index < 12 ? (
+                <Reveal key={product.id} delay={index * 60} className="h-full">
+                  <ProductCard product={product} />
+                </Reveal>
+              ) : (
+                <ProductCard key={product.id} product={product} />
+              ),
+            )}
+          </div>
+        </section>
       )}
     </div>
   );

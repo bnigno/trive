@@ -51,7 +51,10 @@ src/
   app/        # as telas e rotas (Next.js) — só validam input e chamam services
 tests/        # testes automatizados, por área
 docs/         # documentação: setup externo, fases
-scripts/      # verificações de CI (migrações destrutivas, segredos no client)
+scripts/      # verificações de CI (migrações destrutivas, segredos no client),
+              # generate-brand-assets.mjs (logo: brand-source/*.svg → webp/ícones/OG)
+              # e backfill-image-md.ts (rendição média das fotos antigas)
+brand-source/ # SVGs originais do logo — fonte da verdade, nunca vão ao navegador
 ```
 
 Regra de ouro da estrutura: as camadas só importam "para dentro" (app → services → core). O lint reclama se alguém furar a fila.
