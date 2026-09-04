@@ -97,8 +97,9 @@ function buildProductJsonLd(product: {
 const crumb =
   "font-store text-eyebrow font-medium text-ink-500 uppercase transition-colors duration-300 ease-silk hover:text-gold-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600";
 
-/** Ficha dobrável (nativa, sem JS): título serif + chevron que gira ao abrir. */
-function Sheet({
+/** Ficha dobrável (nativa, sem JS): título serif + chevron que gira ao abrir.
+ *  "Details" no nome para não colidir com a folha de papel de order/sheet. */
+function DetailsSheet({
   title,
   open = false,
   children,
@@ -154,8 +155,8 @@ export default async function ProdutoPage({ params }: Props) {
         </Link>
         {product.categoryName && product.categorySlug ? (
           <>
-            <span aria-hidden="true" className="text-ink-300">
-              /
+            <span aria-hidden="true" className="text-gold-500">
+              ·
             </span>
             <Link
               href={`/produtos?categoria=${encodeURIComponent(product.categorySlug)}`}
@@ -188,22 +189,22 @@ export default async function ProdutoPage({ params }: Props) {
       >
         <div className="mt-4 border-b border-ivory-300">
           {product.description ? (
-            <Sheet title="Descrição" open>
+            <DetailsSheet title="Descrição" open>
               <p className="whitespace-pre-line">{product.description}</p>
-            </Sheet>
+            </DetailsSheet>
           ) : null}
-          <Sheet title="Envio e trocas">
+          <DetailsSheet title="Envio e trocas">
             <p>
               Enviamos para todo o Brasil. Primeira troca em até 7 dias corridos
               após o recebimento, conforme o Código de Defesa do Consumidor.
             </p>
-          </Sheet>
-          <Sheet title="Cuidados com a peça">
+          </DetailsSheet>
+          <DetailsSheet title="Cuidados com a peça">
             <p>
               Lave à mão ou no ciclo delicado, com água fria. Seque à sombra e
               passe do avesso. Cada peça vem com instruções próprias na etiqueta.
             </p>
-          </Sheet>
+          </DetailsSheet>
         </div>
       </ProductDetailClient>
 
@@ -214,9 +215,9 @@ export default async function ProdutoPage({ params }: Props) {
             title={related.scope === "category" ? "Também na maison" : "Mais da maison"}
             id="relacionados"
           />
-          <div className="grid grid-cols-2 gap-x-3 gap-y-7 sm:gap-x-5 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-10 sm:gap-x-5 lg:grid-cols-4">
             {related.items.map((item) => (
-              <ProductCard key={item.id} product={item} />
+              <ProductCard key={item.id} product={item} size="sm" />
             ))}
           </div>
         </section>

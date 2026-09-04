@@ -93,16 +93,22 @@ export function VariantPicker({
   return (
     <div className="flex flex-col gap-5">
       {matched ? (
-        <div className="flex items-baseline gap-3">
-          <p className="font-store text-2xl text-ink-900 tabular-nums">
-            {formatCentsBRL(matched.priceCents)}
-          </p>
-          {matched.compareAtPriceCents != null &&
-          matched.compareAtPriceCents > matched.priceCents ? (
-            <p className="font-store text-base text-ink-500 line-through tabular-nums">
-              {formatCentsBRL(matched.compareAtPriceCents)}
+        <div>
+          <div className="flex items-baseline gap-3">
+            <p className="font-store text-2xl text-ink-900 tabular-nums">
+              {formatCentsBRL(matched.priceCents)}
             </p>
-          ) : null}
+            {matched.compareAtPriceCents != null &&
+            matched.compareAtPriceCents > matched.priceCents ? (
+              <p className="font-store text-base text-ink-500 line-through tabular-nums">
+                {formatCentsBRL(matched.compareAtPriceCents)}
+              </p>
+            ) : null}
+          </div>
+          {/* O código costura PDP → sacola → pedido: a cliente reconhece a peça. */}
+          <p className="mt-1.5 font-store text-eyebrow text-ink-500 uppercase tabular-nums">
+            Cód. {matched.sku}
+          </p>
         </div>
       ) : (
         <p className="font-store text-lg text-ink-500">
