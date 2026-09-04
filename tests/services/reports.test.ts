@@ -228,9 +228,45 @@ describe("topProducts", () => {
     });
 
     const top = await topProducts(sdb, { days: 30, limit: 5 });
+    // Nome e código são os ATUAIS da variação (não o snapshot da venda).
     expect(top).toEqual([
-      { name: "Bolsa", sku: "SKU-B", quantity: 1, revenueCents: 30000 },
-      { name: "Vestido", sku: "SKU-A", quantity: 5, revenueCents: 25000 },
+      { variantId: b, name: "Produto SKU-B", sku: "SKU-B", quantity: 1, revenueCents: 30000 },
+      { variantId: a, name: "Produto SKU-A", sku: "SKU-A", quantity: 5, revenueCents: 25000 },
+    ]);
+  });
+
+  it("a mesma variação continua uma linha só depois de trocar o código e o nome", async () => {
+    const customerId = await createTestCustomer(db);
+    const { productId, variantId } = await createTestVariant(db, {
+      sku: "LONGO-ELEN-PRET-M",
+      name: "Longo Elen",
+    });
+    await createOrderWithItems({
+      customerId,
+      paidAt: new Date(),
+      items: [
+        { variantId, sku: "LONGO-ELEN-PRET-M", name: "Longo Elen", quantity: 1, unitPriceCents: 7999, unitCostCents: 3000 },
+      ],
+    });
+    await db
+      .update(schema.products)
+      .set({ name: "LONGO DUNAS" })
+      .where(eq(schema.products.id, productId));
+    await db
+      .update(schema.productVariants)
+      .set({ sku: "LONGO-DUNAS-PRET-M" })
+      .where(eq(schema.productVariants.id, variantId));
+    await createOrderWithItems({
+      customerId,
+      paidAt: new Date(),
+      items: [
+        { variantId, sku: "LONGO-DUNAS-PRET-M", name: "LONGO DUNAS", quantity: 2, unitPriceCents: 7999, unitCostCents: 3000 },
+      ],
+    });
+
+    const top = await topProducts(sdb, { days: 30, limit: 5 });
+    expect(top).toEqual([
+      { variantId, name: "LONGO DUNAS", sku: "LONGO-DUNAS-PRET-M", quantity: 3, revenueCents: 23997 },
     ]);
   });
 });

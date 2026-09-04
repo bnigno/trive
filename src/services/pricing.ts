@@ -863,6 +863,7 @@ export interface PendingApprovalItem {
   variantId: string;
   versionNumber: number;
   sku: string;
+  productId: string;
   productName: string;
   priceCents: number;
   computedMarginRate: number;
@@ -883,6 +884,7 @@ export async function listPendingApprovals(
       variantId: priceVersions.productVariantId,
       versionNumber: priceVersions.versionNumber,
       sku: productVariants.sku,
+      productId: products.id,
       productName: products.name,
       priceCents: priceVersions.priceCents,
       computedMarginRate: priceVersions.computedMarginRate,
@@ -1093,6 +1095,7 @@ export interface BatchSummaryItem {
   versionId: string;
   variantId: string;
   sku: string;
+  productId: string;
   productName: string;
   currentPriceCents: number | null;
   newPriceCents: number;
@@ -1126,6 +1129,7 @@ export async function listBatchSummary(
       versionId: priceVersions.id,
       variantId: priceVersions.productVariantId,
       sku: productVariants.sku,
+      productId: products.id,
       productName: products.name,
       newPriceCents: priceVersions.priceCents,
       previousPriceCents: priceVersions.previousPriceCents,
@@ -1168,6 +1172,7 @@ export async function listBatchSummary(
       versionId: row.versionId,
       variantId: row.variantId,
       sku: row.sku,
+      productId: row.productId,
       productName: row.productName,
       currentPriceCents,
       newPriceCents: row.newPriceCents,

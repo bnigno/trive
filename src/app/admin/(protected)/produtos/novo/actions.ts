@@ -8,6 +8,7 @@ import {
   gridAxes,
   selectGridVariants,
 } from "@/core/catalog/variant-grid";
+import { normalizeSkuInput, validateSku } from "@/core/catalog/sku";
 import { getDb } from "@/db/client";
 import { parseBRLToCents } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
@@ -86,10 +87,17 @@ const quantitySchema = z
 
 const rowSchema = z.object({
   attributes: z.record(z.string(), z.string()).default({}),
+  // Em branco, o servidor sugere pelo nome; digitado, passa pela regra do
+  // core (caixa alta, só letras/números/hífen, teto do menu do WhatsApp).
   sku: z
     .string()
-    .max(64, "O código (SKU) ficou longo demais: use até 64 caracteres.")
-    .default(""),
+    .default("")
+    .transform((value) => (value.trim() === "" ? "" : normalizeSkuInput(value)))
+    .superRefine((sku, ctx) => {
+      if (sku === "") return;
+      const problem = validateSku(sku);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
   quantity: quantitySchema,
   cost: optionalCents("O custo"),
 });

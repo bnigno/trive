@@ -89,7 +89,21 @@ export default async function PedidoDetalhePage({
             <Table headers={["SKU", "Produto", "Qtd.", "Unitário", "Total"]}>
               {order.items.map((item) => (
                 <Tr key={item.id}>
-                  <Td className="font-mono text-xs">{item.skuSnapshot}</Td>
+                  <Td className="font-mono text-xs">
+                    <Link
+                      href={`/admin/estoque/${item.productVariantId}`}
+                      className="text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                      {item.skuSnapshot}
+                    </Link>
+                    {item.currentSku && item.currentSku !== item.skuSnapshot ? (
+                      // O código mudou depois da venda: o snapshot é registro,
+                      // o de hoje é o que o dono encontra no estoque e nos preços.
+                      <span className="ml-1 text-zinc-500 dark:text-zinc-400">
+                        · hoje {item.currentSku}
+                      </span>
+                    ) : null}
+                  </Td>
                   <Td>{item.nameSnapshot}</Td>
                   <Td>{item.quantity}</Td>
                   <Td>

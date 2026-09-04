@@ -2,7 +2,14 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, lt, notInArray, sql } from
 import { z } from "zod";
 
 import { PAYMENT_METHOD_LABELS as CORE_PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
-import { auditLog, customers, orderItems, orders } from "@/db/schema";
+import {
+  auditLog,
+  customers,
+  orderItems,
+  orders,
+  products,
+  productVariants,
+} from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +126,8 @@ const topProductsSchema = z.object({
 export type TopProductsInput = z.input<typeof topProductsSchema>;
 
 export interface TopProductRow {
+  variantId: string;
+  /** Nome e código ATUAIS da variação (ou o último snapshot, se ela sumiu). */
   name: string;
   sku: string;
   quantity: number;
@@ -132,22 +141,28 @@ export async function topProducts(
   const { days, limit } = topProductsSchema.parse(input);
   const windowStart = new Date(Date.now() - days * 86_400_000);
 
+  // Agrupa pela variação (FK que nunca muda), não pelo texto do snapshot: a
+  // mesma peça continua uma linha só depois de renomear o produto ou o código.
   const revenueSql = sql<string | number>`coalesce(sum(${orderItems.totalCents}), 0)`;
   const rows = await db
     .select({
-      name: orderItems.nameSnapshot,
-      sku: orderItems.skuSnapshot,
+      variantId: orderItems.productVariantId,
+      name: sql<string>`coalesce(max(${products.name}), max(${orderItems.nameSnapshot}))`,
+      sku: sql<string>`coalesce(max(${productVariants.sku}), max(${orderItems.skuSnapshot}))`,
       quantity: sql<string | number>`coalesce(sum(${orderItems.quantity}), 0)`,
       revenueCents: revenueSql,
     })
     .from(orderItems)
     .innerJoin(orders, eq(orders.id, orderItems.orderId))
+    .leftJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
+    .leftJoin(products, eq(products.id, productVariants.productId))
     .where(and(paidCondition(), gte(orders.paidAt, windowStart)))
-    .groupBy(orderItems.skuSnapshot, orderItems.nameSnapshot)
+    .groupBy(orderItems.productVariantId)
     .orderBy(desc(revenueSql))
     .limit(limit);
 
   return rows.map((row) => ({
+    variantId: row.variantId,
     name: row.name,
     sku: row.sku,
     quantity: Number(row.quantity),

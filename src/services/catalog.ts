@@ -3,7 +3,7 @@
 // registra o custo inicial informado na criação do produto.
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { and, eq, ilike, isNull, like, or, sql } from "drizzle-orm";
+import { and, eq, ilike, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -11,6 +11,7 @@ import * as schema from "@/db/schema";
 import {
   auditLog,
   categories,
+  orderItems,
   priceVersions,
   productImages,
   products,
@@ -21,6 +22,7 @@ import {
 } from "@/db/schema";
 import { normalizeAxisValue } from "@/core/catalog/attributes";
 import { findColorAxis } from "@/core/catalog/product-images";
+import { normalizeSkuInput, validateSku } from "@/core/catalog/sku";
 import { suggestMarginForPrice } from "@/core/pricing";
 import { applyMovement } from "@/core/stock/ledger";
 import type { FileStorage } from "@/adapters/storage";
@@ -64,7 +66,10 @@ function errorChainText(error: unknown): string {
 
 function mapCatalogUniqueViolation(error: unknown): ServiceError | null {
   const text = errorChainText(error);
-  if (text.includes("product_variants_sku_unique")) {
+  if (
+    text.includes("product_variants_sku_unique") ||
+    text.includes("product_variants_sku_lower_unique_idx")
+  ) {
     return new ServiceError(
       "sku_duplicado",
       "Já existe uma variação com este SKU.",
@@ -506,11 +511,20 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
   });
 }
 
+/** Código digitado: normalizado (caixa alta, espaço → hífen) e validado no core. */
+const skuInputSchema = z
+  .string()
+  .transform(normalizeSkuInput)
+  .superRefine((sku, ctx) => {
+    const problem = validateSku(sku);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
+
 const addVariantSchema = z.object({
   productId: z.uuid(),
   userId: z.uuid(),
   // Sem costCents: custo é responsabilidade do serviço de pricing.
-  sku: z.string().trim().min(1, "Informe o SKU da variação."),
+  sku: skuInputSchema,
   attributes: z.record(z.string(), z.string()).default({}),
   barcodeEan: z.string().trim().min(1).optional(),
   weightGrams: z.number().int().positive().optional(),
@@ -558,10 +572,84 @@ export async function addVariant(db: ServiceDb, input: AddVariantInput) {
   }
 }
 
+/** JSON com chaves ordenadas: compara atributos sem depender da ordem. */
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  const record = value as Record<string, unknown>;
+  return JSON.stringify(
+    Object.keys(record)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = record[key];
+        return acc;
+      }, {}),
+  );
+}
+
+/**
+ * Antes de trocar o código de uma variação: (1) nenhuma outra variação viva
+ * pode ter o mesmo código, nem trocando maiúsculas (o bot busca com ilike) —
+ * a mensagem diz quem segura o código, inclusive produto arquivado; (2) o
+ * código não pode já ter sido vendido em OUTRO produto: menus e conversas
+ * antigas do WhatsApp com esse código passariam a apontar para a peça errada.
+ */
+async function assertSkuAvailable(
+  db: ServiceDb,
+  productId: string,
+  variantId: string,
+  sku: string,
+): Promise<void> {
+  const [holder] = await db
+    .select({
+      sku: productVariants.sku,
+      productName: products.name,
+      productStatus: products.status,
+    })
+    .from(productVariants)
+    .innerJoin(products, eq(products.id, productVariants.productId))
+    .where(
+      and(
+        sql`lower(${productVariants.sku}) = lower(${sku})`,
+        ne(productVariants.id, variantId),
+        isNull(productVariants.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (holder) {
+    const archived = holder.productStatus === "archived" ? " (arquivado)" : "";
+    throw new ServiceError(
+      "sku_duplicado",
+      `Já existe uma variação com o código ${holder.sku} no produto «${holder.productName}»${archived}.`,
+    );
+  }
+
+  const [sold] = await db
+    .select({ id: orderItems.id })
+    .from(orderItems)
+    .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
+    .where(
+      and(
+        sql`lower(${orderItems.skuSnapshot}) = lower(${sku})`,
+        ne(productVariants.productId, productId),
+      ),
+    )
+    .limit(1);
+  if (sold) {
+    throw new ServiceError(
+      "sku_reutilizado",
+      "Este código já foi vendido em outra peça; escolha outro para não confundir pedidos antigos e o WhatsApp.",
+    );
+  }
+}
+
 const updateVariantSchema = z.object({
   variantId: z.uuid(),
   userId: z.uuid(),
-  // Sem sku (imutável após criação) e sem costCents (serviço de pricing).
+  // Sem costCents (serviço de pricing). O sku pode mudar: o código é rótulo
+  // e chave de busca, nunca FK — pedidos guardam sku_snapshot da época.
+  sku: skuInputSchema.optional(),
   attributes: z.record(z.string(), z.string()).optional(),
   barcodeEan: z.string().trim().min(1).nullable().optional(),
   weightGrams: z.number().int().positive().nullable().optional(),
@@ -591,14 +679,37 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
         throw new ServiceError("nao_encontrado", "Variação não encontrada.");
       }
 
+      // Só entra no patch o que realmente mudou: o audit_log vira a trilha
+      // limpa de→para (um Salvar sem mudança não grava nada).
       const patch: Partial<typeof current> = {};
-      if (parsed.attributes !== undefined) patch.attributes = parsed.attributes;
-      if (parsed.barcodeEan !== undefined) patch.barcodeEan = parsed.barcodeEan;
-      if (parsed.weightGrams !== undefined) patch.weightGrams = parsed.weightGrams;
-      if (parsed.lengthMm !== undefined) patch.lengthMm = parsed.lengthMm;
-      if (parsed.widthMm !== undefined) patch.widthMm = parsed.widthMm;
-      if (parsed.heightMm !== undefined) patch.heightMm = parsed.heightMm;
-      if (parsed.isActive !== undefined) patch.isActive = parsed.isActive;
+      if (
+        parsed.attributes !== undefined &&
+        stableJson(parsed.attributes) !== stableJson(current.attributes)
+      ) {
+        patch.attributes = parsed.attributes;
+      }
+      if (parsed.barcodeEan !== undefined && parsed.barcodeEan !== current.barcodeEan) {
+        patch.barcodeEan = parsed.barcodeEan;
+      }
+      if (parsed.weightGrams !== undefined && parsed.weightGrams !== current.weightGrams) {
+        patch.weightGrams = parsed.weightGrams;
+      }
+      if (parsed.lengthMm !== undefined && parsed.lengthMm !== current.lengthMm) {
+        patch.lengthMm = parsed.lengthMm;
+      }
+      if (parsed.widthMm !== undefined && parsed.widthMm !== current.widthMm) {
+        patch.widthMm = parsed.widthMm;
+      }
+      if (parsed.heightMm !== undefined && parsed.heightMm !== current.heightMm) {
+        patch.heightMm = parsed.heightMm;
+      }
+      if (parsed.isActive !== undefined && parsed.isActive !== current.isActive) {
+        patch.isActive = parsed.isActive;
+      }
+      if (parsed.sku !== undefined && parsed.sku !== current.sku) {
+        await assertSkuAvailable(tx, current.productId, current.id, parsed.sku);
+        patch.sku = parsed.sku;
+      }
       if (Object.keys(patch).length === 0) return current;
 
       const [updated] = await tx

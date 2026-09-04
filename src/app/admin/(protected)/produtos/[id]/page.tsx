@@ -8,6 +8,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { axisValues } from "@/core/catalog/attributes";
+import { suggestSkuForVariant } from "@/core/catalog/sku";
 import { findColorAxis } from "@/core/catalog/product-images";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
@@ -355,6 +356,14 @@ export default async function ProdutoDetalhePage({
                 <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   Editar variações
                 </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  O código (SKU) identifica a peça no estoque, nos preços e no
+                  bot do WhatsApp. Você pode trocar: pedidos e comprovantes
+                  antigos continuam com o código da época; etiquetas e
+                  planilhas suas ficam desatualizadas; uma cliente com conversa
+                  aberta no WhatsApp pode ter de escolher a peça de novo.
+                  Letras viram maiúsculas e espaços viram hífen.
+                </p>
                 {detail.variants.map((variant) => (
                   <details
                     key={variant.id}
@@ -367,22 +376,16 @@ export default async function ProdutoDetalhePage({
                       </span>
                     </summary>
                     <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
-                      {axes.length > 0 ||
-                      Object.keys(variant.attributes).length > 0 ? (
-                        <EditVariantForm
-                          productId={detail.id}
-                          variant={variant}
-                          axes={axes}
-                        />
-                      ) : (
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                          Esta variação não tem atributos para editar. O SKU (
-                          <span className="font-mono text-xs">
-                            {variant.sku}
-                          </span>
-                          ) não pode ser alterado depois de criado.
-                        </p>
-                      )}
+                      <EditVariantForm
+                        productId={detail.id}
+                        variant={variant}
+                        axes={axes}
+                        suggestedSku={suggestSkuForVariant(
+                          detail.name,
+                          axes,
+                          variant.attributes,
+                        )}
+                      />
                     </div>
                   </details>
                 ))}

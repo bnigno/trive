@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -109,6 +110,12 @@ export const productVariants = pgTable(
     unique("product_variants_product_id_attributes_unique").on(
       table.productId,
       table.attributes,
+    ),
+    // O bot do WhatsApp procura o código sem diferenciar caixa (ilike): dois
+    // códigos que só diferem em maiúsculas fechariam o pedido na variação
+    // errada. O árbitro é o banco (regra 6), não a memória.
+    uniqueIndex("product_variants_sku_lower_unique_idx").on(
+      sql`lower(${table.sku})`,
     ),
   ],
 );
