@@ -18,6 +18,17 @@ export function formatCentsBRL(cents: Cents): string {
   return brlFormatter.format(cents / 100);
 }
 
+const usdFormatter = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "USD",
+});
+
+/** "US$ 0,42" — o custo da IA é cobrado em dólar (centavos de dólar). */
+export function formatUsdCents(cents: Cents): string {
+  assertCents(cents);
+  return usdFormatter.format(cents / 100);
+}
+
 const BRL_PATTERN =
   /^(-)?(?:(\d{1,3}(?:\.\d{3})*)|(\d+))(?:,(\d{1,2}))?$/;
 

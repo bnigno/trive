@@ -14,6 +14,7 @@ export const TEMPLATE_TRIGGERS: Record<string, string> = {
   owner_payment_approved: "Para você, quando um pagamento é aprovado",
   owner_low_stock: "Para você, quando uma peça chega ao estoque mínimo",
   owner_queue_dead: "Para você, quando a fila de envios trava",
+  owner_daily_digest: "Para você, todo dia às 8h, junto da imagem do resumo",
 };
 
 export const PREVIEW_VARIABLES: Record<string, string> = {
@@ -29,4 +30,14 @@ export const PREVIEW_VARIABLES: Record<string, string> = {
   sku: "DUNAS-PRET-M",
   disponivel: "2",
   loja: "TRIVÉ",
+  dia: "quarta-feira",
+  data: "09/09",
+  vendas: "R$ 1.247,00",
+  ticket: "R$ 311,75",
+  a_pagar: "2",
+  a_embalar: "1",
+  a_enviar: "3",
+  lia_conversas: "6",
+  lia_pedidos: "2",
+  lia_custo: "US$ 0,42",
 };

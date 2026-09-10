@@ -12,6 +12,8 @@ import { orders, products, productVariants, stockLevels } from "@/db/schema";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadReceiptAssets } from "@/receipts/assets";
 import { renderReceiptPng } from "@/receipts/render";
+import { renderDailyDigestPng } from "@/receipts/render-digest";
+import { sendDailyDigestWa } from "@/services/daily-digest";
 import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
@@ -123,6 +125,10 @@ const emailSendPayloadSchema = z.object({
 // Resposta de cliente encaminhada ao dono (bot desligado: humano responde).
 // raw: true envia o corpo como está — avisos do sistema (ex.: transferência
 // do bot) já chegam formatados e não são "fala de cliente".
+const digestDailyPayloadSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
 const waOwnerForwardPayloadSchema = z.object({
   phoneE164: z.string().optional(),
   customerName: z.string().optional(),
@@ -205,6 +211,23 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     );
     console.info(
       `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
+    );
+  },
+  // "Bom dia da maison": o cron das 8h só enfileira; aqui a imagem é
+  // montada, desenhada e enviada ao dono (retry e DLQ da fila). Skips
+  // (desligado, sem telefone, já enviado…) não lançam.
+  "digest.daily": async (event) => {
+    const { date } = digestDailyPayloadSchema.parse(event.payload);
+    const startedAt = Date.now();
+    const result = await sendDailyDigestWa(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      async (data) => renderDailyDigestPng(data, await loadReceiptAssets()),
+      { date },
+    );
+    console.info(
+      `[digest.daily] ${date} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
     );
   },
   // Foto do pacote pelo WhatsApp: enfileirado por packOrder (dedupe por

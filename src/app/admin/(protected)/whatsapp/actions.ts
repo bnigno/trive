@@ -10,6 +10,10 @@ import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
 import { sendToOwner, type WaSkipReason } from "@/services/wa-messaging";
+import { getFileStorage } from "@/adapters/storage";
+import { loadReceiptAssets } from "@/receipts/assets";
+import { renderDailyDigestPng } from "@/receipts/render-digest";
+import { sendDailyDigestWa, yesterdaySpDayKey } from "@/services/daily-digest";
 import { rehearseBotTurn, type RehearsalTurn } from "@/services/wa-rehearsal";
 import { updateWaTemplate } from "@/services/wa-templates";
 
@@ -27,7 +31,7 @@ function toErrorMessage(error: unknown): string {
 // Interruptores (salvam na hora, sem botão): WhatsApp e vendedora
 // ---------------------------------------------------------------------------
 
-const toggleKeySchema = z.enum(["wa_enabled", "bot_enabled"]);
+const toggleKeySchema = z.enum(["wa_enabled", "bot_enabled", "owner_digest_enabled"]);
 
 export async function setToggleAction(
   key: string,
@@ -218,6 +222,44 @@ export async function updateWaTemplateAction(
     });
     revalidatePath("/admin/whatsapp");
     return { success: "Mensagem salva." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "Bom dia da maison" — enviar agora (o resumo de ontem, fora do horário)
+// ---------------------------------------------------------------------------
+
+const DIGEST_SKIP_MESSAGES: Record<string, string> = {
+  digest_desligado: "O resumo está desligado — ligue o interruptor acima.",
+  desabilitado: "O WhatsApp da loja está desligado.",
+  sem_telefone_dono: "Cadastre o seu WhatsApp na conexão abaixo antes de enviar.",
+  sem_template: "O modelo “Bom dia da maison” está desligado nas mensagens automáticas.",
+  numero_sem_whatsapp: "O seu número não tem WhatsApp ativo — confira na conexão abaixo.",
+};
+
+export async function sendDigestNowAction(
+  _prev: FormState,
+  _formData: FormData,
+): Promise<FormState> {
+  await requireOwner("whatsapp");
+  try {
+    const date = yesterdaySpDayKey();
+    const result = await sendDailyDigestWa(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      async (data) => renderDailyDigestPng(data, await loadReceiptAssets()),
+      { date, force: true },
+    );
+    revalidatePath("/admin/whatsapp");
+    if ("sent" in result) {
+      return { success: "Resumo de ontem enviado para o seu WhatsApp." };
+    }
+    return {
+      error: `Não foi enviado. ${DIGEST_SKIP_MESSAGES[result.skipped] ?? result.skipped}`,
+    };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }

@@ -1,10 +1,10 @@
-// Números e atividade da vendedora para a Central do WhatsApp: conversas de
-// hoje, turnos, transferências, pedidos que ela fechou e o custo estimado
-// dos últimos 7 dias — tudo derivado da trilha que runBotTurn grava em
-// audit_log ('wa.bot_turn' / 'wa.bot_handoff') e dos pedidos do canal.
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+// Números e atividade da vendedora para a Central do WhatsApp e para o
+// "Bom dia da maison": conversas, turnos, transferências, pedidos que ela
+// fechou e o custo estimado — tudo derivado da trilha que runBotTurn grava
+// em audit_log ('wa.bot_turn' / 'wa.bot_handoff') e dos pedidos do canal.
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 
-import { auditLog, customers, orders, waConversations } from "@/db/schema";
+import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
 const WINDOW_DAYS = 7;
@@ -42,6 +42,90 @@ export function estimateUsdCents(
   return Math.round(total / 1_000_000);
 }
 
+export interface BotActivityWindow {
+  /** Conversas com mensagem da cliente na janela. */
+  conversations: number;
+  turns: number;
+  handoffs: number;
+  /** Pedidos do canal 'whatsapp' criados na janela (só a vendedora cria por ele). */
+  orders: number;
+  ordersCents: number;
+  costUsdCents: number;
+}
+
+/** O que a vendedora fez entre `from` (inclusive) e `to` (exclusive). */
+export async function summarizeBotActivity(
+  db: DbOrTx,
+  window: { from: Date; to: Date },
+): Promise<BotActivityWindow> {
+  const inWindow = (column: typeof auditLog.createdAt) =>
+    and(gte(column, window.from), lt(column, window.to));
+
+  const [conversationsRow] = await db
+    .select({ value: sql<string>`count(distinct ${waMessages.conversationId})` })
+    .from(waMessages)
+    .where(
+      and(
+        eq(waMessages.direction, "inbound"),
+        gte(waMessages.createdAt, window.from),
+        lt(waMessages.createdAt, window.to),
+      ),
+    );
+
+  const usageRows = await db
+    .select({
+      model: sql<string | null>`${auditLog.after} ->> 'model'`,
+      turns: sql<string>`count(*)`,
+      inputTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'inputTokens')::bigint), 0)`,
+      outputTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'outputTokens')::bigint), 0)`,
+      cacheReadTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'cacheReadTokens')::bigint), 0)`,
+      cacheWriteTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'cacheWriteTokens')::bigint), 0)`,
+    })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "wa.bot_turn"), inWindow(auditLog.createdAt)))
+    .groupBy(sql`1`);
+
+  let turns = 0;
+  let costUsdCents = 0;
+  for (const row of usageRows) {
+    turns += Number(row.turns);
+    costUsdCents += estimateUsdCents(row.model ?? "claude-sonnet-5", {
+      inputTokens: Number(row.inputTokens),
+      outputTokens: Number(row.outputTokens),
+      cacheReadTokens: Number(row.cacheReadTokens),
+      cacheWriteTokens: Number(row.cacheWriteTokens),
+    });
+  }
+
+  const [handoffs] = await db
+    .select({ value: sql<string>`count(*)` })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "wa.bot_handoff"), inWindow(auditLog.createdAt)));
+
+  const [botOrders] = await db
+    .select({
+      value: sql<string>`count(*)`,
+      totalCents: sql<string>`coalesce(sum(${orders.totalCents}), 0)`,
+    })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.channel, "whatsapp"),
+        gte(orders.createdAt, window.from),
+        lt(orders.createdAt, window.to),
+      ),
+    );
+
+  return {
+    conversations: Number(conversationsRow?.value ?? 0),
+    turns,
+    handoffs: Number(handoffs?.value ?? 0),
+    orders: Number(botOrders?.value ?? 0),
+    ordersCents: Number(botOrders?.totalCents ?? 0),
+    costUsdCents,
+  };
+}
+
 export interface BotActivitySummary {
   windowDays: number;
   /** Conversas com mensagem da cliente hoje (fuso de São Paulo). */
@@ -54,12 +138,9 @@ export interface BotActivitySummary {
   estimatedCostUsdCents: number;
 }
 
-function windowStart(): Date {
-  return new Date(Date.now() - WINDOW_DAYS * 86_400_000);
-}
-
 export async function getBotActivitySummary(db: DbOrTx): Promise<BotActivitySummary> {
-  const since = windowStart();
+  const now = new Date();
+  const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000);
 
   const [today] = await db
     .select({ value: sql<string>`count(*)` })
@@ -68,53 +149,19 @@ export async function getBotActivitySummary(db: DbOrTx): Promise<BotActivitySumm
       sql`${waConversations.lastInboundAt} >= (date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo')`,
     );
 
-  const usageRows = await db
-    .select({
-      model: sql<string | null>`${auditLog.after} ->> 'model'`,
-      turns: sql<string>`count(*)`,
-      handedOff: sql<string>`count(*) filter (where (${auditLog.after} ->> 'handedOff') = 'true')`,
-      inputTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'inputTokens')::bigint), 0)`,
-      outputTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'outputTokens')::bigint), 0)`,
-      cacheReadTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'cacheReadTokens')::bigint), 0)`,
-      cacheWriteTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'cacheWriteTokens')::bigint), 0)`,
-    })
-    .from(auditLog)
-    .where(and(eq(auditLog.action, "wa.bot_turn"), gte(auditLog.createdAt, since)))
-    .groupBy(sql`1`);
-
-  let turns = 0;
-  let estimatedCostUsdCents = 0;
-  for (const row of usageRows) {
-    turns += Number(row.turns);
-    estimatedCostUsdCents += estimateUsdCents(row.model ?? "claude-sonnet-5", {
-      inputTokens: Number(row.inputTokens),
-      outputTokens: Number(row.outputTokens),
-      cacheReadTokens: Number(row.cacheReadTokens),
-      cacheWriteTokens: Number(row.cacheWriteTokens),
-    });
-  }
-
-  const [handoffs] = await db
-    .select({ value: sql<string>`count(*)` })
-    .from(auditLog)
-    .where(and(eq(auditLog.action, "wa.bot_handoff"), gte(auditLog.createdAt, since)));
-
-  const [botOrders] = await db
-    .select({
-      value: sql<string>`count(*)`,
-      totalCents: sql<string>`coalesce(sum(${orders.totalCents}), 0)`,
-    })
-    .from(orders)
-    .where(and(eq(orders.channel, "whatsapp"), gte(orders.createdAt, since)));
+  const window = await summarizeBotActivity(db, {
+    from: since,
+    to: new Date(now.getTime() + 60_000),
+  });
 
   return {
     windowDays: WINDOW_DAYS,
     conversationsToday: Number(today?.value ?? 0),
-    turns,
-    handoffs: Number(handoffs?.value ?? 0),
-    ordersByBot: Number(botOrders?.value ?? 0),
-    ordersByBotCents: Number(botOrders?.totalCents ?? 0),
-    estimatedCostUsdCents,
+    turns: window.turns,
+    handoffs: window.handoffs,
+    ordersByBot: window.orders,
+    ordersByBotCents: window.ordersCents,
+    estimatedCostUsdCents: window.costUsdCents,
   };
 }
 

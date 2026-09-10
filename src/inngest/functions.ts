@@ -4,7 +4,9 @@ import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
+import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
+import { yesterdaySpDayKey } from "@/services/daily-digest";
 import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
 import { expireOverdueReservations } from "@/services/store-orders";
@@ -113,7 +115,27 @@ export const emailPoll = inngest.createFunction(
   },
 );
 
+// "Bom dia da maison" (Onda 4): 08:00 em São Paulo = 11:00 UTC (o Brasil não
+// tem horário de verão desde 2019; se voltar, trocar para 10). O cron SÓ
+// enfileira digest.daily (dedupe por dia): quem monta e envia é o handler do
+// outbox — com retry, DLQ e "reprocessar" em /admin/fila.
+export const dailyDigest = inngest.createFunction(
+  { id: "daily-digest", triggers: [{ cron: "0 11 * * *" }] },
+  async () => {
+    const date = yesterdaySpDayKey();
+    const id = await enqueueOutboxEvent(getDb(), {
+      eventType: "digest.daily",
+      dedupeKey: `digest.daily:${date}`,
+      aggregateType: "digest",
+      aggregateId: date,
+      payload: { date },
+    });
+    return { date, enqueued: id !== null };
+  },
+);
+
 export const functions = [
+  dailyDigest,
   outboxSweep,
   outboxKick,
   reservationExpiry,

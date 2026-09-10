@@ -366,6 +366,31 @@ async function deliverOutboundMessage(
  * - falha do provedor: marca a linha como failed + error_detail e RELANÇA
  *   (o retry da fila reprocessa e cai na retomada acima).
  */
+/**
+ * Corpo final da mensagem: o template ativo renderizado com as variáveis, ou
+ * o corpo avulso. Compartilhado por sendTemplateMessage e sendToOwner (que
+ * precisa da legenda pronta quando manda imagem).
+ */
+async function resolveTemplateBody(
+  db: DbOrTx,
+  input: { templateKey?: string; bodyOverride?: string; vars: Record<string, string> },
+): Promise<{ body: string } | { skipped: "sem_template" }> {
+  if (input.templateKey != null) {
+    const [template] = await db
+      .select({
+        bodyTemplate: waTemplates.bodyTemplate,
+        isActive: waTemplates.isActive,
+      })
+      .from(waTemplates)
+      .where(eq(waTemplates.key, input.templateKey))
+      .limit(1);
+    if (!template || !template.isActive) return { skipped: "sem_template" };
+    return { body: renderTemplate(template.bodyTemplate, input.vars) };
+  }
+  // bodyOverride garantido pelo refine dos schemas que chamam.
+  return { body: renderTemplate(input.bodyOverride as string, input.vars) };
+}
+
 export async function sendTemplateMessage(
   db: DbOrTx,
   provider: MessagingProvider,
@@ -381,22 +406,13 @@ export async function sendTemplateMessage(
     return { skipped: "sem_opt_in" };
   }
 
-  let body: string;
-  if (parsed.templateKey != null) {
-    const [template] = await db
-      .select({
-        bodyTemplate: waTemplates.bodyTemplate,
-        isActive: waTemplates.isActive,
-      })
-      .from(waTemplates)
-      .where(eq(waTemplates.key, parsed.templateKey))
-      .limit(1);
-    if (!template || !template.isActive) return { skipped: "sem_template" };
-    body = renderTemplate(template.bodyTemplate, parsed.vars);
-  } else {
-    // bodyOverride garantido pelo refine do schema.
-    body = renderTemplate(parsed.bodyOverride as string, parsed.vars);
-  }
+  const resolved = await resolveTemplateBody(db, {
+    templateKey: parsed.templateKey,
+    bodyOverride: parsed.bodyOverride,
+    vars: parsed.vars,
+  });
+  if ("skipped" in resolved) return resolved;
+  const { body } = resolved;
 
   const conversationId = await upsertConversation(
     db,
@@ -578,9 +594,14 @@ const sendToOwnerSchema = z
     bodyOverride: z.string().min(1).optional(),
     vars: z.record(z.string(), z.string()).default({}),
     dedupeKey: z.string().min(1).optional(),
+    /** Imagem (URL pública) com o texto como legenda — ex.: o resumo diário. */
+    image: z.object({ url: z.url() }).optional(),
   })
   .refine((value) => (value.templateKey != null) !== (value.bodyOverride != null), {
     message: "Informe templateKey OU bodyOverride (exatamente um).",
+  })
+  .refine((value) => value.image == null || value.dedupeKey != null, {
+    message: "Imagem ao dono exige dedupeKey.",
   });
 
 export type SendToOwnerInput = z.input<typeof sendToOwnerSchema>;
@@ -596,6 +617,25 @@ export async function sendToOwner(
   const phone = map["owner_whatsapp_phone"];
   if (typeof phone !== "string" || !isValidE164(phone)) {
     return { skipped: "sem_telefone_dono" };
+  }
+
+  if (parsed.image) {
+    if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
+    const resolved = await resolveTemplateBody(db, {
+      templateKey: parsed.templateKey,
+      bodyOverride: parsed.bodyOverride,
+      vars: parsed.vars,
+    });
+    if ("skipped" in resolved) return resolved;
+    return sendMediaMessage(db, provider, {
+      kind: "image",
+      imageUrl: parsed.image.url,
+      body: resolved.body,
+      phoneE164: phone,
+      // dedupeKey garantido pelo refine do schema.
+      dedupeKey: parsed.dedupeKey as string,
+      requireOptIn: false,
+    });
   }
 
   return sendTemplateMessage(db, provider, {
