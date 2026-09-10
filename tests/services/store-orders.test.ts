@@ -486,6 +486,12 @@ describe("getPublicOrder", () => {
         "totalCents",
         "items",
         "canceledReason",
+        "paidAt",
+        "preparingAt",
+        "packedAt",
+        "shippedAt",
+        "deliveredAt",
+        "packagePhotoPath",
       ].sort(),
     );
     expect(Object.keys(pub!.items[0]).sort()).toEqual(

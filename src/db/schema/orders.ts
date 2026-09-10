@@ -74,6 +74,11 @@ export const orders = pgTable(
     // Comprovante de pagamento em imagem (receipts/<id>/comprovante.jpg),
     // gerado quando o pagamento confirma; o dono abre pelo admin.
     receiptPath: text("receipt_path"),
+    // Foto do pacote (packages/<id>/embalagem.jpg) tirada pelo dono ao
+    // embalar; vai à cliente pelo WhatsApp e aparece na página do pedido.
+    // UMA foto por pedido: refazer sobrescreve o mesmo path.
+    packagePhotoPath: text("package_photo_path"),
+    packedAt: timestamp("packed_at", { withTimezone: true }),
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),

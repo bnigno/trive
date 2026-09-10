@@ -14,7 +14,7 @@ import { NoirStage } from "@/components/store/noir-stage";
 import { Notice } from "@/components/store/order/notice";
 import { Sheet } from "@/components/store/order/sheet";
 import { TotalsList } from "@/components/store/order/totals";
-import { OrderStatusSteps } from "@/components/store/order-status-steps";
+import { OrderJourney } from "@/components/store/order-journey";
 import { Ornament } from "@/components/store/ornament";
 import {
   btnPrimary,
@@ -24,6 +24,9 @@ import {
   panelGold,
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
+import { getFileStorage } from "@/adapters/storage";
+import { buildOrderJourney } from "@/core/orders/journey";
+import type { OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
 import { waMeUrl } from "@/lib/phone";
@@ -151,6 +154,20 @@ export default async function OrderPage({
     ? waMeLink(settings["store_whatsapp"], order.orderNumber)
     : null;
 
+  const journey = buildOrderJourney({
+    status: order.status as OrderStatus,
+    createdAt: order.createdAt,
+    paidAt: order.paidAt,
+    packedAt: order.packedAt,
+    preparingAt: order.preparingAt,
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+  });
+  const packagePhotoUrl =
+    order.packagePhotoPath && order.packedAt
+      ? `${getFileStorage().publicUrl(order.packagePhotoPath)}?v=${order.packedAt.getTime()}`
+      : null;
+
   const total = formatCentsBRL(order.totalCents);
   const showTracking =
     (order.status === "shipped" || order.status === "delivered") &&
@@ -229,9 +246,13 @@ export default async function OrderPage({
               headingId="andamento-title"
               aria-labelledby="andamento-title"
             >
-              <div className="mt-5">
-                <OrderStatusSteps status={order.status} />
-              </div>
+              {journey ? (
+                <OrderJourney
+                  steps={journey}
+                  packagePhotoUrl={packagePhotoUrl}
+                  trackingCode={order.trackingCode}
+                />
+              ) : null}
             </Sheet>
           )}
 

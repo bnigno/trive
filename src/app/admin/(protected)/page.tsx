@@ -5,6 +5,7 @@ import { getDb } from "@/db/client";
 import { orders, outboxEvents, priceVersions } from "@/db/schema";
 import { isOwner, requireUser } from "@/services/auth";
 import { listOrders } from "@/services/orders";
+import { countOrdersAwaitingPacking } from "@/services/packing";
 import { monthOverview } from "@/services/financial";
 import { getStockOverview } from "@/services/stock";
 import {
@@ -88,7 +89,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders] = await Promise.all([
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount] = await Promise.all([
     safe(async () => {
       const db = getDb();
       const [row] = await db
@@ -102,9 +103,10 @@ async function loadSharedDashboard() {
       return overview.filter((row) => row.low).length;
     }),
     safe((): Promise<RecentOrder[]> => listOrders(getDb(), { limit: 5 })),
+    safe(() => countOrdersAwaitingPacking(getDb())),
   ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount };
 }
 
 /**
@@ -201,8 +203,8 @@ export default async function AdminDashboardPage() {
       <div
         className={
           ownerData
-            ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5"
-            : "grid grid-cols-1 gap-4 sm:grid-cols-2"
+            ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6"
+            : "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
         }
       >
         <Link href="/admin/pedidos" className="block">
@@ -249,6 +251,14 @@ export default async function AdminDashboardPage() {
             </Link>
           </>
         ) : null}
+        <Link href="/admin/pedidos/embalar" className="block">
+          <StatCard
+            label="A embalar"
+            value={data.toPackCount === null ? "—" : String(data.toPackCount)}
+            tone={data.toPackCount ? "warning" : "neutral"}
+            hint="Pedidos pagos esperando a foto do pacote."
+          />
+        </Link>
         <Link href="/admin/estoque" className="block">
           <StatCard
             label="Estoque baixo"

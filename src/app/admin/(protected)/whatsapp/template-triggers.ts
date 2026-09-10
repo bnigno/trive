@@ -7,6 +7,7 @@ export const TEMPLATE_TRIGGERS: Record<string, string> = {
   order_confirmed_cash: "Quando a cliente fecha um pedido em dinheiro na entrega",
   payment_approved: "Quando o pagamento é aprovado",
   payment_receipt: "Junto do comprovante em imagem, quando o pagamento confirma",
+  order_packed: "Junto da foto do pacote, quando você registra a embalagem",
   order_shipped: "Quando você marca o pedido como enviado",
   order_recovery: "Um único lembrete, X minutos depois do pedido sem pagamento",
   owner_new_order: "Para você, a cada pedido novo",

@@ -93,6 +93,18 @@ const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "link"],
   },
   {
+    // Foto do pacote (legenda da imagem): sai quando o dono registra a
+    // embalagem com foto; só com opt-in; uma vez por pedido.
+    key: "order_packed",
+    label: "Peça embalada (legenda da foto)",
+    bodyTemplate:
+      "{{nome}}, sua peça foi embalada com carinho 🤎\n" +
+      "O pedido #{{pedido}} já está pronto para seguir viagem — em breve mandamos o rastreio.\n" +
+      "Acompanhe: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "link"],
+  },
+  {
     key: "order_shipped",
     label: "Pedido enviado",
     bodyTemplate:
