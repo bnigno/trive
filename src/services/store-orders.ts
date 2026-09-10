@@ -728,6 +728,15 @@ export interface PublicOrder {
   totalCents: number;
   items: PublicOrderItem[];
   canceledReason: string | null;
+  /** Carimbos da linha do tempo (nenhum é dado pessoal). */
+  paidAt: Date | null;
+  /** Primeira entrada em 'preparing' no histórico (separação sem foto). */
+  preparingAt: Date | null;
+  packedAt: Date | null;
+  shippedAt: Date | null;
+  deliveredAt: Date | null;
+  /** Foto do pacote (path no Storage); a página resolve a URL pública. */
+  packagePhotoPath: string | null;
 }
 
 /**
@@ -758,6 +767,11 @@ export async function getPublicOrder(
         shippingCents: orders.shippingCents,
         totalCents: orders.totalCents,
         canceledReason: orders.cancelReason,
+        paidAt: orders.paidAt,
+        packedAt: orders.packedAt,
+        shippedAt: orders.shippedAt,
+        deliveredAt: orders.deliveredAt,
+        packagePhotoPath: orders.packagePhotoPath,
       })
       .from(orders)
       .where(eq(orders.publicToken, parsedToken.data));
@@ -787,6 +801,18 @@ export async function getPublicOrder(
     .from(orderItems)
     .where(eq(orderItems.orderId, order.id));
 
+  const [preparing] = await db
+    .select({ createdAt: orderStatusHistory.createdAt })
+    .from(orderStatusHistory)
+    .where(
+      and(
+        eq(orderStatusHistory.orderId, order.id),
+        eq(orderStatusHistory.toStatus, "preparing"),
+      ),
+    )
+    .orderBy(asc(orderStatusHistory.createdAt))
+    .limit(1);
+
   return {
     orderNumber: order.orderNumber,
     status: order.status,
@@ -800,5 +826,11 @@ export async function getPublicOrder(
     totalCents: order.totalCents,
     items,
     canceledReason: order.canceledReason,
+    paidAt: order.paidAt,
+    preparingAt: preparing?.createdAt ?? null,
+    packedAt: order.packedAt,
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+    packagePhotoPath: order.packagePhotoPath,
   };
 }

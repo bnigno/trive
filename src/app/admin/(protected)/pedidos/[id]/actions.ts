@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z, ZodError } from "zod";
 
+import { getFileStorage } from "@/adapters/storage";
 import { InvalidTransitionError, type OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { requireOwner, requireUser } from "@/services/auth";
@@ -11,6 +12,7 @@ import {
   transitionOrder,
   updateOrderTracking,
 } from "@/services/orders";
+import { PACKAGE_PHOTO_MAX_BYTES, packOrder } from "@/services/packing";
 
 export type FormState = { error?: string; success?: string };
 
@@ -29,6 +31,8 @@ function friendlyError(error: unknown): FormState {
 function revalidateOrder(orderId: string): void {
   revalidatePath("/admin/pedidos");
   revalidatePath(`/admin/pedidos/${orderId}`);
+  revalidatePath("/admin/pedidos/embalar");
+  revalidatePath("/admin");
 }
 
 async function runTransition(
@@ -145,4 +149,42 @@ export async function refundOrderAction(
     "Pedido reembolsado — lançamento de reembolso criado no financeiro.",
     { reason: reason || undefined, restock },
   );
+}
+
+/**
+ * "Embalei": foto do pacote → packOrder (processa, guarda, leva o pedido a
+ * 'preparing' e enfileira a foto para a cliente). A validação do arquivo
+ * fica aqui, na fronteira; o service revalida o tipo.
+ */
+export async function packOrderAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const orderId = orderIdSchema.parse(formData.get("orderId"));
+    const photo = formData.get("photo");
+    if (!(photo instanceof File) || photo.size === 0) {
+      return { error: "Escolha (ou tire) a foto do pacote antes de enviar." };
+    }
+    if (!photo.type.startsWith("image/")) {
+      return { error: "O arquivo precisa ser uma imagem (JPG, PNG ou HEIC)." };
+    }
+    if (photo.size > PACKAGE_PHOTO_MAX_BYTES) {
+      return { error: "A foto passou de 8 MB. Tire a foto direto pela câmera ou escolha uma menor." };
+    }
+    const result = await packOrder(getDb(), getFileStorage(), {
+      orderId,
+      photo: { data: new Uint8Array(await photo.arrayBuffer()), contentType: photo.type },
+      userId: user.id,
+    });
+    revalidateOrder(orderId);
+    return {
+      success: result.rephoto
+        ? "Foto trocada. A cliente não recebe uma segunda mensagem — a nova foto fica na página do pedido."
+        : "Foto guardada e pedido em separação. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.",
+    };
+  } catch (error) {
+    return friendlyError(error);
+  }
 }

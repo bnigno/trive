@@ -224,6 +224,7 @@ export function OrderActions({
             action={startPreparingAction}
             label="Iniciar separação"
             pendingLabel="Iniciando…"
+            hint="Sem foto — a cliente não recebe o aviso de embalagem. Prefira “Embalei” com a foto do pacote, no card Embalagem."
           />
           <AdvanceForm
             orderId={orderId}

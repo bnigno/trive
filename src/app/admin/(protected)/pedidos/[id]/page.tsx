@@ -27,6 +27,8 @@ import { channelLabel, formatDateTimeSP } from "../format";
 import { OrderFinancialCard } from "./financial-card";
 import { OrderMarginCard } from "./margin-card";
 import { OrderActions } from "./order-actions";
+import { PackForm } from "./pack-form";
+import { packagePhotoUrl } from "@/services/packing";
 
 export const dynamic = "force-dynamic";
 
@@ -321,6 +323,31 @@ export default async function PedidoDetalhePage({
               </p>
             )}
           </Card>
+
+          {status === "paid" || status === "preparing" ? (
+            <Card title="Embalagem">
+              <PackForm
+                orderId={order.id}
+                photoUrl={
+                  order.packagePhotoPath && order.packedAt
+                    ? packagePhotoUrl(getFileStorage(), order.packagePhotoPath, order.packedAt)
+                    : null
+                }
+                packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
+              />
+            </Card>
+          ) : order.packagePhotoPath && order.packedAt ? (
+            <Card title="Embalagem">
+              <img
+                src={packagePhotoUrl(getFileStorage(), order.packagePhotoPath, order.packedAt)}
+                alt="Foto do pacote"
+                className="h-40 w-32 rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
+              />
+              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                Embalado em {formatDateTimeSP(order.packedAt)}.
+              </p>
+            </Card>
+          ) : null}
 
           <Card title="Ações">
             <OrderActions

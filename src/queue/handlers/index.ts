@@ -15,6 +15,7 @@ import { renderReceiptPng } from "@/receipts/render";
 import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
+import { sendPackedWa } from "@/services/packing";
 import { sendReceiptWa } from "@/services/receipts";
 import { runBotTurn } from "@/services/wa-bot";
 import {
@@ -205,6 +206,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     console.info(
       `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
     );
+  },
+  // Foto do pacote pelo WhatsApp: enfileirado por packOrder (dedupe por
+  // pedido). Skips (desligado, sem opt-in, já enviado…) não lançam.
+  "order.packed": async (event) => {
+    const orderId = String(event.payload.orderId);
+    const result = await sendPackedWa(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      { orderId },
+    );
+    console.info(`[order.packed] ${orderId} → ${JSON.stringify(result)}`);
   },
   "order.shipped": async (event) => {
     await sendOrderEmail(getDb(), getEmailProvider(), {
