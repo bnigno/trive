@@ -18,6 +18,7 @@ import { renderTemplate } from "@/core/whatsapp/render";
 import {
   saveBotSettingsAction,
   saveWaSettingsAction,
+  sendDigestNowAction,
   sendTestMessageAction,
   setToggleAction,
   updateWaTemplateAction,
@@ -37,7 +38,7 @@ export function ToggleSwitch({
   label,
   hint,
 }: {
-  settingKey: "wa_enabled" | "bot_enabled";
+  settingKey: "wa_enabled" | "bot_enabled" | "owner_digest_enabled";
   checked: boolean;
   label: string;
   hint: string;
@@ -160,6 +161,22 @@ export function SendTestMessageForm() {
       <div>
         <SubmitButton variant="outline" size="sm" pendingLabel="Enviando…">
           Enviar um teste para o meu WhatsApp
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export function SendDigestNowForm() {
+  const [state, formAction] = useActionState(sendDigestNowAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton variant="outline" size="sm" pendingLabel="Montando o resumo…">
+          Enviar o resumo de ontem agora
         </SubmitButton>
       </div>
     </form>

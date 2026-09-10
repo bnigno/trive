@@ -38,6 +38,7 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   // Fase 6 — chave Pix da LOJA para Pix manual (plano B do robô).
   // Vazia = recurso desligado; o dono cadastra em /admin/configuracoes.
   { key: "store_pix_key", value: "" },
+  { key: "owner_digest_enabled", value: true },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca
@@ -158,6 +159,30 @@ const initialWaTemplates: Array<{
       "Atenção: {{quantidade}} evento(s) na fila esgotaram as tentativas. ⚠️\n" +
       "Confira em /admin/fila.",
     variables: ["quantidade"],
+  },
+  {
+    // Legenda da imagem "Bom dia da maison" (todo dia às 8h, só para o dono).
+    key: "owner_daily_digest",
+    label: "[interno] Bom dia da maison (legenda da imagem)",
+    bodyTemplate:
+      "Bom dia! ☕ Seu resumo de {{dia}}, {{data}}:\n" +
+      "Vendas: {{vendas}} em {{pedidos}} pedido(s) · ticket {{ticket}}\n" +
+      "Aguardando você: {{a_pagar}} a pagar · {{a_embalar}} a embalar · {{a_enviar}} a enviar\n" +
+      "A Lia atendeu {{lia_conversas}} conversa(s) e fechou {{lia_pedidos}} pedido(s) 🤎",
+    variables: [
+      "dia",
+      "data",
+      "vendas",
+      "pedidos",
+      "ticket",
+      "a_pagar",
+      "a_embalar",
+      "a_enviar",
+      "lia_conversas",
+      "lia_pedidos",
+      "lia_custo",
+      "loja",
+    ],
   },
 ];
 

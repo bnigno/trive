@@ -506,6 +506,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .string()
     .trim()
     .max(2000, "As respostas rápidas devem ter no máximo 2000 caracteres."),
+  /** "Bom dia da maison": imagem diária às 8h no WhatsApp do dono. Ausente = ligado. */
+  owner_digest_enabled: z.boolean(),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getAdapterMode } from "@/adapters/adapter-mode";
+import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { Badge } from "@/components/ui/badge";
 import { Card, StatCard } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { formatDateTimeSP } from "@/emails/templates";
 import { formatCentsBRL } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
+import { getLastDigest } from "@/services/daily-digest";
 import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
 import {
   getBotActivitySummary,
@@ -34,6 +36,7 @@ import {
 import { maskPhone } from "./conversas/format";
 import {
   BotSettingsForm,
+  SendDigestNowForm,
   SendTestMessageForm,
   TemplateEditForm,
   ToggleSwitch,
@@ -67,6 +70,8 @@ interface PageData {
   summary: BotActivitySummary;
   activity: BotActivityEvent[];
   awaitingOwner: number;
+  digestEnabled: boolean;
+  lastDigest: { date: string; url: string; at: Date } | null;
 }
 
 async function loadPageData(): Promise<PageData | null> {
@@ -77,8 +82,9 @@ async function loadPageData(): Promise<PageData | null> {
   let summary: BotActivitySummary;
   let activity: BotActivityEvent[];
   let awaitingOwner: number;
+  let lastDigestRow: Awaited<ReturnType<typeof getLastDigest>>;
   try {
-    [settingsMap, templates, summary, activity, awaitingOwner] = await Promise.all([
+    [settingsMap, templates, summary, activity, awaitingOwner, lastDigestRow] = await Promise.all([
       getSettingsMap(db, [
         "wa_enabled",
         "owner_whatsapp_phone",
@@ -89,11 +95,13 @@ async function loadPageData(): Promise<PageData | null> {
         "store_exchange_policy",
         "bot_extra_instructions",
         "wa_quick_replies",
+        "owner_digest_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
       listRecentBotActivity(db, { limit: 8 }),
       countConversationsAwaitingOwner(db),
+      getLastDigest(db),
     ]);
   } catch {
     return null;
@@ -129,6 +137,14 @@ async function loadPageData(): Promise<PageData | null> {
     summary,
     activity,
     awaitingOwner,
+    digestEnabled: settingsMap["owner_digest_enabled"] !== false,
+    lastDigest: lastDigestRow
+      ? {
+          date: lastDigestRow.date,
+          url: `${getFileStorage().publicUrl(lastDigestRow.path)}?v=${lastDigestRow.at.getTime()}`,
+          at: lastDigestRow.at,
+        }
+      : null,
   };
 }
 
@@ -182,6 +198,8 @@ export default async function WhatsappPage() {
     summary,
     activity,
     awaitingOwner,
+    digestEnabled,
+    lastDigest,
   } = data;
 
   // O interruptor sozinho não liga a vendedora em produção: sem a chave da
@@ -292,6 +310,33 @@ export default async function WhatsappPage() {
             </Warning>
           </div>
         ) : null}
+      </Card>
+
+      {/* Bom dia da maison */}
+      <Card title="Bom dia da maison">
+        <div className="grid gap-6 md:grid-cols-[1fr_auto] md:items-start">
+          <ToggleSwitch
+            settingKey="owner_digest_enabled"
+            checked={digestEnabled}
+            label="Resumo diário no seu WhatsApp"
+            hint="Todo dia às 8h você recebe uma imagem com o resumo de ontem: vendas, o que espera você, o que a Lia fez, estoque baixo e a peça da semana."
+          />
+          <div className="flex flex-col items-start gap-2">
+            <SendDigestNowForm />
+            {lastDigest ? (
+              <a
+                href={lastDigest.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                Ver o último resumo ({lastDigest.date.split("-").reverse().slice(0, 2).join("/")})
+              </a>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">Nenhum resumo enviado ainda.</p>
+            )}
+          </div>
+        </div>
       </Card>
 
       {/* A vendedora */}
