@@ -3,7 +3,12 @@
 // Sem IA: template estável, do mesmo jeito toda vez (o post é dela, não do
 // modelo).
 
+import { findColorAxis, imagesForColor } from "@/core/catalog/product-images";
+
 const MAX_CAPTION = 2200;
+
+/** Teto de imagens do carrossel — o mesmo do Instagram. */
+export const CAROUSEL_MAX = 10;
 
 /** Hashtags fixas da praça — ordem estável, sem repetição. */
 export const BELEM_HASHTAGS = [
@@ -82,3 +87,43 @@ export function buildPostCaption(input: PostCaptionInput): string {
 }
 
 export const POST_CAPTION_MAX = MAX_CAPTION;
+
+
+export type CarouselVariant = { attributes: Record<string, string> };
+export type CarouselImage = { color: string | null; storagePath: string };
+export type CarouselEntry = { color: string; imagePath: string };
+
+/**
+ * Uma imagem por COR da peça, na ordem das variações: é o carrossel que a
+ * dona posta. Peça sem eixo de cor não tem carrossel (o post já mostra a
+ * peça); cor sem foto própria usa a foto do produto inteiro, e cor sem foto
+ * nenhuma fica de fora — carrossel não inventa imagem.
+ */
+export function carouselColors(input: {
+  attributesSchema: unknown;
+  variants: readonly CarouselVariant[];
+  images: readonly CarouselImage[];
+}): CarouselEntry[] {
+  const axis = findColorAxis(input.attributesSchema);
+  if (!axis) return [];
+
+  const seen = new Set<string>();
+  const out: CarouselEntry[] = [];
+  for (const variant of input.variants) {
+    const color = (variant.attributes[axis] ?? "").trim();
+    if (color === "") continue;
+    const key = color.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const [image] = imagesForColor(input.images, color);
+    if (!image) continue;
+    out.push({ color, imagePath: image.storagePath });
+    if (out.length >= CAROUSEL_MAX) break;
+  }
+  return out;
+}
+
+/** "EDIÇÃO CÍRIO · TERRACOTA" — a faixa do cartão daquela cor. */
+export function carouselEyebrow(editionName: string | null | undefined, color: string): string {
+  return `${postEyebrow(editionName)} · ${color.toUpperCase()}`.slice(0, 60);
+}

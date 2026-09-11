@@ -32,6 +32,8 @@ export async function generateProductPostAction(
       { productId: id, userId: user.id },
     );
     revalidatePath(`/admin/produtos/${id}/post`);
+    // A prévia do link da peça passa a ser o cartão recém-desenhado.
+    revalidatePath("/produto/[slug]", "page");
     return { success: "Post e story prontos." };
   } catch (error) {
     if (error instanceof ServiceError) return { error: error.message };

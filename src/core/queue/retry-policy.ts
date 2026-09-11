@@ -7,6 +7,13 @@ export type RetryPolicy = {
 // Políticas por event_type entram aqui (ex.: 'whatsapp.send': { ... }).
 // Sem entrada específica, vale a 'default'.
 export const RETRY_POLICIES: Record<string, RetryPolicy> = {
+  // Pré-desenho do post da peça: ninguém espera na tela (a dona gera de novo
+  // quando quiser), então poucas tentativas e rápidas.
+  "product.published": {
+    maxAttempts: 2,
+    baseDelayMs: 10_000,
+    maxDelayMs: 60_000,
+  },
   default: {
     maxAttempts: 8,
     baseDelayMs: 5_000,

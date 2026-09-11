@@ -47,9 +47,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       type: "website",
       url: canonical,
-      images: product.images[0]
-        ? [{ url: publicImageUrl(product.images[0].path), alt: product.name }]
-        : undefined,
+      // O cartão editorial (nome e preço em ouro sobre noir) é a cara da peça
+      // quando o link é colado no WhatsApp ou no Instagram; sem ele, a foto.
+      images: product.postCardPath
+        ? [{ url: publicImageUrl(product.postCardPath), alt: product.name, width: 1080, height: 1350 }]
+        : product.images[0]
+          ? [{ url: publicImageUrl(product.images[0].path), alt: product.name }]
+          : undefined,
     },
   };
 }

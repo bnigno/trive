@@ -12,6 +12,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import {
   getProductPostFile,
   getProductPostPreview,
+  prerenderProductPosts,
   publishProductPost,
 } from "@/services/product-posts";
 import { ServiceError } from "@/services/settings";
@@ -210,5 +211,84 @@ describe("getProductPostPreview / getProductPostFile", () => {
     const file = await getProductPostFile(sdb, storage, { productId, format: "story" });
     expect(file?.contentType).toBe("image/jpeg");
     expect((file?.data.length ?? 0) > 0).toBe(true);
+  });
+});
+
+describe("carrossel das cores e pré-desenho", () => {
+  async function comCores(productId: string) {
+    await db
+      .update(schema.products)
+      .set({ attributesSchema: ["cor"] })
+      .where(eq(schema.products.id, productId));
+    const [variant] = await db
+      .select({ id: schema.productVariants.id })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.productId, productId));
+    await db
+      .update(schema.productVariants)
+      .set({ attributes: { cor: "Areia" } })
+      .where(eq(schema.productVariants.id, variant.id));
+    const [terra] = await db
+      .insert(schema.productVariants)
+      .values({ productId, sku: "DUNAS-TERRA-M", attributes: { cor: "Terracota" }, costCents: 12000 })
+      .returning({ id: schema.productVariants.id });
+    await db.insert(schema.priceVersions).values({
+      productVariantId: terra.id,
+      versionNumber: 1,
+      status: "active",
+      priceCents: 28900,
+      origin: "initial",
+      breakdown: {},
+      costSnapshotCents: 12000,
+      computedMarginRate: "0.3000",
+      activatedAt: new Date(),
+    });
+    // Uma foto por cor.
+    for (const [cor, arquivo] of [["Areia", "areia"], ["Terracota", "terra"]] as const) {
+      const path = `products/dunas/${arquivo}-full.webp`;
+      await db.insert(schema.productImages).values({ productId, storagePath: path, color: cor, sortOrder: 1 });
+      await storage.upload({
+        path,
+        data: await sharp({ create: { width: 900, height: 1200, channels: 3, background: "#8a7f6d" } })
+          .webp()
+          .toBuffer(),
+        contentType: "image/webp",
+      });
+    }
+  }
+
+  it("desenha um cartão por cor, grava o caminho do post e serve cada cor pelo índice", async () => {
+    const productId = await setupProduct();
+    await comCores(productId);
+
+    const result = await publishProductPost(sdb, storage, render, { productId, userId: FIXED_USER_ID });
+    expect(result.carousel.map((entry) => entry.color)).toEqual(["Areia", "Terracota"]);
+    expect(result.carousel.every((entry) => entry.card !== null)).toBe(true);
+    // post + story + duas cores
+    expect(render).toHaveBeenCalledTimes(4);
+
+    const [row] = await db
+      .select({ postCardPath: schema.products.postCardPath })
+      .from(schema.products)
+      .where(eq(schema.products.id, productId));
+    expect(row.postCardPath).toBe(result.post?.path);
+
+    const cor = await getProductPostFile(sdb, storage, { productId, format: "carousel-1" });
+    expect((cor?.data.length ?? 0) > 0).toBe(true);
+    expect(await getProductPostFile(sdb, storage, { productId, format: "carousel-9" })).toBeNull();
+  });
+
+  it("o pré-desenho da publicação é idempotente: a segunda vez não desenha nada", async () => {
+    const productId = await setupProduct();
+    await comCores(productId);
+
+    const first = await prerenderProductPosts(sdb, storage, render, { productId });
+    expect(first).toEqual({ post: true, story: true, colors: 2 });
+    expect(render).toHaveBeenCalledTimes(4);
+
+    render.mockClear();
+    const second = await prerenderProductPosts(sdb, storage, render, { productId });
+    expect(second).toEqual({ post: false, story: false, colors: 2 });
+    expect(render).not.toHaveBeenCalled();
   });
 });

@@ -1285,3 +1285,34 @@ describe("createProduct com medidas por tamanho", () => {
     ]);
   });
 });
+
+describe("product.published", () => {
+  it("ativar a peça enfileira o evento uma vez; reativar ou voltar a rascunho não enfileira", async () => {
+    const created = await createProduct(db, {
+      name: "Peça que vai para a vitrine",
+      variants: [{ sku: "VITRINE-1", initialQuantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    const eventos = async () =>
+      (
+        await db
+          .select({ dedupeKey: schema.outboxEvents.dedupeKey })
+          .from(schema.outboxEvents)
+          .where(eq(schema.outboxEvents.eventType, "product.published"))
+      ).length;
+
+    expect(await eventos()).toBe(0);
+    await updateProduct(db, { productId: created.product.id, status: "active", userId: FIXED_USER_ID });
+    expect(await eventos()).toBe(1);
+
+    // Já ativa: mexer noutro campo não pede post de novo.
+    await updateProduct(db, { productId: created.product.id, brand: "TRIVÉ", userId: FIXED_USER_ID });
+    expect(await eventos()).toBe(1);
+
+    // Voltar para rascunho e publicar de novo: um evento novo (a arte pode ter mudado).
+    await updateProduct(db, { productId: created.product.id, status: "draft", userId: FIXED_USER_ID });
+    expect(await eventos()).toBe(1);
+    await updateProduct(db, { productId: created.product.id, status: "active", userId: FIXED_USER_ID });
+    expect(await eventos()).toBe(2);
+  });
+});

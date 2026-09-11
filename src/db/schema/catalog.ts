@@ -56,6 +56,8 @@ export const products = pgTable(
     fitNotes: text("fit_notes"),
     // Uma frase da curadora sobre a peça (o áudio chega em outro PR).
     curatorNote: text("curator_note"),
+    /** Post 4:5 mais recente no Storage: é a prévia do link da peça. */
+    postCardPath: text("post_card_path"),
     categoryId: uuid("category_id").references(() => categories.id, {
       onDelete: "restrict",
     }),

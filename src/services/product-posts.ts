@@ -6,8 +6,14 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
-import { buildPostCaption, postEyebrow } from "@/core/cards/post";
-import { categories } from "@/db/schema";
+import {
+  buildPostCaption,
+  carouselColors,
+  carouselEyebrow,
+  postEyebrow,
+  type CarouselEntry,
+} from "@/core/cards/post";
+import { categories, products } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import {
@@ -24,11 +30,16 @@ import { siteBaseUrl } from "@/services/wa-messaging";
 export type ProductPost = {
   post: PublishedCard | null;
   story: PublishedCard | null;
+  /** Uma imagem por cor, na ordem das variações (vazio = peça sem cores). */
+  carousel: { color: string; card: PublishedCard | null }[];
   caption: string;
 };
 
 type PostBasis = {
   input: (kind: "post" | "story") => PublishBotCardInput;
+  /** Cartão 4:5 de UMA cor da peça (a faixa diz a cor). */
+  colorInput: (entry: CarouselEntry) => PublishBotCardInput;
+  colors: CarouselEntry[];
   caption: string;
 };
 
@@ -90,7 +101,28 @@ async function loadBasis(db: DbOrTx, productId: string): Promise<PostBasis> {
   const categoryName = category[0]?.name ?? null;
   const priceLabel = priceLabelOf(prices);
 
+  const colors = carouselColors({
+    attributesSchema: detail.attributesSchema,
+    variants: detail.variants,
+    images: detail.images,
+  });
+
   return {
+    colors,
+    colorInput: (entry) => ({
+      kind: "post",
+      storeName,
+      eyebrow: carouselEyebrow(editionName, entry.color),
+      title: detail.name,
+      items: [
+        {
+          slug: detail.slug,
+          name: detail.name,
+          priceLabel,
+          imagePath: entry.imagePath,
+        },
+      ],
+    }),
     input: (kind) => ({
       kind,
       storeName,
@@ -130,7 +162,19 @@ export async function publishProductPost(
   try {
     const post = await publishBotCard(db, storage, render, basis.input("post"));
     const story = await publishBotCard(db, storage, render, basis.input("story"));
-    return { post, story, caption: basis.caption };
+    const carousel = [];
+    for (const entry of basis.colors) {
+      carousel.push({
+        color: entry.color,
+        card: await publishBotCard(db, storage, render, basis.colorInput(entry)),
+      });
+    }
+    // É este cartão que a prévia do link mostra no WhatsApp e no Instagram.
+    await db
+      .update(products)
+      .set({ postCardPath: post.path, updatedAt: new Date() })
+      .where(eq(products.id, parsed.productId));
+    return { post, story, carousel, caption: basis.caption };
   } catch (error) {
     // A causa quase sempre é a foto: arquivo que sumiu do Storage ou formato
     // que o recorte não abre. Dizer isso poupa a dona de tentar de novo à toa.
@@ -156,22 +200,63 @@ export async function getProductPostPreview(
   productId: string,
 ): Promise<ProductPost> {
   const basis = await loadBasis(db, z.uuid().parse(productId));
-  const [post, story] = await Promise.all([
+  const [post, story, ...cards] = await Promise.all([
     findCachedBotCard(db, storage, basis.input("post")),
     findCachedBotCard(db, storage, basis.input("story")),
+    ...basis.colors.map((entry) => findCachedBotCard(db, storage, basis.colorInput(entry))),
   ]);
-  return { post, story, caption: basis.caption };
+  return {
+    post,
+    story,
+    carousel: basis.colors.map((entry, index) => ({ color: entry.color, card: cards[index] })),
+    caption: basis.caption,
+  };
 }
 
 /** O JPEG do cache, servido pela própria origem (sem CORS do Storage). */
 export async function getProductPostFile(
   db: DbOrTx,
   storage: FileStorage,
-  input: { productId: string; format: "post" | "story" },
+  input: { productId: string; format: "post" | "story" | `carousel-${number}` },
 ): Promise<{ data: Buffer; contentType: string } | null> {
   const basis = await loadBasis(db, z.uuid().parse(input.productId));
-  const card = await findCachedBotCard(db, storage, basis.input(input.format));
+  const carouselIndex = input.format.startsWith("carousel-")
+    ? Number(input.format.slice("carousel-".length))
+    : null;
+  const request =
+    carouselIndex === null
+      ? basis.input(input.format as "post" | "story")
+      : basis.colors[carouselIndex]
+        ? basis.colorInput(basis.colors[carouselIndex])
+        : null;
+  if (!request) return null;
+  const card = await findCachedBotCard(db, storage, request);
   if (!card) return null;
   const file = await storage.download(card.path);
   return { data: file.data, contentType: file.contentType ?? "image/jpeg" };
+}
+
+
+/**
+ * Pré-desenha o post, o story e o carrossel quando a peça entra na vitrine
+ * (handler de product.published). Idempotente: o que já está no cache não é
+ * desenhado de novo, então o retry nunca refaz trabalho.
+ */
+export async function prerenderProductPosts(
+  db: DbOrTx,
+  storage: FileStorage,
+  render: CardRenderer,
+  input: { productId: string },
+): Promise<{ post: boolean; story: boolean; colors: number }> {
+  const basis = await loadBasis(db, z.uuid().parse(input.productId));
+  const post = await publishBotCard(db, storage, render, basis.input("post"));
+  const story = await publishBotCard(db, storage, render, basis.input("story"));
+  for (const entry of basis.colors) {
+    await publishBotCard(db, storage, render, basis.colorInput(entry));
+  }
+  await db
+    .update(products)
+    .set({ postCardPath: post.path, updatedAt: new Date() })
+    .where(eq(products.id, input.productId));
+  return { post: !post.cached, story: !story.cached, colors: basis.colors.length };
 }

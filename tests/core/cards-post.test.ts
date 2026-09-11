@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   BELEM_HASHTAGS,
+  CAROUSEL_MAX,
+  carouselColors,
+  carouselEyebrow,
   buildPostCaption,
   hashtagFrom,
   POST_CAPTION_MAX,
@@ -65,5 +68,52 @@ describe("buildPostCaption", () => {
     const belem = semRepetir.match(/#Belém(?![a-zA-ZÀ-ÿ])/g) ?? [];
     expect(belem).toHaveLength(1);
     expect(BELEM_HASHTAGS.length).toBeGreaterThan(3);
+  });
+});
+
+describe("carouselColors", () => {
+  const images = [
+    { color: "Areia", storagePath: "products/dunas/areia-1-full.webp" },
+    { color: "Terracota", storagePath: "products/dunas/terra-1-full.webp" },
+    { color: null, storagePath: "products/dunas/geral-full.webp" },
+  ];
+  const variants = [
+    { attributes: { cor: "Areia", tamanho: "P" } },
+    { attributes: { cor: "Areia", tamanho: "M" } },
+    { attributes: { cor: "Terracota", tamanho: "P" } },
+  ];
+
+  it("uma imagem por cor, na ordem das variações e sem repetir", () => {
+    expect(carouselColors({ attributesSchema: ["cor", "tamanho"], variants, images })).toEqual([
+      { color: "Areia", imagePath: "products/dunas/areia-1-full.webp" },
+      { color: "Terracota", imagePath: "products/dunas/terra-1-full.webp" },
+    ]);
+  });
+
+  it("peça sem eixo de cor não tem carrossel; cor sem foto própria usa a do produto inteiro", () => {
+    expect(carouselColors({ attributesSchema: ["tamanho"], variants, images })).toEqual([]);
+    const semFotoDaCor = carouselColors({
+      attributesSchema: ["cor"],
+      variants: [{ attributes: { cor: "Verde" } }],
+      images,
+    });
+    expect(semFotoDaCor).toEqual([{ color: "Verde", imagePath: "products/dunas/geral-full.webp" }]);
+    // Sem foto nenhuma, a cor fica de fora (carrossel não inventa imagem).
+    expect(
+      carouselColors({ attributesSchema: ["cor"], variants: [{ attributes: { cor: "Verde" } }], images: [] }),
+    ).toEqual([]);
+  });
+
+  it("respeita o teto de imagens do Instagram", () => {
+    const muitas = Array.from({ length: 15 }, (_, i) => ({ attributes: { cor: `Cor ${i}` } }));
+    const fotos = muitas.map((v, i) => ({ color: `Cor ${i}`, storagePath: `p/${i}.webp` }));
+    expect(carouselColors({ attributesSchema: ["cor"], variants: muitas, images: fotos })).toHaveLength(
+      CAROUSEL_MAX,
+    );
+  });
+
+  it("a faixa do cartão diz a edição e a cor", () => {
+    expect(carouselEyebrow("Edição Círio", "Terracota")).toBe("EDIÇÃO CÍRIO · TERRACOTA");
+    expect(carouselEyebrow("", "Areia")).toBe("NOITE DE ESTREIA · AREIA");
   });
 });

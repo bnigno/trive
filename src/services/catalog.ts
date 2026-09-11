@@ -7,6 +7,8 @@ import { and, eq, ilike, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
+import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+
 import * as schema from "@/db/schema";
 import {
   auditLog,
@@ -538,6 +540,20 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
       before,
       after,
     });
+
+    // A peça entrou na vitrine: o post e o story dela vão sendo desenhados em
+    // segundo plano (regra 5 — efeito externo sai na MESMA transação).
+    if (patch.status === "active" && current.status !== "active") {
+      // O tipo do tx aqui é o PgTransaction genérico do ServiceDb; a fila
+      // declara o do driver de produção. É o mesmo objeto em runtime.
+      await enqueueOutboxEvent(tx as unknown as DbOrTx, {
+        eventType: "product.published",
+        dedupeKey: `product.published:${updated.id}:${updated.updatedAt.getTime()}`,
+        aggregateType: "product",
+        aggregateId: updated.id,
+        payload: { productId: updated.id },
+      });
+    }
 
     return updated;
   });

@@ -94,3 +94,14 @@ describe("wa.card_render", () => {
     });
   });
 });
+
+describe("política do pré-desenho do post", () => {
+  it("product.published tenta poucas vezes e rápido (ninguém espera na tela)", () => {
+    const policy = getRetryPolicy("product.published");
+    expect(policy.maxAttempts).toBe(2);
+    expect(policy.baseDelayMs).toBeLessThanOrEqual(10_000);
+    expect(policy.maxDelayMs).toBeLessThanOrEqual(60_000);
+    // O padrão continua paciente para o resto da fila.
+    expect(getRetryPolicy("qualquer.outro").maxAttempts).toBeGreaterThan(2);
+  });
+});

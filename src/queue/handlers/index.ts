@@ -7,6 +7,7 @@ import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
+import { prerenderProductPosts } from "@/services/product-posts";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropInvite } from "@/services/drops";
@@ -242,6 +243,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   // Cartão editorial fora do cache: desenha, publica e manda logo depois do
   // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).
+  // Peça entrou na vitrine: o post, o story e o carrossel dela ficam prontos
+  // antes de a dona abrir a tela. Falha aqui nunca mexe no status da peça.
+  "product.published": async (event) => {
+    const payload = z.object({ productId: z.uuid() }).parse(event.payload);
+    const assets = await loadReceiptAssets();
+    await prerenderProductPosts(
+      getDb(),
+      getFileStorage(),
+      (data) => renderCardPng(data, assets),
+      { productId: payload.productId },
+    );
+  },
   "wa.card_render": async (event) => {
     const result = await renderAndSendBotCard(
       getDb(),
