@@ -3,6 +3,7 @@
 // das cores reais do catálogo, resultado com nome poético + três peças, e o
 // "guardar" com telefone e consentimento explícito. O navegador guarda só o
 // token; nada do que ela respondeu fica em cookie ou localStorage.
+import { trackStoreEvent } from "@/components/store/analytics";
 import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 
@@ -195,6 +196,7 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
         return;
       }
       writeStoredStyle({ token: result.token, paletteName: result.paletteName, savedAt: new Date().toISOString() });
+      trackStoreEvent("style_quiz_done", { palette: result.paletteName ?? "" });
       setRedoing(false);
       setMessage(null);
     });

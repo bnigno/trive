@@ -4,6 +4,7 @@
 // Desabilitado quando o item está esgotado (availableQty <= 0) ou quando a
 // página do produto pedir (ex.: variante ainda não selecionada).
 
+import { trackStoreEvent } from "@/components/store/analytics";
 import { useEffect, useRef, useState } from "react";
 
 import { useCart, type CartItemInput } from "./cart-context";
@@ -59,6 +60,7 @@ export function AddToCartButton({
   function handleClick() {
     if (isDisabled) return;
     addItem(item, quantity);
+    trackStoreEvent("add_to_cart", { sku: item.sku, quantity, priceCents: item.priceCents });
     setAdded(true);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => setAdded(false), 2000);

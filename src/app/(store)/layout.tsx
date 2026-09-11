@@ -6,7 +6,10 @@ import type { Viewport } from "next";
 import { Cormorant_Garamond, Jost } from "next/font/google";
 import { preconnect } from "react-dom";
 
+import { StoreAnalytics } from "@/components/store/analytics";
 import { CartProvider } from "@/components/store/cart/cart-context";
+import { buildOrganizationJsonLd, buildWebSiteJsonLd, serializeJsonLd } from "@/core/seo/json-ld";
+import { siteUrl } from "@/lib/site-url";
 import { StoreFooter } from "@/components/store/store-footer";
 import { StoreHeader } from "@/components/store/store-header";
 import { getDb } from "@/db/client";
@@ -67,9 +70,24 @@ export default async function StoreLayout({
     getSettingsMap(getDb(), [...STORE_SETTING_KEYS]),
   );
   const storeName = asText(settings.store_name) || STORE_NAME_DEFAULT;
+  const base = siteUrl();
+  const whatsappDigits = asText(settings.store_whatsapp).replace(/\D/g, "");
+  const organizationJsonLd = serializeJsonLd(
+    buildOrganizationJsonLd({
+      name: storeName,
+      url: base,
+      logoUrl: `${base}/brand/mark-dark-400.webp`,
+      ...(asText(settings.store_email) ? { email: asText(settings.store_email) } : {}),
+      ...(whatsappDigits ? { whatsappE164: `+${whatsappDigits}` } : {}),
+    }),
+  );
+  const webSiteJsonLd = serializeJsonLd(buildWebSiteJsonLd({ name: storeName, url: base }));
 
   return (
     <CartProvider>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: organizationJsonLd }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: webSiteJsonLd }} />
+      <StoreAnalytics />
       <div
         data-store=""
         className={`${cormorant.variable} ${jost.variable} flex min-h-screen flex-col bg-ivory-100 font-store text-ink-900`}

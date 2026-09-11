@@ -15,6 +15,8 @@ export const revalidate = 300;
 export const metadata: Metadata = {
   title: "Sua cartela",
   description: "Em um minuto, a maison descobre a sua cartela de estilo e escolhe peças para você.",
+  alternates: { canonical: "/estilo" },
+  openGraph: { title: "Sua cartela", description: "Em um minuto, a maison descobre a sua cartela de estilo e escolhe peças para você.", url: "/estilo", type: "website" },
 };
 
 export default async function EstiloPage() {

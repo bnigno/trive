@@ -16,6 +16,8 @@ export const metadata: Metadata = {
   title: "Trocas e devoluções",
   description:
     "Como trocar ou devolver um produto: direito de arrependimento de 7 dias, troca por defeito e passo a passo do reembolso.",
+  alternates: { canonical: "/trocas-e-devolucoes" },
+  openGraph: { title: "Trocas e devoluções", description: "Como trocar ou devolver um produto: direito de arrependimento de 7 dias, troca por defeito e passo a passo do reembolso.", url: "/trocas-e-devolucoes", type: "website" },
 };
 
 const TOC = [

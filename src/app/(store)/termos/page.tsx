@@ -20,6 +20,8 @@ export const metadata: Metadata = {
   title: "Termos de uso",
   description:
     "Condições de compra da loja: identificação, como o pedido funciona, preços, entrega e responsabilidades.",
+  alternates: { canonical: "/termos" },
+  openGraph: { title: "Termos de uso", description: "Condições de compra da loja: identificação, como o pedido funciona, preços, entrega e responsabilidades.", url: "/termos", type: "website" },
 };
 
 const TOC = [

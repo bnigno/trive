@@ -1,6 +1,8 @@
 // Página de produto (PDP), "o camarim": galeria, seletor de variação, compra,
 // fichas em <details> e peças relacionadas. Vitrine com ISR — revalida a cada
 // 5 minutos; nunca force-dynamic.
+import { buildProductJsonLd, serializeJsonLd } from "@/core/seo/json-ld";
+import { siteUrl } from "@/lib/site-url";
 import { parseCareNotes } from "@/core/catalog/care";
 import { buildSizeChart, isSizeChartEmpty } from "@/core/catalog/measurements";
 import { hasMuseumPlaque, MuseumPlaque } from "@/components/store/museum-plaque";
@@ -35,69 +37,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const description =
     product.description?.trim().slice(0, 160) ||
     `${product.name} — compre online.`;
+  const canonical = `/produto/${product.slug}`;
   return {
     title: product.name,
     description,
+    alternates: { canonical },
     openGraph: {
       title: product.name,
       description,
       type: "website",
+      url: canonical,
       images: product.images[0]
         ? [{ url: publicImageUrl(product.images[0].path), alt: product.name }]
         : undefined,
     },
   };
-}
-
-/**
- * JSON-LD Product para buscadores (Google Shopping/rich results), montado com
- * os dados já carregados. Serializado com escape de `<` (<) para nunca
- * fechar a tag <script> mesmo que nome/descrição contenham HTML.
- */
-function buildProductJsonLd(product: {
-  name: string;
-  slug: string;
-  description: string | null;
-  composition?: string | null;
-  brand: string | null;
-  images: { path: string }[];
-  variants: { priceCents: number; availableQty: number }[];
-}): string {
-  const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL || "https://trivemaison.com.br";
-  const prices = product.variants.map((variant) => variant.priceCents);
-  const cheapestCents = prices.length > 0 ? Math.min(...prices) : null;
-  const inStock = product.variants.some((variant) => variant.availableQty > 0);
-
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Product",
-    name: product.name,
-    ...(product.images.length > 0
-      ? { image: product.images.map((image) => publicImageUrl(image.path)) }
-      : {}),
-    ...(product.description?.trim()
-      ? { description: product.description.trim() }
-      : {}),
-    ...(product.brand
-      ? { brand: { "@type": "Brand", name: product.brand } }
-      : {}),
-    ...(product.composition?.trim() ? { material: product.composition.trim() } : {}),
-    ...(cheapestCents !== null
-      ? {
-          offers: {
-            "@type": "Offer",
-            url: `${siteUrl}/produto/${product.slug}`,
-            priceCurrency: "BRL",
-            price: (cheapestCents / 100).toFixed(2),
-            availability: inStock
-              ? "https://schema.org/InStock"
-              : "https://schema.org/OutOfStock",
-          },
-        }
-      : {}),
-  };
-  return JSON.stringify(jsonLd).replace(/</g, "\\u003c");
 }
 
 const crumb =
@@ -161,7 +115,22 @@ export default async function ProdutoPage({ params }: Props) {
     <div className="mx-auto max-w-6xl px-4 py-8 pb-24 sm:px-6 lg:pb-8">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: buildProductJsonLd(product) }}
+        dangerouslySetInnerHTML={{
+          __html: serializeJsonLd(
+            buildProductJsonLd(
+              {
+                name: product.name,
+                slug: product.slug,
+                description: product.description,
+                composition: product.composition,
+                brand: product.brand,
+                imageUrls: product.images.map((image) => publicImageUrl(image.path)),
+                variants: product.variants,
+              },
+              siteUrl(),
+            ),
+          ),
+        }}
       />
       <nav aria-label="Navegação" className="mb-8 flex flex-wrap items-center gap-2">
         <Link href="/produtos" className={crumb}>

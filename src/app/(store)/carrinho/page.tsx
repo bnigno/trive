@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Sacola",
   description: "Revise os itens da sua sacola e calcule o frete.",
+  robots: { index: false, follow: false },
 };
 
 export default function CartPage() {

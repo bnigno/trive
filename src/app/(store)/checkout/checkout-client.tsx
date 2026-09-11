@@ -7,6 +7,7 @@
 // createStoreOrder (expected* detecta qualquer divergência e o cliente
 // confirma antes de seguir). A lógica de estado é a mesma da versão anterior.
 
+import { trackStoreEvent } from "@/components/store/analytics";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -151,8 +152,9 @@ export function CheckoutClient({
   useEffect(() => {
     if (!mounted || autofilledOnMount.current) return;
     autofilledOnMount.current = true;
+    trackStoreEvent("checkout_start", { items: items.length, subtotalCents });
     if (initialCepDigits.length === 8) cepAutofill.onCepChange(initialCepDigits);
-  }, [mounted, initialCepDigits, cepAutofill]);
+  }, [mounted, initialCepDigits, cepAutofill, items.length, subtotalCents]);
   const [fieldErrors, setFieldErrors] = useState<{
     document?: string;
     phone?: string;
@@ -298,6 +300,10 @@ export function CheckoutClient({
         const result = await placeOrderAction(payload);
         if (result.ok) {
           setPlaced(true);
+          trackStoreEvent("order_placed", {
+            orderNumber: result.orderNumber,
+            paymentMethod: payload.paymentMethod ?? "online",
+          });
           clear();
           if (result.initPointUrl) {
             // Mercado Pago habilitado: vai DIRETO para o Checkout Pro pagar
