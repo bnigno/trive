@@ -15,7 +15,9 @@ import { findColorAxis } from "@/core/catalog/product-images";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Badge } from "@/components/ui/badge";
+import { publicImageUrl } from "@/services/store-catalog";
 import { Card } from "@/components/ui/card";
+import { CuratorNoteForm } from "./curator-note-form";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/form";
@@ -469,6 +471,21 @@ export default async function ProdutoDetalhePage({
           </OwnerOnly>
         </div>
       </Card>
+
+      <OwnerOnly>
+        <Card id="nota-da-curadora" title="Nota da curadora">
+          <CuratorNoteForm
+            productId={detail.id}
+            note={detail.curatorNote ?? ""}
+            audioUrl={
+              detail.curatorAudioPath
+                ? `${publicImageUrl(detail.curatorAudioPath)}?v=${detail.curatorNoteUpdatedAt?.getTime() ?? 0}`
+                : null
+            }
+            audioSeconds={detail.curatorAudioSeconds}
+          />
+        </Card>
+      </OwnerOnly>
 
       <OwnerOnly>
         <Card id="fita-metrica" title="Fita métrica">

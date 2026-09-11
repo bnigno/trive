@@ -4,6 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z, ZodError } from "zod";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
+import { getTranscriber } from "@/adapters/transcription";
+import {
+  recordCuratorNote,
+  removeCuratorAudio,
+  updateCuratorNote,
+} from "@/services/curator-notes";
 import { requireOwner } from "@/services/auth";
 import {
   addProductImage,
@@ -368,4 +374,79 @@ export async function setProductMeasurementsAction(
         ? "Nada mudou na fita métrica."
         : `Fita métrica salva em ${result.updated} ${result.updated === 1 ? "variação" : "variações"}.`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// A nota da curadora: a voz da dona sobre a peça
+// ---------------------------------------------------------------------------
+
+export async function recordCuratorNoteAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  try {
+    const productId = String(formData.get("productId") ?? "");
+    const file = formData.get("audio");
+    if (!(file instanceof File) || file.size === 0) {
+      return { error: "Grave a nota ou escolha um arquivo de áudio." };
+    }
+    const secondsRaw = Number(formData.get("seconds") ?? 0);
+    const result = await recordCuratorNote(getDb(), getFileStorage(), getTranscriber(), {
+      productId,
+      userId: user.id,
+      audio: {
+        data: Buffer.from(await file.arrayBuffer()),
+        contentType: file.type || "audio/webm",
+        ...(Number.isFinite(secondsRaw) && secondsRaw > 0
+          ? { seconds: Math.round(secondsRaw) }
+          : {}),
+      },
+    });
+    revalidateProduct(productId);
+    return {
+      success: result.transcribed
+        ? "Nota gravada e transcrita — confira o texto e ajuste se precisar."
+        : "Áudio guardado. Não consegui transcrever agora: escreva a nota à mão.",
+    };
+  } catch (error) {
+    return toErrorState(error);
+  }
+}
+
+export async function updateCuratorNoteAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  try {
+    const productId = String(formData.get("productId") ?? "");
+    await updateCuratorNote(getDb(), {
+      productId,
+      userId: user.id,
+      note: String(formData.get("note") ?? ""),
+    });
+    revalidateProduct(productId);
+    return { success: "Nota da curadora salva." };
+  } catch (error) {
+    return toErrorState(error);
+  }
+}
+
+export async function removeCuratorAudioAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  try {
+    const productId = String(formData.get("productId") ?? "");
+    const { removed } = await removeCuratorAudio(getDb(), getFileStorage(), {
+      productId,
+      userId: user.id,
+    });
+    revalidateProduct(productId);
+    return { success: removed ? "Áudio removido; o texto continua." : "Esta peça não tem áudio." };
+  } catch (error) {
+    return toErrorState(error);
+  }
 }
