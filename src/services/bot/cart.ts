@@ -1,6 +1,6 @@
 // Ferramentas da sacola da vendedora.
 import { inArray } from "drizzle-orm";
-import { cartAdd, cartRemove, cartSubtotalCents, formatCartLines, type BotCartItem } from "@/core/bot/memory";
+import { cartAdd, cartRemove, cartSubtotalCents, formatCartLines, type BotCartItem, type BotState } from "@/core/bot/memory";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { productVariants } from "@/db/schema";
@@ -10,8 +10,56 @@ import { quoteCoupon, ServiceError as CouponServiceError } from "@/services/coup
 import { computeTotalWeightGrams } from "@/services/store-catalog";
 
 import { availableQtyOf, resolveVariantBySku } from "./catalog";
-import { loadBotState, updateBotState } from "./shared";
+import { readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
+
+/**
+ * A sacola mudou: o cupom validado é refeito sobre o subtotal novo (o
+ * caderninho mostra o desconto certo) ou esquecido, com o motivo — nunca um
+ * desconto velho até o fechamento.
+ */
+async function refreshCoupon(
+  db: DbOrTx,
+  state: BotState,
+): Promise<{ coupon: BotState["coupon"]; note: string | null }> {
+  if (!state.coupon) return { coupon: undefined, note: null };
+  const code = state.coupon.code;
+  const cart = state.cart ?? [];
+  if (cart.length === 0) {
+    return {
+      coupon: undefined,
+      note: `[O cupom ${code} validado antes foi esquecido: a sacola ficou vazia. Valide de novo quando houver peças.]`,
+    };
+  }
+  try {
+    const quote = await quoteCoupon(db, { code, subtotalCents: cartSubtotalCents(cart) });
+    return {
+      coupon: { code: quote.code, discountCents: quote.discountCents, at: new Date().toISOString() },
+      note: `[Cupom ${quote.code} continua válido: desconto de ${formatCentsBRL(quote.discountCents)} nesta sacola.]`,
+    };
+  } catch (error) {
+    if (error instanceof CouponServiceError) {
+      return {
+        coupon: undefined,
+        note: `[O cupom ${code} deixou de valer para esta sacola: ${error.message} Esqueci o cupom — avise a cliente se ela contava com ele.]`,
+      };
+    }
+    throw error;
+  }
+}
+
+/** Aplica a mudança na sacola e acerta o cupom validado (se houver) para a sacola nova. */
+async function changeCart(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  change: (current: BotState) => BotState,
+): Promise<{ state: BotState; couponNote: string | null }> {
+  const changed = await updateBotState(db, ctx, change);
+  if (!changed.coupon) return { state: changed, couponNote: null };
+  const refreshed = await refreshCoupon(db, changed);
+  const state = await updateBotState(db, ctx, (current) => ({ ...current, coupon: refreshed.coupon }));
+  return { state, couponNote: refreshed.note };
+}
 
 export async function execAdicionarASacola(
   db: DbOrTx,
@@ -49,7 +97,7 @@ export async function execAdicionarASacola(
     variacao,
     precoCents: variant.priceCents,
   };
-  const state = await updateBotState(db, ctx, (current) => ({
+  const { state, couponNote } = await changeCart(db, ctx, (current) => ({
     ...current,
     cart: cartAdd(current.cart, item),
     // Sacola mudou: a cotação anterior valia para outro peso.
@@ -61,6 +109,7 @@ export async function execAdicionarASacola(
     text: [
       `Adicionei ${input.quantidade}× ${rotulo} à sacola.`,
       ...formatCartLines(state.cart),
+      ...(couponNote ? [couponNote] : []),
       "[Se a sacola tiver tudo, siga para o CEP e cotar_frete. Sugira UMA peça que completa o look só depois do pedido fechado.]",
     ].join("\n"),
   };
@@ -70,7 +119,7 @@ export async function execVerSacola(
   db: DbOrTx,
   ctx: BotExecutorContext,
 ): Promise<ToolResult> {
-  const state = await loadBotState(db, ctx.conversationId);
+  const state = await readBotState(db, ctx);
   return { ok: true, text: formatCartLines(state.cart).join("\n") };
 }
 
@@ -79,7 +128,7 @@ export async function execRemoverDaSacola(
   ctx: BotExecutorContext,
   input: BotToolInputs["remover_da_sacola"],
 ): Promise<ToolResult> {
-  const before = await loadBotState(db, ctx.conversationId);
+  const before = await readBotState(db, ctx);
   const existed = (before.cart ?? []).some(
     (item) => item.sku.toLowerCase() === input.sku.trim().toLowerCase(),
   );
@@ -89,7 +138,7 @@ export async function execRemoverDaSacola(
       text: `O SKU "${input.sku}" não está na sacola.\n${formatCartLines(before.cart).join("\n")}`,
     };
   }
-  const state = await updateBotState(db, ctx, (current) => ({
+  const { state, couponNote } = await changeCart(db, ctx, (current) => ({
     ...current,
     cart: cartRemove(current.cart, input.sku),
     lastQuotes: undefined,
@@ -97,7 +146,7 @@ export async function execRemoverDaSacola(
   }));
   return {
     ok: true,
-    text: ["Tirei da sacola.", ...formatCartLines(state.cart)].join("\n"),
+    text: ["Tirei da sacola.", ...formatCartLines(state.cart), ...(couponNote ? [couponNote] : [])].join("\n"),
   };
 }
 
@@ -120,14 +169,14 @@ export async function cartWeightGrams(db: DbOrTx, cart: readonly BotCartItem[]):
  * validar_cupom: o desconto REAL sobre a sacola desta conversa, sem consumir
  * o cupom (quem consome é criar_pedido, na transação do pedido). Válido vai
  * para o caderninho; criar_pedido aplica quando o campo cupom vier ausente.
- * Só lê, então vale também no ensaio (dryRun) — o caderninho não é gravado.
+ * No ensaio (dryRun) vale com a sacola do turno (overlay) e nada é gravado.
  */
 export async function execValidarCupom(
   db: DbOrTx,
   ctx: BotExecutorContext,
   input: BotToolInputs["validar_cupom"],
 ): Promise<ToolResult> {
-  const state = await loadBotState(db, ctx.conversationId);
+  const state = await readBotState(db, ctx);
   const cart = state.cart ?? [];
   if (cart.length === 0) {
     return {
@@ -144,7 +193,7 @@ export async function execValidarCupom(
     if (error instanceof CouponServiceError) {
       return {
         ok: false,
-        text: `O cupom ${codigo} não vale para esta sacola: ${error.message} Explique com gentileza e siga sem desconto — nunca invente outro.`,
+        text: `O cupom ${codigo} não vale para esta sacola: ${error.message}\n[Explique com gentileza e siga sem desconto — nunca invente outro.]`,
       };
     }
     throw error;

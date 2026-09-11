@@ -225,7 +225,7 @@ export function renderContextNote(
   }
   if (state.coupon) {
     linhas.push(
-      `• Cupom validado nesta conversa: ${state.coupon.code} (desconto de ${formatCentsBRL(state.coupon.discountCents)} na sacola de então) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio`,
+      `• Cupom validado nesta conversa: ${state.coupon.code} (desconto de ${formatCentsBRL(state.coupon.discountCents)} nesta sacola) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
     );
   }
   if (state.lastOrderNumber !== undefined) {

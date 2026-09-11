@@ -159,7 +159,11 @@ export function buildToolExecutor(
   db: DbOrTx,
   baseCtx: BotExecutorContext,
 ): ToolExecutor {
-  const ctx: ExecutorCtx = { ...baseCtx, emitCard: makeCardEmitter(db, baseCtx) };
+  const ctx: ExecutorCtx = {
+    ...baseCtx,
+    ...(baseCtx.dryRun && !baseCtx.stateOverlay ? { stateOverlay: { current: null } } : {}),
+    emitCard: makeCardEmitter(db, baseCtx),
+  };
   return async (name, rawInput) => {
     const schema = BOT_TOOL_INPUT_SCHEMAS[name];
     const parsed = schema.safeParse(rawInput);

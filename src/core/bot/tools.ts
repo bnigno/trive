@@ -349,7 +349,8 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         },
         cupom: {
           type: "string",
-          description: "Código de cupom informado pela cliente. Omita se não houver.",
+          description:
+            'Código que validar_cupom confirmou nesta conversa. OMITIDO = aplica o cupom já validado (se houver). Para fechar SEM cupom mesmo tendo um validado, passe string vazia "".',
         },
         forma_de_pagamento: {
           type: "string",

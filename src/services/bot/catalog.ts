@@ -1,6 +1,5 @@
 // Ferramentas de catálogo da vendedora: listar, detalhar, montar look e resolver peças/variações.
 import { and, eq, ilike, isNull } from "drizzle-orm";
-import { parseBotState } from "@/core/bot/memory";
 import { truncateOptionTitle } from "@/core/bot/option-list";
 import type { BotToolInputs } from "@/core/bot/tools";
 import {
@@ -31,7 +30,6 @@ import {
   products,
   productVariants,
   stockLevels,
-  waConversations,
 } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -45,7 +43,7 @@ import {
   type PublicProductListItem,
 } from "@/services/store-catalog";
 
-import { DESCRIPTION_MAX_CHARS, PAGE_SIZE, formatPriceRange, updateBotState } from "./shared";
+import { DESCRIPTION_MAX_CHARS, PAGE_SIZE, formatPriceRange, readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ExecutorCtx, ToolResult } from "./shared";
 
 /** Categoria por slug exato ou nome aproximado; null quando não existe. */
@@ -217,15 +215,7 @@ export async function execMontarLook(
   }
   const { detail } = resolved;
   const heroPrice = Math.min(...detail.variants.map((variant) => variant.priceCents));
-  const state = parseBotState(
-    (
-      await db
-        .select({ botState: waConversations.botState })
-        .from(waConversations)
-        .where(eq(waConversations.id, ctx.conversationId))
-        .limit(1)
-    )[0]?.botState,
-  );
+  const state = await readBotState(db, ctx);
   const heroColor = state.focus?.slug === detail.slug ? (state.focus.cor ?? null) : null;
   const heroImage = pickImagePath(detail.images, heroColor);
 

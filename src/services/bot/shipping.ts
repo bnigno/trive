@@ -6,7 +6,7 @@ import { formatLookedUpAddress, lookupAddressByCep } from "@/services/address-lo
 import { DEFAULT_ITEM_WEIGHT_GRAMS, quoteShipping } from "@/services/store-catalog";
 
 import { cartWeightGrams } from "./cart";
-import { formatDeliveryDays, loadBotState, updateBotState } from "./shared";
+import { formatDeliveryDays, readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 
 export async function execCotarFrete(
@@ -14,7 +14,7 @@ export async function execCotarFrete(
   ctx: BotExecutorContext,
   input: BotToolInputs["cotar_frete"],
 ): Promise<ToolResult> {
-  const state = await loadBotState(db, ctx.conversationId);
+  const state = await readBotState(db, ctx);
   const cart = state.cart ?? [];
 
   // Com peças na sacola, o peso é real; sem sacola, cotamos com o peso

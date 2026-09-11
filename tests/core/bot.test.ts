@@ -95,6 +95,10 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("chame historico_de_compras quando ela perguntar o que levou");
     expect(prompt).toContain("Nunca cite compra que a ferramenta não devolveu");
     expect(prompt).toContain("e em cupom o código que validar_cupom confirmou");
+    expect(prompt).toContain('se ela desistir do cupom, passe cupom vazio ""');
+    const cupomDesc = (BOT_TOOLS.find((tool) => tool.name === "criar_pedido")?.input_schema.properties as Record<string, { description: string }>).cupom.description;
+    expect(cupomDesc).toContain("OMITIDO = aplica o cupom já validado");
+    expect(cupomDesc).toContain('passe string vazia ""');
   });
 
   it("contém as regras de Pix manual, aviso ao dono e dinheiro na entrega", () => {
