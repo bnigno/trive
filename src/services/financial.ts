@@ -1,7 +1,8 @@
-import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
+import type { SettlementRow } from "@/core/financial/settlement";
+import { and, asc, desc, eq, getTableColumns, gte, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { auditLog, financialEntries, suppliers } from "@/db/schema";
+import { auditLog, financialEntries, orders, suppliers } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/stock";
 
@@ -321,4 +322,62 @@ export async function listEntries(db: DbOrTx, input: ListEntriesInput = {}) {
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(financialEntries.createdAt), desc(financialEntries.id))
     .limit(parsed.limit);
+}
+
+// ---------------------------------------------------------------------------
+// listSettlementForecast — taxas do MP pendentes → o que ainda cai na conta
+// ---------------------------------------------------------------------------
+
+const listSettlementForecastSchema = z.object({
+  /** 'YYYY-MM-DD': só repasses a partir deste dia (omitido = todos). */
+  fromDayKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  limit: z.number().int().positive().max(500).default(200),
+});
+
+export type ListSettlementForecastInput = z.input<typeof listSettlementForecastSchema>;
+
+/**
+ * Uma linha por taxa do MP pendente, com o pedido: bruto (total do pedido),
+ * taxa e a data prevista do repasse. Quem agrupa por dia é o core
+ * (groupSettlementForecast).
+ */
+export async function listSettlementForecast(
+  db: DbOrTx,
+  input: ListSettlementForecastInput = {},
+): Promise<SettlementRow[]> {
+  const parsed = listSettlementForecastSchema.parse(input);
+  const conditions = [
+    eq(financialEntries.category, "mp_fee"),
+    eq(financialEntries.status, "pending"),
+    isNotNull(financialEntries.dueDate),
+  ];
+  if (parsed.fromDayKey) conditions.push(gte(financialEntries.dueDate, parsed.fromDayKey));
+
+  const rows = await db
+    .select({
+      entryId: financialEntries.id,
+      dueDate: financialEntries.dueDate,
+      orderId: orders.id,
+      orderNumber: orders.orderNumber,
+      grossCents: orders.totalCents,
+      feeCents: financialEntries.amountCents,
+      paymentMethod: orders.paymentMethod,
+      installments: orders.installments,
+    })
+    .from(financialEntries)
+    .innerJoin(orders, eq(orders.id, financialEntries.orderId))
+    .where(and(...conditions))
+    .orderBy(asc(financialEntries.dueDate), asc(orders.orderNumber))
+    .limit(parsed.limit);
+
+  return rows.map((row) => ({
+    entryId: row.entryId,
+    dueDate: String(row.dueDate),
+    orderId: row.orderId,
+    orderNumber: row.orderNumber,
+    grossCents: Number(row.grossCents),
+    feeCents: Number(row.feeCents),
+    paymentMethod: row.paymentMethod,
+    installments: row.installments,
+  }));
 }
