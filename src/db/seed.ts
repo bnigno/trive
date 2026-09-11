@@ -113,6 +113,29 @@ const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "link"],
   },
   {
+    // Cancelamento (pela dona ou por expiração da reserva): motivo em
+    // linguagem humana (friendlyCancelReason); só com opt-in; uma vez.
+    key: "order_canceled",
+    label: "Pedido cancelado",
+    bodyTemplate:
+      "{{nome}}, o pedido #{{pedido}} foi cancelado: {{motivo}}.\n" +
+      "Se quiser a peça de novo, é só chamar por aqui que a gente refaz 🤎\n" +
+      "Detalhes: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "motivo", "link"],
+  },
+  {
+    // Reembolso confirmado pelo Mercado Pago; só com opt-in; uma vez.
+    key: "order_refunded",
+    label: "Reembolso confirmado",
+    bodyTemplate:
+      "{{nome}}, o reembolso de {{total}} do pedido #{{pedido}} foi confirmado.\n" +
+      "O valor volta pelo mesmo meio de pagamento, no prazo do banco ou do cartão.\n" +
+      "Detalhes: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "total", "link"],
+  },
+  {
     key: "order_shipped",
     label: "Pedido enviado",
     bodyTemplate:
@@ -161,6 +184,26 @@ const initialWaTemplates: Array<{
       "Pedido #{{pedido}} — {{total}}\n" +
       "Forma de pagamento: {{metodo}}",
     variables: ["pedido", "total", "metodo"],
+  },
+  {
+    // Chargeback sinalizado pelo MP: sem transição automática — o dono decide.
+    key: "owner_chargeback",
+    label: "[interno] Chargeback",
+    bodyTemplate:
+      "Chargeback no pedido #{{pedido}} ⚠️\n" +
+      "Cliente: {{cliente}} · {{total}}\n" +
+      "O Mercado Pago contestou o pagamento. Confira no painel e responda à contestação no MP.",
+    variables: ["pedido", "cliente", "total"],
+  },
+  {
+    // Taxa real do MP diferente da estimada na precificação.
+    key: "owner_fee_divergent",
+    label: "[interno] Taxa do MP diferente da estimada",
+    bodyTemplate:
+      "Taxa do Mercado Pago diferente no pedido #{{pedido}} ({{metodo}}).\n" +
+      "Estimada: {{estimada}} · Real: {{real}} · Diferença: {{diferenca}}\n" +
+      "Confira as regras de taxa em Configurações.",
+    variables: ["pedido", "metodo", "estimada", "real", "diferenca"],
   },
   {
     key: "owner_low_stock",

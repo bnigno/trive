@@ -24,6 +24,12 @@ import { sendDailyDigestWa } from "@/services/daily-digest";
 import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
+import {
+  notifyOwnerChargeback,
+  notifyOwnerFeeDivergent,
+  sendOrderCanceledWa,
+  sendOrderRefundedWa,
+} from "@/services/order-notices";
 import { processPaymentEvent } from "@/services/payments";
 import { sendPackedWa } from "@/services/packing";
 import { sendReceiptWa } from "@/services/receipts";
@@ -38,6 +44,13 @@ import { loadOrderWaContext } from "./wa-helpers";
 // Payload mínimo do evento de pagamento (Zod na fronteira da fila).
 const mpPaymentEventPayloadSchema = z.object({
   mpPaymentId: z.string().min(1),
+});
+
+// Avisos de pedido (cancelado/reembolsado/chargeback) só precisam do id.
+const orderNoticePayloadSchema = z.object({ orderId: z.uuid() });
+const feeDivergentPayloadSchema = orderNoticePayloadSchema.extend({
+  estimatedCents: z.number().int().min(0),
+  actualCents: z.number().int().min(0),
 });
 
 // ---------------------------------------------------------------------------
@@ -363,16 +376,26 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const { mpPaymentId } = mpPaymentEventPayloadSchema.parse(event.payload);
     await processPaymentEvent(getDb(), getPaymentGateway(), { mpPaymentId });
   },
-  // Reembolso confirmado (transição feita pelo serviço de pagamentos).
-  // Notificação ao cliente entra depois — no-op registrado de propósito.
-  "order.refunded": async () => {},
-  // Divergência taxa real × estimada: registrada em audit/outbox pelo serviço
-  // de pagamentos; notificação ao dono entra na Fase 4 (WhatsApp). No-op de
-  // propósito para o evento não cair na DLQ por falta de handler.
-  "mp.fee_divergent": async () => {},
-  // Chargeback sinalizado: o dono decide no admin (sem transição automática).
-  // Notificação ativa entra na Fase 4 — no-op registrado de propósito.
-  "payment.chargeback": async () => {},
+  // Reembolso confirmado (transição feita pelo serviço de pagamentos): a
+  // cliente recebe o aviso no WhatsApp (só com opt-in; dedupe por pedido).
+  "order.refunded": async (event) => {
+    const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const result = await sendOrderRefundedWa(getDb(), getMessagingProvider(), { orderId });
+    console.info(`[order.refunded] ${orderId}:`, result);
+  },
+  // Divergência taxa real × estimada: o dono recebe os dois valores e a
+  // diferença no WhatsApp (uma vez por pedido).
+  "mp.fee_divergent": async (event) => {
+    const payload = feeDivergentPayloadSchema.parse(event.payload);
+    const result = await notifyOwnerFeeDivergent(getDb(), getMessagingProvider(), payload);
+    console.info(`[mp.fee_divergent] ${payload.orderId}:`, result);
+  },
+  // Chargeback sinalizado: sem transição automática, mas o dono fica sabendo.
+  "payment.chargeback": async (event) => {
+    const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const result = await notifyOwnerChargeback(getDb(), getMessagingProvider(), { orderId });
+    console.info(`[payment.chargeback] ${orderId}:`, result);
+  },
   // Eventos de ciclo de vida emitidos por transitionOrder/estoque que ainda
   // não têm efeito externo — no-op explícito para não poluir a DLQ.
   // A Fase 4 (WhatsApp) substitui vários deles por notificações reais.
@@ -394,7 +417,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "order.preparing": async () => {},
   "order.delivered": async () => {},
-  "order.canceled": async () => {},
+  // Cancelado (pela dona ou pela expiração da reserva): a cliente recebe o
+  // motivo em linguagem humana e o link do pedido (só com opt-in).
+  "order.canceled": async (event) => {
+    const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const result = await sendOrderCanceledWa(getDb(), getMessagingProvider(), { orderId });
+    console.info(`[order.canceled] ${orderId}:`, result);
+  },
   // Estoque cruzou o limiar para baixo → aviso interno ao dono (sem opt-in).
   // Busca nome/SKU/disponível na hora do envio (o payload pode estar velho).
   // Convite VIP de lançamento: um por convidada, na fase VIP e na janela.

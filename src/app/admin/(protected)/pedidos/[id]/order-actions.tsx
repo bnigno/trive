@@ -118,7 +118,7 @@ function CancelLikeForm({
       <FormSuccess message={state.success} />
       <Field
         label={reasonRequired ? "Motivo (obrigatório)" : "Motivo (opcional)"}
-        hint="Fica registrado no histórico do pedido."
+        hint="Fica no histórico do pedido e, no cancelamento, a cliente recebe este motivo no WhatsApp — escreva como falaria com ela."
       >
         <TextArea
           name="reason"
