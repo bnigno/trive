@@ -168,6 +168,11 @@ export default async function OrderPage({
       ? `${getFileStorage().publicUrl(order.packagePhotoPath)}?v=${order.packedAt.getTime()}`
       : null;
 
+  const giftNoteUrl =
+    order.isGift && order.giftNotePath
+      ? `${getFileStorage().publicUrl(order.giftNotePath)}?v=${order.createdAt.getTime()}`
+      : null;
+
   const total = formatCentsBRL(order.totalCents);
   const showTracking =
     (order.status === "shipped" || order.status === "delivered") &&
@@ -255,6 +260,24 @@ export default async function OrderPage({
               ) : null}
             </Sheet>
           )}
+
+          {giftNoteUrl ? (
+            <Sheet
+              eyebrow="O bilhete do presente"
+              headingId="bilhete-title"
+              aria-labelledby="bilhete-title"
+            >
+              <p className="mt-3 font-store text-sm leading-relaxed text-ink-700">
+                Vai impresso dentro do pacote — e a embalagem segue sem preço.
+                Quer ajustar alguma palavra? É só falar com a gente.
+              </p>
+              <img
+                src={giftNoteUrl}
+                alt={`Bilhete para ${order.giftRecipientName ?? ""}`}
+                className="mt-4 w-full border border-ivory-300"
+              />
+            </Sheet>
+          ) : null}
 
           {mpApproved ? (
             <Notice tone="laurel" role="status" title="Pagamento recebido! Confirmando…">

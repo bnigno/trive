@@ -73,6 +73,8 @@ export type BotToolInputs = {
     telefone?: string;
     /** Default 'online'; dinheiro só quando o cliente pedir explicitamente. */
     forma_de_pagamento?: "online" | "dinheiro_na_entrega";
+    /** Só quando a cliente disser que é presente: para quem e o bilhete DELA. */
+    presente?: { para: string; bilhete?: string; entregar_ate?: string };
   };
   status_do_pedido: { numero_do_pedido?: number };
   enviar_chave_pix: { numero_do_pedido?: number };
@@ -308,6 +310,30 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           description:
             "Use 'dinheiro_na_entrega' SOMENTE quando a cliente pedir explicitamente para pagar em dinheiro na entrega. Caso contrário, omita: o padrão é 'online' (link de pagamento).",
         },
+        presente: {
+          type: "object",
+          description:
+            "SÓ quando a cliente disser que a compra é presente para outra pessoa. Para quem é e, se ela quiser, o bilhete com as palavras DELA (nunca escreva o bilhete por ela). O pacote vai sem preço e com o bilhete impresso.",
+          properties: {
+            para: {
+              type: "string",
+              maxLength: 80,
+              description: "Nome de quem recebe, como a cliente disse (ex.: 'minha mãe', 'Ana').",
+            },
+            bilhete: {
+              type: "string",
+              maxLength: 280,
+              description: "Texto do bilhete, palavra por palavra como ela ditou. Omita se ela não quiser bilhete.",
+            },
+            entregar_ate: {
+              type: "string",
+              pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+              description: "Data desejada de entrega (AAAA-MM-DD), só se ela disse uma. Informativa: o prazo real é o do frete.",
+            },
+          },
+          required: ["para"],
+          additionalProperties: false,
+        },
         telefone: {
           type: "string",
           description:
@@ -512,6 +538,16 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     forma_de_pagamento: z
       .enum(["online", "dinheiro_na_entrega"])
       .default("online"),
+    presente: z
+      .strictObject({
+        para: z.string().trim().min(1).max(80),
+        bilhete: z.string().trim().max(280).optional(),
+        entregar_ate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "entregar_ate deve ser AAAA-MM-DD")
+          .optional(),
+      })
+      .optional(),
   })
     // Ou o pedido reaproveita o cadastro salvo, ou traz o conjunto COMPLETO de
     // dados pessoais. Meio-termo produziria pedido sem endereço de entrega.

@@ -492,6 +492,9 @@ describe("getPublicOrder", () => {
         "shippedAt",
         "deliveredAt",
         "packagePhotoPath",
+        "isGift",
+        "giftRecipientName",
+        "giftNotePath",
       ].sort(),
     );
     expect(Object.keys(pub!.items[0]).sort()).toEqual(
@@ -638,5 +641,71 @@ describe("expireOverdueReservations", () => {
 
     // Segunda passada: nada mais vencido.
     expect(await expireOverdueReservations(sdb, {})).toEqual({ expired: 0 });
+  });
+});
+
+describe("presente com bilhete", () => {
+  it("grava para quem é, o bilhete limpo e a data; enfileira order.gift_note uma vez", async () => {
+    const { variantId, rate } = await setupStore();
+    const created = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, {
+        gift: {
+          recipientName: " Ana Clara ✨ ",
+          message: "Para iluminar  o seu\n\n\nsetembro 🤎",
+          deliverBy: "2026-10-05",
+        },
+      }),
+    );
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, created.orderId));
+    expect(order.isGift).toBe(true);
+    expect(order.giftRecipientName).toBe("Ana Clara");
+    expect(order.giftMessage).toBe("Para iluminar o seu\n\nsetembro");
+    expect(order.giftDeliverBy).toBe("2026-10-05");
+    expect(order.giftNotePath).toBeNull();
+
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events.filter((event) => event.eventType === "order.gift_note")).toHaveLength(1);
+    expect(events.find((event) => event.eventType === "order.gift_note")).toMatchObject({
+      dedupeKey: `order.gift_note:${created.orderId}`,
+      payload: { orderId: created.orderId },
+    });
+
+    const pub = await getPublicOrder(sdb, created.publicToken);
+    expect(pub).toMatchObject({ isGift: true, giftRecipientName: "Ana Clara", giftNotePath: null });
+
+    const [audit] = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "order.store_create"));
+    expect(audit.after).toMatchObject({ gift: { recipientName: "Ana Clara", hasMessage: true, deliverBy: "2026-10-05" } });
+  });
+
+  it("bilhete só de emoji vira sem bilhete; sem presente nada muda", async () => {
+    const { variantId, rate } = await setupStore();
+    const withEmptyNote = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { gift: { recipientName: "Bia", message: "🤎🤎" } }),
+    );
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, withEmptyNote.orderId));
+    expect(order.giftMessage).toBeNull();
+
+    await db.delete(schema.outboxEvents);
+    const plain = await createStoreOrder(sdb, baseInput(variantId, rate.id));
+    const [plainOrder] = await db.select().from(schema.orders).where(eq(schema.orders.id, plain.orderId));
+    expect(plainOrder.isGift).toBe(false);
+    expect(plainOrder.giftRecipientName).toBeNull();
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events.map((event) => event.eventType)).not.toContain("order.gift_note");
+  });
+
+  it("bilhete acima de 280 caracteres é recusado", async () => {
+    const { variantId, rate } = await setupStore();
+    await expect(
+      createStoreOrder(
+        sdb,
+        baseInput(variantId, rate.id, { gift: { recipientName: "Bia", message: "x".repeat(281) } }),
+      ),
+    ).rejects.toThrow(/280/);
   });
 });

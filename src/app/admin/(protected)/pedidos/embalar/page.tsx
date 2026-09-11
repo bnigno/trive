@@ -80,9 +80,12 @@ export default async function EmbalarPage() {
                     ) : null}
                   </p>
                 </div>
-                <Badge tone={order.status === "preparing" ? "info" : "warning"}>
-                  {order.status === "preparing" ? "Em separação" : "Pago"}
-                </Badge>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <Badge tone={order.status === "preparing" ? "info" : "warning"}>
+                    {order.status === "preparing" ? "Em separação" : "Pago"}
+                  </Badge>
+                  {order.isGift ? <Badge tone="warning">🎁 Presente · sem preço</Badge> : null}
+                </div>
               </div>
               <PackForm orderId={order.id} photoUrl={null} packedAtLabel={null} compact />
             </li>

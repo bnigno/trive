@@ -92,8 +92,11 @@ export function buildOrderVars(input: {
   trackingCode?: string | null;
   storeName?: string;
   paymentMethod?: string | null;
+  /** Presente: {{presente}} vira a linha "🎁 Presente — sem preço na embalagem". */
+  isGift?: boolean;
 }): Record<string, string> {
   return {
+    presente: input.isGift ? "\n🎁 Presente — sem preço na embalagem" : "",
     nome: firstNameOf(input.customerName),
     cliente: input.customerName,
     pedido: String(input.orderNumber),

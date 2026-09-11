@@ -38,6 +38,7 @@ export async function loadOrderWaContext(
       trackingCode: orders.shippingTrackingCode,
       paymentMethod: orders.paymentMethod,
       totalCents: orders.totalCents,
+      isGift: orders.isGift,
       customerId: customers.id,
       customerName: customers.fullName,
       customerPhone: customers.phoneE164,
@@ -75,6 +76,7 @@ export async function loadOrderWaContext(
       trackingCode: row.trackingCode,
       storeName,
       paymentMethod: row.paymentMethod,
+      isGift: row.isGift,
     }),
   };
 }
