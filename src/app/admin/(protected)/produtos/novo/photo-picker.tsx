@@ -8,6 +8,8 @@ export type PhotoStatus = "pending" | "sent" | "failed";
 export type PhotoItem = {
   id: string;
   file: File;
+  /** "draft" = veio do card "Começar pela foto" (é trocada a cada rascunho). */
+  source?: "draft";
   /** "" = foto do produto inteiro (todas as cores). */
   color: string;
   status: PhotoStatus;

@@ -218,11 +218,32 @@ describe("ClaudeSalesAssistant.extractFromPhotos", () => {
     const request = create.mock.calls[0]![0] as Record<string, unknown>;
     expect(request.tools).toBeUndefined();
     expect(request.system).toBe("Monte a ficha.");
+    // effort baixo: extrair de foto não pede raciocínio longo, e o pensamento
+    // sai do mesmo teto de max_tokens (que precisa caber a ficha inteira).
+    expect(request.output_config).toEqual({
+      effort: "low",
+      format: { type: "json_schema", schema: input.jsonSchema },
+    });
+    expect(request.max_tokens).toBeGreaterThanOrEqual(4096);
+    const content = (request.messages as { content: { type: string }[] }[])[0].content;
+    expect(content.map((block) => block.type)).toEqual(["image", "image", "text"]);
+  });
+
+  it("no Haiku não manda effort (o modelo não aceita)", async () => {
+    const create = vi.fn(async (_params: unknown) => textMessage("{}"));
+    const assistant = new ClaudeSalesAssistant({ messages: { create } } as unknown as MessagesClient);
+    await assistant.extractFromPhotos({ ...input, model: "claude-haiku-4-5" });
+    const request = create.mock.calls[0]![0] as Record<string, unknown>;
     expect(request.output_config).toEqual({
       format: { type: "json_schema", schema: input.jsonSchema },
     });
-    const content = (request.messages as { content: { type: string }[] }[])[0].content;
-    expect(content.map((block) => block.type)).toEqual(["image", "image", "text"]);
+  });
+
+  it("resposta cortada por max_tokens vira erro próprio (não se confunde com JSON torto)", async () => {
+    const cortada = new ClaudeSalesAssistant({
+      messages: { create: async () => textMessage('{"name":"Ves', "max_tokens") },
+    } as unknown as MessagesClient);
+    await expect(cortada.extractFromPhotos(input)).rejects.toThrow(/cortada antes do fim/);
   });
 
   it("recusa, JSON torto e APIError viram AssistantUnavailableError", async () => {

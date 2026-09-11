@@ -2,8 +2,9 @@
 // "Bom dia da maison": conversas, turnos, transferências, pedidos que ela
 // fechou e o custo estimado — tudo derivado da trilha que runBotTurn grava
 // em audit_log ('wa.bot_turn' / 'wa.bot_handoff') e dos pedidos do canal.
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
+import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
@@ -13,16 +14,7 @@ const WINDOW_DAYS = 7;
  * Preço por milhão de tokens em CENTAVOS de dólar (Anthropic, 2026):
  * entrada, cache lido (10%), cache gravado por 1 h (2×) e saída.
  */
-const PRICE_USD_CENTS_PER_MTOK: Record<
-  string,
-  { input: number; cacheRead: number; cacheWrite: number; output: number }
-> = {
-  "claude-sonnet-5": { input: 300, cacheRead: 30, cacheWrite: 600, output: 1500 },
-  "claude-haiku-4-5": { input: 100, cacheRead: 10, cacheWrite: 200, output: 500 },
-  "claude-opus-5": { input: 500, cacheRead: 50, cacheWrite: 1000, output: 2500 },
-};
-
-/** Custo em centavos de dólar de um conjunto de tokens num modelo. */
+/** Mesma tabela da ficha pela foto (src/core/ai/model-cost.ts). */
 export function estimateUsdCents(
   model: string,
   tokens: {
@@ -32,14 +24,7 @@ export function estimateUsdCents(
     cacheWriteTokens: number;
   },
 ): number {
-  const price =
-    PRICE_USD_CENTS_PER_MTOK[model] ?? PRICE_USD_CENTS_PER_MTOK["claude-sonnet-5"];
-  const total =
-    tokens.inputTokens * price.input +
-    tokens.cacheReadTokens * price.cacheRead +
-    tokens.cacheWriteTokens * price.cacheWrite +
-    tokens.outputTokens * price.output;
-  return Math.round(total / 1_000_000);
+  return estimateUsageCostUsdCents(tokens, model);
 }
 
 export interface BotActivityWindow {
@@ -82,7 +67,13 @@ export async function summarizeBotActivity(
       cacheWriteTokens: sql<string>`coalesce(sum((${auditLog.after} -> 'usage' ->> 'cacheWriteTokens')::bigint), 0)`,
     })
     .from(auditLog)
-    .where(and(eq(auditLog.action, "wa.bot_turn"), inWindow(auditLog.createdAt)))
+    // A ficha pela foto grava o mesmo formato de `usage`: o painel soma as duas.
+    .where(
+      and(
+        inArray(auditLog.action, ["wa.bot_turn", "product.draft_from_photos"]),
+        inWindow(auditLog.createdAt),
+      ),
+    )
     .groupBy(sql`1`);
 
   let turns = 0;

@@ -30,7 +30,9 @@ export async function isBotMediaEnabled(db: DbOrTx): Promise<boolean> {
 export async function prepareImageForModel(
   data: Buffer,
 ): Promise<BotImageInput & { width: number; height: number }> {
-  const { data: jpeg, info } = await sharp(data)
+  // Teto de pixels: foto gigante (ou "zip bomb" de imagem) não pode derrubar
+  // a função — 50 MP cobre qualquer celular com folga.
+  const { data: jpeg, info } = await sharp(data, { limitInputPixels: 50_000_000 })
     .rotate()
     .resize({
       width: MODEL_IMAGE_MAX_EDGE,

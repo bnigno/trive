@@ -135,8 +135,9 @@ describe("getBotActivitySummary / listRecentBotActivity", () => {
       ordersByBot: 1,
       ordersByBotCents: 4990,
     });
-    // 2000 entrada (US$ 0,006) + 1000 saída (US$ 0,015) + 10k cache (US$ 0,003) ≈ 2 centavos.
-    expect(summary.estimatedCostUsdCents).toBe(2);
+    // 2000 entrada (US$ 0,006) + 1000 saída (US$ 0,015) + 10k cache (US$ 0,003)
+    // = US$ 0,024 → 3 centavos (a conta arredonda para cima: nunca subestima).
+    expect(summary.estimatedCostUsdCents).toBe(3);
 
     const activity = await listRecentBotActivity(sdb);
     expect(activity.map((event) => event.kind)).toEqual(["order", "handoff"]);

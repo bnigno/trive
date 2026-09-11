@@ -88,13 +88,24 @@ describe("draftProductFromPhotos", () => {
     expect(sent.model).toBe("claude-sonnet-5");
     expect(sent.jsonSchema).toMatchObject({ type: "object" });
 
-    // Audit com uso e custo; nada criado no catálogo.
+    // As fotos chegam ao modelo REDUZIDAS (as originais tinham 2400 px).
+    for (const image of sent.images) {
+      const meta = await sharp(Buffer.from(image.base64, "base64")).metadata();
+      expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(1024);
+    }
+
+    // Audit com uso e custo (é o único lugar onde o gasto existe); nada no catálogo.
     const audits = await auditRows();
     expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ actorType: "user", actorId: FIXED_USER_ID, entityType: "product" });
     expect(audits[0].after).toMatchObject({
+      ok: true,
       model: "claude-sonnet-5",
       photos: 2,
       name: "Vestido Áurea",
+      usage: { inputTokens: 4200, outputTokens: 800, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      estimatedCostUsdCents: 3,
+      suggestedPriceCents: result.suggestedPrice?.priceCents ?? null,
     });
     expect(await db.select().from(schema.products)).toHaveLength(0);
   });
@@ -125,7 +136,7 @@ describe("draftProductFromPhotos", () => {
     expect(result.draft.name).toBe("Vestido Áurea");
   });
 
-  it("IA fora do ar vira erro em pt-BR; JSON torto também; nada é auditado", async () => {
+  it("IA fora do ar e JSON torto viram erro em pt-BR — e a tentativa É auditada (ela custou tokens)", async () => {
     const { AssistantUnavailableError } = await import("@/adapters/assistant");
     assistant.enqueueExtraction(new AssistantUnavailableError("Assistente de IA indisponível"));
     await expect(
@@ -145,7 +156,39 @@ describe("draftProductFromPhotos", () => {
       }),
     ).rejects.toThrow(/formato esperado/);
 
+    // O audit é o único lugar onde o gasto existe: a tentativa que falhou
+    // entra com ok:false (e com o uso, quando a resposta chegou).
+    const audits = await auditRows();
+    expect(audits).toHaveLength(2);
+    expect(audits.map((row) => (row.after as { reason?: string }).reason)).toEqual([
+      "ia_indisponivel",
+      "json_invalido",
+    ]);
+    expect((audits[1].after as { usage?: unknown }).usage).toBeDefined();
+    expect(audits.every((row) => (row.after as { ok?: boolean }).ok === false)).toBe(true);
+  });
+
+  it("foto que o servidor não decodifica (HEIC) recusa antes de gastar a chamada, dizendo o que fazer", async () => {
+    const naoEhFoto = { data: Buffer.from("isto não é uma imagem"), contentType: "image/heic" };
+    await expect(
+      draftProductFromPhotos(sdb, assistant, {
+        photos: [naoEhFoto],
+        costCents: 12000,
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(/Mais compatível/);
+    expect(assistant.extractions).toHaveLength(0);
     expect(await auditRows()).toHaveLength(0);
+  });
+
+  it("passa um sinal de cancelamento ao adapter (o estouro de tempo não deixa a chamada correndo)", async () => {
+    await draftProductFromPhotos(sdb, assistant, {
+      photos: [await photo()],
+      costCents: 12000,
+      userId: FIXED_USER_ID,
+    });
+    expect(assistant.extractions[0].signal).toBeInstanceOf(AbortSignal);
+    expect(assistant.extractions[0].signal?.aborted).toBe(false);
   });
 
   it("interruptor desligado recusa; entrada inválida (sem foto, custo zero, 4 fotos) também", async () => {
