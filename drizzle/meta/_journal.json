@@ -134,6 +134,13 @@
       "when": 1789090723181,
       "tag": "0018_premium_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789092164313,
+      "tag": "0019_ambiguous_whiplash",
+      "breakpoints": true
     }
   ]
 }

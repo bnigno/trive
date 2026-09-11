@@ -2,7 +2,7 @@
 // Fase 2: vitrine sem autenticação. Nada aqui muta estado — sem audit/outbox.
 // Regra central: só é visível o que está ativo E tem preço ativo (price_versions
 // status 'active'); preço exibido é sempre o do banco, nunca o do cliente.
-import { and, asc, desc, eq, gte, ilike, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, isNull, lte, ne, or, sql, inArray } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -460,6 +460,54 @@ export async function quoteShipping(
     priceCents: Number(row.priceCents),
     deliveryDaysMin: Number(row.deliveryDaysMin),
     deliveryDaysMax: Number(row.deliveryDaysMax),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// 4b. listPublicVariantFacts — por produto vendável, os tamanhos e as cores
+// COM estoque (a cartela de estilo cura a edição por eles).
+// ---------------------------------------------------------------------------
+
+export interface PublicVariantFacts {
+  product: PublicProductListItem;
+  sizesAvailable: string[];
+  colorsAvailable: string[];
+}
+
+export async function listPublicVariantFacts(db: ServiceDb): Promise<PublicVariantFacts[]> {
+  const items = await listPublicProducts(db, { limit: 200 });
+  if (items.length === 0) return [];
+  const rows = await db
+    .select({
+      productId: productVariants.productId,
+      color: sql<string | null>`${productVariants.attributes} ->> 'cor'`,
+      size: sql<string | null>`${productVariants.attributes} ->> 'tamanho'`,
+      available: sql<string>`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0)`,
+    })
+    .from(productVariants)
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
+    .where(
+      and(
+        inArray(
+          productVariants.productId,
+          items.map((item) => item.id),
+        ),
+        eq(productVariants.isActive, true),
+        isNull(productVariants.deletedAt),
+      ),
+    );
+  const sizes = new Map<string, Set<string>>();
+  const colors = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (Number(row.available) <= 0) continue;
+    if (row.size) (sizes.get(row.productId) ?? sizes.set(row.productId, new Set()).get(row.productId))!.add(row.size);
+    if (row.color) (colors.get(row.productId) ?? colors.set(row.productId, new Set()).get(row.productId))!.add(row.color);
+  }
+  return items.map((product) => ({
+    product,
+    sizesAvailable: [...(sizes.get(product.id) ?? [])].sort(compareSizes),
+    colorsAvailable: [...(colors.get(product.id) ?? [])].sort((a, b) => a.localeCompare(b, "pt-BR")),
   }));
 }
 

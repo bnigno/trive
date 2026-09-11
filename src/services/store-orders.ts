@@ -28,6 +28,7 @@ import { normalizeGiftName, normalizeGiftText } from "@/core/gifts/text";
 import { GIFT_MESSAGE_MAX, GIFT_RECIPIENT_MAX } from "@/core/gifts/types";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { consumeMatchingHoldsTx } from "@/services/stock-holds";
+import { linkStyleProfileToCustomer } from "@/services/style-profiles";
 import {
   quoteCoupon,
   redeemCouponInTx,
@@ -157,6 +158,8 @@ const createStoreOrderSchema = z.object({
    * Presente: para quem é, o bilhete (opcional, ≤ 280) e a data desejada
    * (só informativa). Presente = sem preço na embalagem.
    */
+  /** Token da cartela de estilo guardada no navegador: vincula ao cadastro. */
+  styleToken: z.uuid().optional(),
   gift: z
     .object({
       recipientName: z
@@ -559,6 +562,10 @@ export async function createStoreOrder(
       toStatus: "draft",
       changedBy: null,
     });
+
+    if (parsed.styleToken) {
+      await linkStyleProfileToCustomer(tx, { siteToken: parsed.styleToken, customerId });
+    }
 
     // Reserva gentil desta cliente para uma peça do pedido vira 'converted':
     // libera a reserva da vendedora aqui e o pedido reserva logo abaixo.

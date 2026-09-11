@@ -16,6 +16,7 @@ import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
+import { getStyleProfileByPhone } from "@/services/style-profiles";
 
 // "Não vista" = inbound criada depois da última leitura do dono; conversa
 // nunca aberta (owner_last_seen_at NULL) conta tudo desde a época.
@@ -250,7 +251,8 @@ export interface WaThreadTailMessage {
 
 /** O que o painel mostra ao lado da conversa: caderninho, sacola e pedidos. */
 export interface WaConversationContext {
-  /** Reserva gentil ativa (descrição pronta) e avisos de "voltou" pedidos. */
+  /** Cartela de estilo (nome poético + resumo), reserva ativa e avisos pedidos. */
+  style: string | null;
   hold: string | null;
   alerts: string[];
   customerId: string | null;
@@ -314,11 +316,22 @@ async function loadConversationContext(
         .orderBy(desc(orders.createdAt))
         .limit(3)
     : [];
-  const [hold, alerts] = await Promise.all([
+  const [styleProfile, hold, alerts] = await Promise.all([
+    getStyleProfileByPhone(db, conversation.phoneE164),
     getActiveHoldByPhone(db, conversation.phoneE164),
     listOpenAlertsByPhone(db, conversation.phoneE164),
   ]);
   return {
+    style: styleProfile
+      ? `${styleProfile.paletteName}${
+          Object.values(styleProfile.profile.sizes).filter(Boolean).length > 0
+            ? ` · veste ${Object.entries(styleProfile.profile.sizes)
+                .filter(([, v]) => v)
+                .map(([k, v]) => `${k} ${v}`)
+                .join(", ")}`
+            : ""
+        }${styleProfile.profile.colorsLove.length > 0 ? ` · ama ${styleProfile.profile.colorsLove.join(", ")}` : ""}`
+      : null,
     hold: hold?.description ?? null,
     alerts: alerts.map((alert) => `${alert.productName}${alert.variantLabel ? ` (${alert.variantLabel})` : ""}`),
     customerId: conversation.customerId,

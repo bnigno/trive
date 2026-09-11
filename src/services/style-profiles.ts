@@ -1,0 +1,244 @@
+// Cartela de estilo: uma por telefone (enquanto não "esquecida"), com merge
+// do que já se sabia, vínculo ao cadastro quando existe, consentimento que
+// nunca rebaixa e "esquecer" que zera tudo. A edição para a cliente vem do
+// core (buildEditionForProfile) sobre os fatos vendáveis do catálogo.
+import { and, eq, isNull } from "drizzle-orm";
+import { z } from "zod";
+
+import { buildEditionForProfile, type EditionPick } from "@/core/style/edition";
+import {
+  EMPTY_PROFILE,
+  isProfileEmpty,
+  mergeStyleProfile,
+  paletteName,
+  styleProfilePatchSchema,
+  styleProfileSchema,
+  type StyleProfile,
+} from "@/core/style/profile";
+import { auditLog, customerProfiles, customers } from "@/db/schema";
+import type { DbOrTx } from "@/queue/enqueue";
+import { listPublicVariantFacts, type PublicProductListItem } from "@/services/store-catalog";
+
+const E164 = /^\+[1-9]\d{7,14}$/;
+
+export interface StyleProfileView {
+  id: string;
+  phoneE164: string;
+  customerId: string | null;
+  siteToken: string;
+  profile: StyleProfile;
+  paletteName: string;
+  source: string;
+  consentAt: Date | null;
+  updatedAt: Date;
+}
+
+function toView(row: {
+  id: string;
+  phoneE164: string;
+  customerId: string | null;
+  siteToken: string;
+  profile: unknown;
+  paletteName: string | null;
+  source: string;
+  consentAt: Date | null;
+  updatedAt: Date;
+}): StyleProfileView {
+  const parsed = styleProfileSchema.safeParse(row.profile ?? {});
+  const profile = parsed.success ? parsed.data : EMPTY_PROFILE;
+  return {
+    id: row.id,
+    phoneE164: row.phoneE164,
+    customerId: row.customerId,
+    siteToken: row.siteToken,
+    profile,
+    paletteName: row.paletteName ?? paletteName(profile),
+    source: row.source,
+    consentAt: row.consentAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+const activeByPhone = (phoneE164: string) =>
+  and(eq(customerProfiles.phoneE164, phoneE164), isNull(customerProfiles.forgottenAt));
+
+// ---------------------------------------------------------------------------
+// saveStyleProfile
+// ---------------------------------------------------------------------------
+
+const saveSchema = z.object({
+  phoneE164: z.string().regex(E164, "Telefone deve estar em E.164."),
+  patch: styleProfilePatchSchema,
+  source: z.enum(["quiz", "lia", "admin", "checkout"]),
+  /** true = a cliente consentiu agora (quiz/checkout); nunca rebaixa um consentimento anterior. */
+  consent: z.boolean().default(false),
+  customerId: z.uuid().nullable().optional(),
+  userId: z.uuid().optional(),
+});
+
+export type SaveStyleProfileInput = z.input<typeof saveSchema>;
+
+export async function saveStyleProfile(db: DbOrTx, input: SaveStyleProfileInput): Promise<StyleProfileView> {
+  const parsed = saveSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(customerProfiles)
+      .where(activeByPhone(parsed.phoneE164))
+      .for("update")
+      .limit(1);
+
+    let customerId = parsed.customerId ?? existing?.customerId ?? null;
+    if (!customerId) {
+      const [customer] = await tx
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(eq(customers.phoneE164, parsed.phoneE164), isNull(customers.deletedAt)))
+        .limit(1);
+      customerId = customer?.id ?? null;
+    }
+
+    const current = existing ? toView(existing).profile : EMPTY_PROFILE;
+    const merged = mergeStyleProfile(current, parsed.patch);
+    const palette = paletteName(merged);
+    const now = new Date();
+    const consentAt = existing?.consentAt ?? (parsed.consent ? now : null);
+
+    let row;
+    if (existing) {
+      [row] = await tx
+        .update(customerProfiles)
+        .set({ profile: merged, paletteName: palette, customerId, consentAt, source: parsed.source, updatedAt: now })
+        .where(eq(customerProfiles.id, existing.id))
+        .returning();
+    } else {
+      [row] = await tx
+        .insert(customerProfiles)
+        .values({ phoneE164: parsed.phoneE164, customerId, profile: merged, paletteName: palette, source: parsed.source, consentAt })
+        .returning();
+    }
+
+    await tx.insert(auditLog).values({
+      actorType: parsed.userId ? "user" : parsed.source === "lia" ? "system" : "customer",
+      actorId: parsed.userId ?? null,
+      action: existing ? "style.profile_update" : "style.profile_create",
+      entityType: "customer_profile",
+      entityId: row.id,
+      before: existing ? { profile: current } : null,
+      after: { profile: merged, paletteName: palette, source: parsed.source, consent: consentAt !== null },
+    });
+    return toView(row);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Consultas e esquecimento
+// ---------------------------------------------------------------------------
+
+export async function getStyleProfileByPhone(db: DbOrTx, phoneE164: string): Promise<StyleProfileView | null> {
+  const [row] = await db.select().from(customerProfiles).where(activeByPhone(phoneE164)).limit(1);
+  return row ? toView(row) : null;
+}
+
+export async function getStyleProfileByToken(db: DbOrTx, siteToken: string): Promise<StyleProfileView | null> {
+  if (!z.uuid().safeParse(siteToken).success) return null;
+  const [row] = await db
+    .select()
+    .from(customerProfiles)
+    .where(and(eq(customerProfiles.siteToken, siteToken), isNull(customerProfiles.forgottenAt)))
+    .limit(1);
+  return row ? toView(row) : null;
+}
+
+export async function getStyleProfileByCustomer(
+  db: DbOrTx,
+  input: { customerId: string; phoneE164?: string | null },
+): Promise<StyleProfileView | null> {
+  const [row] = await db
+    .select()
+    .from(customerProfiles)
+    .where(and(eq(customerProfiles.customerId, input.customerId), isNull(customerProfiles.forgottenAt)))
+    .limit(1);
+  if (row) return toView(row);
+  return input.phoneE164 ? getStyleProfileByPhone(db, input.phoneE164) : null;
+}
+
+/** Vincula a cartela do navegador (token) ao cadastro, se ainda não estiver. */
+export async function linkStyleProfileToCustomer(
+  db: DbOrTx,
+  input: { siteToken: string; customerId: string },
+): Promise<boolean> {
+  if (!z.uuid().safeParse(input.siteToken).success) return false;
+  const updated = await db
+    .update(customerProfiles)
+    .set({ customerId: input.customerId, updatedAt: new Date() })
+    .where(and(eq(customerProfiles.siteToken, input.siteToken), isNull(customerProfiles.forgottenAt)))
+    .returning({ id: customerProfiles.id });
+  return updated.length > 0;
+}
+
+/** "Esquecer minha cartela": zera os campos e carimba forgotten_at (LGPD). */
+export async function forgetStyleProfile(
+  db: DbOrTx,
+  input: { siteToken?: string; profileId?: string; userId?: string },
+): Promise<{ forgotten: boolean }> {
+  const condition = input.profileId
+    ? eq(customerProfiles.id, input.profileId)
+    : input.siteToken && z.uuid().safeParse(input.siteToken).success
+      ? eq(customerProfiles.siteToken, input.siteToken)
+      : null;
+  if (!condition) return { forgotten: false };
+  const now = new Date();
+  const updated = await db
+    .update(customerProfiles)
+    .set({ profile: {}, paletteName: null, forgottenAt: now, updatedAt: now })
+    .where(and(condition, isNull(customerProfiles.forgottenAt)))
+    .returning({ id: customerProfiles.id });
+  if (updated.length === 0) return { forgotten: false };
+  await db.insert(auditLog).values({
+    actorType: input.userId ? "user" : "customer",
+    actorId: input.userId ?? null,
+    action: "style.profile_forget",
+    entityType: "customer_profile",
+    entityId: updated[0].id,
+    after: { forgottenAt: now.toISOString() },
+  });
+  return { forgotten: true };
+}
+
+// ---------------------------------------------------------------------------
+// curateEditionForProfile — "A edição para você"
+// ---------------------------------------------------------------------------
+
+export interface CuratedEditionItem {
+  product: PublicProductListItem;
+  reasons: string[];
+}
+
+export async function curateEditionForProfile(
+  db: DbOrTx,
+  profile: StyleProfile,
+  opts: { limit?: number } = {},
+): Promise<CuratedEditionItem[]> {
+  if (isProfileEmpty(profile)) return [];
+  const facts = await listPublicVariantFacts(db);
+  const picks: EditionPick[] = buildEditionForProfile(
+    profile,
+    facts.map((fact) => ({
+      id: fact.product.id,
+      slug: fact.product.slug,
+      name: fact.product.name,
+      categoryName: fact.product.categoryName,
+      priceFromCents: fact.product.priceFromCents,
+      imagePath: fact.product.imagePath,
+      sizesAvailable: fact.sizesAvailable,
+      colorsAvailable: fact.colorsAvailable,
+    })),
+    { limit: opts.limit ?? 3 },
+  );
+  const byId = new Map(facts.map((fact) => [fact.product.id, fact.product]));
+  return picks.flatMap((pick) => {
+    const product = byId.get(pick.candidate.id);
+    return product ? [{ product, reasons: pick.reasons }] : [];
+  });
+}
