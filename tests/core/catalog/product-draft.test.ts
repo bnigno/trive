@@ -32,7 +32,10 @@ function raw(over: Partial<RawProductDraft> = {}): RawProductDraft {
     careFreeText: "Não torcer\n",
     fitNotes: " Corte fluido ",
     weightGramsEstimate: 320.4,
-    measurementsBySize: { P: { bust: 88, waist: 70 }, M: { bust: 92 } },
+    measurementsBySize: [
+      { size: "P", bust: 88, waist: 70 },
+      { size: "M", bust: 92 },
+    ],
     warnings: [" Etiqueta parcialmente ilegível ", ""],
     ...over,
   };
@@ -170,7 +173,10 @@ describe("normalizeProductDraft", () => {
     // Só os tamanhos da grade: a tabela citar GG não cria medida órfã.
     const comGG = normalizeProductDraft(
       raw({
-        measurementsBySize: { P: { bust: 88 }, GG: { bust: 104 } },
+        measurementsBySize: [
+          { size: "P", bust: 88 },
+          { size: "GG", bust: 104 },
+        ],
         warnings: [],
       }),
       { categories: CATEGORIES },
@@ -188,10 +194,29 @@ describe("normalizeProductDraft", () => {
     ).toEqual({});
     // 0 cm e 900 cm não passam pelo schema de medidas (1–300).
     expect(
-      normalizeProductDraft(raw({ measurementsBySize: { P: { bust: 0 }, M: { waist: 900 } } }), {
-        categories: CATEGORIES,
-      }).measurementsBySize,
+      normalizeProductDraft(
+        raw({
+          measurementsBySize: [
+            { size: "P", bust: 0 },
+            { size: "M", waist: 900 },
+          ],
+        }),
+        { categories: CATEGORIES },
+      ).measurementsBySize,
     ).toEqual({});
+  });
+
+  it("uma medida torta não leva junto as outras do mesmo tamanho, e a dona é avisada", () => {
+    const draft = normalizeProductDraft(
+      raw({
+        sizes: ["P"],
+        measurementsBySize: [{ size: "P", bust: 88, waist: 70.3, hip: 94 }],
+        warnings: [],
+      }),
+      { categories: CATEGORIES },
+    );
+    expect(draft.measurementsBySize).toEqual({ P: { bust: 88, hip: 94 } });
+    expect(draft.warnings.some((warning) => warning.includes("Cintura do P (70.3)"))).toBe(true);
   });
 
   it("o prompt manda transcrever a tabela em centímetros e nunca estimar", () => {

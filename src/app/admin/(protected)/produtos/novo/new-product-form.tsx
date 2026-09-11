@@ -17,14 +17,11 @@ import {
   COLOR_AXIS,
   MAX_AXIS_VALUES,
   MAX_GRID_ROWS,
-  SIZE_AXIS,
   buildVariantGrid,
+  measurementsForCombination,
 } from "@/core/catalog/variant-grid";
-import {
-  MEASUREMENT_KEYS,
-  measurementsSchema,
-  type MeasurementKey,
-} from "@/core/catalog/measurements";
+import { MEASUREMENT_KEYS, type MeasurementKey } from "@/core/catalog/measurements";
+import { parseMeasurementCm } from "./measurements-editor";
 import { uploadImagesAction } from "../[id]/actions";
 import { createProductAction } from "./actions";
 import { ChipsField } from "./chips-field";
@@ -49,13 +46,11 @@ function parseMeasurementsInput(
   if (!values) return undefined;
   const out: Record<string, number> = {};
   for (const key of MEASUREMENT_KEYS) {
-    const raw = (values[key] ?? "").trim().replace(",", ".");
-    if (raw === "") continue;
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed)) out[key] = parsed;
+    // Medida a medida: "70,3" numa coluna não pode zerar as outras cinco.
+    const value = parseMeasurementCm(values[key]);
+    if (value !== null) out[key] = value;
   }
-  const checked = measurementsSchema.safeParse(out);
-  return checked.success && Object.keys(out).length > 0 ? out : undefined;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Centavos → "129,90" para o campo de texto do formulário. */
@@ -314,8 +309,10 @@ export function NewProductForm({
         ]),
       );
     }
-    setMeasurements(fromPhoto);
-    setMeasurementsFromPhoto(Object.keys(fromPhoto).length > 0);
+      // Mescla: a tabela da foto vence tamanho por tamanho, o que a dona
+      // mediu à mão nos outros tamanhos continua.
+      setMeasurements((current) => ({ ...current, ...fromPhoto }));
+    if (Object.keys(fromPhoto).length > 0) setMeasurementsFromPhoto(true);
     if (form) {
       const data = new FormData(form);
       const text = (name: string) => String(data.get(name) ?? "").trim();
@@ -394,6 +391,14 @@ export function NewProductForm({
       return;
     }
 
+    // As medidas digitadas viram números uma vez só; a combinação pega a do
+    // seu tamanho pela mesma regra do core.
+    const measurementsBySizeParsed = Object.fromEntries(
+      Object.entries(measurements)
+        .map(([size, values]) => [size, parseMeasurementsInput(values)] as const)
+        .filter((entry): entry is readonly [string, Record<string, number>] => entry[1] !== undefined),
+    );
+
     const formData = new FormData(event.currentTarget);
     const payload = {
       name: String(formData.get("name") ?? ""),
@@ -413,8 +418,10 @@ export function NewProductForm({
       sizes,
       rows: grid.combinations.map((combination) => {
         const cell = cells[combination.key];
-        const size = combination.attributes[SIZE_AXIS];
-        const rowMeasurements = size ? parseMeasurementsInput(measurements[size]) : undefined;
+        const rowMeasurements = measurementsForCombination(
+          measurementsBySizeParsed,
+          combination.attributes,
+        );
         return {
           attributes: combination.attributes,
           ...(rowMeasurements ? { measurements: rowMeasurements } : {}),

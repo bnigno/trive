@@ -21,11 +21,11 @@ export const FAKE_PRODUCT_DRAFT_JSON = {
   careFreeText: "",
   fitNotes: "Corte fluido, comprimento midi-longo, alças finas ajustáveis.",
   weightGramsEstimate: 320,
-  measurementsBySize: {
-    P: { bust: 88, waist: 70, hip: 94, length: 138 },
-    M: { bust: 92, waist: 74, hip: 98, length: 139 },
-    G: { bust: 96, waist: 78, hip: 102, length: 140 },
-  },
+  measurementsBySize: [
+    { size: "P", bust: 88, waist: 70, hip: 94, length: 138 },
+    { size: "M", bust: 92, waist: 74, hip: 98, length: 139 },
+    { size: "G", bust: 96, waist: 78, hip: 102, length: 140 },
+  ],
   warnings: [],
 };
 
