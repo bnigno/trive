@@ -41,11 +41,22 @@ import {
   siteBaseUrl,
 } from "@/services/wa-messaging";
 
-import { execAdicionarASacola, execRemoverDaSacola, execVerSacola } from "./bot/cart";
+import {
+  execAdicionarASacola,
+  execRemoverDaSacola,
+  execValidarCupom,
+  execVerSacola,
+} from "./bot/cart";
 import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/catalog";
 import { execBuscarCadastro } from "./bot/customer";
 import { execAvisarQuandoVoltar, execLiberarReserva, execReservarPeca } from "./bot/holds";
-import { execCriarPedido, execEnviarChavePix, execStatusDoPedido } from "./bot/orders";
+import {
+  execCriarPedido,
+  execEnviarChavePix,
+  execHistoricoDeCompras,
+  execStatusDoPedido,
+  purchaseMemoryLineFor,
+} from "./bot/orders";
 import { execAvisarDono, execTransferir, handOffToHuman } from "./bot/owner";
 import {
   BOT_UNAVAILABLE_REPLY,
@@ -186,10 +197,18 @@ export function buildToolExecutor(
           ctx,
           parsed.data as BotToolInputs["remover_da_sacola"],
         );
+      case "validar_cupom":
+        return execValidarCupom(
+          db,
+          ctx,
+          parsed.data as BotToolInputs["validar_cupom"],
+        );
       case "cotar_frete":
         return execCotarFrete(db, ctx, parsed.data as BotToolInputs["cotar_frete"]);
       case "buscar_cadastro":
         return execBuscarCadastro(db, ctx);
+      case "historico_de_compras":
+        return execHistoricoDeCompras(db, ctx);
       case "criar_pedido":
         return execCriarPedido(db, ctx, parsed.data as BotToolInputs["criar_pedido"]);
       case "status_do_pedido":
@@ -391,8 +410,15 @@ export async function runBotTurn(
       };
     });
     const state = parseBotState(conversation.botState);
+    const [memoryLines, purchaseLine] = await Promise.all([
+      loadMemoryLines(tx, conversation.phoneE164),
+      purchaseMemoryLineFor(tx, {
+        customerId: conversation.customerId,
+        phoneE164: conversation.phoneE164,
+      }),
+    ]);
     const history = assembleHistory(state, messages, {
-      lines: await loadMemoryLines(tx, conversation.phoneE164),
+      lines: [...memoryLines, ...(purchaseLine ? [purchaseLine] : [])],
     });
 
     const { system, model } = await buildBotPromptBundle(tx);

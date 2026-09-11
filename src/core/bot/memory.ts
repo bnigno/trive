@@ -65,6 +65,18 @@ export const botStateSchema = z
     lastQuotedAt: z.string().optional(),
     chosenRateId: z.string().optional(),
     lastOrderNumber: z.number().int().optional(),
+    /**
+     * Cupom que validar_cupom confirmou nesta conversa. criar_pedido aplica
+     * quando o campo cupom vier ausente (o desconto é recalculado no
+     * fechamento); some ao fechar o pedido.
+     */
+    coupon: z
+      .object({
+        code: z.string(),
+        discountCents: z.number().int(),
+        at: z.string(),
+      })
+      .optional(),
     /** Última transferência para a equipe: motivo e resumo para o painel. */
     handoff: z
       .object({
@@ -210,6 +222,11 @@ export function renderContextNote(
         `• Endereço do CEP: ${local ? `${local} — ` : ""}${endereco.city}/${endereco.state} (peça só número e complemento)`,
       );
     }
+  }
+  if (state.coupon) {
+    linhas.push(
+      `• Cupom validado nesta conversa: ${state.coupon.code} (desconto de ${formatCentsBRL(state.coupon.discountCents)} na sacola de então) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio`,
+    );
   }
   if (state.lastOrderNumber !== undefined) {
     linhas.push(`• Último pedido nesta conversa: #${state.lastOrderNumber}`);

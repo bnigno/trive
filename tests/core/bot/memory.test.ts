@@ -125,6 +125,18 @@ describe("renderContextNote", () => {
     expect(parseBotState({ lastCep: "01310100" }).lastCepAddress).toBeUndefined();
   });
 
+  it("cupom validado entra no caderninho com o desconto e a instrução para criar_pedido", () => {
+    const state = parseBotState({
+      coupon: { code: "BEMVINDA10", discountCents: 899, at: "2026-09-11T12:00:00.000Z" },
+    });
+    expect(state.coupon?.code).toBe("BEMVINDA10");
+    const note = renderContextNote(state);
+    expect(note).toContain(
+      `• Cupom validado nesta conversa: BEMVINDA10 (desconto de ${formatCentsBRL(899)} na sacola de então) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio`,
+    );
+    expect(renderContextNote({})).toBeNull();
+  });
+
   it("guarda quando a cotação foi feita", () => {
     const state = parseBotState({ lastCep: "68795000", lastQuotedAt: "2026-09-11T12:00:00.000Z" });
     expect(state.lastQuotedAt).toBe("2026-09-11T12:00:00.000Z");
