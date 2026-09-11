@@ -6,6 +6,7 @@ import { getEmailProvider } from "@/adapters/email";
 import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getFileStorage } from "@/adapters/storage";
+import { renderCardPng } from "@/cards/render";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
@@ -14,6 +15,7 @@ import { loadReceiptAssets } from "@/receipts/assets";
 import { renderReceiptPng } from "@/receipts/render";
 import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { getTranscriber } from "@/adapters/transcription";
+import { cardRenderPayloadSchema, renderAndSendBotCard } from "@/services/bot-cards";
 import { sendDailyDigestWa } from "@/services/daily-digest";
 import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { sendQueuedEmail } from "@/services/email-inbox";
@@ -217,6 +219,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
     );
   },
+  // Cartão editorial fora do cache: desenha, publica e manda logo depois do
+  // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).
+  "wa.card_render": async (event) => {
+    const result = await renderAndSendBotCard(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      async (data) => renderCardPng(data, await loadReceiptAssets()),
+      cardRenderPayloadSchema.parse(event.payload),
+    );
+    console.info(`[wa.card_render] ${JSON.stringify({ ...result, cardUrl: undefined })}`);
+  },
   // Áudio da cliente: baixa, transcreve e só então decide a rota (turno da
   // vendedora ou dono). Falha do vendor relança até a política esgotar; na
   // última tentativa o serviço grava o marcador e a conversa segue.
@@ -296,9 +310,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // retry/backoff/DLQ da fila agem, com idempotência via dedupe do enqueue.
   "wa.bot_turn": async (event) => {
     const payload = waBotTurnPayloadSchema.parse(event.payload);
-    await runBotTurn(getDb(), getSalesAssistant(), getMessagingProvider(), {
-      conversationId: payload.conversationId,
-    });
+    await runBotTurn(
+      getDb(),
+      getSalesAssistant(),
+      getMessagingProvider(),
+      { conversationId: payload.conversationId },
+      {
+        cards: {
+          storage: getFileStorage(),
+          render: async (data) => renderCardPng(data, await loadReceiptAssets()),
+        },
+      },
+    );
   },
   // Resposta de cliente → encaminha ao dono (humano responde; bot desligado
   // ou conversa assumida).

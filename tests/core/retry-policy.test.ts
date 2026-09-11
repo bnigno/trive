@@ -84,3 +84,13 @@ describe("wa.transcribe", () => {
     });
   });
 });
+
+describe("wa.card_render", () => {
+  it("tenta 2 vezes: foto que não abre não melhora com o tempo", () => {
+    expect(getRetryPolicy("wa.card_render")).toEqual({
+      maxAttempts: 2,
+      baseDelayMs: 10_000,
+      maxDelayMs: 30_000,
+    });
+  });
+});

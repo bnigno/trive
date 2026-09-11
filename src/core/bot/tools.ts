@@ -18,6 +18,7 @@ export const BOT_TOOL_NAMES = [
   "status_do_pedido",
   "enviar_chave_pix",
   "avisar_dono",
+  "montar_look",
   "anotar",
   "transferir_para_atendente",
 ] as const;
@@ -76,6 +77,7 @@ export type BotToolInputs = {
   status_do_pedido: { numero_do_pedido?: number };
   enviar_chave_pix: { numero_do_pedido?: number };
   avisar_dono: { mensagem: string };
+  montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
   transferir_para_atendente: { motivo: string; resumo?: string };
 };
@@ -375,6 +377,27 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "montar_look",
+    description:
+      "Monta o look completo a partir de UMA peça: escolhe 1 ou 2 complementos reais do catálogo (categoria diferente e que combina, com foto e estoque, preço na vizinhança) e envia à cliente o cartão do look em imagem. Chame UMA vez, depois do pedido fechado ou quando ela perguntar o que combina/como usar. Nunca invente combinação fora do que a ferramenta devolveu.",
+    input_schema: {
+      type: "object",
+      properties: {
+        produto: {
+          type: "string",
+          description: "Nome, slug ou SKU da peça principal (a que ela escolheu ou comprou).",
+        },
+        orcamento_reais: {
+          type: "integer",
+          minimum: 1,
+          description: "Teto em reais para peça + complementos, se ela disse um orçamento.",
+        },
+      },
+      required: ["produto"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "anotar",
     description:
       "Escreve no caderninho da vendedora um fato curto e útil para as próximas compras desta cliente: tamanho que usa, cores que ama ou evita, ocasião, para quem compra, peça esgotada que quer ser avisada. NUNCA anote CPF, endereço ou dado de pagamento. Uma frase por chamada.",
@@ -523,6 +546,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   }),
   avisar_dono: z.strictObject({
     mensagem: z.string().min(1).max(300),
+  }),
+  montar_look: z.strictObject({
+    produto: z.string().min(1),
+    orcamento_reais: z.number().int().min(1).optional(),
   }),
   anotar: z.strictObject({
     nota: z.string().trim().min(3).max(140),

@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   check,
   index,
   jsonb,
@@ -118,6 +119,20 @@ export const waTemplates = pgTable("wa_templates", {
   variables: jsonb("variables").notNull().default([]),
   isActive: boolean("is_active").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// Cartões editoriais já renderizados (vitrine/look em imagem) — cache por
+// chave determinística (sha256 das peças, fotos e preços): a mesma vitrine
+// nunca é desenhada duas vezes. Só metadados; o JPEG vive no Storage.
+export const botCards = pgTable("bot_cards", {
+  key: text("key").primaryKey(),
+  kind: text("kind").notNull(),
+  storagePath: text("storage_path").notNull(),
+  productSlugs: jsonb("product_slugs").notNull().default([]),
+  renderMs: integer("render_ms"),
+  createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 });

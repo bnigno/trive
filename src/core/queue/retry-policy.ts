@@ -15,6 +15,8 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // Transcrição de áudio da cliente: a resposta da vendedora espera por ela,
   // então poucas tentativas e rápidas; na última, o serviço cai no marcador
   // "não foi possível transcrever" e a conversa segue.
+  // Cartão editorial: 2 tentativas (foto que não abre não melhora com tempo).
+  "wa.card_render": { maxAttempts: 2, baseDelayMs: 10_000, maxDelayMs: 30_000 },
   "wa.transcribe": {
     maxAttempts: 3,
     baseDelayMs: 5_000,

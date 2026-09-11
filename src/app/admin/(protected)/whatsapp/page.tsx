@@ -73,6 +73,7 @@ interface PageData {
   awaitingOwner: number;
   digestEnabled: boolean;
   mediaEnabled: boolean;
+  cardsEnabled: boolean;
   lastDigest: { date: string; url: string; at: Date } | null;
 }
 
@@ -99,6 +100,7 @@ async function loadPageData(): Promise<PageData | null> {
         "wa_quick_replies",
         "owner_digest_enabled",
         "bot_media_enabled",
+        "bot_cards_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -142,6 +144,7 @@ async function loadPageData(): Promise<PageData | null> {
     awaitingOwner,
     digestEnabled: settingsMap["owner_digest_enabled"] !== false,
     mediaEnabled: settingsMap["bot_media_enabled"] !== false,
+    cardsEnabled: settingsMap["bot_cards_enabled"] !== false,
     lastDigest: lastDigestRow
       ? {
           date: lastDigestRow.date,
@@ -204,6 +207,7 @@ export default async function WhatsappPage() {
     awaitingOwner,
     digestEnabled,
     mediaEnabled,
+    cardsEnabled,
     lastDigest,
   } = data;
 
@@ -314,6 +318,12 @@ export default async function WhatsappPage() {
                 ? "Foto da cliente (print, peça do armário, convite) vai para a inteligência; áudio é transcrito. Centavos por uso; nada é guardado."
                 : "Fotos vão para a inteligência (centavos por uso). Áudio exige a chave da OpenAI na hospedagem — sem ela, a vendedora pede para escrever."
             }
+          />
+          <ToggleSwitch
+            settingKey="bot_cards_enabled"
+            checked={cardsEnabled}
+            label="Cartões editoriais no WhatsApp"
+            hint="Junto com a lista tocável vai um cartão com as fotos das peças (a vitrine em imagem); depois do pedido, o cartão do look completo. Desligado, só a lista."
           />
         </div>
         {botEnabledSetting && anthropicKeyMissing ? (

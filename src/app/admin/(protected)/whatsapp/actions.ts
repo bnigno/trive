@@ -11,6 +11,7 @@ import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
 import { sendToOwner, type WaSkipReason } from "@/services/wa-messaging";
 import { getFileStorage } from "@/adapters/storage";
+import { renderCardPng } from "@/cards/render";
 import { loadReceiptAssets } from "@/receipts/assets";
 import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { sendDailyDigestWa, yesterdaySpDayKey } from "@/services/daily-digest";
@@ -36,6 +37,7 @@ const toggleKeySchema = z.enum([
   "bot_enabled",
   "owner_digest_enabled",
   "bot_media_enabled",
+  "bot_cards_enabled",
 ]);
 
 export async function setToggleAction(
@@ -146,7 +148,12 @@ export async function rehearseBotAction(input: unknown): Promise<RehearsalResult
   await requireOwner("whatsapp");
   try {
     const parsed = rehearsalInputSchema.parse(input);
-    const turn = await rehearseBotTurn(getDb(), getSalesAssistant(), parsed);
+    const turn = await rehearseBotTurn(getDb(), getSalesAssistant(), parsed, {
+      cards: {
+        storage: getFileStorage(),
+        render: async (data) => renderCardPng(data, await loadReceiptAssets()),
+      },
+    });
     return { ok: true, turn };
   } catch (error) {
     if (error instanceof AssistantUnavailableError) {

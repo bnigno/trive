@@ -14,7 +14,7 @@ type Bubble =
   | {
       kind: "seller";
       texts: string[];
-      attachments: string[];
+      attachments: { text: string; imageUrl?: string }[];
       tools: string;
       handedOff: boolean;
       durationMs: number;
@@ -56,8 +56,10 @@ export function Rehearsal({ sellerName }: { sellerName: string }) {
           texts: turn.bubbles,
           attachments: turn.attachments.map((attachment) =>
             attachment.kind === "option_list"
-              ? `📋 Lista tocável «${attachment.buttonLabel}» com ${attachment.options.length} ${attachment.options.length === 1 ? "opção" : "opções"}: ${attachment.options.map((option) => option.title).join(" · ")}`
-              : `🖼️ Foto: ${attachment.caption}`,
+              ? {
+                  text: `📋 Lista tocável «${attachment.buttonLabel}» com ${attachment.options.length} ${attachment.options.length === 1 ? "opção" : "opções"}: ${attachment.options.map((option) => option.title).join(" · ")}`,
+                }
+              : { text: `🖼️ ${attachment.caption}`, imageUrl: attachment.imageUrl },
           ),
           tools: describeTools(turn.toolCalls.map((call) => call.name)) ?? "",
           handedOff: turn.handedOff,
@@ -114,13 +116,19 @@ export function Rehearsal({ sellerName }: { sellerName: string }) {
             </div>
           ) : (
             <div key={index} className="flex flex-col items-end gap-1">
-              {bubble.attachments.map((attachment) => (
-                <p
-                  key={attachment}
-                  className="max-w-[85%] rounded-lg border border-dashed border-gold-500/60 bg-gold-300/20 px-3 py-1.5 text-[11px] text-ink-700 dark:text-gold-300"
-                >
-                  {attachment}
-                </p>
+              {bubble.attachments.map((attachment, j) => (
+                <div key={j} className="flex max-w-[85%] flex-col items-end gap-1">
+                  {attachment.imageUrl ? (
+                    <img
+                      src={attachment.imageUrl}
+                      alt=""
+                      className="w-56 rounded-lg border border-ivory-300 shadow-sm dark:border-ink-700"
+                    />
+                  ) : null}
+                  <p className="rounded-lg border border-dashed border-gold-500/60 bg-gold-300/20 px-3 py-1.5 text-[11px] text-ink-700 dark:text-gold-300">
+                    {attachment.text}
+                  </p>
+                </div>
               ))}
               {bubble.texts.map((text, i) => (
                 <div
