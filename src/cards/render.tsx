@@ -6,11 +6,13 @@
 // display:flex, texto misto é UMA string, nada de rede.
 import { ImageResponse } from "next/og";
 
-import { cardFrameSize, type CardData, type CardItem } from "@/core/cards/types";
+import { cardDimensions, cardFrameSize, type CardData, type CardItem } from "@/core/cards/types";
 import { normalizeReceiptText, type ReceiptAssets } from "@/core/receipts/types";
 
 export const CARD_WIDTH = 1080;
 export const CARD_HEIGHT = 1350;
+/** O rodapé do WhatsApp convida a responder; no post, quem responde é o Instagram. */
+const WA_FOOTER_LINE = "Responda com o nome da peça que quer ver de perto.";
 
 const C = {
   ivory100: "#faf7f0",
@@ -133,7 +135,7 @@ function Title({ text }: { text: string }) {
   );
 }
 
-function Footer({ storeName }: { storeName: string }) {
+function Footer({ storeName, line }: { storeName: string; line: string }) {
   return (
     <div
       style={{
@@ -156,18 +158,20 @@ function Footer({ storeName }: { storeName: string }) {
         {normalizeReceiptText(storeName).toUpperCase()}
       </div>
       <div style={{ marginTop: 6, fontFamily: SANS, fontSize: 18, color: C.ink500 }}>
-        Responda com o nome da peça que quer ver de perto.
+        {line}
       </div>
     </div>
   );
 }
 
 function Card({ data, lockup }: { data: CardData; lockup: string }) {
+  const { width, height } = cardDimensions(data.kind);
+  const isPost = data.kind === "post" || data.kind === "story";
   return (
     <div
       style={{
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
+        width,
+        height,
         display: "flex",
         flexDirection: "column",
         backgroundColor: C.ivory100,
@@ -188,7 +192,15 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
         }}
       >
       <Title text={data.title} />
-      {data.kind === "catalog" ? (
+      {data.kind === "post" || data.kind === "story" ? (
+        <Frame
+          item={data.hero}
+          width={cardFrameSize(data.kind, "hero", 1).width}
+          height={cardFrameSize(data.kind, "hero", 1).height}
+          nameSize={data.kind === "story" ? 44 : 40}
+          priceSize={data.kind === "story" ? 30 : 28}
+        />
+      ) : data.kind === "catalog" ? (
         <div
           style={{
             display: "flex",
@@ -244,17 +256,24 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
         </div>
       )}
       </div>
-      <Footer storeName={data.storeName} />
+      <Footer
+        storeName={data.storeName}
+        line={isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
+      />
     </div>
   );
 }
 
-/** PNG 1080×1350 do cartão. Sem rede: fontes, lockup e fotos vêm embutidos. */
+/**
+ * PNG do cartão, na tela do formato (catálogo/look/post 1080×1350, story
+ * 1080×1920). Sem rede: fontes, lockup e fotos vêm embutidos.
+ */
 export async function renderCardPng(data: CardData, assets: ReceiptAssets): Promise<Buffer> {
   const lockup = `data:image/png;base64,${assets.lockupDarkPng.toString("base64")}`;
+  const { width, height } = cardDimensions(data.kind);
   const response = new ImageResponse(<Card data={data} lockup={lockup} />, {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
+    width,
+    height,
     fonts: assets.fonts.map((font) => ({
       name: font.name,
       data: font.data,

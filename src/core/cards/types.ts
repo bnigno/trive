@@ -35,7 +35,30 @@ export interface LookCardData {
   complements: CardItem[];
 }
 
-export type CardData = CatalogCardData | LookCardData;
+/** O post da peça: uma foto só, grande, para o Instagram (4:5). */
+export interface PostCardData {
+  kind: "post";
+  storeName: string;
+  eyebrow: string;
+  title: string;
+  hero: CardItem;
+}
+
+/** O story da peça (9:16), mesma identidade em pé. */
+export interface StoryCardData {
+  kind: "story";
+  storeName: string;
+  eyebrow: string;
+  title: string;
+  hero: CardItem;
+}
+
+export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData;
+
+/** Tela de cada formato, em px. O WhatsApp usa 4:5; o story é 9:16. */
+export function cardDimensions(kind: CardData["kind"]): { width: number; height: number } {
+  return kind === "story" ? { width: 1080, height: 1920 } : { width: 1080, height: 1350 };
+}
 
 const COUNT_WORDS = ["", "Uma peça", "Duas peças", "Três peças"] as const;
 
@@ -78,6 +101,10 @@ export function cardFrameSize(
   if (kind === "look") {
     return role === "hero" ? { width: 520, height: 693 } : { width: 270, height: 360 };
   }
+  // Post e story: a peça ocupa a tela, com respiro para a faixa noir (≈223),
+  // o título, o nome/preço da moldura e o rodapé — senão a arte sai cortada.
+  if (kind === "post") return { width: 570, height: 760 };
+  if (kind === "story") return { width: 900, height: 1200 };
   if (count >= 3) return { width: 310, height: 413 };
   if (count === 2) return { width: 440, height: 587 };
   return { width: 600, height: 800 };

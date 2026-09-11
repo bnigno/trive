@@ -122,6 +122,9 @@ function validate(input: PublishBotCardInput): void {
   if (input.kind === "look" && (input.items.length < 2 || input.items.length > 1 + LOOK_MAX_COMPLEMENTS)) {
     throw new Error("Cartão de look pede a peça e 1 ou 2 complementos.");
   }
+  if ((input.kind === "post" || input.kind === "story") && input.items.length !== 1) {
+    throw new Error("O post e o story mostram UMA peça.");
+  }
 }
 
 async function buildCardData(storage: FileStorage, input: PublishBotCardInput): Promise<CardData> {
@@ -134,6 +137,15 @@ async function buildCardData(storage: FileStorage, input: PublishBotCardInput): 
   if (input.kind === "catalog") {
     const items = await Promise.all(input.items.map((ref) => toItem(ref, "item")));
     return { kind: "catalog", storeName: input.storeName, eyebrow: input.eyebrow, title: input.title, items };
+  }
+  if (input.kind === "post" || input.kind === "story") {
+    return {
+      kind: input.kind,
+      storeName: input.storeName,
+      eyebrow: input.eyebrow,
+      title: input.title,
+      hero: await toItem(input.items[0], "hero"),
+    };
   }
   const [heroRef, ...complementRefs] = input.items;
   const [hero, ...complements] = await Promise.all([

@@ -520,7 +520,7 @@ export function StockSettingsForm({
 export function StorefrontForm({
   defaults,
 }: {
-  defaults: { tagline: string; manifesto: string };
+  defaults: { tagline: string; manifesto: string; editionName: string };
 }) {
   const [state, formAction] = useActionState(updateStorefrontAction, INITIAL_STATE);
 
@@ -547,6 +547,18 @@ export function StorefrontForm({
           maxLength={600}
           defaultValue={defaults.manifesto}
           placeholder={"Vestir é um jeito de contar quem você é — sem precisar dizer uma palavra.\n\nA TRIVÉ nasce de um laço: entre o clássico e o agora…"}
+        />
+      </Field>
+
+      <Field
+        label="Nome da edição"
+        hint="Aparece no post e no story da peça e vira hashtag na legenda. Ex.: “Edição Círio”. Vazio = “Noite de Estreia”."
+      >
+        <Input
+          name="editionName"
+          maxLength={40}
+          defaultValue={defaults.editionName}
+          placeholder="Edição Círio"
         />
       </Field>
 

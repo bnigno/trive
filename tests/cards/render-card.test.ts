@@ -116,3 +116,28 @@ describe("renderCardPng", () => {
     expect(columnHas(380, "#7a6a58")).toBe(false);
   });
 });
+
+describe("post e story da peça", () => {
+  it("post sai 1080×1350 e story 1080×1920, com a foto embutida e sem rede", async () => {
+    const assets = await loadReceiptAssets();
+    const hero = items[0];
+
+    const post = await renderCardPng(
+      { kind: "post", storeName: "TRIVÉ", eyebrow: "EDIÇÃO CÍRIO", title: "Longo Dunas", hero },
+      assets,
+    );
+    const postMeta = await sharp(post).metadata();
+    expect(postMeta.width).toBe(1080);
+    expect(postMeta.height).toBe(1350);
+
+    const story = await renderCardPng(
+      { kind: "story", storeName: "TRIVÉ", eyebrow: "EDIÇÃO CÍRIO", title: "Longo Dunas", hero },
+      assets,
+    );
+    const storyMeta = await sharp(story).metadata();
+    expect(storyMeta.width).toBe(1080);
+    expect(storyMeta.height).toBe(1920);
+
+    expect(networkCalls).toEqual([]);
+  });
+});

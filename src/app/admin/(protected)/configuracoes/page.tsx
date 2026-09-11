@@ -74,6 +74,7 @@ type SettingsData = {
   storefront: {
     tagline: string;
     manifesto: string;
+    editionName: string;
   };
   mpEnabled: boolean;
 };
@@ -101,6 +102,7 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_pix_key",
         "store_tagline",
         "store_manifesto",
+        "edition_name",
         "mp_enabled",
       ]),
     ]);
@@ -119,6 +121,7 @@ async function loadSettings(): Promise<SettingsData | null> {
       storefront: {
         tagline: asString(map.store_tagline),
         manifesto: asString(map.store_manifesto),
+        editionName: asString(map.edition_name),
       },
       settings: {
         changeThresholdRate:
@@ -213,6 +216,7 @@ export default async function ConfiguracoesPage() {
             defaults={{
               tagline: data.storefront.tagline,
               manifesto: data.storefront.manifesto,
+              editionName: data.storefront.editionName,
             }}
           />
         </div>

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  cardFrameSize,
-  catalogCardEyebrow,
-  catalogCardTitle,
-  lookCardTitle,
-} from "@/core/cards/types";
+import { cardDimensions, cardFrameSize, catalogCardEyebrow, catalogCardTitle, lookCardTitle } from "@/core/cards/types";
 
 describe("cartão editorial — títulos e molduras", () => {
   it("título conta as peças por extenso e nunca passa de três", () => {
@@ -41,5 +36,25 @@ describe("cartão editorial — títulos e molduras", () => {
     }
     expect(cardFrameSize("catalog", "item", 3).width * 3 + 60).toBeLessThanOrEqual(1080 - 80);
     expect(cardFrameSize("look", "hero", 1).width + cardFrameSize("look", "complement", 1).width + 40).toBeLessThanOrEqual(1080 - 80);
+  });
+});
+
+describe("cardDimensions / cardFrameSize dos formatos novos", () => {
+  it("post e catálogo são 4:5; story é 9:16", () => {
+    expect(cardDimensions("catalog")).toEqual({ width: 1080, height: 1350 });
+    expect(cardDimensions("look")).toEqual({ width: 1080, height: 1350 });
+    expect(cardDimensions("post")).toEqual({ width: 1080, height: 1350 });
+    expect(cardDimensions("story")).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it("a peça do post e do story ocupa a tela, com respiro para faixa e rodapé", () => {
+    const post = cardFrameSize("post", "hero", 1);
+    const story = cardFrameSize("story", "hero", 1);
+    expect(post.width).toBeLessThan(1080);
+    expect(post.height).toBeLessThan(1350);
+    expect(story.height).toBeGreaterThan(post.height);
+    // 3:4 em ambos (é a proporção da foto recortada).
+    expect(Math.round((post.height / post.width) * 100) / 100).toBe(1.33);
+    expect(Math.round((story.height / story.width) * 100) / 100).toBe(1.33);
   });
 });
