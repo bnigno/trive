@@ -114,6 +114,17 @@ describe("renderContextNote", () => {
     expect(note).not.toContain("escolhido");
   });
 
+  it("endereço do CEP entra no caderninho pedindo só número e complemento", () => {
+    const note = renderContextNote({
+      lastCep: "01310100",
+      lastCepAddress: { street: "Avenida Paulista", district: "Bela Vista", city: "São Paulo", state: "SP" },
+    });
+    expect(note).toContain(
+      "• Endereço do CEP: Avenida Paulista, Bela Vista — São Paulo/SP (peça só número e complemento)",
+    );
+    expect(parseBotState({ lastCep: "01310100" }).lastCepAddress).toBeUndefined();
+  });
+
   it("guarda quando a cotação foi feita", () => {
     const state = parseBotState({ lastCep: "68795000", lastQuotedAt: "2026-09-11T12:00:00.000Z" });
     expect(state.lastQuotedAt).toBe("2026-09-11T12:00:00.000Z");

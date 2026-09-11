@@ -18,6 +18,7 @@ import {
   type BotChatMessage,
   type SalesAssistant,
 } from "@/adapters/assistant";
+import { getCepLookup, type CepLookup } from "@/adapters/cep";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
@@ -105,6 +106,7 @@ import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { formatLookedUpAddress, lookupAddressByCep } from "@/services/address-lookup";
 import {
   findCachedBotCard,
   isBotCardsEnabled,
@@ -226,6 +228,8 @@ export type BotExecutorContext = {
    * respondem um texto explicando que estão desligados no ensaio.
    */
   dryRun?: boolean;
+  /** Consulta de CEP: cotar_frete devolve também rua/bairro/cidade/UF. */
+  cepLookup?: CepLookup;
 };
 
 export type RunBotTurnResult =
@@ -1139,9 +1143,21 @@ async function execCotarFrete(
     };
   }
 
+  // Endereço do CEP (melhor esforço): a cliente digita só número e
+  // complemento. Vendor fora do ar não atrapalha a cotação.
+  let cepAddress: { street: string; district: string; city: string; state: string } | undefined;
+  if (ctx.cepLookup) {
+    const found = await lookupAddressByCep(ctx.cepLookup, input.cep);
+    if (found.ok) {
+      const { street, district, city, state: uf } = found.address;
+      cepAddress = { street, district, city, state: uf };
+    }
+  }
+
   await updateBotState(db, ctx, (current) => ({
     ...current,
     lastCep: input.cep,
+    lastCepAddress: cepAddress,
     lastQuotes: quotes,
     lastQuotedAt: new Date().toISOString(),
     chosenRateId: quotes.length === 1 ? quotes[0].rateId : undefined,
@@ -1157,6 +1173,11 @@ async function execCotarFrete(
   if (quotes.length > 1) {
     lines.push(
       "[Pergunte à cliente qual opção ela prefere e passe a escolha em criar_pedido (campo frete).]",
+    );
+  }
+  if (cepAddress) {
+    lines.push(
+      `Endereço do CEP: ${formatLookedUpAddress(cepAddress)}. [Confirme com a cliente e peça SÓ número e complemento; em criar_pedido use estes rua/bairro/cidade/uf.]`,
     );
   }
   return { ok: true, text: lines.join("\n") };
@@ -2236,6 +2257,7 @@ export async function runBotTurn(
       customerId: conversation.customerId,
       lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
+      cepLookup: getCepLookup(),
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 

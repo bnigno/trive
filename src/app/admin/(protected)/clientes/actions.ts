@@ -5,7 +5,9 @@ import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { getCepLookup } from "@/adapters/cep";
 import { getDb } from "@/db/client";
+import { lookupAddressByCep, type AddressLookupResult } from "@/services/address-lookup";
 import { auditLog, customerAddresses } from "@/db/schema";
 import { requireUser } from "@/services/auth";
 import { ServiceError } from "@/services/catalog";
@@ -221,4 +223,14 @@ export async function setDefaultAddressAction(
   });
 
   if (customerId) revalidatePath(`/admin/clientes/${customerId}`);
+}
+
+const lookupCepSchema = z.object({ cep: z.string().trim().min(1).max(12) });
+
+/** Endereço pelo CEP nos formulários de cliente e de endereço. */
+export async function lookupCepAction(input: { cep: string }): Promise<AddressLookupResult> {
+  await requireUser();
+  const parsed = lookupCepSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, reason: "cep_invalido" };
+  return lookupAddressByCep(getCepLookup(), parsed.data.cep);
 }

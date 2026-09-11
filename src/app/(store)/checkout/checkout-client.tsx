@@ -41,6 +41,7 @@ import {
 import { cx } from "@/components/ui/cx";
 import { GIFT_MESSAGE_MAX, GIFT_RECIPIENT_MAX } from "@/core/gifts/types";
 import { formatCep } from "@/lib/cep";
+import { CEP_AUTOFILL_MESSAGES, useCepAutofill } from "@/components/forms/use-cep-autofill";
 import { normalizeDocument } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
@@ -49,7 +50,10 @@ import type { ShippingQuote } from "@/services/store-catalog";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
 import { quoteCouponAction, quoteShippingAction } from "../carrinho/actions";
-import { placeOrderAction } from "./actions";
+import {
+  placeOrderAction,
+  lookupCepAction,
+} from "./actions";
 
 const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
@@ -139,6 +143,16 @@ export function CheckoutClient({
   const [documentValue, setDocumentValue] = useState("");
   const [phoneValue, setPhoneValue] = useState("");
   const [cepValue, setCepValue] = useState(formatCep(initialCepDigits));
+  // CEP completo → rua, bairro, cidade e UF se preenchem; o cursor vai ao número.
+  const formRef = useRef<HTMLFormElement>(null);
+  const cepAutofill = useCepAutofill(formRef, (cep) => lookupCepAction({ cep }));
+  // Veio da sacola com o CEP já digitado: o endereço se preenche ao abrir.
+  const autofilledOnMount = useRef(false);
+  useEffect(() => {
+    if (!mounted || autofilledOnMount.current) return;
+    autofilledOnMount.current = true;
+    if (initialCepDigits.length === 8) cepAutofill.onCepChange(initialCepDigits);
+  }, [mounted, initialCepDigits, cepAutofill]);
   const [fieldErrors, setFieldErrors] = useState<{
     document?: string;
     phone?: string;
@@ -567,6 +581,7 @@ export function CheckoutClient({
 
         {/* O formulário */}
         <form
+          ref={formRef}
           onSubmit={handleSubmit}
           noValidate
           className="space-y-8 lg:col-start-1 lg:row-start-1"
@@ -643,10 +658,19 @@ export function CheckoutClient({
                   autoComplete="postal-code"
                   placeholder="00000-000"
                   value={cepValue}
-                  onChange={(event) => setCepValue(formatCep(event.target.value))}
+                  onChange={(event) => {
+                    const next = formatCep(event.target.value);
+                    setCepValue(next);
+                    cepAutofill.onCepChange(next);
+                  }}
                   aria-invalid={fieldErrors.cep ? true : undefined}
                   className={inputClasses}
                 />
+                {cepAutofill.status !== "idle" ? (
+                  <p className="mt-1 font-store text-xs text-ink-500" role="status">
+                    {CEP_AUTOFILL_MESSAGES[cepAutofill.status]}
+                  </p>
+                ) : null}
               </Field>
 
               {/* As opções de entrega vivem aqui, logo abaixo do CEP: no
