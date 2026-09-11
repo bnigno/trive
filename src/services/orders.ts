@@ -550,6 +550,7 @@ export async function listOrders(db: DbOrTx, input: ListOrdersInput = {}) {
       orderNumber: orders.orderNumber,
       status: orders.status,
       channel: orders.channel,
+      isGift: orders.isGift,
       totalCents: orders.totalCents,
       createdAt: orders.createdAt,
       customerId: orders.customerId,

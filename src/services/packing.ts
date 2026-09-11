@@ -191,6 +191,8 @@ export interface OrderAwaitingPacking {
   customerName: string;
   itemsCount: number;
   packagePhotoPath: string | null;
+  /** Presente: sem preço no pacote, bilhete impresso dentro. */
+  isGift: boolean;
 }
 
 /** Pedidos pagos ou em separação ainda sem foto do pacote, os mais antigos primeiro. */
@@ -206,6 +208,7 @@ export async function listOrdersAwaitingPacking(
       paidAt: orders.paidAt,
       customerName: customers.fullName,
       packagePhotoPath: orders.packagePhotoPath,
+      isGift: orders.isGift,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))

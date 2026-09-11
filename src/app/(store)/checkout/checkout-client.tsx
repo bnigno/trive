@@ -39,6 +39,7 @@ import {
   linkGold,
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
+import { GIFT_MESSAGE_MAX, GIFT_RECIPIENT_MAX } from "@/core/gifts/types";
 import { formatCep } from "@/lib/cep";
 import { normalizeDocument } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
@@ -132,6 +133,8 @@ export function CheckoutClient({
   );
 
   // ----- Campos com máscara (controlados) --------------------------------
+  const [isGift, setIsGift] = useState(false);
+  const [giftMessage, setGiftMessage] = useState("");
   const [documentValue, setDocumentValue] = useState("");
   const [phoneValue, setPhoneValue] = useState("");
   const [cepValue, setCepValue] = useState(formatCep(initialCepDigits));
@@ -366,6 +369,17 @@ export function CheckoutClient({
       expectedShippingCents: shippingCents,
       paymentMethod,
       ...(couponCode ? { couponCode } : {}),
+      ...(isGift
+        ? {
+            gift: {
+              recipientName: String(form.get("giftRecipientName") ?? "").trim(),
+              ...(giftMessage.trim() ? { message: giftMessage.trim() } : {}),
+              ...(String(form.get("giftDeliverBy") ?? "").trim()
+                ? { deliverBy: String(form.get("giftDeliverBy")).trim() }
+                : {}),
+            },
+          }
+        : {}),
     };
     submitPayload(payload);
   }
@@ -753,7 +767,62 @@ export function CheckoutClient({
             </div>
           </FormSection>
 
-          <FormSection id="pagamento-title" number="03" title="Pagamento">
+          <FormSection id="presente-title" number="03" title="É um presente?">
+            <label className="flex min-h-11 cursor-pointer items-start gap-3 font-store text-sm text-ink-700">
+              <input
+                type="checkbox"
+                name="isGift"
+                checked={isGift}
+                onChange={(event) => setIsGift(event.target.checked)}
+                className="mt-0.5 h-5 w-5 shrink-0 accent-gold-600"
+              />
+              <span>
+                Sim, é para presentear alguém. Enviamos{" "}
+                <strong className="font-medium text-espresso-900">sem preço na embalagem</strong>,
+                com um bilhete impresso na tipografia da maison.
+              </span>
+            </label>
+            {isGift ? (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <Field label="Para quem é" hint="O nome vai no bilhete." className="sm:col-span-2">
+                  <input
+                    name="giftRecipientName"
+                    required
+                    maxLength={GIFT_RECIPIENT_MAX}
+                    autoComplete="off"
+                    className={inputClasses}
+                  />
+                </Field>
+                <Field
+                  label="Bilhete (opcional)"
+                  hint={`${giftMessage.length}/${GIFT_MESSAGE_MAX} · sem emojis — impresso com a tipografia da maison`}
+                  className="sm:col-span-2"
+                >
+                  <textarea
+                    name="giftMessage"
+                    rows={4}
+                    maxLength={GIFT_MESSAGE_MAX}
+                    value={giftMessage}
+                    onChange={(event) => setGiftMessage(event.target.value)}
+                    className={cx(inputClasses, "min-h-24 resize-y")}
+                  />
+                </Field>
+                <Field
+                  label="Data desejada de entrega (opcional)"
+                  hint="Fazemos o possível; o prazo real é o do frete escolhido."
+                >
+                  <input
+                    name="giftDeliverBy"
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    className={inputClasses}
+                  />
+                </Field>
+              </div>
+            ) : null}
+          </FormSection>
+
+          <FormSection id="pagamento-title" number="04" title="Pagamento">
             <fieldset>
               <legend className="sr-only">Forma de pagamento</legend>
               <div className="space-y-2">

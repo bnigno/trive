@@ -28,6 +28,7 @@ import { OrderFinancialCard } from "./financial-card";
 import { OrderMarginCard } from "./margin-card";
 import { OrderActions } from "./order-actions";
 import { PackForm } from "./pack-form";
+import { giftNoteUrl } from "@/services/gifts";
 import { packagePhotoUrl } from "@/services/packing";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,12 @@ export const metadata: Metadata = {
 /** Label pt-BR do método vindo do core; método desconhecido volta cru. */
 function paymentMethodLabel(method: string): string {
   return (PAYMENT_METHOD_LABELS as Record<string, string>)[method] ?? method;
+}
+
+/** 'YYYY-MM-DD' (coluna date) → 'DD/MM/YYYY'. */
+function formatIsoDateBR(iso: string): string {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
 }
 
 export default async function PedidoDetalhePage({
@@ -296,6 +303,52 @@ export default async function PedidoDetalhePage({
               ) : null}
             </div>
           </Card>
+
+          {order.isGift ? (
+            <Card title="🎁 Presente — sem preço na embalagem">
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+                <dl className="grid gap-2">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                      Para quem
+                    </dt>
+                    <dd className="text-zinc-900 dark:text-zinc-100">{order.giftRecipientName}</dd>
+                  </div>
+                  {order.giftDeliverBy ? (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                        Data desejada de entrega
+                      </dt>
+                      <dd className="text-zinc-900 dark:text-zinc-100">
+                        {formatIsoDateBR(order.giftDeliverBy)}
+                      </dd>
+                    </div>
+                  ) : null}
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                      Bilhete
+                    </dt>
+                    <dd className="whitespace-pre-line italic text-zinc-900 dark:text-zinc-100">
+                      {order.giftMessage ?? "Sem bilhete escrito — vai só o cartão da maison."}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+              {order.giftNotePath ? (
+                <img
+                  src={giftNoteUrl(getFileStorage(), order.giftNotePath, order.updatedAt)}
+                  alt="Bilhete do presente"
+                  className="mt-3 w-full max-w-xs rounded-md border border-zinc-200 dark:border-zinc-700"
+                />
+              ) : null}
+              <Link
+                href={`/admin/pedidos/${order.id}/bilhete`}
+                className="mt-3 inline-flex rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Imprimir bilhete
+              </Link>
+            </Card>
+          ) : null}
 
           <Card title="Cliente">
             {order.customer ? (

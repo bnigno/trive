@@ -24,6 +24,8 @@ import {
 } from "@/db/schema";
 import { normalizeDocument } from "@/lib/document";
 import { toE164BR } from "@/lib/phone";
+import { normalizeGiftName, normalizeGiftText } from "@/core/gifts/text";
+import { GIFT_MESSAGE_MAX, GIFT_RECIPIENT_MAX } from "@/core/gifts/types";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import {
   quoteCoupon,
@@ -150,6 +152,28 @@ const createStoreOrderSchema = z.object({
    * baixar manualmente.
    */
   paymentMethod: z.enum(["online", "cash"]).default("online"),
+  /**
+   * Presente: para quem é, o bilhete (opcional, ≤ 280) e a data desejada
+   * (só informativa). Presente = sem preço na embalagem.
+   */
+  gift: z
+    .object({
+      recipientName: z
+        .string()
+        .trim()
+        .min(1, "Diga para quem é o presente.")
+        .max(GIFT_RECIPIENT_MAX, "O nome de quem recebe cabe em 80 caracteres."),
+      message: z
+        .string()
+        .trim()
+        .max(GIFT_MESSAGE_MAX, "O bilhete cabe em 280 caracteres.")
+        .optional(),
+      deliverBy: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "Data desejada inválida.")
+        .optional(),
+    })
+    .optional(),
 });
 
 export type CreateStoreOrderInput = z.input<typeof createStoreOrderSchema>;
@@ -475,12 +499,26 @@ export async function createStoreOrder(
       shippingCents,
     );
 
+    // Presente: texto limpo (sem emoji — o bilhete é desenhado com a fonte
+    // da maison); bilhete vazio vira null.
+    const gift = parsed.gift
+      ? {
+          recipientName: normalizeGiftName(parsed.gift.recipientName) || parsed.gift.recipientName,
+          message: parsed.gift.message ? normalizeGiftText(parsed.gift.message) || null : null,
+          deliverBy: parsed.gift.deliverBy ?? null,
+        }
+      : null;
+
     const [order] = await tx
       .insert(orders)
       .values({
         customerId,
         status: "draft",
         channel: parsed.channel,
+        isGift: gift !== null,
+        giftRecipientName: gift?.recipientName ?? null,
+        giftMessage: gift?.message ?? null,
+        giftDeliverBy: gift?.deliverBy ?? null,
         subtotalCents: totals.subtotalCents,
         discountCents: coupon?.discountCents ?? 0,
         couponId: coupon?.couponId ?? null,
@@ -592,6 +630,16 @@ export async function createStoreOrder(
         customerId,
       },
     });
+    if (gift) {
+      // O bilhete em imagem (para o admin imprimir e a compradora conferir).
+      await enqueueOutboxEvent(tx, {
+        eventType: "order.gift_note",
+        dedupeKey: `order.gift_note:${order.id}`,
+        aggregateType: "order",
+        aggregateId: order.id,
+        payload: { orderId: order.id },
+      });
+    }
 
     await tx.insert(auditLog).values({
       actorType: "system",
@@ -610,6 +658,9 @@ export async function createStoreOrder(
         totalCents: totals.totalCents,
         paymentMethod: parsed.paymentMethod,
         paymentDueAt: paymentDueAt?.toISOString() ?? null,
+        gift: gift
+          ? { recipientName: gift.recipientName, hasMessage: gift.message !== null, deliverBy: gift.deliverBy }
+          : null,
         items: itemRows.map((r) => ({
           sku: r.skuSnapshot,
           quantity: r.quantity,
@@ -737,6 +788,10 @@ export interface PublicOrder {
   deliveredAt: Date | null;
   /** Foto do pacote (path no Storage); a página resolve a URL pública. */
   packagePhotoPath: string | null;
+  /** Presente: a página mostra o bilhete (a compradora escreveu; sem PII nosso). */
+  isGift: boolean;
+  giftRecipientName: string | null;
+  giftNotePath: string | null;
 }
 
 /**
@@ -772,6 +827,9 @@ export async function getPublicOrder(
         shippedAt: orders.shippedAt,
         deliveredAt: orders.deliveredAt,
         packagePhotoPath: orders.packagePhotoPath,
+        isGift: orders.isGift,
+        giftRecipientName: orders.giftRecipientName,
+        giftNotePath: orders.giftNotePath,
       })
       .from(orders)
       .where(eq(orders.publicToken, parsedToken.data));
@@ -832,5 +890,8 @@ export async function getPublicOrder(
     shippedAt: order.shippedAt,
     deliveredAt: order.deliveredAt,
     packagePhotoPath: order.packagePhotoPath,
+    isGift: order.isGift,
+    giftRecipientName: order.giftRecipientName,
+    giftNotePath: order.giftNotePath,
   };
 }

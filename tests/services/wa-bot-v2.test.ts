@@ -733,3 +733,38 @@ describe("modo ensaio (dryRun)", () => {
     expect(conversation.status).toBe("open");
   });
 });
+
+describe("criar_pedido com presente", () => {
+  it("passa o presente ao pedido (sem preço na embalagem, bilhete dela) e entra no resumo", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await createRate("PAC", 1990);
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId);
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL", quantidade: 1 });
+    await executor("cotar_frete", { cep: "01310100" });
+
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      presente: { para: "minha mãe", bilhete: "Mãe, você é única 🤎", entregar_ate: "2026-10-05" },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("🎁 Presente para minha mãe — bilhete incluído, sem preço na embalagem.");
+
+    const [order] = await db.select().from(schema.orders);
+    expect(order.isGift).toBe(true);
+    expect(order.giftRecipientName).toBe("minha mãe");
+    expect(order.giftMessage).toBe("Mãe, você é única");
+    expect(order.giftDeliverBy).toBe("2026-10-05");
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events.map((event) => event.eventType)).toContain("order.gift_note");
+  });
+
+  it("entregar_ate fora do formato é recusado antes de criar o pedido", async () => {
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId);
+    const result = await executor("criar_pedido", { ...IDENTITY, presente: { para: "Ana", entregar_ate: "05/10/2026" } });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("AAAA-MM-DD");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+});

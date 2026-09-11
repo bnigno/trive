@@ -7,6 +7,8 @@ import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
+import { renderGiftNotePng } from "@/receipts/render-gift-note";
+import { sendGiftNoteWa } from "@/services/gifts";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
@@ -272,6 +274,19 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       { orderId },
     );
     console.info(`[order.packed] ${orderId} → ${JSON.stringify(result)}`);
+  },
+  // Bilhete do presente: publica a imagem (o admin imprime dela) e manda a
+  // prévia à compradora com opt-in; dedupe por pedido.
+  "order.gift_note": async (event) => {
+    const orderId = String(event.payload.orderId);
+    const result = await sendGiftNoteWa(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      async (data) => renderGiftNotePng(data, await loadReceiptAssets()),
+      { orderId },
+    );
+    console.info(`[order.gift_note] ${orderId} → ${JSON.stringify(result)}`);
   },
   "order.shipped": async (event) => {
     await sendOrderEmail(getDb(), getEmailProvider(), {

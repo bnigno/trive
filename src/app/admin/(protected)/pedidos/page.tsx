@@ -158,7 +158,7 @@ export default async function PedidosPage({
                   href={`/admin/pedidos/${order.id}`}
                   className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
                 >
-                  #{order.orderNumber}
+                  {order.isGift ? "🎁 " : ""}#{order.orderNumber}
                 </Link>
               </Td>
               <Td>

@@ -1394,6 +1394,15 @@ async function execCriarPedido(
       ...(input.cupom !== undefined && input.cupom.trim() !== ""
         ? { couponCode: input.cupom }
         : {}),
+      ...(input.presente
+        ? {
+            gift: {
+              recipientName: input.presente.para,
+              ...(input.presente.bilhete ? { message: input.presente.bilhete } : {}),
+              ...(input.presente.entregar_ate ? { deliverBy: input.presente.entregar_ate } : {}),
+            },
+          }
+        : {}),
     });
   } catch (error) {
     // Erros de negócio (preço mudou, estoque, cupom, frete) voltam com a
@@ -1471,6 +1480,11 @@ async function execCriarPedido(
     `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
     ...(discountCents > 0 ? [`Desconto: -${formatCentsBRL(discountCents)}`] : []),
     `TOTAL: ${formatCentsBRL(created.totalCents)}`,
+    ...(input.presente
+      ? [
+          `🎁 Presente para ${input.presente.para} — ${input.presente.bilhete ? "bilhete incluído" : "sem bilhete"}, sem preço na embalagem.`,
+        ]
+      : []),
     ...(isCash
       ? ["Pagamento em dinheiro na entrega — vamos combinar a entrega por aqui."]
       : []),

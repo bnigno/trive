@@ -133,8 +133,20 @@ const initialWaTemplates: Array<{
     bodyTemplate:
       "Novo pedido na loja! 🛍️\n" +
       "Pedido #{{pedido}} — {{total}}\n" +
-      "Cliente: {{cliente}}",
-    variables: ["pedido", "total", "cliente"],
+      "Cliente: {{cliente}}{{presente}}",
+    variables: ["pedido", "total", "cliente", "presente"],
+  },
+  {
+    // Bilhete do presente (legenda da imagem): sai quando o pedido é
+    // presente, junto da prévia do bilhete; só com opt-in; uma vez por pedido.
+    key: "gift_note_preview",
+    label: "Bilhete do presente (legenda da imagem)",
+    bodyTemplate:
+      "{{nome}}, o bilhete para {{para}} ficou assim 🎁\n" +
+      "Ele vai impresso dentro do pacote — e a embalagem segue sem preço.\n" +
+      "Quer ajustar alguma palavra? É só responder por aqui.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "para"],
   },
   {
     key: "owner_payment_approved",

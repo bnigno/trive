@@ -1,7 +1,9 @@
 import {
   bigint,
   bigserial,
+  boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -79,6 +81,14 @@ export const orders = pgTable(
     // UMA foto por pedido: refazer sobrescreve o mesmo path.
     packagePhotoPath: text("package_photo_path"),
     packedAt: timestamp("packed_at", { withTimezone: true }),
+    // Presente (Onda 4): para quem é, o bilhete que a compradora escreveu
+    // (≤ 280), a data desejada (só informativa) e a imagem do bilhete
+    // publicada em gifts/<id>/bilhete.jpg. Presente = sem preço no pacote.
+    isGift: boolean("is_gift").notNull().default(false),
+    giftRecipientName: text("gift_recipient_name"),
+    giftMessage: text("gift_message"),
+    giftDeliverBy: date("gift_deliver_by"),
+    giftNotePath: text("gift_note_path"),
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
@@ -93,6 +103,10 @@ export const orders = pgTable(
   },
   (table) => [
     index("orders_status_idx").on(table.status),
+    check(
+      "orders_gift_message_len_check",
+      sql`${table.giftMessage} IS NULL OR char_length(${table.giftMessage}) <= 280`,
+    ),
     index("orders_customer_id_idx").on(table.customerId),
     index("orders_created_at_idx").on(table.createdAt),
     index("orders_payment_due_at_idx").on(table.paymentDueAt),
