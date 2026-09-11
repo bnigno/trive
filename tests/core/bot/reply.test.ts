@@ -60,3 +60,27 @@ describe("splitBotReply", () => {
     ]);
   });
 });
+
+describe("stripInternalMarkers (anotações internas nunca chegam à cliente)", () => {
+  it("remove o marcador de foto/lista copiado pelo modelo, no começo e no meio", async () => {
+    const { polishBotReply, splitBotReply, stripInternalMarkers } = await import("@/core/bot/reply");
+    expect(
+      polishBotReply(
+        "[foto enviada ao cliente] Bolsa Tote de Algodão — R$ 34,90\n\nResistente e com estampa exclusiva, R$ 34,90 🤎\n\nQuer que eu já coloque na sua sacola?",
+      ),
+    ).toBe("Bolsa Tote de Algodão — R$ 34,90\n\nResistente e com estampa exclusiva, R$ 34,90 🤎\n\nQuer que eu já coloque na sua sacola?");
+    expect(stripInternalMarkers("Olha ela: [foto enviada ao cliente] Vestido Dunas")).toBe("Olha ela: Vestido Dunas");
+    expect(stripInternalMarkers("[A foto da peça foi enviada ao cliente.]\nVeste M?")).toBe("Veste M?");
+    expect(stripInternalMarkers("[lista tocável do catálogo enviada ao cliente]\nToque em «Ver o catálogo» 👇")).toBe("Toque em «Ver o catálogo» 👇");
+    expect(splitBotReply("[Um cartão com as fotos foi enviado junto com a lista.]\nMandei um cartão com as três 🤎\n---\nQual chamou sua atenção?")).toEqual([
+      "Mandei um cartão com as três 🤎",
+      "Qual chamou sua atenção?",
+    ]);
+  });
+
+  it("deixa colchetes curtos de verdade em paz", async () => {
+    const { stripInternalMarkers } = await import("@/core/bot/reply");
+    expect(stripInternalMarkers("Tem no [M] e no [G].")).toBe("Tem no [M] e no [G].");
+    expect(stripInternalMarkers("[ok] combinado")).toBe("[ok] combinado");
+  });
+});
