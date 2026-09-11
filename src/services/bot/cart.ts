@@ -1,10 +1,12 @@
 // Ferramentas da sacola da vendedora.
 import { inArray } from "drizzle-orm";
-import { cartAdd, cartRemove, formatCartLines, type BotCartItem } from "@/core/bot/memory";
+import { cartAdd, cartRemove, cartSubtotalCents, formatCartLines, type BotCartItem } from "@/core/bot/memory";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { productVariants } from "@/db/schema";
+import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
+import { quoteCoupon, ServiceError as CouponServiceError } from "@/services/coupons";
 import { computeTotalWeightGrams } from "@/services/store-catalog";
 
 import { availableQtyOf, resolveVariantBySku } from "./catalog";
@@ -112,4 +114,50 @@ export async function cartWeightGrams(db: DbOrTx, cart: readonly BotCartItem[]):
       quantity: item.quantidade,
     })),
   );
+}
+
+/**
+ * validar_cupom: o desconto REAL sobre a sacola desta conversa, sem consumir
+ * o cupom (quem consome é criar_pedido, na transação do pedido). Válido vai
+ * para o caderninho; criar_pedido aplica quando o campo cupom vier ausente.
+ * Só lê, então vale também no ensaio (dryRun) — o caderninho não é gravado.
+ */
+export async function execValidarCupom(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["validar_cupom"],
+): Promise<ToolResult> {
+  const state = await loadBotState(db, ctx.conversationId);
+  const cart = state.cart ?? [];
+  if (cart.length === 0) {
+    return {
+      ok: false,
+      text: "A sacola está vazia — o desconto é calculado sobre as peças da sacola. Confirme as peças com adicionar_a_sacola e valide o cupom de novo.",
+    };
+  }
+  const subtotalCents = cartSubtotalCents(cart);
+  const codigo = input.cupom.trim().toUpperCase();
+  let quote;
+  try {
+    quote = await quoteCoupon(db, { code: codigo, subtotalCents });
+  } catch (error) {
+    if (error instanceof CouponServiceError) {
+      return {
+        ok: false,
+        text: `O cupom ${codigo} não vale para esta sacola: ${error.message} Explique com gentileza e siga sem desconto — nunca invente outro.`,
+      };
+    }
+    throw error;
+  }
+  await updateBotState(db, ctx, (current) => ({
+    ...current,
+    coupon: { code: quote.code, discountCents: quote.discountCents, at: new Date().toISOString() },
+  }));
+  return {
+    ok: true,
+    text: [
+      `Cupom ${quote.code} válido: desconto de ${formatCentsBRL(quote.discountCents)} sobre o subtotal de ${formatCentsBRL(subtotalCents)} das peças → ${formatCentsBRL(subtotalCents - quote.discountCents)} (o frete não entra no desconto).`,
+      `Passe cupom: "${quote.code}" em criar_pedido — o desconto só é aplicado ao fechar o pedido, e o resumo oficial virá com o valor final.`,
+    ].join("\n"),
+  };
 }

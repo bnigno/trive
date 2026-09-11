@@ -87,6 +87,16 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("passe em frete a opção que a cliente escolheu");
   });
 
+  it("cupom só pela ferramenta e histórico de compras para quem volta", () => {
+    const prompt = buildBotSystemPrompt(promptOptions);
+    expect(prompt).toContain("Cupom só existe se validar_cupom confirmar");
+    expect(prompt).toContain("criar_pedido.cupom");
+    expect(prompt).toContain("cupom validado por validar_cupom NESTA conversa");
+    expect(prompt).toContain("chame historico_de_compras quando ela perguntar o que levou");
+    expect(prompt).toContain("Nunca cite compra que a ferramenta não devolveu");
+    expect(prompt).toContain("e em cupom o código que validar_cupom confirmou");
+  });
+
   it("contém as regras de Pix manual, aviso ao dono e dinheiro na entrega", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
     // Problema com o link → oferecer Pix manual; só a ferramenta confirma.
@@ -187,6 +197,15 @@ describe("BOT_TOOLS", () => {
     const forma = properties["forma_de_pagamento"];
     expect(forma["enum"]).toEqual(["online", "dinheiro_na_entrega"]);
     expect(forma["default"]).toBe("online");
+  });
+
+  it("validar_cupom exige o código; historico_de_compras não recebe entrada", () => {
+    const validar = BOT_TOOLS.find((tool) => tool.name === "validar_cupom");
+    expect(validar?.input_schema.required).toEqual(["cupom"]);
+    expect(validar?.description).toContain("criar_pedido.cupom");
+    const historico = BOT_TOOLS.find((tool) => tool.name === "historico_de_compras");
+    expect(historico?.input_schema.properties).toEqual({});
+    expect(historico?.description).toContain("telefone desta conversa");
   });
 
   it("enviar_chave_pix: numero_do_pedido opcional; avisar_dono exige mensagem", () => {
@@ -338,6 +357,21 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     expect(
       schema.safeParse({ ...pedidoValido, forma_de_pagamento: "" }).success,
     ).toBe(false);
+  });
+
+  it("validar_cupom: código obrigatório (aparado), até 40 caracteres, sem extras; historico_de_compras vazio", () => {
+    const schema = BOT_TOOL_INPUT_SCHEMAS.validar_cupom;
+    expect(schema.safeParse({ cupom: " bemvinda10 " })).toMatchObject({
+      success: true,
+      data: { cupom: "bemvinda10" },
+    });
+    expect(schema.safeParse({ cupom: "   " }).success).toBe(false);
+    expect(schema.safeParse({}).success).toBe(false);
+    expect(schema.safeParse({ cupom: "A".repeat(41) }).success).toBe(false);
+    expect(schema.safeParse({ cupom: "X", valor: 10 }).success).toBe(false);
+    const historico = BOT_TOOL_INPUT_SCHEMAS.historico_de_compras;
+    expect(historico.safeParse({}).success).toBe(true);
+    expect(historico.safeParse({ telefone: "x" }).success).toBe(false);
   });
 
   it("status_do_pedido: número opcional, inteiro positivo", () => {

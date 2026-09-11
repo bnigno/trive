@@ -12,8 +12,10 @@ export const BOT_TOOL_NAMES = [
   "adicionar_a_sacola",
   "ver_sacola",
   "remover_da_sacola",
+  "validar_cupom",
   "cotar_frete",
   "buscar_cadastro",
+  "historico_de_compras",
   "criar_pedido",
   "status_do_pedido",
   "enviar_chave_pix",
@@ -49,8 +51,11 @@ export type BotToolInputs = {
   adicionar_a_sacola: { sku: string; quantidade: number };
   ver_sacola: Record<string, never>;
   remover_da_sacola: { sku: string };
+  /** Código como a cliente escreveu; o executor normaliza e calcula sobre a sacola. */
+  validar_cupom: { cupom: string };
   cotar_frete: { cep: string };
   buscar_cadastro: Record<string, never>;
+  historico_de_compras: Record<string, never>;
   criar_pedido: {
     /** Omitido = fecha com o que está na sacola. */
     itens?: { sku: string; quantidade: number }[];
@@ -218,6 +223,23 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "validar_cupom",
+    description:
+      "Valida um cupom de desconto que a cliente mencionou e calcula o desconto REAL sobre a sacola atual — o valor sai daqui, nunca de cabeça. Chame assim que ela citar um código, com as peças já na sacola. Se for válido, passe o MESMO código em criar_pedido.cupom (o desconto só é aplicado ao fechar o pedido). Se não for, diga o motivo devolvido e siga sem desconto: não existe outro desconto além do que esta ferramenta confirmar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        cupom: {
+          type: "string",
+          description:
+            "Código do cupom como a cliente escreveu (maiúsculas e minúsculas não importam).",
+        },
+      },
+      required: ["cupom"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "cotar_frete",
     description:
       "Devolve as opções reais de entrega (transportadora, prazo e valor) para um CEP, com o peso das peças que estão na sacola. Chame depois de montar a sacola e SEMPRE com o CEP do endereço que VAI no pedido (o salvo que a cliente confirmou, ou o novo). Se o endereço ou a sacola mudar, cote de novo. A cliente ESCOLHE uma das opções; passe a escolha em criar_pedido (campo frete).",
@@ -238,6 +260,17 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     name: "buscar_cadastro",
     description:
       "Procura o cadastro já salvo da cliente DESTA conversa: nome, CPF mascarado e até 3 endereços salvos, cada um com o CEP. Chame ANTES de começar a pedir dados pessoais e ANTES de cotar o frete: confirme QUAL endereço é o da entrega e cote com o CEP dele. Se ela já comprou, você confirma tudo em uma pergunta em vez de coletar sete campos. O CPF vem mascarado de propósito — os dados reais nunca passam por você.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "historico_de_compras",
+    description:
+      "O que a cliente DESTA conversa já comprou na loja: os últimos pedidos com número, data, status e peças (nome, cor e tamanho). Use quando ela perguntar o que levou, quiser repetir uma peça ou o tamanho, pedir algo que combine com o que já tem, ou quando o caderninho mostrar 'Compras anteriores' e lembrar a peça ajudar a vender. Só enxerga os pedidos do telefone desta conversa — nunca de outra pessoa.",
     input_schema: {
       type: "object",
       properties: {},
@@ -585,6 +618,9 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   remover_da_sacola: z.strictObject({
     sku: z.string().min(1),
   }),
+  validar_cupom: z.strictObject({
+    cupom: z.string().trim().min(1, "Informe o código do cupom.").max(40),
+  }),
   cotar_frete: z.strictObject({
     cep: digitos(8, "CEP"),
   }),
@@ -671,6 +707,7 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
       }
     }),
   buscar_cadastro: z.strictObject({}),
+  historico_de_compras: z.strictObject({}),
   status_do_pedido: z.strictObject({
     numero_do_pedido: z.number().int().min(1).optional(),
   }),

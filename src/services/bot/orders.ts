@@ -1,10 +1,20 @@
 // Fechamento e pós-venda pela vendedora: criar_pedido, status_do_pedido, enviar_chave_pix.
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import {
+  BOT_ORDER_STATUS_LABELS,
+  isPurchasedStatus,
+  PURCHASE_HISTORY_LIMIT,
+  PURCHASED_STATUSES,
+  purchaseMemoryLine,
+  summarizePurchaseHistory,
+  type PurchaseOrderSummary,
+} from "@/core/bot/purchases";
 import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
-import { auditLog, customers, orders, waConversations } from "@/db/schema";
+import { variantLabel } from "@/core/catalog/attributes";
+import { auditLog, customers, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
 import { formatDateTimeSP } from "@/emails/templates";
 import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
@@ -26,16 +36,7 @@ import type { OrderIdentity } from "./customer";
 import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, loadBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 
-export const ORDER_STATUS_LABELS: Record<string, string> = {
-  draft: "em rascunho",
-  pending_payment: "aguardando pagamento",
-  paid: "pagamento aprovado",
-  preparing: "em preparação",
-  shipped: "enviado",
-  delivered: "entregue",
-  canceled: "cancelado",
-  refunded: "reembolsado",
-};
+export const ORDER_STATUS_LABELS = BOT_ORDER_STATUS_LABELS;
 
 export async function execCriarPedido(
   db: DbOrTx,
@@ -164,6 +165,11 @@ export async function execCriarPedido(
 
   const isCash = input.forma_de_pagamento === "dinheiro_na_entrega";
 
+  // Cupom: o que veio no campo; ausente, o que validar_cupom confirmou nesta
+  // conversa (cupom vazio = explicitamente sem cupom). O serviço revalida.
+  const couponCode =
+    input.cupom !== undefined ? input.cupom.trim() : (state.coupon?.code ?? "");
+
   let created;
   try {
     created = await createStoreOrder(db, {
@@ -194,9 +200,7 @@ export async function execCriarPedido(
       })),
       shippingRateId: chosen.rateId,
       expectedShippingCents: chosen.priceCents,
-      ...(input.cupom !== undefined && input.cupom.trim() !== ""
-        ? { couponCode: input.cupom }
-        : {}),
+      ...(couponCode !== "" ? { couponCode } : {}),
       ...(input.presente
         ? {
             gift: {
@@ -244,6 +248,7 @@ export async function execCriarPedido(
         lastQuotes: undefined,
         lastQuotedAt: undefined,
         chosenRateId: undefined,
+        coupon: undefined,
         lastOrderNumber: created.orderNumber,
       },
       updatedAt: new Date(),
@@ -310,7 +315,7 @@ export async function execCriarPedido(
  */
 export async function resolveConversationCustomerId(
   db: DbOrTx,
-  ctx: BotExecutorContext,
+  ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
 ): Promise<string | null> {
   if (ctx.customerId) return ctx.customerId;
   const [customer] = await db
@@ -370,6 +375,92 @@ export async function execStatusDoPedido(
     `Acompanhe: ${orderPublicUrl(order.publicToken)}`,
   ];
   return { ok: true, text: lines.join("\n") };
+}
+
+/**
+ * Últimos pedidos de uma cliente com as peças (nome do pedido + variação
+ * atual da combinação). Rascunho fica de fora (nunca chegou a ser pedido).
+ */
+export async function loadPurchaseHistory(
+  db: DbOrTx,
+  customerId: string,
+  opts: { limit: number; onlyPurchased?: boolean },
+): Promise<PurchaseOrderSummary[]> {
+  const conditions = [eq(orders.customerId, customerId), ne(orders.status, "draft")];
+  if (opts.onlyPurchased) conditions.push(inArray(orders.status, [...PURCHASED_STATUSES]));
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      status: orders.status,
+      createdAt: orders.createdAt,
+      totalCents: orders.totalCents,
+    })
+    .from(orders)
+    .where(and(...conditions))
+    .orderBy(desc(orders.createdAt), desc(orders.orderNumber))
+    .limit(opts.limit);
+  if (rows.length === 0) return [];
+
+  const items = await db
+    .select({
+      orderId: orderItems.orderId,
+      name: orderItems.nameSnapshot,
+      quantity: orderItems.quantity,
+      attributes: productVariants.attributes,
+      attributesSchema: products.attributesSchema,
+    })
+    .from(orderItems)
+    .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
+    .innerJoin(products, eq(products.id, productVariants.productId))
+    .where(inArray(orderItems.orderId, rows.map((row) => row.id)));
+
+  return rows.map((row) => ({
+    orderNumber: row.orderNumber,
+    status: row.status,
+    createdAt: row.createdAt,
+    totalCents: row.totalCents,
+    items: items
+      .filter((item) => item.orderId === row.id)
+      .map((item) => {
+        const axes = Array.isArray(item.attributesSchema) ? (item.attributesSchema as string[]) : [];
+        return {
+          name: item.name,
+          variantLabel: variantLabel((item.attributes ?? {}) as Record<string, string>, axes),
+          quantity: item.quantity,
+        };
+      }),
+  }));
+}
+
+/** Ferramenta historico_de_compras: só lê, então vale também no ensaio (dryRun). */
+export async function execHistoricoDeCompras(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+): Promise<ToolResult> {
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  if (!customerId) return { ok: true, text: summarizePurchaseHistory([]) };
+  const history = await loadPurchaseHistory(db, customerId, { limit: PURCHASE_HISTORY_LIMIT });
+  return { ok: true, text: summarizePurchaseHistory(history) };
+}
+
+/**
+ * Linha "Compras anteriores" do caderninho: a compra paga mais recente e
+ * quantas compras pagas o telefone tem. Null para quem nunca comprou.
+ */
+export async function purchaseMemoryLineFor(
+  db: DbOrTx,
+  ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
+): Promise<string | null> {
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  if (!customerId) return null;
+  const [latest] = await loadPurchaseHistory(db, customerId, { limit: 1, onlyPurchased: true });
+  if (!latest || !isPurchasedStatus(latest.status)) return null;
+  const [row] = await db
+    .select({ total: count() })
+    .from(orders)
+    .where(and(eq(orders.customerId, customerId), inArray(orders.status, [...PURCHASED_STATUSES])));
+  return purchaseMemoryLine(latest, Number(row?.total ?? 0));
 }
 
 /**
