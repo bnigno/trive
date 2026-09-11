@@ -19,6 +19,7 @@ export async function GET(
   const { id, format } = await params;
   const parsed = z.enum(["post", "story"]).safeParse(format);
   if (!parsed.success) return new Response("Formato inválido.", { status: 404 });
+  if (!z.uuid().safeParse(id).success) return new Response("Peça não encontrada.", { status: 404 });
 
   let file;
   try {
@@ -27,7 +28,10 @@ export async function GET(
       format: parsed.data,
     });
   } catch (error) {
-    if (error instanceof ServiceError) return new Response(error.message, { status: 409 });
+    if (error instanceof ServiceError) {
+      const status = error.code === "nao_encontrado" ? 404 : 409;
+      return new Response(error.message, { status });
+    }
     throw error;
   }
   if (!file) return new Response("Ainda não desenhado.", { status: 404 });
@@ -36,7 +40,9 @@ export async function GET(
   return new Response(new Uint8Array(file.data), {
     headers: {
       "Content-Type": file.contentType,
-      "Cache-Control": "private, max-age=60",
+      // A URL é fixa por peça e formato, mas o desenho muda quando o preço ou
+      // a foto mudam: guardar 60 s devolveria a arte velha no "Atualizar".
+      "Cache-Control": "private, no-store",
       ...(download
         ? { "Content-Disposition": `attachment; filename="${parsed.data}.jpg"` }
         : {}),

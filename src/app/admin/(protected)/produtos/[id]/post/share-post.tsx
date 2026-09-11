@@ -31,14 +31,21 @@ export function SharePost({
   const [ready, setReady] = useState(hasPost && hasStory);
   const [files, setFiles] = useState<Loaded>({ post: null, story: null });
   const [busy, setBusy] = useState(false);
+  /** As imagens são baixadas assim que a tela abre; até lá, não dá para compartilhar. */
+  const [loadingFiles, setLoadingFiles] = useState(ready);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
 
   const load = useCallback(async (): Promise<Loaded> => {
     const fetchOne = async (format: "post" | "story"): Promise<File | null> => {
-      const response = await fetch(`/admin/produtos/${productId}/post/${format}`);
-      if (!response.ok) return null;
+      const response = await fetch(`/admin/produtos/${productId}/post/${format}`, {
+        cache: "no-store",
+      });
+      // Sessão expirada responde a página de login (200, text/html): sem esta
+      // checagem o "JPEG" compartilhado seria o HTML do login.
+      if (!response.ok || response.redirected) return null;
       const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) return null;
       return new File([blob], `${format}.jpg`, { type: "image/jpeg" });
     };
     const [post, story] = await Promise.all([fetchOne("post"), fetchOne("story")]);
@@ -50,9 +57,17 @@ export function SharePost({
   useEffect(() => {
     if (!ready) return;
     let alive = true;
-    void load().then((loaded) => {
-      if (alive) setFiles(loaded);
-    });
+    void load()
+      .then((loaded) => {
+        if (!alive) return;
+        setFiles(loaded);
+        if (!loaded.post && !loaded.story) {
+          setError("Não consegui carregar as imagens. Recarregue a página ou entre de novo.");
+        }
+      })
+      .finally(() => {
+        if (alive) setLoadingFiles(false);
+      });
     return () => {
       alive = false;
     };
@@ -70,12 +85,21 @@ export function SharePost({
     }
     setReady(true);
     setDone("Post e story prontos.");
+    setLoadingFiles(true);
     setFiles(await load());
+    setLoadingFiles(false);
   }
 
   async function handleShare() {
     const list = [files.post, files.story].filter((file): file is File => file !== null);
-    if (list.length === 0) return;
+    if (list.length === 0) {
+      setError(
+        loadingFiles
+          ? "As imagens ainda estão chegando — aguarde um instante e toque de novo."
+          : "Não consegui preparar as imagens para compartilhar. Use “Baixar”.",
+      );
+      return;
+    }
     const data: ShareData = { files: list, text: caption };
     if (typeof navigator.canShare === "function" && navigator.canShare(data)) {
       try {
@@ -146,8 +170,13 @@ export function SharePost({
             </Button>
             {ready ? (
               <>
-                <Button type="button" variant="outline" onClick={handleShare}>
-                  Compartilhar
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleShare}
+                  disabled={loadingFiles}
+                >
+                  {loadingFiles ? "Preparando as imagens…" : "Compartilhar"}
                 </Button>
                 <a
                   href={`/admin/produtos/${productId}/post/post?download=1`}

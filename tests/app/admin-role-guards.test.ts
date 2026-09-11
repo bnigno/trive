@@ -159,6 +159,36 @@ describe("guards de papel no painel (varredura de arquivos)", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("toda action exportada sob (protected) tem algum guard de sessão", () => {
+    // A varredura de "área do dono" só olha as pastas do dono; uma action nova
+    // numa área compartilhada (ex.: produtos/[id]/post) ficaria sem rede.
+    const GUARD = /requireOwner\(|requireUser\(|getAuthUserOrNull\(/;
+    const files = walk(PROTECTED_ROOT, new Set<string>()).filter(
+      (file) => path.basename(file) === "actions.ts",
+    );
+    expect(files.length).toBeGreaterThan(3);
+    for (const file of files) {
+      const source = read(file);
+      // Helpers do próprio arquivo (ex.: runTransition) também valem como
+      // guard: o que não pode é a action chegar ao banco sem passar por um.
+      const helpers = [...source.matchAll(/\nasync function (\w+)/g)]
+        .map((match) => match[1])
+        .filter((name) => {
+          const start = source.indexOf(`async function ${name}`);
+          const next = source.indexOf("\nasync function ", start + 1);
+          const end = source.indexOf("\nexport async function ", start + 1);
+          const stop = Math.min(...[next, end].filter((index) => index > 0), source.length);
+          return GUARD.test(source.slice(start, stop));
+        });
+      for (const action of exportedActionBodies(source)) {
+        const guarded =
+          GUARD.test(action.body) ||
+          helpers.some((helper) => new RegExp(`\\b${helper}\\s*\\(`).test(action.body));
+        expect(guarded, `${rel(file)}: ${action.name} sem guard de sessão`).toBe(true);
+      }
+    }
+  });
+
   it("toda página sob (protected) tem algum guard de sessão", () => {
     const offenders: string[] = [];
     for (const file of allProtectedFiles) {

@@ -140,4 +140,34 @@ describe("post e story da peça", () => {
 
     expect(networkCalls).toEqual([]);
   });
+
+  it("nome longo não empurra o rodapé para fora: a última linha continua dentro da arte", async () => {
+    const assets = await loadReceiptAssets();
+    const hero = {
+      ...items[0],
+      name: "Vestido Longo Dunas de Linho Natural com Alças Finas Ajustáveis",
+    };
+    const png = await renderCardPng(
+      {
+        kind: "post",
+        storeName: "TRIVÉ",
+        eyebrow: "EDIÇÃO CÍRIO",
+        title: hero.name,
+        hero,
+      },
+      assets,
+    );
+    // O rodapé tem um traço dourado (#d4b96a) logo acima da assinatura. Se a
+    // arte estourasse, ele seria empurrado para fora e sumiria do quadro.
+    const { data, info } = await sharp(png)
+      .extract({ left: 0, top: 1200, width: 1080, height: 150 })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let gold = 0;
+    for (let i = 0; i < data.length; i += info.channels) {
+      const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+      if (r > 185 && r < 235 && g > 160 && g < 210 && b > 80 && b < 140) gold += 1;
+    }
+    expect(gold, "o traço dourado do rodapé sumiu: a arte estourou").toBeGreaterThan(50);
+  });
 });

@@ -40,12 +40,15 @@ function Frame({
   height,
   nameSize,
   priceSize,
+  showName = true,
 }: {
   item: CardItem;
   width: number;
   height: number;
   nameSize: number;
   priceSize: number;
+  /** No post e no story o título já é o nome: repetir estoura a arte. */
+  showName?: boolean;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width }}>
@@ -59,19 +62,21 @@ function Frame({
       >
         <img src={item.imageDataUrl} width={width - 18} height={height - 18} alt="" />
       </div>
-      <div
-        style={{
-          marginTop: 16,
-          fontFamily: SERIF,
-          fontWeight: 600,
-          fontSize: nameSize,
-          lineHeight: 1.1,
-          color: C.ink900,
-          textAlign: "center",
-        }}
-      >
-        {clampName(item.name, width >= 500 ? 40 : 26)}
-      </div>
+      {showName ? (
+        <div
+          style={{
+            marginTop: 16,
+            fontFamily: SERIF,
+            fontWeight: 600,
+            fontSize: nameSize,
+            lineHeight: 1.1,
+            color: C.ink900,
+            textAlign: "center",
+          }}
+        >
+          {clampName(item.name, width >= 500 ? 40 : 26)}
+        </div>
+      ) : null}
       <div
         style={{
           marginTop: 6,
@@ -198,7 +203,8 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
           width={cardFrameSize(data.kind, "hero", 1).width}
           height={cardFrameSize(data.kind, "hero", 1).height}
           nameSize={data.kind === "story" ? 44 : 40}
-          priceSize={data.kind === "story" ? 30 : 28}
+          priceSize={data.kind === "story" ? 34 : 32}
+          showName={false}
         />
       ) : data.kind === "catalog" ? (
         <div
