@@ -17,6 +17,7 @@ import {
   rejectPriceVersion,
   ServiceError,
   setVariantCost,
+  suggestPriceForCost,
 } from "@/services/pricing";
 import {
   createTestDb,
@@ -449,6 +450,34 @@ describe("consultas", () => {
       ).rejects.toThrow(/taxa de pagamento/i);
     } finally {
       await isolated.close();
+    }
+  });
+});
+
+describe("suggestPriceForCost", () => {
+  it("usa a política global ativa e a taxa de referência, sem precisar de variante", async () => {
+    // Mesmas fixtures da referência: custo 1000 → 1690 (margem efetiva 0,3586).
+    const suggested = await suggestPriceForCost(db, 1000);
+    expect(suggested?.priceCents).toBe(1690);
+    expect(suggested?.effectiveMarginRate).toBeCloseTo(0.3586, 3);
+    expect(suggested?.breakdown.steps.length).toBeGreaterThan(0);
+    // Custo maior sobe o preço; custo zero ainda devolve um preço válido.
+    expect((await suggestPriceForCost(db, 12000))!.priceCents).toBeGreaterThan(1690);
+    expect((await suggestPriceForCost(db, 0))!.priceCents).toBeGreaterThanOrEqual(0);
+  });
+
+  it("sem taxa marcada como referência (ou sem política ativa) devolve null", async () => {
+    const fresh = await createTestDb();
+    try {
+      const empty = fresh.db as unknown as Parameters<typeof suggestPriceForCost>[0];
+      expect(await suggestPriceForCost(empty, 1000)).toBeNull();
+      await createTestFeeRuleAndPolicy(fresh.db);
+      await fresh.db
+        .update(schema.paymentFeeRules)
+        .set({ isReferenceForPricing: false });
+      expect(await suggestPriceForCost(empty, 1000)).toBeNull();
+    } finally {
+      await fresh.close();
     }
   });
 });

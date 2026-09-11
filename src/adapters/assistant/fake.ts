@@ -2,9 +2,27 @@ import type { BotToolName } from "@/core/bot/tools";
 
 import type {
   AssistantTurn,
+  ExtractFromPhotosInput,
+  ExtractFromPhotosResult,
   RespondTurnInput,
   SalesAssistant,
 } from "./index";
+
+/** Rascunho canônico para demos em ADAPTER_MODE=fake (sem roteiro). */
+export const FAKE_PRODUCT_DRAFT_JSON = {
+  name: "Vestido Áurea",
+  categorySlug: null,
+  colors: ["Areia", "Terracota"],
+  sizes: ["P", "M", "G"],
+  description:
+    "Vestido longo de linho com caimento fluido e alças finas, pensado para as tardes de calor: o tecido respira, seca rápido e acompanha o corpo sem marcar. O decote reto e a saia evasê alongam a silhueta; o comprimento midi-longo fica elegante com rasteira de dia e com salto à noite. Em Belém, é a peça que vai do almoço em família ao fim de tarde na orla sem perder o frescor — a umidade não pesa no linho, e a cor areia combina com a luz da cidade.",
+  composition: "100% linho",
+  careSymbols: ["hand_wash", "dry_shade"],
+  careFreeText: "",
+  fitNotes: "Corte fluido, comprimento midi-longo, alças finas ajustáveis.",
+  weightGramsEstimate: 320,
+  warnings: [],
+};
 
 export type FakeTurnScript = {
   toolCalls?: { name: BotToolName; input: unknown }[];
@@ -21,9 +39,27 @@ export class FakeSalesAssistant implements SalesAssistant {
   readonly turns: AssistantTurn[] = [];
   /** O que cada turno recebeu (prompt, histórico com fotos) — para os testes. */
   readonly inputs: RespondTurnInput[] = [];
+  private readonly extractionScripts: unknown[] = [];
+  /** O que cada extração recebeu (prompt, fotos, schema) — para os testes. */
+  readonly extractions: ExtractFromPhotosInput[] = [];
 
   enqueueScript(script: FakeTurnScript): void {
     this.scripts.push(script);
+  }
+
+  /** Próxima extractFromPhotos devolve este JSON (ou lança, se for um Error). */
+  enqueueExtraction(json: unknown): void {
+    this.extractionScripts.push(json);
+  }
+
+  async extractFromPhotos(input: ExtractFromPhotosInput): Promise<ExtractFromPhotosResult> {
+    this.extractions.push(input);
+    const scripted = this.extractionScripts.shift();
+    if (scripted instanceof Error) throw scripted;
+    return {
+      json: scripted === undefined ? FAKE_PRODUCT_DRAFT_JSON : scripted,
+      usage: { inputTokens: 4200, outputTokens: 800, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    };
   }
 
   async respondTurn(input: RespondTurnInput): Promise<AssistantTurn> {
@@ -84,5 +120,7 @@ export class FakeSalesAssistant implements SalesAssistant {
     this.scripts.length = 0;
     this.turns.length = 0;
     this.inputs.length = 0;
+    this.extractionScripts.length = 0;
+    this.extractions.length = 0;
   }
 }

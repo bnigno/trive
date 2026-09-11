@@ -43,7 +43,8 @@ export function ToggleSwitch({
     | "bot_enabled"
     | "owner_digest_enabled"
     | "bot_media_enabled"
-    | "bot_cards_enabled";
+    | "bot_cards_enabled"
+    | "catalog_draft_enabled";
   checked: boolean;
   label: string;
   hint: string;

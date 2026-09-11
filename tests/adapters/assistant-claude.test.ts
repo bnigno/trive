@@ -194,3 +194,55 @@ describe("ClaudeSalesAssistant", () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe("ClaudeSalesAssistant.extractFromPhotos", () => {
+  const input = {
+    system: "Monte a ficha.",
+    images: [
+      { mediaType: "image/jpeg" as const, base64: "AAAA" },
+      { mediaType: "image/jpeg" as const, base64: "BBBB" },
+    ],
+    userText: "Fotos em anexo.",
+    model: "claude-sonnet-5",
+    jsonSchema: { type: "object", properties: { name: { type: "string" } } },
+  };
+
+  it("manda imagens antes do texto, pede saída estruturada, sem ferramentas, e devolve o JSON com o uso", async () => {
+    const create = vi.fn(async (_params: unknown) => textMessage('{"name":"Vestido Áurea"}'));
+    const assistant = new ClaudeSalesAssistant({ messages: { create } } as unknown as MessagesClient);
+
+    const result = await assistant.extractFromPhotos(input);
+    expect(result.json).toEqual({ name: "Vestido Áurea" });
+    expect(result.usage.inputTokens).toBe(100);
+
+    const request = create.mock.calls[0]![0] as Record<string, unknown>;
+    expect(request.tools).toBeUndefined();
+    expect(request.system).toBe("Monte a ficha.");
+    expect(request.output_config).toEqual({
+      format: { type: "json_schema", schema: input.jsonSchema },
+    });
+    const content = (request.messages as { content: { type: string }[] }[])[0].content;
+    expect(content.map((block) => block.type)).toEqual(["image", "image", "text"]);
+  });
+
+  it("recusa, JSON torto e APIError viram AssistantUnavailableError", async () => {
+    const refusal = new ClaudeSalesAssistant({
+      messages: { create: async () => textMessage("", "refusal") },
+    } as unknown as MessagesClient);
+    await expect(refusal.extractFromPhotos(input)).rejects.toBeInstanceOf(AssistantUnavailableError);
+
+    const torto = new ClaudeSalesAssistant({
+      messages: { create: async () => textMessage("não é json") },
+    } as unknown as MessagesClient);
+    await expect(torto.extractFromPhotos(input)).rejects.toBeInstanceOf(AssistantUnavailableError);
+
+    const apiError = new ClaudeSalesAssistant({
+      messages: {
+        create: async () => {
+          throw new Anthropic.APIError(500, undefined, "erro", undefined);
+        },
+      },
+    } as unknown as MessagesClient);
+    await expect(apiError.extractFromPhotos(input)).rejects.toBeInstanceOf(AssistantUnavailableError);
+  });
+});

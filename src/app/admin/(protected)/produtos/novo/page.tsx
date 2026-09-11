@@ -4,10 +4,14 @@ import { asc } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema";
 import { requireOwner } from "@/services/auth";
+import { isCatalogDraftEnabled } from "@/services/product-draft";
 import { PageHeader } from "@/components/ui/page-header";
 import { NewProductForm } from "./new-product-form";
 
 export const dynamic = "force-dynamic";
+
+/** A ficha pela foto roda dentro da action desta página (orçamento de 45 s). */
+export const maxDuration = 60;
 
 export const metadata: Metadata = {
   title: "Novo produto",
@@ -16,10 +20,13 @@ export const metadata: Metadata = {
 export default async function NovoProdutoPage() {
   await requireOwner("produtos");
   const db = getDb();
-  const categoryRows = await db
-    .select({ id: categories.id, name: categories.name })
-    .from(categories)
-    .orderBy(asc(categories.name));
+  const [categoryRows, draftEnabled] = await Promise.all([
+    db
+      .select({ id: categories.id, name: categories.name })
+      .from(categories)
+      .orderBy(asc(categories.name)),
+    isCatalogDraftEnabled(db),
+  ]);
 
   return (
     <div className="flex max-w-5xl flex-col gap-6">
@@ -35,7 +42,7 @@ export default async function NovoProdutoPage() {
           </Link>
         }
       />
-      <NewProductForm categoryOptions={categoryRows} />
+      <NewProductForm categoryOptions={categoryRows} draftEnabled={draftEnabled} />
     </div>
   );
 }

@@ -9,10 +9,15 @@ import {
   selectGridVariants,
 } from "@/core/catalog/variant-grid";
 import { normalizeSkuInput, validateSku } from "@/core/catalog/sku";
+import { getSalesAssistant } from "@/adapters/assistant";
+import type { ProductDraft } from "@/core/catalog/product-draft";
+import { DRAFT_MAX_PHOTOS } from "@/core/catalog/product-draft";
 import { getDb } from "@/db/client";
 import { parseBRLToCents } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
 import { createProduct, ServiceError } from "@/services/catalog";
+import { draftProductFromPhotos } from "@/services/product-draft";
+import { ServiceError as SettingsServiceError } from "@/services/settings";
 
 export type FormState = {
   error?: string;
@@ -110,8 +115,25 @@ const axisValuesSchema = z
   )
   .default([]);
 
+/** Peso da peça em gramas: vale para todas as combinações, como o preço. */
+const weightSchema = z
+  .string()
+  .trim()
+  .transform((value, ctx) => {
+    if (value === "") return undefined;
+    if (!/^\d{1,5}$/.test(value) || Number(value) <= 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "O peso precisa ser um número inteiro de gramas, como 320. Deixe em branco para definir depois.",
+      });
+      return z.NEVER;
+    }
+    return Number(value);
+  });
+
 const payloadSchema = z.object({
   name: z.string().trim().min(1, "Informe o nome do produto."),
+  weightGrams: weightSchema.optional(),
   description: z.string().trim().default(""),
   composition: z.string().trim().default(""),
   careNotes: z.string().trim().default(""),
@@ -179,6 +201,7 @@ export async function createProductAction(
       costCents: row.cost,
     })),
     priceCents: data.price,
+    weightGrams: data.weightGrams,
   });
 
   if (variants.length === 0) {
@@ -211,4 +234,76 @@ export async function createProductAction(
   revalidatePath("/admin/produtos");
   // Sem redirect: quem navega é o cliente, depois de mandar as fotos.
   return { productId };
+}
+
+
+// ---------------------------------------------------------------------------
+// "Começar pela foto": as fotos viram um rascunho da ficha (nada é salvo)
+// ---------------------------------------------------------------------------
+
+export type DraftFormState = {
+  error?: string;
+  draft?: ProductDraft;
+  suggestedPriceCents?: number | null;
+  estimatedCostUsdCents?: number;
+};
+
+/** Fotos já reduzidas no navegador; o limite do corpo da action é 8 MB. */
+const MAX_DRAFT_PHOTO_BYTES = 2 * 1024 * 1024;
+
+export async function draftFromPhotosAction(
+  _prev: DraftFormState,
+  formData: FormData,
+): Promise<DraftFormState> {
+  const user = await requireOwner("produtos");
+
+  const files = formData
+    .getAll("photos")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  if (files.length === 0) {
+    return { error: "Escolha ao menos uma foto da peça." };
+  }
+  if (files.length > DRAFT_MAX_PHOTOS) {
+    return { error: `Use no máximo ${DRAFT_MAX_PHOTOS} fotos.` };
+  }
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) {
+      return { error: "Só consigo ler fotos (imagens)." };
+    }
+    if (file.size > MAX_DRAFT_PHOTO_BYTES) {
+      return { error: "Uma das fotos ficou grande demais mesmo depois de reduzida. Tente com outra foto." };
+    }
+  }
+
+  let costCents: number;
+  try {
+    costCents = parseBRLToCents(String(formData.get("cost") ?? ""));
+  } catch {
+    return { error: "Escreva quanto a peça custou assim: 120,00." };
+  }
+  if (costCents <= 0) {
+    return { error: "Informe quanto a peça custou para você — é com isso que eu sugiro o preço." };
+  }
+
+  try {
+    const photos = await Promise.all(
+      files.map(async (file) => ({
+        data: Buffer.from(await file.arrayBuffer()),
+        contentType: file.type,
+      })),
+    );
+    const result = await draftProductFromPhotos(getDb(), getSalesAssistant(), {
+      photos,
+      costCents,
+      userId: user.id,
+    });
+    return {
+      draft: result.draft,
+      suggestedPriceCents: result.suggestedPrice?.priceCents ?? null,
+      estimatedCostUsdCents: result.estimatedCostUsdCents,
+    };
+  } catch (error) {
+    if (error instanceof SettingsServiceError) return { error: error.message };
+    return toErrorState(error);
+  }
 }

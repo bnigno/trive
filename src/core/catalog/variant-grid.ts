@@ -115,6 +115,8 @@ export interface SelectedVariant {
   initialQuantity: number;
   costCents?: number;
   priceCents?: number;
+  /** Peso da peça (g) — igual para todas as combinações, como o preço. */
+  weightGrams?: number;
 }
 
 /**
@@ -129,6 +131,7 @@ export function selectGridVariants(input: {
   axes: readonly string[];
   rows: readonly GridSelectionRow[];
   priceCents?: number;
+  weightGrams?: number;
 }): SelectedVariant[] {
   const base = skuBaseFromName(input.name);
   const chosen = input.rows
@@ -156,6 +159,7 @@ export function selectGridVariants(input: {
     initialQuantity: entry.row.quantity ?? 0,
     costCents: entry.row.costCents,
     priceCents: input.priceCents,
+    weightGrams: input.weightGrams,
   }));
 }
 

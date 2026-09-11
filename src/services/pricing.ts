@@ -34,6 +34,7 @@ import {
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { variantLabel } from "@/core/catalog/attributes";
+import { getDefaultPolicy, getFeeRules } from "@/services/settings";
 import {
   calculatePrice,
   evaluateApproval,
@@ -322,6 +323,44 @@ function buildPricingInputs(
       mode: overrides?.roundingMode ?? ctx.policy.roundingMode,
       direction: overrides?.roundingDirection ?? ctx.policy.roundingDirection,
     },
+  };
+}
+
+/**
+ * Preço sugerido para um custo, ANTES de a peça existir (cadastro novo,
+ * "começar pela foto"): política global ativa + taxa de referência vigente.
+ * Sem política ou sem taxa marcada como referência, devolve null — o
+ * rascunho segue sem preço em vez de inventar um.
+ */
+export type SuggestedPrice = {
+  priceCents: number;
+  breakdown: PricingResult["breakdown"];
+  effectiveMarginRate: number;
+};
+
+export async function suggestPriceForCost(
+  db: PricingDb,
+  costCents: number,
+): Promise<SuggestedPrice | null> {
+  const cost = z.number().int().nonnegative().parse(costCents);
+  const [policy, feeRules] = await Promise.all([getDefaultPolicy(db), getFeeRules(db)]);
+  const feeRule = feeRules.current.find((rule) => rule.isReferenceForPricing);
+  if (!policy || !feeRule) return null;
+
+  const result = calculatePrice({
+    costCents: cost,
+    otherFixedCents: policy.otherCostsFixedCents,
+    otherRate: policy.otherCostsRate,
+    feePercentRate: feeRule.percentRate,
+    feeFixedCents: feeRule.fixedFeeCents,
+    shippingSubsidyCents: 0,
+    targetMarginRate: policy.targetMarginRate,
+    rounding: { mode: policy.roundingMode, direction: policy.roundingDirection },
+  });
+  return {
+    priceCents: result.priceCents,
+    breakdown: result.breakdown,
+    effectiveMarginRate: result.effectiveMarginRate,
   };
 }
 

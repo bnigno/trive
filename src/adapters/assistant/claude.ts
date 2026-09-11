@@ -4,6 +4,8 @@ import { BOT_TOOLS, type BotToolName } from "@/core/bot/tools";
 
 import type {
   AssistantTurn,
+  ExtractFromPhotosInput,
+  ExtractFromPhotosResult,
   RespondTurnInput,
   SalesAssistant,
 } from "./index";
@@ -45,6 +47,62 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       this.client = new Anthropic({ timeout: 40_000, maxRetries: 1 });
     }
     return this.client;
+  }
+
+  /**
+   * Uma chamada só, sem ferramentas: imagens + texto entram, JSON no formato
+   * pedido sai (saída estruturada). Recusa ou JSON torto = indisponível —
+   * o rascunho nunca nasce de um texto parcial.
+   */
+  async extractFromPhotos(input: ExtractFromPhotosInput): Promise<ExtractFromPhotosResult> {
+    const client = this.getClient();
+    const request: Anthropic.MessageCreateParamsNonStreaming = {
+      model: input.model,
+      max_tokens: input.maxTokens ?? 2048,
+      system: input.system,
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...input.images.map((image) => ({
+              type: "image" as const,
+              source: { type: "base64" as const, media_type: image.mediaType, data: image.base64 },
+            })),
+            { type: "text" as const, text: input.userText },
+          ],
+        },
+      ],
+      output_config: { format: { type: "json_schema", schema: input.jsonSchema } },
+    };
+    let response: Anthropic.Message;
+    try {
+      response = await client.messages.create(request);
+    } catch (error) {
+      if (error instanceof Anthropic.APIError) {
+        throw new AssistantUnavailableError(
+          "Assistente de IA indisponível no momento — tente novamente em instantes",
+        );
+      }
+      throw error;
+    }
+    const usage = {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: response.usage.cache_creation_input_tokens ?? 0,
+    };
+    if (response.stop_reason === "refusal") {
+      throw new AssistantUnavailableError("O modelo recusou ler estas fotos.");
+    }
+    const text = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === "text")
+      .map((block) => block.text)
+      .join("");
+    try {
+      return { json: JSON.parse(text) as unknown, usage };
+    } catch {
+      throw new AssistantUnavailableError("A resposta do modelo não veio no formato esperado.");
+    }
   }
 
   async respondTurn(input: RespondTurnInput): Promise<AssistantTurn> {

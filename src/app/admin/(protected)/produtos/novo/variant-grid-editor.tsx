@@ -20,12 +20,17 @@ export function VariantGridEditor({
   onCellChange,
   onFillAll,
   selectedCount,
+  defaultPrice = "",
+  defaultWeightGrams = "",
 }: {
   grid: VariantGrid;
   cells: Record<string, GridCell>;
   onCellChange: (key: string, patch: Partial<GridCell>) => void;
   onFillAll: (patch: { quantity?: string; cost?: string }) => void;
   selectedCount: number;
+  /** Preenchidos pelo rascunho da foto; a dona revisa. */
+  defaultPrice?: string;
+  defaultWeightGrams?: string;
 }) {
   const [bulkQuantity, setBulkQuantity] = useState("");
   const [bulkCost, setBulkCost] = useState("");
@@ -41,7 +46,18 @@ export function VariantGridEditor({
           label="Preço de venda (R$)"
           hint="Vale para todas as combinações. Dá para ajustar depois, uma a uma, na calculadora de preços."
         >
-          <Input name="price" inputMode="decimal" placeholder="129,90" />
+          <Input name="price" inputMode="decimal" placeholder="129,90" defaultValue={defaultPrice} />
+        </Field>
+        <Field
+          label="Peso da peça (g)"
+          hint="É o que o frete dos Correios usa. Sem peso, a loja calcula com 300 g."
+        >
+          <Input
+            name="weightGrams"
+            inputMode="numeric"
+            placeholder="320"
+            defaultValue={defaultWeightGrams}
+          />
         </Field>
       </div>
 

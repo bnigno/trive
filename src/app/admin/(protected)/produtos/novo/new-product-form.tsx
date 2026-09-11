@@ -22,6 +22,7 @@ import {
 import { uploadImagesAction } from "../[id]/actions";
 import { createProductAction } from "./actions";
 import { ChipsField } from "./chips-field";
+import { DraftFromPhotos, type DraftResult } from "./draft-from-photos";
 import { PhotoPicker, type PhotoItem } from "./photo-picker";
 import {
   EMPTY_CELL,
@@ -30,6 +31,11 @@ import {
 } from "./variant-grid-editor";
 
 export type CategoryOption = { id: string; name: string };
+
+/** Centavos → "129,90" para o campo de texto do formulário. */
+function centsToInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
 
 const SIZE_SUGGESTIONS = [
   "PP",
@@ -67,12 +73,22 @@ type Phase =
 
 export function NewProductForm({
   categoryOptions,
+  draftEnabled,
 }: {
   categoryOptions: CategoryOption[];
+  /** "Começar pela foto" ligado nas Configurações. */
+  draftEnabled: boolean;
 }) {
   const router = useRouter();
 
   const [name, setName] = useState("");
+  /**
+   * Rascunho da foto: os campos livres continuam não controlados (é a dona
+   * que escreve), então a chegada do rascunho REMONTA os cards com os novos
+   * valores padrão — por isso o contador de versão.
+   */
+  const [draft, setDraft] = useState<DraftResult | null>(null);
+  const [draftVersion, setDraftVersion] = useState(0);
   const [colors, setColors] = useState<string[]>([]);
   const [sizes, setSizes] = useState<string[]>([]);
   const [cells, setCells] = useState<Record<string, GridCell>>({});
@@ -244,6 +260,20 @@ export function NewProductForm({
     [goToProduct],
   );
 
+  const handleDraft = useCallback(
+    (result: DraftResult) => {
+      setDraft(result);
+      setDraftVersion((current) => current + 1);
+      setName(result.draft.name);
+      setColors(result.draft.colors);
+      setSizes(result.draft.sizes);
+      // O custo digitado no card do rascunho vale para a grade inteira.
+      if (result.costInput.trim() !== "") handleFillAll({ cost: result.costInput });
+      handleAddPhotos(result.photos);
+    },
+    [handleAddPhotos, handleFillAll],
+  );
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // O produto já existe: um segundo envio criaria um cadastro duplicado.
@@ -276,6 +306,7 @@ export function NewProductForm({
       brand: String(formData.get("brand") ?? ""),
       categoryId: String(formData.get("categoryId") ?? ""),
       price: String(formData.get("price") ?? ""),
+      weightGrams: String(formData.get("weightGrams") ?? ""),
       colors,
       sizes,
       rows: grid.combinations.map((combination) => {
@@ -316,13 +347,14 @@ export function NewProductForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+      {draftEnabled ? <DraftFromPhotos disabled={locked} onDraft={handleDraft} /> : null}
       {/* fieldset desabilitado congela a tela inteira depois que o produto
           nasce: mexer nos campos aqui não mudaria mais nada no banco. */}
       <fieldset
         disabled={locked}
-        className="m-0 flex flex-col gap-6 border-0 p-0"
+        className="m-0 flex min-w-0 flex-col gap-6 border-0 p-0"
       >
-        <Card title="Dados do produto">
+        <Card title="Dados do produto" key={`dados-${draftVersion}`}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nome" className="sm:col-span-2">
               <Input
@@ -337,21 +369,34 @@ export function NewProductForm({
               <TextArea
                 name="description"
                 rows={4}
+                defaultValue={draft?.draft.description ?? ""}
                 placeholder="Tecido, caimento, ocasião, como veste no calor de Belém (200 caracteres deixam a peça pronta)"
               />
             </Field>
             <Field label="Composição" className="sm:col-span-2" hint="Ex.: 100% linho · forro 100% viscose">
-              <Input name="composition" placeholder="Tecido e forro (opcional)" />
+              <Input
+                name="composition"
+                placeholder="Tecido e forro (opcional)"
+                defaultValue={draft?.draft.composition ?? ""}
+              />
             </Field>
-            <CareFields symbols={[]} freeText={[]} />
+            <CareFields
+              symbols={draft?.draft.careSymbols ?? []}
+              freeText={draft?.draft.careFreeText ?? []}
+            />
             <Field label="Como veste" className="sm:col-span-2" hint="Caimento, modelagem, altura da modelo.">
-              <TextArea name="fitNotes" rows={2} placeholder="Opcional" />
+              <TextArea
+                name="fitNotes"
+                rows={2}
+                placeholder="Opcional"
+                defaultValue={draft?.draft.fitNotes ?? ""}
+              />
             </Field>
             <Field label="Marca">
               <Input name="brand" placeholder="Ex.: TRIVÉ (opcional)" />
             </Field>
             <Field label="Categoria">
-              <Select name="categoryId" defaultValue="">
+              <Select name="categoryId" defaultValue={draft?.draft.categoryId ?? ""}>
                 <option value="">Sem categoria</option>
                 {categoryOptions.map((category) => (
                   <option key={category.id} value={category.id}>
@@ -363,7 +408,7 @@ export function NewProductForm({
           </div>
         </Card>
 
-        <Card title="Variações">
+        <Card title="Variações" key={`variacoes-${draftVersion}`}>
           <div className="flex flex-col gap-5">
             <div className="grid gap-5 sm:grid-cols-2">
               <ChipsField
@@ -392,6 +437,10 @@ export function NewProductForm({
               onCellChange={handleCellChange}
               onFillAll={handleFillAll}
               selectedCount={selectedCount}
+              defaultPrice={
+                draft?.suggestedPriceCents != null ? centsToInput(draft.suggestedPriceCents) : ""
+              }
+              defaultWeightGrams={draft?.draft.weightGrams != null ? String(draft.draft.weightGrams) : ""}
             />
           </div>
         </Card>
@@ -434,7 +483,9 @@ export function NewProductForm({
           </Button>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             {photos.length > 0
-              ? `Primeiro salvo o produto; depois envio as ${photos.length} fotos, uma a uma.`
+              ? photos.length === 1
+                ? "Primeiro salvo o produto; depois envio a foto."
+                : `Primeiro salvo o produto; depois envio as ${photos.length} fotos, uma a uma.`
               : "Você pode acrescentar fotos agora ou depois, na tela do produto."}
           </p>
         </div>
