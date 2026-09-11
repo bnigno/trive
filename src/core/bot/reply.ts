@@ -31,9 +31,34 @@ export function fixVocabulary(text: string): string {
   return out;
 }
 
-/** Vocabulário da casa + respiro: nunca mais de uma linha em branco seguida. */
+/**
+ * Anotações internas que o modelo lê no histórico e nos resultados das
+ * ferramentas — "[foto enviada ao cliente] …", "[lista tocável do catálogo
+ * enviada ao cliente]", "[A foto da peça foi enviada ao cliente.]" — e que
+ * ele às vezes copia na resposta (caso real em produção, 2026-09-11). Sai
+ * qualquer bloco entre colchetes no começo de uma linha, e os marcadores
+ * conhecidos em qualquer posição. Colchetes curtos no meio de uma frase
+ * ("tamanho [M]") ficam.
+ */
+const KNOWN_MARKERS: ReadonlyArray<RegExp> = [
+  /\[foto enviada ao cliente\]\s*/giu,
+  /\[lista tocável do catálogo enviada ao cliente\]\s*/giu,
+  /\[mensagem enviada pela equipe da loja, não por você\]\s*/giu,
+  /\[aviso automático[^\]]*\]\s*/giu,
+  /\[áudio da cliente, transcrição automática\]\s*/giu,
+];
+
+export function stripInternalMarkers(text: string): string {
+  let out = text;
+  for (const pattern of KNOWN_MARKERS) out = out.replace(pattern, "");
+  // Bloco entre colchetes que abre uma linha (≥ 12 caracteres, sem quebra).
+  out = out.replace(/^[ \t]*\[[^\]\n]{12,}\][ \t]*\n?/gmu, "");
+  return out;
+}
+
+/** Vocabulário da casa + sem anotações internas + respiro entre linhas. */
 export function polishBotReply(text: string): string {
-  return fixVocabulary(text)
+  return fixVocabulary(stripInternalMarkers(text))
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
