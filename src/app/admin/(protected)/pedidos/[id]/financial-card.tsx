@@ -14,6 +14,13 @@ const ENTRY_DIRECTION_LABELS: Record<string, string> = {
   payable: "A pagar",
 };
 
+/** 'YYYY-MM-DD' → 'dd/mm/aaaa'; sem vencimento → '—'. */
+function formatDueDate(dueDate: string | null): string {
+  if (!dueDate) return "—";
+  const [year, month, day] = dueDate.split("-");
+  return `${day}/${month}/${year}`;
+}
+
 const ENTRY_STATUS_LABELS: Record<string, string> = {
   pending: "Pendente",
   settled: "Liquidado",
@@ -43,7 +50,7 @@ export async function OrderFinancialCard({ orderId }: { orderId: string }) {
           venda é lançada automaticamente.
         </p>
       ) : (
-        <Table headers={["Descrição", "Tipo", "Valor", "Situação", "Data"]}>
+        <Table headers={["Descrição", "Tipo", "Valor", "Situação", "Vencimento", "Data"]}>
           {entries.map((entry) => (
             <Tr key={entry.id}>
               <Td>{entry.description}</Td>
@@ -54,6 +61,7 @@ export async function OrderFinancialCard({ orderId }: { orderId: string }) {
                 <Money cents={entry.amountCents} className="font-medium" />
               </Td>
               <Td>{ENTRY_STATUS_LABELS[entry.status] ?? entry.status}</Td>
+              <Td className="whitespace-nowrap">{formatDueDate(entry.dueDate)}</Td>
               <Td className="whitespace-nowrap">
                 {formatDateTimeSP(entry.createdAt)}
               </Td>

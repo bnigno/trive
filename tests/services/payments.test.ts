@@ -15,7 +15,9 @@ import {
   ServiceError,
 } from "@/services/payments";
 import { createStoreOrder } from "@/services/store-orders";
-import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { createTestDb, createTestFeeRuleAndPolicy, createTestVariant, type TestDb } from "../helpers/db";
+import { listSettlementForecast } from "@/services/financial";
+import { spDayKey } from "@/lib/sp-day";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -425,5 +427,96 @@ describe("reconcilePendingMpOrders", () => {
     expect((await getOrder(orderA.orderId)).status).toBe("paid");
     expect((await getOrder(orderB.orderId)).status).toBe("pending_payment");
     expect((await getOrder(orderC.orderId)).status).toBe("pending_payment");
+  });
+});
+
+describe("taxa do Mercado Pago como lançamento (mp_fee)", () => {
+  async function mpFeeEntries(orderId: string) {
+    return db
+      .select()
+      .from(schema.financialEntries)
+      .where(
+        and(
+          eq(schema.financialEntries.orderId, orderId),
+          eq(schema.financialEntries.category, "mp_fee"),
+        ),
+      );
+  }
+
+  it("aprovado com taxa → um lançamento a pagar pendente com vencimento no dia do pagamento (sem regra = 0 dias); reprocessar não duplica", async () => {
+    const pending = await createPendingStoreOrder();
+    const paymentId = await createFakePayment(pending);
+    gateway.approvePayment(paymentId);
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+
+    const entries = await mpFeeEntries(pending.orderId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      direction: "payable",
+      status: "pending",
+      amountCents: Math.round(pending.totalCents * 0.05),
+      description: `Taxa Mercado Pago — pedido #${pending.orderNumber}`,
+      dueDate: spDayKey(new Date()),
+    });
+
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+    expect(await mpFeeEntries(pending.orderId)).toHaveLength(1);
+    expect(await auditOfAction("financial_entry.mp_fee_sync")).toHaveLength(1);
+
+    // A previsão lista o pedido com líquido = total − taxa.
+    const forecast = await listSettlementForecast(sdb);
+    expect(forecast).toHaveLength(1);
+    expect(forecast[0]).toMatchObject({
+      orderNumber: pending.orderNumber,
+      grossCents: pending.totalCents,
+      feeCents: Math.round(pending.totalCents * 0.05),
+      dueDate: spDayKey(new Date()),
+    });
+  });
+
+  it("com regra do método (30 dias), o vencimento é o dia do pagamento + 30", async () => {
+    await createTestFeeRuleAndPolicy(db); // credit_card, 4,98%, 30 dias
+    const pending = await createPendingStoreOrder();
+    const paymentId = await createFakePayment(pending);
+    gateway.approvePayment(paymentId, { paymentMethod: "credit_card", installments: 1 });
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+
+    const [entry] = await mpFeeEntries(pending.orderId);
+    const expected = new Date();
+    expected.setUTCDate(expected.getUTCDate() + 30);
+    expect(entry.dueDate).toBe(spDayKey(expected));
+  });
+
+  it("taxa diferente num reenvio atualiza o valor com audit; reembolso cancela o lançamento pendente", async () => {
+    const pending = await createPendingStoreOrder();
+    const paymentId = await createFakePayment(pending);
+    gateway.approvePayment(paymentId);
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+
+    const base = await gateway.getPayment(paymentId);
+    const withOtherFee: PaymentGateway = {
+      createCheckoutPreference: (input) => gateway.createCheckoutPreference(input),
+      refundPayment: (id) => gateway.refundPayment(id),
+      getPayment: async (): Promise<Payment> => ({ ...base, feeCents: (base.feeCents ?? 0) + 37 }),
+    };
+    await processPaymentEvent(sdb, withOtherFee, { mpPaymentId: paymentId });
+    let [entry] = await mpFeeEntries(pending.orderId);
+    expect(entry.amountCents).toBe(Math.round(pending.totalCents * 0.05) + 37);
+    expect(entry.status).toBe("pending");
+    expect(await auditOfAction("financial_entry.mp_fee_sync")).toHaveLength(2);
+
+    await gateway.refundPayment(paymentId);
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+    [entry] = await mpFeeEntries(pending.orderId);
+    expect(entry.status).toBe("canceled");
+    expect(await listSettlementForecast(sdb)).toHaveLength(0);
+  });
+
+  it("pagamento rejeitado com taxa não gera lançamento", async () => {
+    const pending = await createPendingStoreOrder();
+    const paymentId = await createFakePayment(pending);
+    gateway.rejectPayment(paymentId);
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+    expect(await mpFeeEntries(pending.orderId)).toHaveLength(0);
   });
 });

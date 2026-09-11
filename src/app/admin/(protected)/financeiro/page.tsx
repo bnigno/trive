@@ -5,7 +5,9 @@ import { inArray } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { orders } from "@/db/schema";
 import { requireOwner } from "@/services/auth";
-import { listEntries, monthOverview } from "@/services/financial";
+import { listEntries, listSettlementForecast, monthOverview } from "@/services/financial";
+import { groupSettlementForecast } from "@/core/financial/settlement";
+import { spDayKey } from "@/lib/sp-day";
 import { listSuppliers } from "@/services/suppliers";
 import { Badge } from "@/components/ui/badge";
 import { Card, StatCard } from "@/components/ui/card";
@@ -118,11 +120,14 @@ export default async function FinancialPage({
     : undefined;
 
   const db = getDb();
-  const [overview, entries, supplierRows] = await Promise.all([
+  const [overview, entries, supplierRows, settlementRows] = await Promise.all([
     monthOverview(db, { year, month: monthNumber }),
     listEntries(db, { month, status, direction, limit: 200 }),
     listSuppliers(db),
+    listSettlementForecast(db, { limit: 200 }),
   ]);
+  const forecast = groupSettlementForecast(settlementRows);
+  const todayKey = spDayKey(new Date());
   const supplierOptions = supplierRows.map((supplier) => ({
     id: supplier.id,
     name: supplier.name,
@@ -207,6 +212,57 @@ export default async function FinancialPage({
           hint="Recebido − pago no mês"
         />
       </div>
+
+      <Card title="A receber por data">
+        {forecast.days.length === 0 ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Nenhum repasse do Mercado Pago em aberto. Quando um pagamento é aprovado, a taxa
+            vira um lançamento com a data prevista do repasse e o líquido aparece aqui.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Líquido previsto:{" "}
+              <Money cents={forecast.totalNetCents} className="font-semibold text-zinc-900 dark:text-zinc-100" />{" "}
+              <span className="text-xs">
+                ({forecast.days.length === 1 ? "1 dia" : `${forecast.days.length} dias`} · taxas{" "}
+                <Money cents={forecast.totalFeeCents} />). Marque “Liquidar” na taxa quando o dinheiro cair.
+              </span>
+            </p>
+            {forecast.days.map((day) => (
+              <div key={day.dayKey} className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-900 first-letter:uppercase dark:text-zinc-100">
+                    {day.label}
+                    {day.dayKey < todayKey ? (
+                      <StatusPill label="Atrasado" tone="warning" className="ml-2" />
+                    ) : null}
+                  </h3>
+                  <Money cents={day.netCents} className="text-sm font-semibold" />
+                </div>
+                <Table headers={["Pedido", "Bruto", "Taxa", "Líquido", ""]}>
+                  {day.orders.map((row) => (
+                    <Tr key={row.entryId}>
+                      <Td>
+                        <Link
+                          href={`/admin/pedidos/${row.orderId}`}
+                          className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          #{row.orderNumber}
+                        </Link>
+                      </Td>
+                      <Td><Money cents={row.grossCents} /></Td>
+                      <Td><Money cents={row.feeCents} /></Td>
+                      <Td><Money cents={row.grossCents - row.feeCents} className="font-medium" /></Td>
+                      <Td><EntryActions entryId={row.entryId} /></Td>
+                    </Tr>
+                  ))}
+                </Table>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       <div className="grid items-start gap-6 xl:grid-cols-[2fr_1fr]">
         <div className="flex flex-col gap-4">

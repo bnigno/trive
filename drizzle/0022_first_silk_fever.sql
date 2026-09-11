@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "financial_entries_order_mp_fee_unique_idx" ON "financial_entries" USING btree ("order_id") WHERE "financial_entries"."category" = 'mp_fee' AND "financial_entries"."status" <> 'canceled';--> statement-breakpoint
+CREATE INDEX "financial_entries_category_due_date_idx" ON "financial_entries" USING btree ("category","due_date") WHERE "financial_entries"."status" = 'pending';

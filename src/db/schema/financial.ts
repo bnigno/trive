@@ -6,6 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -45,6 +46,15 @@ export const financialEntries = pgTable(
     ),
     index("financial_entries_order_id_idx").on(table.orderId),
     index("financial_entries_supplier_id_idx").on(table.supplierId),
+    // Uma taxa do Mercado Pago por pedido: o banco é o árbitro da duplicata
+    // (webhook reenviado, conciliação diária), não a memória.
+    uniqueIndex("financial_entries_order_mp_fee_unique_idx")
+      .on(table.orderId)
+      .where(sql`${table.category} = 'mp_fee' AND ${table.status} <> 'canceled'`),
+    // Previsão "a receber por data": taxas pendentes ordenadas pelo repasse.
+    index("financial_entries_category_due_date_idx")
+      .on(table.category, table.dueDate)
+      .where(sql`${table.status} = 'pending'`),
     check(
       "financial_entries_direction_check",
       sql`${table.direction} IN ('receivable', 'payable')`,

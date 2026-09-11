@@ -10,7 +10,7 @@
 //   orders.mp_fee_cents e comparamos com a estimativa da payment_fee_rules
 //   vigente — divergência relevante vira evento 'mp.fee_divergent' (1x por
 //   pedido) para o dono revisar a margem.
-import { and, asc, desc, eq, gte, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lt, ne } from "drizzle-orm";
 import { z } from "zod";
 
 import type { PaymentGateway } from "@/adapters/mercadopago";
@@ -19,8 +19,14 @@ import {
   type MpPaymentMethod,
 } from "@/core/orders/payment-methods";
 import type { OrderStatus } from "@/core/orders/state-machine";
-import { auditLog, orders, paymentFeeRules } from "@/db/schema";
+import {
+  auditLog,
+  financialEntries,
+  orders,
+  paymentFeeRules,
+} from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { expectedSettlementDayKey } from "@/core/financial/settlement";
 import { ServiceError, transitionOrder } from "@/services/orders";
 
 export { ServiceError };
@@ -237,6 +243,23 @@ export async function processPaymentEvent(
         break;
     }
 
+    // (4) A taxa do MP vira lançamento a pagar com vencimento no repasse
+    // previsto; no reembolso total o MP devolve a taxa → o lançamento pendente
+    // é cancelado. Mesma transação do sync: nunca meio-caminho.
+    if (payment.status === "approved" && payment.feeCents !== null && payment.feeCents > 0) {
+      await upsertMpFeeEntry(tx, {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        feeCents: payment.feeCents,
+        method,
+        installments: payment.installments,
+        paidAt: order.paidAt ?? new Date(),
+      });
+    }
+    if (action === "refunded") {
+      await cancelPendingMpFeeEntry(tx, order.id);
+    }
+
     return { orderId: order.id, action };
   });
 }
@@ -264,6 +287,141 @@ async function resolveOrderId(
 }
 
 /**
+ * Regra de taxa vigente do método: effective_to IS NULL e, entre as regras
+ * do método, a de menor installments_max que cubra o parcelamento usado
+ * (a mais específica). A mesma base da precificação.
+ */
+export async function findCurrentFeeRule(
+  tx: DbOrTx,
+  input: { method: OrderPaymentMethod | null; installments: number | null },
+): Promise<{ percentRate: number; fixedFeeCents: number; settlementDays: number } | null> {
+  if (input.method === null) return null;
+  const [rule] = await tx
+    .select({
+      percentRate: paymentFeeRules.percentRate,
+      fixedFeeCents: paymentFeeRules.fixedFeeCents,
+      settlementDays: paymentFeeRules.settlementDays,
+    })
+    .from(paymentFeeRules)
+    .where(
+      and(
+        eq(paymentFeeRules.paymentMethod, input.method),
+        isNull(paymentFeeRules.effectiveTo),
+        gte(paymentFeeRules.installmentsMax, input.installments ?? 1),
+      ),
+    )
+    .orderBy(asc(paymentFeeRules.installmentsMax), desc(paymentFeeRules.effectiveFrom))
+    .limit(1);
+  if (!rule) return null;
+  return {
+    percentRate: Number(rule.percentRate),
+    fixedFeeCents: rule.fixedFeeCents,
+    settlementDays: rule.settlementDays,
+  };
+}
+
+/**
+ * A taxa real do MP como lançamento a pagar (category 'mp_fee'), um por
+ * pedido — o índice único parcial é o árbitro. Reenvio de webhook com a
+ * mesma taxa é no-op; taxa diferente atualiza o valor (com audit).
+ */
+async function upsertMpFeeEntry(
+  tx: DbOrTx,
+  input: {
+    orderId: string;
+    orderNumber: number;
+    feeCents: number;
+    method: OrderPaymentMethod | null;
+    installments: number | null;
+    paidAt: Date;
+  },
+): Promise<void> {
+  const [existing] = await tx
+    .select({ id: financialEntries.id, amountCents: financialEntries.amountCents, status: financialEntries.status })
+    .from(financialEntries)
+    .where(
+      and(
+        eq(financialEntries.orderId, input.orderId),
+        eq(financialEntries.category, "mp_fee"),
+        ne(financialEntries.status, "canceled"),
+      ),
+    )
+    .limit(1);
+
+  if (existing) {
+    if (existing.status !== "pending" || existing.amountCents === input.feeCents) return;
+    await tx
+      .update(financialEntries)
+      .set({ amountCents: input.feeCents, updatedAt: new Date() })
+      .where(eq(financialEntries.id, existing.id));
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "financial_entry.mp_fee_sync",
+      entityType: "financial_entry",
+      entityId: existing.id,
+      before: { amountCents: existing.amountCents },
+      after: { amountCents: input.feeCents },
+    });
+    return;
+  }
+
+  const rule = await findCurrentFeeRule(tx, { method: input.method, installments: input.installments });
+  const dueDate = expectedSettlementDayKey(input.paidAt, rule?.settlementDays ?? 0);
+  const [created] = await tx
+    .insert(financialEntries)
+    .values({
+      direction: "payable",
+      category: "mp_fee",
+      description: `Taxa Mercado Pago — pedido #${input.orderNumber}`,
+      amountCents: input.feeCents,
+      status: "pending",
+      dueDate,
+      orderId: input.orderId,
+    })
+    .returning({ id: financialEntries.id });
+  await tx.insert(auditLog).values({
+    actorType: "system",
+    actorId: null,
+    action: "financial_entry.mp_fee_sync",
+    entityType: "financial_entry",
+    entityId: created.id,
+    after: { amountCents: input.feeCents, dueDate, orderId: input.orderId },
+  });
+}
+
+/** Reembolso total: o MP devolve a taxa — o lançamento pendente é cancelado. */
+async function cancelPendingMpFeeEntry(tx: DbOrTx, orderId: string): Promise<void> {
+  const [entry] = await tx
+    .select({ id: financialEntries.id })
+    .from(financialEntries)
+    .where(
+      and(
+        eq(financialEntries.orderId, orderId),
+        eq(financialEntries.category, "mp_fee"),
+        eq(financialEntries.status, "pending"),
+      ),
+    )
+    .limit(1);
+  if (!entry) return;
+  const now = new Date();
+  await tx
+    .update(financialEntries)
+    .set({ status: "canceled", updatedAt: now })
+    .where(eq(financialEntries.id, entry.id));
+  await tx.insert(auditLog).values({
+    actorType: "system",
+    actorId: null,
+    action: "financial_entry.mp_fee_sync",
+    entityType: "financial_entry",
+    entityId: entry.id,
+    before: { status: "pending" },
+    after: { status: "canceled" },
+    reason: "Reembolso confirmado pelo Mercado Pago",
+  });
+}
+
+/**
  * Compara a taxa REAL cobrada pelo MP com a estimada pela payment_fee_rules
  * vigente do método (a mesma base usada na precificação). Divergência acima de
  * max(50 centavos, 10% da estimada) → outbox 'mp.fee_divergent' (1x por
@@ -280,31 +438,14 @@ async function checkFeeDivergence(
     actualCents: number;
   },
 ): Promise<void> {
-  // Vigente = effective_to IS NULL; entre as regras do método, a de menor
-  // installments_max que cubra o parcelamento usado (regra mais específica).
-  const [rule] = await tx
-    .select({
-      percentRate: paymentFeeRules.percentRate,
-      fixedFeeCents: paymentFeeRules.fixedFeeCents,
-    })
-    .from(paymentFeeRules)
-    .where(
-      and(
-        eq(paymentFeeRules.paymentMethod, input.method),
-        isNull(paymentFeeRules.effectiveTo),
-        gte(paymentFeeRules.installmentsMax, input.installments ?? 1),
-      ),
-    )
-    .orderBy(
-      asc(paymentFeeRules.installmentsMax),
-      desc(paymentFeeRules.effectiveFrom),
-    )
-    .limit(1);
+  const rule = await findCurrentFeeRule(tx, {
+    method: input.method,
+    installments: input.installments,
+  });
   if (!rule) return; // Sem regra vigente do método → sem estimativa p/ comparar.
 
   const estimatedCents =
-    Math.round(input.totalCents * Number(rule.percentRate)) +
-    rule.fixedFeeCents;
+    Math.round(input.totalCents * rule.percentRate) + rule.fixedFeeCents;
   const toleranceCents = Math.max(50, Math.round(estimatedCents * 0.1));
   if (Math.abs(input.actualCents - estimatedCents) <= toleranceCents) return;
 
