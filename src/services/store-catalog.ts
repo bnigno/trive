@@ -538,8 +538,11 @@ export interface PublicVariantFacts {
   colorsAvailable: string[];
 }
 
-export async function listPublicVariantFacts(db: ServiceDb): Promise<PublicVariantFacts[]> {
-  const items = await listPublicProducts(db, { limit: 200 });
+export async function listPublicVariantFacts(
+  db: ServiceDb,
+  opts: { viewer?: CatalogViewer } = {},
+): Promise<PublicVariantFacts[]> {
+  const items = await listPublicProducts(db, { limit: 200, ...(opts.viewer ? { viewer: opts.viewer } : {}) });
   if (items.length === 0) return [];
   const rows = await db
     .select({

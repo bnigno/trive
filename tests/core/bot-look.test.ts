@@ -2,7 +2,7 @@
 // com foto e estoque, preço na vizinhança, dentro do orçamento) — ou nada.
 import { describe, expect, it } from "vitest";
 
-import { lookFamilyOf, pickLookComplements, type LookCandidate } from "@/core/bot/look";
+import { colorMatches, isOnlyInAvoidedColors, lookFamilyOf, lovedColorOf, pickLookComplements, type LookCandidate } from "@/core/bot/look";
 
 function candidate(over: Partial<LookCandidate> & { id: string; name: string }): LookCandidate {
   return {
@@ -63,6 +63,41 @@ describe("pickLookComplements", () => {
     expect(within.map((pick) => pick.item.id)).toEqual(["bolsa"]);
     const one = pickLookComplements(hero, candidates, { max: 1 });
     expect(one).toHaveLength(1);
+  });
+
+  it("cartela: peça só em cores evitadas fica de fora; cor amada ganha preferência e aparece no motivo; sem cor cadastrada entra", () => {
+    const picks = pickLookComplements(
+      hero,
+      [
+        candidate({ id: "bolsa-vermelha", name: "Bolsa Tote", categoryName: "Acessórios", priceCents: 12900, colors: ["Vermelho"] }),
+        candidate({ id: "bolsa-caramelo", name: "Bolsa Baú", categoryName: "Acessórios", priceCents: 12900, colors: ["Caramelo", "Vermelho-escuro"] }),
+        candidate({ id: "bone", name: "Boné Bordado", categoryName: "Acessórios", priceCents: 8900, colors: ["Preto"] }),
+        candidate({ id: "colar", name: "Colar de Contas", categoryName: "Acessórios", priceCents: 8900 }),
+        candidate({ id: "sandalia-terra", name: "Sandália Rasteira", categoryName: "Calçados", priceCents: 15900, colors: ["Terra"] }),
+      ],
+      { max: 3, avoidColors: ["vermelho"], loveColors: ["terra", "caramelo"] },
+    );
+    expect(picks.map((pick) => pick.item.id)).toEqual(["bolsa-caramelo", "sandalia-terra", "bone"]);
+    expect(picks[0]?.reason).toContain("tem em Caramelo, cor que ela ama");
+    expect(picks[1]?.reason).toContain("tem em Terra, cor que ela ama");
+    expect(picks[2]?.reason).not.toContain("cor que ela ama");
+    // Sem cartela, a bolsa vermelha (mais barata na mesma família) voltaria a concorrer.
+    expect(pickLookComplements(hero, [candidate({ id: "bolsa-vermelha", name: "Bolsa Tote", categoryName: "Acessórios", colors: ["Vermelho"] })]).map((p) => p.item.id)).toEqual(["bolsa-vermelha"]);
+  });
+
+  it("colorMatches / isOnlyInAvoidedColors / lovedColorOf: sem acento, sem caixa, um contém o outro", () => {
+    expect(colorMatches("Vermelho-escuro", "vermelho")).toBe(true);
+    expect(colorMatches("Areia", "AREIA")).toBe(true);
+    expect(colorMatches("Café", "cafe")).toBe(true);
+    expect(colorMatches("Preto", "vermelho")).toBe(false);
+    expect(colorMatches("", "vermelho")).toBe(false);
+    expect(isOnlyInAvoidedColors(["Vermelho", "Bordô"], ["vermelho"])).toBe(false);
+    expect(isOnlyInAvoidedColors(["Vermelho", "Bordô"], ["vermelho", "bordo"])).toBe(true);
+    expect(isOnlyInAvoidedColors([], ["vermelho"])).toBe(false);
+    expect(isOnlyInAvoidedColors(undefined, ["vermelho"])).toBe(false);
+    expect(lovedColorOf(["Preto", "Terra"], ["terra"])).toBe("Terra");
+    expect(lovedColorOf(["Preto"], ["terra"])).toBeNull();
+    expect(lovedColorOf(undefined, ["terra"])).toBeNull();
   });
 
   it("peça sem família conhecida ainda ganha complementos de outra categoria", () => {

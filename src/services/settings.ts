@@ -521,6 +521,18 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   wa_bulk_interval_seconds: z.number().int().min(5).max(300),
   /** Prazo da reserva gentil (horas). */
   hold_ttl_hours: z.number().int().min(1).max(168),
+  /** Silêncio da vendedora depois de transferir para a equipe (horas, 1–168). */
+  handoff_silence_hours: z
+    .number()
+    .int()
+    .min(1, "O silêncio após transferir vai de 1 a 168 horas.")
+    .max(168, "O silêncio após transferir vai de 1 a 168 horas."),
+  /** Conversa "com você" parada por N horas volta para a vendedora (0 = nunca; até 168). */
+  handoff_auto_return_hours: z
+    .number()
+    .int()
+    .min(0, "A volta automática vai de 0 (nunca) a 168 horas.")
+    .max(168, "A volta automática vai de 0 (nunca) a 168 horas."),
   /** Teto de convidadas por lançamento VIP. */
   drop_audience_limit: z.number().int().min(1).max(500),
 };

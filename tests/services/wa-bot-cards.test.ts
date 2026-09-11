@@ -10,6 +10,7 @@ import type { CardData } from "@/core/cards/types";
 import * as schema from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
+import { saveStyleProfile } from "@/services/style-profiles";
 import { buildToolExecutor, type BotAttachment } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 
@@ -237,6 +238,28 @@ describe("montar_look", () => {
     expect(honest.ok).toBe(true);
     expect(honest.text).toContain("Não invente combinação");
     expect(none.attachments).toHaveLength(0);
+  });
+
+  it("cartela: peça só em cor que ela evita fica fora do look e a cor amada ganha; o modelo é avisado", async () => {
+    // Bolsa Tote passa a existir só em vermelho; o Boné em terra.
+    const [tote] = await db.select({ id: schema.productVariants.id }).from(schema.productVariants).where(eq(schema.productVariants.sku, "TOTE"));
+    await db.update(schema.productVariants).set({ attributes: { cor: "Vermelho" } }).where(eq(schema.productVariants.id, tote.id));
+    const [bone] = await db.select({ id: schema.productVariants.id }).from(schema.productVariants).where(eq(schema.productVariants.sku, "BONE"));
+    await db.update(schema.productVariants).set({ attributes: { cor: "Terra" } }).where(eq(schema.productVariants.id, bone.id));
+    await saveStyleProfile(sdb, {
+      phoneE164: PHONE,
+      source: "lia",
+      patch: { colorsAvoid: ["vermelho"], colorsLove: ["terra"] },
+    });
+
+    const { executeTool } = executor();
+    const result = await executeTool("montar_look", { produto: "LONGO DUNAS" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("Boné Bordado");
+    expect(result.text).toContain("tem em Terra, cor que ela ama");
+    expect(result.text).not.toContain("Bolsa Tote");
+    expect(result.text).toContain("[Cartela considerada: peças só em vermelho ficaram de fora; preferência por terra.]");
+    expect(result.text).toContain(`Total do look: ${formatCentsBRL(30900 + 8900)}`);
   });
 
   it("peça desconhecida ou ambígua orienta o modelo", async () => {

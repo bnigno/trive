@@ -1,6 +1,8 @@
 // "Montar o look": dada uma peça (hero) e o catálogo disponível, escolhe 1–2
 // complementos honestos — categoria diferente e complementar, preço na
-// vizinhança, com foto e estoque — sem inventar combinação. Puro.
+// vizinhança, com foto e estoque — sem inventar combinação. Com a cartela
+// de estilo, peça disponível SÓ em cores que a cliente evita fica de fora e
+// cor que ela ama ganha um empurrão. Puro.
 
 export interface LookCandidate {
   id: string;
@@ -10,6 +12,8 @@ export interface LookCandidate {
   priceCents: number;
   available: boolean;
   imagePath: string | null;
+  /** Cores com estoque (eixo "cor"); ausente/vazio = peça sem cor cadastrada. */
+  colors?: readonly string[];
 }
 
 export interface LookHero {
@@ -55,28 +59,68 @@ export function lookFamilyOf(categoryName: string | null, name: string): string 
 
 const PRICE_WINDOW = { min: 0.3, max: 1.2 };
 
-function reasonFor(pick: LookCandidate, heroFamily: string | null, pickFamily: string | null): string {
-  if (heroFamily && pickFamily) {
-    const family = FAMILIES.find((entry) => entry.key === heroFamily);
-    if (family?.complements.includes(pickFamily)) {
-      return `completa a peça (${pick.categoryName ?? pickFamily})`;
+/** "Vermelho" ~ "vermelho-escuro" ~ "VERMELHA": sem acento, sem caixa, um contém o outro. */
+function foldColor(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
+export function colorMatches(color: string, wanted: string): boolean {
+  const a = foldColor(color);
+  const b = foldColor(wanted);
+  if (a === "" || b === "") return false;
+  return a.includes(b) || b.includes(a);
+}
+
+/** Peça só em cores evitadas não entra no look; sem cor cadastrada, entra. */
+export function isOnlyInAvoidedColors(colors: readonly string[] | undefined, avoid: readonly string[]): boolean {
+  if (!colors || colors.length === 0 || avoid.length === 0) return false;
+  return colors.every((color) => avoid.some((wanted) => colorMatches(color, wanted)));
+}
+
+export function lovedColorOf(colors: readonly string[] | undefined, love: readonly string[]): string | null {
+  if (!colors || love.length === 0) return null;
+  return colors.find((color) => love.some((wanted) => colorMatches(color, wanted))) ?? null;
+}
+
+function reasonFor(
+  pick: LookCandidate,
+  heroFamily: string | null,
+  pickFamily: string | null,
+  lovedColor: string | null,
+): string {
+  const base = (() => {
+    if (heroFamily && pickFamily) {
+      const family = FAMILIES.find((entry) => entry.key === heroFamily);
+      if (family?.complements.includes(pickFamily)) {
+        return `completa a peça (${pick.categoryName ?? pickFamily})`;
+      }
     }
-  }
-  return `outra categoria (${pick.categoryName ?? "peça"})`;
+    return `outra categoria (${pick.categoryName ?? "peça"})`;
+  })();
+  return lovedColor ? `${base}; tem em ${lovedColor}, cor que ela ama` : base;
 }
 
 /**
  * Escolhe até `max` complementos: nunca a própria peça, nunca a mesma família,
  * só com foto e estoque; prefere família complementar (na ordem), preço entre
  * 30% e 120% da peça e categorias distintas entre si. Com `budgetCents`, a soma
- * (peça + complementos) respeita o teto. Sem opção honesta devolve [].
+ * (peça + complementos) respeita o teto. Com a cartela (`avoidColors`,
+ * `loveColors`): peça só em cores evitadas fica de fora; cor amada soma 0,5.
+ * Sem opção honesta devolve [].
  */
 export function pickLookComplements(
   hero: LookHero,
   candidates: readonly LookCandidate[],
-  opts: { max?: number; budgetCents?: number } = {},
+  opts: {
+    max?: number;
+    budgetCents?: number;
+    avoidColors?: readonly string[];
+    loveColors?: readonly string[];
+  } = {},
 ): LookPick[] {
   const max = opts.max ?? 2;
+  const avoid = opts.avoidColors ?? [];
+  const love = opts.loveColors ?? [];
   const heroFamily = lookFamilyOf(hero.categoryName, hero.name);
   const preferred = heroFamily
     ? (FAMILIES.find((family) => family.key === heroFamily)?.complements ?? [])
@@ -88,11 +132,14 @@ export function pickLookComplements(
       const family = lookFamilyOf(candidate.categoryName, candidate.name);
       if (family === null) return null;
       if (heroFamily !== null && family === heroFamily) return null;
+      if (isOnlyInAvoidedColors(candidate.colors, avoid)) return null;
       const rank = preferred.indexOf(family);
       let score = rank >= 0 ? 3 - rank * 0.25 : 0.5;
       const ratio = hero.priceCents > 0 ? candidate.priceCents / hero.priceCents : 1;
       if (ratio >= PRICE_WINDOW.min && ratio <= PRICE_WINDOW.max) score += 1;
-      return { candidate, family, score };
+      const lovedColor = lovedColorOf(candidate.colors, love);
+      if (lovedColor) score += 0.5;
+      return { candidate, family, score, lovedColor };
     })
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .sort((a, b) => b.score - a.score || a.candidate.priceCents - b.candidate.priceCents);
@@ -106,7 +153,10 @@ export function pickLookComplements(
     if (opts.budgetCents !== undefined && spent + entry.candidate.priceCents > opts.budgetCents) continue;
     familiesUsed.add(entry.family);
     spent += entry.candidate.priceCents;
-    picks.push({ item: entry.candidate, reason: reasonFor(entry.candidate, heroFamily, entry.family) });
+    picks.push({
+      item: entry.candidate,
+      reason: reasonFor(entry.candidate, heroFamily, entry.family, entry.lovedColor),
+    });
   }
   return picks;
 }

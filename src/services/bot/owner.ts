@@ -1,16 +1,18 @@
 // Canal com a equipe: transferência para humano e avisos ao dono.
 import { eq } from "drizzle-orm";
 import type { BotToolInputs } from "@/core/bot/tools";
+import { DEFAULT_HANDOFF_SILENCE_HOURS, hoursSetting, silenceUntil } from "@/core/whatsapp/handoff";
 import { auditLog, waConversations } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { getSettingsMap } from "@/services/settings";
 
-import { DRY_RUN_TEXT, HANDOFF_SILENCE_HOURS, loadBotState } from "./shared";
+import { DRY_RUN_TEXT, loadBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 
 /**
  * Transfere a conversa para atendimento humano: status 'human', bot em
- * silêncio por 24h, audit (com o resumo para a equipe) e aviso ao dono via
- * outbox. Compartilhado entre a ferramenta transferir_para_atendente e o
+ * silêncio pelas horas de handoff_silence_hours (padrão 24), audit (com o
+ * resumo para a equipe) e aviso ao dono via outbox. Compartilhado entre a ferramenta transferir_para_atendente e o
  * fallback de IA indisponível.
  */
 export async function handOffToHuman(
@@ -20,9 +22,11 @@ export async function handOffToHuman(
   resumo?: string,
 ): Promise<void> {
   const now = new Date();
-  const botDisabledUntil = new Date(
-    now.getTime() + HANDOFF_SILENCE_HOURS * 60 * 60_000,
-  );
+  const settings = await getSettingsMap(db, ["handoff_silence_hours"]);
+  const silenceHours = hoursSetting(settings["handoff_silence_hours"], DEFAULT_HANDOFF_SILENCE_HOURS, {
+    min: 1,
+  });
+  const botDisabledUntil = silenceUntil(now, silenceHours);
 
   const state = await loadBotState(db, ctx.conversationId);
   await db
@@ -52,6 +56,7 @@ export async function handOffToHuman(
       motivo,
       ...(resumo ? { resumo } : {}),
       botDisabledUntil: botDisabledUntil.toISOString(),
+      silenceHours,
     },
     reason: motivo,
   });

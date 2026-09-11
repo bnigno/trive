@@ -62,6 +62,8 @@ interface PageData {
   ownerPhone: string;
   recoveryAfterMinutes: number;
   botEnabledSetting: boolean;
+  handoffSilenceHours: number;
+  handoffAutoReturnHours: number;
   botModel: string;
   sellerName: string;
   exchangePolicy: string;
@@ -101,6 +103,8 @@ async function loadPageData(): Promise<PageData | null> {
         "owner_digest_enabled",
         "bot_media_enabled",
         "bot_cards_enabled",
+        "handoff_silence_hours",
+        "handoff_auto_return_hours",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -124,6 +128,10 @@ async function loadPageData(): Promise<PageData | null> {
   const text = (key: string): string =>
     typeof settingsMap[key] === "string" ? (settingsMap[key] as string) : "";
   const rawMinutes = settingsMap["wa_recovery_after_minutes"];
+  const hours = (key: string, fallback: number): number => {
+    const raw = settingsMap[key];
+    return typeof raw === "number" && Number.isInteger(raw) ? raw : fallback;
+  };
   return {
     overview,
     waEnabledSetting: settingsMap["wa_enabled"] === true,
@@ -133,6 +141,8 @@ async function loadPageData(): Promise<PageData | null> {
         ? rawMinutes
         : 60,
     botEnabledSetting: settingsMap["bot_enabled"] === true,
+    handoffSilenceHours: hours("handoff_silence_hours", 24),
+    handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
     botModel: text("bot_model") || "claude-sonnet-5",
     sellerName: text("bot_seller_name").trim() || DEFAULT_SELLER_NAME,
     exchangePolicy: text("store_exchange_policy"),
@@ -373,6 +383,8 @@ export default async function WhatsappPage() {
             exchangePolicy={exchangePolicy}
             botExtraInstructions={botExtraInstructions}
             quickReplies={quickReplies}
+            handoffSilenceHours={data.handoffSilenceHours}
+            handoffAutoReturnHours={data.handoffAutoReturnHours}
           />
         </Card>
         <div className="flex flex-col gap-6">

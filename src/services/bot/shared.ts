@@ -29,8 +29,6 @@ export const PAGE_SIZE = OPTION_LIST_MAX_OPTIONS;
 
 export const DESCRIPTION_MAX_CHARS = 700;
 
-export const HANDOFF_SILENCE_HOURS = 24;
-
 // Pix manual tem ritmo humano (dono confere o banco): o prazo de reserva de
 // 2h expiraria DEPOIS de o cliente pagar — estendemos para 24h quando menor.
 export const PIX_MANUAL_TTL_HOURS = 24;

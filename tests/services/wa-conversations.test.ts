@@ -9,6 +9,7 @@ import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/settings";
 import {
+  autoReturnIdleHumanConversations,
   closeWaConversation,
   countConversationsAwaitingOwner,
   getWaConversationThread,
@@ -189,6 +190,51 @@ describe("wa-conversations (painel do admin)", () => {
     expect(audits.map((audit) => audit.action)).toEqual([
       "wa.conversation_return_to_bot",
     ]);
+  });
+
+  it("volta automática: conversa 'com você' parada há N horas volta para a vendedora com audit; recente, aberta ou fechada ficam; 0 desliga", async () => {
+    const now = new Date("2026-09-11T15:00:00Z");
+    const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60_000);
+    const idle = await createConversation({
+      status: "human",
+      lastInboundAt: hoursAgo(13),
+      lastOutboundAt: hoursAgo(20),
+      updatedAt: hoursAgo(13),
+      botDisabledUntil: new Date(now.getTime() + 10 * 60 * 60_000),
+    });
+    const recent = await createConversation({
+      phoneE164: "+5511999990001",
+      status: "human",
+      lastInboundAt: hoursAgo(13),
+      lastOutboundAt: hoursAgo(2),
+      updatedAt: hoursAgo(13),
+    });
+    const open = await createConversation({ phoneE164: "+5511999990002", status: "open", updatedAt: hoursAgo(40) });
+    const closed = await createConversation({ phoneE164: "+5511999990003", status: "closed", updatedAt: hoursAgo(40) });
+
+    // Padrão (sem setting gravada): 12 h.
+    expect(await autoReturnIdleHumanConversations(sdb, { now })).toEqual({ checked: 2, returned: 1, hours: 12 });
+    const byId = async (id: string) =>
+      (await db.select().from(schema.waConversations).where(eq(schema.waConversations.id, id)))[0];
+    expect((await byId(idle)).status).toBe("open");
+    expect((await byId(idle)).botDisabledUntil).toBeNull();
+    expect((await byId(recent)).status).toBe("human");
+    expect((await byId(open)).status).toBe("open");
+    expect((await byId(closed)).status).toBe("closed");
+    const audits = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.conversation_auto_return"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ actorType: "system", entityId: idle });
+    expect(audits[0].reason).toContain("sem mensagens há 12 h");
+
+    // Segunda passada: nada novo (a que voltou já está aberta).
+    expect(await autoReturnIdleHumanConversations(sdb, { now })).toEqual({ checked: 1, returned: 0, hours: 12 });
+
+    // Setting 1 h: a recente (2 h parada) também volta. Setting 0: nunca.
+    await db.insert(schema.settings).values({ key: "handoff_auto_return_hours", value: 1 });
+    expect(await autoReturnIdleHumanConversations(sdb, { now })).toEqual({ checked: 1, returned: 1, hours: 1 });
+    await db.update(schema.settings).set({ value: 0 }).where(eq(schema.settings.key, "handoff_auto_return_hours"));
+    await createConversation({ phoneE164: "+5511999990004", status: "human", updatedAt: hoursAgo(100) });
+    expect(await autoReturnIdleHumanConversations(sdb, { now })).toEqual({ checked: 0, returned: 0, hours: 0 });
   });
 
   it("resposta manual: assume a conversa e enfileira wa.send com telefone e cliente", async () => {
