@@ -114,7 +114,11 @@ describe("draftProductFromPhotos", () => {
     assistant.enqueueExtraction({
       ...FAKE_PRODUCT_DRAFT_JSON,
       sizes: ["P", "M"],
-      measurementsBySize: { P: { bust: 88, waist: 70 }, M: { bust: 92, waist: 74 }, GG: { bust: 104 } },
+      measurementsBySize: [
+        { size: "P", bust: 88, waist: 70 },
+        { size: "M", bust: 92, waist: 74 },
+        { size: "GG", bust: 104 },
+      ],
     });
     const result = await draftProductFromPhotos(sdb, assistant, {
       photos: [await photo(), await photo()],
