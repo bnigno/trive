@@ -1250,3 +1250,38 @@ describe("ficha da peça e fita métrica", () => {
     ).rejects.toMatchObject({ code: "sem_eixo_tamanho" });
   });
 });
+
+describe("createProduct com medidas por tamanho", () => {
+  it("cada variação nasce com a fita métrica do SEU tamanho", async () => {
+    const created = await createProduct(db, {
+      name: "Vestido com medidas",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        {
+          sku: "MED-AREIA-P",
+          attributes: { cor: "Areia", tamanho: "P" },
+          measurements: { bust: 88, waist: 70 },
+          initialQuantity: 1,
+        },
+        {
+          sku: "MED-AREIA-M",
+          attributes: { cor: "Areia", tamanho: "M" },
+          measurements: { bust: 92 },
+          initialQuantity: 1,
+        },
+        { sku: "MED-AREIA-G", attributes: { cor: "Areia", tamanho: "G" }, initialQuantity: 1 },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const rows = await db
+      .select({ sku: schema.productVariants.sku, measurements: schema.productVariants.measurements })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.productId, created.product.id))
+      .orderBy(schema.productVariants.sku);
+    expect(rows.map((row) => [row.sku, row.measurements])).toEqual([
+      ["MED-AREIA-G", null],
+      ["MED-AREIA-M", { bust: 92 }],
+      ["MED-AREIA-P", { bust: 88, waist: 70 }],
+    ]);
+  });
+});

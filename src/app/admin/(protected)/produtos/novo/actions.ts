@@ -8,6 +8,7 @@ import {
   gridAxes,
   selectGridVariants,
 } from "@/core/catalog/variant-grid";
+import { measurementsSchema } from "@/core/catalog/measurements";
 import { normalizeSkuInput, validateSku } from "@/core/catalog/sku";
 import { getSalesAssistant } from "@/adapters/assistant";
 import type { ProductDraft } from "@/core/catalog/product-draft";
@@ -105,6 +106,8 @@ const rowSchema = z.object({
     }),
   quantity: quantitySchema,
   cost: optionalCents("O custo"),
+  /** Medidas do tamanho desta combinação (cm), já validadas pelo core. */
+  measurements: measurementsSchema.optional(),
 });
 
 const axisValuesSchema = z
@@ -199,6 +202,7 @@ export async function createProductAction(
       sku: row.sku,
       quantity: row.quantity,
       costCents: row.cost,
+      ...(row.measurements ? { measurements: row.measurements } : {}),
     })),
     priceCents: data.price,
     weightGrams: data.weightGrams,

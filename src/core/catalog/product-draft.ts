@@ -8,6 +8,12 @@ import { z } from "zod";
 
 import { normalizeAxisValue } from "./attributes";
 import { CARE_SYMBOL_KEYS, CARE_SYMBOLS, type CareSymbolKey } from "./care";
+import {
+  MEASUREMENT_KEYS,
+  MEASUREMENT_LABELS,
+  parseMeasurements,
+  type Measurements,
+} from "./measurements";
 import { DESCRIPTION_MIN_CHARS } from "./readiness";
 
 export const DRAFT_MAX_COLORS = 6;
@@ -60,6 +66,11 @@ export const rawProductDraftSchema = z.object({
   careFreeText: z.string(),
   fitNotes: z.string(),
   weightGramsEstimate: z.number().nullable(),
+  /** Tabela do fornecedor transcrita: tamanho → medidas em cm. */
+  measurementsBySize: z
+    .record(z.string(), z.record(z.string(), z.number()))
+    .nullable()
+    .optional(),
   warnings: z.array(z.string()),
 });
 
@@ -86,6 +97,18 @@ export const PRODUCT_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
     careFreeText: { type: "string", description: "Cuidados que não cabem nos pictogramas; vazio se nenhum." },
     fitNotes: { type: "string", description: "Como veste: caimento, modelagem, comprimento." },
     weightGramsEstimate: { type: ["number", "null"], description: "Peso estimado em gramas (50–3000) ou null." },
+    measurementsBySize: {
+      type: ["object", "null"],
+      description:
+        "Tabela de medidas do fornecedor, SE ela aparecer numa das fotos: uma chave por tamanho (como na etiqueta) e, dentro, as medidas em centímetros com as chaves bust, waist, hip, length, sleeve, shoulder. null quando não há tabela.",
+      additionalProperties: {
+        type: "object",
+        properties: Object.fromEntries(
+          MEASUREMENT_KEYS.map((key) => [key, { type: "number", description: `${MEASUREMENT_LABELS[key]} em cm.` }]),
+        ),
+        additionalProperties: false,
+      },
+    },
     warnings: { type: "array", items: { type: "string" }, description: "O que não deu para ler ou ficou em dúvida, em pt-BR." },
   },
   required: [
@@ -99,6 +122,7 @@ export const PRODUCT_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
     "careFreeText",
     "fitNotes",
     "weightGramsEstimate",
+    "measurementsBySize",
     "warnings",
   ],
   additionalProperties: false,
@@ -116,6 +140,8 @@ export type ProductDraft = {
   careFreeText: string[];
   fitNotes: string;
   weightGrams: number | null;
+  /** Tamanho (como nas fichas da grade) → medidas em cm, revisáveis. */
+  measurementsBySize: Record<string, Measurements>;
   /** Avisos do modelo + os da normalização, em pt-BR, para a faixa amarela. */
   warnings: string[];
 };
@@ -146,7 +172,7 @@ export function buildProductDraftPrompt(input: ProductDraftPromptInput): string 
       : "TOM DA MAISON: elegante, direto, caloroso; sem exageros nem jargão de e-commerce.",
     `SALAS (categorias) da loja — escolha UMA pelo slug, ou null se nenhuma servir:\n${salas}`,
     `CORES já usadas na loja (prefira estas grafias quando a cor for a mesma): ${cores}.\nTAMANHOS já usados: ${tamanhos}.`,
-    `REGRAS:\n1. name: nome curto no tom da maison (ex.: "Longo Dunas", "Blusa Aurora"), até 80 caracteres, sem preço, sem cor no nome.\n2. description: pelo menos 300 caracteres em pt-BR, falando de tecido, caimento, ocasião e UMA frase sobre como a peça se comporta no calor e na umidade de Belém. Nunca invente tecnologia de tecido nem origem.\n3. composition: só o que está legível na etiqueta (ex.: "100% linho" ou "70% viscose 30% poliéster"). Se a etiqueta não aparece ou está ilegível, devolva "" e explique em warnings.\n4. careSymbols: só os pictogramas que a etiqueta mostra, usando as chaves: ${cuidados}. careFreeText: o que não cabe nos pictogramas.\n5. colors: as cores que aparecem NAS FOTOS, uma grafia por cor (Primeira letra maiúscula), até ${DRAFT_MAX_COLORS}. sizes: só os tamanhos lidos (etiqueta ou tabela), até ${DRAFT_MAX_SIZES}; sem informação, devolva [] — nunca chute uma grade.\n6. fitNotes: caimento, modelagem e comprimento observáveis (ex.: "Corte fluido, comprimento midi, cintura marcada"). Nada sobre corpo de quem veste.\n7. weightGramsEstimate: estimativa honesta em gramas (${DRAFT_WEIGHT_MIN_GRAMS}–${DRAFT_WEIGHT_MAX_GRAMS}) pelo tipo de peça e tecido, ou null.\n8. warnings: tudo que não deu para ler ou ficou em dúvida, em frases curtas em pt-BR (ex.: "Etiqueta de composição não aparece nas fotos").`,
+    `REGRAS:\n1. name: nome curto no tom da maison (ex.: "Longo Dunas", "Blusa Aurora"), até 80 caracteres, sem preço, sem cor no nome.\n2. description: pelo menos 300 caracteres em pt-BR, falando de tecido, caimento, ocasião e UMA frase sobre como a peça se comporta no calor e na umidade de Belém. Nunca invente tecnologia de tecido nem origem.\n3. composition: só o que está legível na etiqueta (ex.: "100% linho" ou "70% viscose 30% poliéster"). Se a etiqueta não aparece ou está ilegível, devolva "" e explique em warnings.\n4. careSymbols: só os pictogramas que a etiqueta mostra, usando as chaves: ${cuidados}. careFreeText: o que não cabe nos pictogramas.\n5. colors: as cores que aparecem NAS FOTOS, uma grafia por cor (Primeira letra maiúscula), até ${DRAFT_MAX_COLORS}. sizes: só os tamanhos lidos (etiqueta ou tabela), até ${DRAFT_MAX_SIZES}; sem informação, devolva [] — nunca chute uma grade.\n6. fitNotes: caimento, modelagem e comprimento observáveis (ex.: "Corte fluido, comprimento midi, cintura marcada"). Nada sobre corpo de quem veste.\n7. weightGramsEstimate: estimativa honesta em gramas (${DRAFT_WEIGHT_MIN_GRAMS}–${DRAFT_WEIGHT_MAX_GRAMS}) pelo tipo de peça e tecido, ou null.\n8. measurementsBySize: se UMA das fotos for a tabela de medidas do fornecedor, transcreva o que estiver legível — uma entrada por tamanho, com as medidas da PEÇA DEITADA em centímetros (chaves: ${MEASUREMENT_KEYS.join(", ")}). Se a tabela estiver em polegadas, converta para centímetros (1 in = 2,54 cm) e diga isso em warnings. Sem tabela nas fotos, devolva null — nunca estime medidas.\n9. warnings: tudo que não deu para ler ou ficou em dúvida, em frases curtas em pt-BR (ex.: "Etiqueta de composição não aparece nas fotos").`,
   ].join("\n\n");
 }
 
@@ -223,6 +249,28 @@ export function normalizeProductDraft(
     );
   }
 
+  const measurementsBySize: Record<string, Measurements> = {};
+  const sizesOutOfGrid: string[] = [];
+  for (const [rawSize, rawMeasurements] of Object.entries(parsed.measurementsBySize ?? {})) {
+    const measurements = parseMeasurements(rawMeasurements);
+    if (!measurements) continue;
+    const size = normalizeAxisValue(rawSize);
+    if (size === "") continue;
+    // A tabela costuma citar tamanhos que a dona não comprou: fica de fora,
+    // mas ela fica sabendo (nada de medida órfã na peça).
+    const known = sizesRead.kept.find((candidate) => candidate.toLowerCase() === size.toLowerCase());
+    if (!known) {
+      sizesOutOfGrid.push(size);
+      continue;
+    }
+    measurementsBySize[known] = measurements;
+  }
+  if (sizesOutOfGrid.length > 0) {
+    warnings.push(
+      `A tabela de medidas cita ${sizesOutOfGrid.join(", ")}, que não está nas fichas de tamanho: acrescente a ficha ou deixe essas medidas de fora.`,
+    );
+  }
+
   const careSymbols = parsed.careSymbols
     .map((symbol) => symbol.trim())
     .filter(isCareSymbolKey)
@@ -263,6 +311,7 @@ export function normalizeProductDraft(
     categoryName,
     colors: colorsRead.kept,
     sizes: sizesRead.kept,
+    measurementsBySize,
     description,
     composition,
     careSymbols,

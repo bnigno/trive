@@ -32,6 +32,7 @@ function raw(over: Partial<RawProductDraft> = {}): RawProductDraft {
     careFreeText: "Não torcer\n",
     fitNotes: " Corte fluido ",
     weightGramsEstimate: 320.4,
+    measurementsBySize: { P: { bust: 88, waist: 70 }, M: { bust: 92 } },
     warnings: [" Etiqueta parcialmente ilegível ", ""],
     ...over,
   };
@@ -158,6 +159,53 @@ describe("normalizeProductDraft", () => {
         w.includes("recado do fornecedor"),
       ),
     ).toBe(false);
+  });
+
+  it("casa a tabela de medidas com as fichas de tamanho, em cm", () => {
+    const draft = normalizeProductDraft(raw(), { categories: CATEGORIES });
+    expect(draft.measurementsBySize).toEqual({
+      P: { bust: 88, waist: 70 },
+      M: { bust: 92 },
+    });
+    // Só os tamanhos da grade: a tabela citar GG não cria medida órfã.
+    const comGG = normalizeProductDraft(
+      raw({
+        measurementsBySize: { P: { bust: 88 }, GG: { bust: 104 } },
+        warnings: [],
+      }),
+      { categories: CATEGORIES },
+    );
+    expect(Object.keys(comGG.measurementsBySize)).toEqual(["P"]);
+    expect(comGG.warnings).toContain(
+      "A tabela de medidas cita GG, que não está nas fichas de tamanho: acrescente a ficha ou deixe essas medidas de fora.",
+    );
+  });
+
+  it("sem tabela nas fotos (null) ou com medida impossível: nenhuma medida entra", () => {
+    expect(
+      normalizeProductDraft(raw({ measurementsBySize: null }), { categories: CATEGORIES })
+        .measurementsBySize,
+    ).toEqual({});
+    // 0 cm e 900 cm não passam pelo schema de medidas (1–300).
+    expect(
+      normalizeProductDraft(raw({ measurementsBySize: { P: { bust: 0 }, M: { waist: 900 } } }), {
+        categories: CATEGORIES,
+      }).measurementsBySize,
+    ).toEqual({});
+  });
+
+  it("o prompt manda transcrever a tabela em centímetros e nunca estimar", () => {
+    const prompt = buildProductDraftPrompt({
+      storeName: "TRIVÉ",
+      manifesto: "",
+      categories: CATEGORIES,
+      knownColors: [],
+      knownSizes: [],
+    });
+    expect(prompt).toContain("measurementsBySize");
+    expect(prompt).toContain("PEÇA DEITADA");
+    expect(prompt).toContain("1 in = 2,54 cm");
+    expect(prompt).toContain("nunca estime medidas");
   });
 
   it("JSON fora do formato lança", () => {
