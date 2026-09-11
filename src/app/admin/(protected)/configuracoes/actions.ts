@@ -329,11 +329,13 @@ export async function updateStorefrontAction(
   try {
     const tagline = String(formData.get("storeTagline") ?? "").trim();
     const manifesto = String(formData.get("storeManifesto") ?? "").trim();
+    const edition = String(formData.get("editionName") ?? "").trim();
 
     const db = getDb();
     // Vazio = a home volta ao texto padrão (o serviço aceita vazio).
     await updateSetting(db, { key: "store_tagline", value: tagline, userId: user.id });
     await updateSetting(db, { key: "store_manifesto", value: manifesto, userId: user.id });
+    await updateSetting(db, { key: "edition_name", value: edition, userId: user.id });
 
     revalidatePath("/admin/configuracoes");
     // A home é ISR (5 min): revalidar aqui é o que faz o dono ver na hora.

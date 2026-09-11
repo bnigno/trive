@@ -537,6 +537,11 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   drop_audience_limit: z.number().int().min(1).max(500),
   /** "Começar pela foto" no cadastro de peça (ausente = ligado). */
   catalog_draft_enabled: z.boolean(),
+  /** Nome da edição em cartaz (ex.: "Edição Círio"): entra no post e na legenda. */
+  edition_name: z
+    .string()
+    .trim()
+    .max(40, "O nome da edição deve ter no máximo 40 caracteres."),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

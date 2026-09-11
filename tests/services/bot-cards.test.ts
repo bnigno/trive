@@ -32,7 +32,12 @@ async function webp(color: string, width = 900, height = 1200): Promise<Buffer> 
 
 const render = vi.fn(async (data: CardData) => {
   // PNG pequeno; o que importa é que chegou o CardData montado.
-  const items = data.kind === "catalog" ? data.items : [data.hero, ...data.complements];
+  const items =
+    data.kind === "catalog"
+      ? data.items
+      : data.kind === "look"
+        ? [data.hero, ...data.complements]
+        : [data.hero];
   expect(items.every((item) => item.imageDataUrl.startsWith("data:image/jpeg;base64,"))).toBe(true);
   return sharp({ create: { width: 108, height: 135, channels: 3, background: "#faf7f0" } }).png().toBuffer();
 });
@@ -132,6 +137,22 @@ describe("publishBotCard", () => {
     expect(look.cached).toBe(false);
   });
 
+  it("post e story mostram UMA peça (duas é erro) e cada um vira seu próprio cartão", async () => {
+    await expect(
+      publishBotCard(sdb, storage, render, { ...input, kind: "post" }),
+    ).rejects.toThrow(/UMA peça/);
+
+    const uma = { ...input, items: [input.items[0]] };
+    const post = await publishBotCard(sdb, storage, render, { ...uma, kind: "post" });
+    const story = await publishBotCard(sdb, storage, render, { ...uma, kind: "story" });
+    expect(post.cached).toBe(false);
+    expect(story.cached).toBe(false);
+    expect(post.key).not.toBe(story.key);
+    const rows = await db.select().from(schema.botCards);
+    expect(rows.map((row) => row.kind).sort()).toContain("post");
+    expect(rows.map((row) => row.kind).sort()).toContain("story");
+  });
+
   it("isBotCardsEnabled: ausente = ligado, false desliga", async () => {
     expect(await isBotCardsEnabled(sdb)).toBe(true);
     await db.insert(schema.settings).values({ key: "bot_cards_enabled", value: false });
@@ -156,7 +177,7 @@ describe("renderAndSendBotCard (handler wa.card_render)", () => {
       customerId: null,
       lastInboundId: INBOUND_ID,
       caption: "Vitrine: LONGO DUNAS · Bolsa Tote",
-      request: input,
+      request: { ...input, kind: input.kind as "catalog" | "look" },
     };
 
     const first = await renderAndSendBotCard(sdb, provider, storage, render, payload);

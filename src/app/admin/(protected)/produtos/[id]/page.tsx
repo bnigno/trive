@@ -153,12 +153,20 @@ export default async function ProdutoDetalhePage({
         title={detail.name}
         subtitle={`Criado em ${dateTimeFormatter.format(detail.createdAt)}`}
         actions={
-          <Link
-            href="/admin/produtos"
-            className="text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-400"
-          >
-            Voltar para produtos
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href={`/admin/produtos/${id}/post`}
+              className="text-sm font-medium text-zinc-900 underline dark:text-zinc-100"
+            >
+              Post da peça
+            </Link>
+            <Link
+              href="/admin/produtos"
+              className="text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-400"
+            >
+              Voltar para produtos
+            </Link>
+          </div>
         }
       />
 
