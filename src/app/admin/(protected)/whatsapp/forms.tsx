@@ -198,12 +198,16 @@ export function BotSettingsForm({
   exchangePolicy,
   botExtraInstructions,
   quickReplies,
+  handoffSilenceHours,
+  handoffAutoReturnHours,
 }: {
   sellerName: string;
   botModel: string;
   exchangePolicy: string;
   botExtraInstructions: string;
   quickReplies: string;
+  handoffSilenceHours: number;
+  handoffAutoReturnHours: number;
 }) {
   const [state, formAction] = useActionState(
     saveBotSettingsAction,
@@ -255,6 +259,37 @@ export function BotSettingsForm({
           placeholder="Ex.: Destaque que a produção é artesanal e que enviamos em até 2 dias úteis."
         />
       </Field>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field
+          label="Silêncio após transferir (horas)"
+          hint="Depois que ela passa a conversa para você, fica quieta por este tempo mesmo que a cliente escreva de novo. De 1 a 168 (uma semana)."
+        >
+          <Input
+            name="handoffSilenceHours"
+            type="number"
+            min={1}
+            max={168}
+            step={1}
+            required
+            defaultValue={String(handoffSilenceHours)}
+          />
+        </Field>
+        <Field
+          label="Volta sozinha depois de (horas paradas)"
+          hint="Conversa “com você” sem nenhuma mensagem, sua ou dela, por este tempo volta para a vendedora. 0 = nunca volta sozinha; até 168."
+        >
+          <Input
+            name="handoffAutoReturnHours"
+            type="number"
+            min={0}
+            max={168}
+            step={1}
+            required
+            defaultValue={String(handoffAutoReturnHours)}
+          />
+        </Field>
+      </div>
 
       <Field
         label="Respostas rápidas suas (uma por linha)"

@@ -382,6 +382,27 @@ describe("runBotTurn", () => {
     expect(await db.select().from(schema.stockMovements)).toHaveLength(0);
   });
 
+  it("transferir_para_atendente: o silêncio vem de handoff_silence_hours (2 h) e fica no audit", async () => {
+    await db.insert(schema.settings).values({ key: "handoff_silence_hours", value: 2 });
+    const before = Date.now();
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Quero falar com uma pessoa");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "transferir_para_atendente", input: { motivo: "pediu uma pessoa" } }],
+      replyTemplate: "Já chamo a equipe!",
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    const [conversation] = await db
+      .select()
+      .from(schema.waConversations)
+      .where(eq(schema.waConversations.id, conversationId));
+    const silenceMs = conversation.botDisabledUntil!.getTime() - before;
+    expect(silenceMs).toBeGreaterThan(1.9 * 60 * 60_000);
+    expect(silenceMs).toBeLessThan(2.1 * 60 * 60_000);
+    const [audit] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.bot_handoff"));
+    expect(audit.after).toMatchObject({ silenceHours: 2 });
+  });
+
   it("transferir_para_atendente: marca human + audit + aviso ao dono e PARA o turno", async () => {
     const before = Date.now();
     const conversationId = await createConversation();

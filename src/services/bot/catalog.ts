@@ -9,6 +9,7 @@ import {
   pickImagePath,
 } from "@/core/bot/variants";
 import { pickLookComplements } from "@/core/bot/look";
+import { getStyleProfileByPhone } from "@/services/style-profiles";
 import {
   CARD_MAX_ITEMS,
   catalogCardEyebrow,
@@ -38,6 +39,7 @@ import {
   getPublicProductBySlug,
   listProductIdsWithVariant,
   listPublicProducts,
+  listPublicVariantFacts,
   publicImageUrl,
   type PublicProductDetail,
   type PublicProductListItem,
@@ -197,7 +199,9 @@ export async function execMontarLook(
   ctx: ExecutorCtx,
   input: BotToolInputs["montar_look"],
 ): Promise<ToolResult> {
-  const resolved = await resolveProductDetail(db, input.produto);
+  // A viewer é a cliente da conversa: convidada VIP vê a peça escondida no look.
+  const viewer = { customerId: ctx.customerId };
+  const resolved = await resolveProductDetail(db, input.produto, viewer);
   if (resolved.kind === "none") {
     return {
       ok: false,
@@ -219,10 +223,17 @@ export async function execMontarLook(
   const heroColor = state.focus?.slug === detail.slug ? (state.focus.cor ?? null) : null;
   const heroImage = pickImagePath(detail.images, heroColor);
 
-  const list = await listPublicProducts(db, { limit: 200 });
+  // Fatos por peça (cores com estoque) e a cartela da cliente: peça só em
+  // cor que ela evita fica fora do look; cor que ela ama ganha preferência.
+  const [facts, styleProfile] = await Promise.all([
+    listPublicVariantFacts(db, { viewer }),
+    getStyleProfileByPhone(db, ctx.phoneE164),
+  ]);
+  const avoidColors = styleProfile?.profile.colorsAvoid ?? [];
+  const loveColors = styleProfile?.profile.colorsLove ?? [];
   const picks = pickLookComplements(
     { id: detail.id, name: detail.name, categoryName: detail.categoryName, priceCents: heroPrice },
-    list.map((item) => ({
+    facts.map(({ product: item, colorsAvailable }) => ({
       id: item.id,
       slug: item.slug,
       name: item.name,
@@ -230,16 +241,31 @@ export async function execMontarLook(
       priceCents: item.priceFromCents,
       available: item.available,
       imagePath: item.imagePath,
+      colors: colorsAvailable,
     })),
     {
       max: LOOK_MAX_COMPLEMENTS,
+      avoidColors,
+      loveColors,
       ...(input.orcamento_reais !== undefined ? { budgetCents: input.orcamento_reais * 100 } : {}),
     },
   );
+  const cartelaNote =
+    avoidColors.length > 0 || loveColors.length > 0
+      ? `[Cartela considerada: ${[
+          avoidColors.length > 0 ? `peças só em ${avoidColors.join(", ")} ficaram de fora` : "",
+          loveColors.length > 0 ? `preferência por ${loveColors.join(", ")}` : "",
+        ]
+          .filter((part) => part !== "")
+          .join("; ")}.]`
+      : null;
   if (picks.length === 0) {
     return {
       ok: true,
-      text: `Nenhuma peça do catálogo completa ${detail.name} com honestidade (só há peças da mesma família, sem foto, esgotadas ou fora do orçamento). Não invente combinação: siga com a peça em vista.`,
+      text: [
+        `Nenhuma peça do catálogo completa ${detail.name} com honestidade (só há peças da mesma família, sem foto, esgotadas, fora do orçamento${avoidColors.length > 0 ? " ou só em cores que ela evita" : ""}). Não invente combinação: siga com a peça em vista.`,
+        ...(cartelaNote ? [cartelaNote] : []),
+      ].join("\n"),
     };
   }
 
@@ -272,6 +298,7 @@ export async function execMontarLook(
     cardSent
       ? `[O cartão do look em imagem ${cardSent === "sent" ? "foi enviado à cliente" : "chega logo depois da sua resposta"} — mencione em meia frase, não descreva a imagem.]`
       : "[Sem cartão em imagem neste turno: apresente o look em texto, 1 frase por peça.]",
+    ...(cartelaNote ? [cartelaNote] : []),
   ];
   return { ok: true, text: lines.join("\n") };
 }

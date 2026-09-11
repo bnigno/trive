@@ -184,6 +184,17 @@ describe("updateSetting / getSettingsMap", () => {
     expect(map.default_low_stock_threshold).toBe(7);
   });
 
+  it("handoff_silence_hours (1–168) e handoff_auto_return_hours (0–168): inteiros na faixa; fora dela rejeita", async () => {
+    await updateSetting(db, { key: "handoff_silence_hours", value: 2, userId: FIXED_USER_ID });
+    await updateSetting(db, { key: "handoff_auto_return_hours", value: 0, userId: FIXED_USER_ID });
+    const map = await getSettingsMap(db, ["handoff_silence_hours", "handoff_auto_return_hours"]);
+    expect(map.handoff_silence_hours).toBe(2);
+    expect(map.handoff_auto_return_hours).toBe(0);
+    for (const bad of [{ key: "handoff_silence_hours", value: 0 }, { key: "handoff_silence_hours", value: 169 }, { key: "handoff_silence_hours", value: 1.5 }, { key: "handoff_auto_return_hours", value: -1 }, { key: "handoff_auto_return_hours", value: 200 }, { key: "handoff_auto_return_hours", value: "12" }]) {
+      await expect(updateSetting(db, { ...bad, userId: FIXED_USER_ID })).rejects.toThrow(ServiceError);
+    }
+  });
+
   it("store_pix_key: aparas espaços, aceita vazia (= desligado) e limita a 140", async () => {
     const saved = await updateSetting(db, {
       key: "store_pix_key",

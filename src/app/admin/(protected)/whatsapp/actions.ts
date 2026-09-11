@@ -122,6 +122,20 @@ export async function saveBotSettingsAction(
       value: text("waQuickReplies"),
       userId: user.id,
     });
+    const hours = (name: string): number => {
+      const value = Number(text(name));
+      return Number.isFinite(value) ? Math.trunc(value) : Number.NaN;
+    };
+    await updateSetting(db, {
+      key: "handoff_silence_hours",
+      value: hours("handoffSilenceHours"),
+      userId: user.id,
+    });
+    await updateSetting(db, {
+      key: "handoff_auto_return_hours",
+      value: hours("handoffAutoReturnHours"),
+      userId: user.id,
+    });
 
     revalidatePath("/admin/whatsapp");
     revalidatePath("/admin/whatsapp/conversas");

@@ -14,6 +14,7 @@ import { expireOverdueHolds, remindExpiringHolds } from "@/services/stock-holds"
 import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
 import { checkSessionAndAlert } from "@/services/wa-session";
+import { autoReturnIdleHumanConversations } from "@/services/wa-conversations";
 
 const SWEEP_BATCH_LIMIT = 25;
 const SWEEP_MAX_BATCHES = 10;
@@ -157,6 +158,13 @@ export const dailyDigest = inngest.createFunction(
   },
 );
 
+// Conversas "com você" paradas por handoff_auto_return_hours voltam para a
+// vendedora (0 = nunca). Cada volta é auditada como ação do sistema.
+export const waAutoReturn = inngest.createFunction(
+  { id: "wa-auto-return", triggers: [{ cron: "*/15 * * * *" }] },
+  async () => autoReturnIdleHumanConversations(getDb()),
+);
+
 export const functions = [
   dailyDigest,
   outboxSweep,
@@ -167,5 +175,6 @@ export const functions = [
   mpReconciliation,
   waSessionMonitor,
   waRecovery,
+  waAutoReturn,
   emailPoll,
 ];

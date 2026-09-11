@@ -45,6 +45,9 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "wa_send_window_end", value: 21 },
   { key: "wa_bulk_interval_seconds", value: 20 },
   { key: "hold_ttl_hours", value: 24 },
+  // Onda 5 — transferência: silêncio da vendedora e volta automática.
+  { key: "handoff_silence_hours", value: 24 },
+  { key: "handoff_auto_return_hours", value: 12 },
   { key: "drop_audience_limit", value: 60 },
 ];
 

@@ -11,6 +11,12 @@ import {
   type WaMessageOrigin,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
+import {
+  DEFAULT_HANDOFF_AUTO_RETURN_HOURS,
+  hoursSetting,
+  isIdleForHours,
+  lastActivityAt,
+} from "@/core/whatsapp/handoff";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
@@ -639,6 +645,59 @@ export async function returnWaConversationToBot(
     after: { status: "open", botDisabledUntil: null },
   });
   return { status: "open" };
+}
+
+/**
+ * Conversas "com você" paradas (sem NENHUMA mensagem, sua ou dela) por
+ * handoff_auto_return_hours voltam sozinhas para a vendedora — a cliente não
+ * fica sem resposta porque a equipe não viu. 0 = nunca. Roda pelo cron
+ * wa-auto-return; audita cada volta como ação do sistema.
+ */
+export async function autoReturnIdleHumanConversations(
+  db: DbOrTx,
+  opts: { now?: Date } = {},
+): Promise<{ checked: number; returned: number; hours: number }> {
+  const now = opts.now ?? new Date();
+  const settings = await getSettingsMap(db, ["handoff_auto_return_hours"]);
+  const hours = hoursSetting(settings["handoff_auto_return_hours"], DEFAULT_HANDOFF_AUTO_RETURN_HOURS, {
+    min: 0,
+  });
+  if (hours <= 0) return { checked: 0, returned: 0, hours };
+
+  const rows = await db
+    .select({
+      id: waConversations.id,
+      lastInboundAt: waConversations.lastInboundAt,
+      lastOutboundAt: waConversations.lastOutboundAt,
+      updatedAt: waConversations.updatedAt,
+      botDisabledUntil: waConversations.botDisabledUntil,
+    })
+    .from(waConversations)
+    .where(eq(waConversations.status, "human"));
+
+  let returned = 0;
+  for (const row of rows) {
+    const lastActivity = lastActivityAt(row);
+    if (!isIdleForHours(lastActivity, now, hours)) continue;
+    const updated = await db
+      .update(waConversations)
+      .set({ status: "open", botDisabledUntil: null, updatedAt: now })
+      .where(and(eq(waConversations.id, row.id), eq(waConversations.status, "human")))
+      .returning({ id: waConversations.id });
+    if (updated.length === 0) continue;
+    await db.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "wa.conversation_auto_return",
+      entityType: "wa_conversation",
+      entityId: row.id,
+      before: { status: "human", botDisabledUntil: row.botDisabledUntil?.toISOString() ?? null },
+      after: { status: "open", botDisabledUntil: null },
+      reason: `sem mensagens há ${hours} h (última atividade ${lastActivity.toISOString()})`,
+    });
+    returned += 1;
+  }
+  return { checked: rows.length, returned, hours };
 }
 
 /**
