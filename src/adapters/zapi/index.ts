@@ -41,6 +41,12 @@ export type QrCode = {
   imageBase64: string;
 };
 
+/** Mídia recebida da cliente, baixada do storage temporário da Z-API. */
+export type DownloadedMedia = {
+  data: Buffer;
+  contentType: string | null;
+};
+
 /**
  * Contrato de mensageria WhatsApp. A Z-API é uma API NÃO-oficial (sessão de
  * WhatsApp Web): esta interface existe para trocarmos o adapter pela API
@@ -62,6 +68,13 @@ export interface MessagingProvider {
    * de enviar. Indisponibilidade da consulta deve responder true (fail-open).
    */
   phoneExists(toE164: string): Promise<boolean>;
+  /**
+   * Baixa uma mídia recebida (foto, áudio) pela URL que veio no webhook. A
+   * Z-API guarda o arquivo por ~30 dias numa URL pública. Lança quando a
+   * URL não responde ou o arquivo passa de `maxBytes` — quem chama trata
+   * como "mídia indisponível" (a conversa segue sem ela).
+   */
+  downloadMedia(input: { url: string; maxBytes: number }): Promise<DownloadedMedia>;
 }
 
 let instance: MessagingProvider | undefined;

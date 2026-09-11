@@ -64,9 +64,21 @@ export class ClaudeSalesAssistant implements SalesAssistant {
     const { system, history, model, executeTool } = input;
     const client = this.getClient();
 
+    // Foto anexada vira bloco de imagem antes do texto (Sonnet é multimodal).
     const messages: Anthropic.MessageParam[] = history.map((message) => ({
       role: message.role,
-      content: message.text,
+      content:
+        message.images && message.images.length > 0
+          ? [
+              ...message.images.map(
+                (image): Anthropic.ImageBlockParam => ({
+                  type: "image",
+                  source: { type: "base64", media_type: image.mediaType, data: image.base64 },
+                }),
+              ),
+              { type: "text", text: message.text } satisfies Anthropic.TextBlockParam,
+            ]
+          : message.text,
     }));
     // A API exige que a primeira mensagem seja 'user'.
     if (messages[0]?.role !== "user") {

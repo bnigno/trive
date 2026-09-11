@@ -22,6 +22,12 @@ export class FakeFileStorage implements FileStorage {
     this.files.delete(path);
   }
 
+  async download(path: string): Promise<{ data: Buffer; contentType: string | null }> {
+    const file = this.files.get(path);
+    if (!file) throw new Error(`Falha ao baixar arquivo do storage (${path}): não existe (fake).`);
+    return { data: Buffer.from(file.data), contentType: file.contentType };
+  }
+
   // --- Helpers de teste (não fazem parte da interface FileStorage) ---
 
   has(path: string): boolean {

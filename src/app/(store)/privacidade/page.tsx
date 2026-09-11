@@ -118,6 +118,14 @@ export default async function PrivacyPage() {
           {email ? <> — ou pedir pelo e-mail {email}</> : null}. A saída vale
           na hora e não afeta em nada seus pedidos.
         </p>
+        <p>
+          Se você mandar uma foto ou um áudio para o nosso WhatsApp, a nossa
+          atendente digital pode usar inteligência artificial (Anthropic e
+          OpenAI) para entender a peça mostrada ou transcrever o que você
+          disse. O arquivo é processado na hora e não fica guardado por nós;
+          só o texto da conversa permanece no histórico do atendimento, como
+          qualquer mensagem.
+        </p>
       </LegalSection>
 
       <LegalSection id="prazo" number="04" title="Por quanto tempo guardamos">

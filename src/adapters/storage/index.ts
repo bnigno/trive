@@ -12,6 +12,8 @@ export interface FileStorage {
   upload(input: UploadInput): Promise<{ path: string }>;
   publicUrl(path: string): string;
   remove(path: string): Promise<void>;
+  /** Lê um arquivo do bucket (ex.: foto de produto para compor uma imagem). Lança se não existir. */
+  download(path: string): Promise<{ data: Buffer; contentType: string | null }>;
 }
 
 let instance: FileStorage | undefined;

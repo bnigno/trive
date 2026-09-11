@@ -106,6 +106,13 @@
       "when": 1789080202016,
       "tag": "0014_heavy_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789083463394,
+      "tag": "0015_amazing_junta",
+      "breakpoints": true
     }
   ]
 }

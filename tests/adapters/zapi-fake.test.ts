@@ -180,3 +180,16 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
     expect(sent.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-1$/);
   });
 });
+
+describe("FakeMessagingProvider.downloadMedia", () => {
+  it("devolve a fixture cadastrada e falha sem ela; reset limpa", async () => {
+    const provider = new FakeMessagingProvider();
+    provider.setMediaFixture("https://cdn/x.ogg", Buffer.from("abc"), "audio/ogg");
+    const media = await provider.downloadMedia({ url: "https://cdn/x.ogg", maxBytes: 100 });
+    expect(media.data.toString()).toBe("abc");
+    expect(media.contentType).toBe("audio/ogg");
+    await expect(provider.downloadMedia({ url: "https://cdn/nada", maxBytes: 100 })).rejects.toThrow();
+    provider.reset();
+    await expect(provider.downloadMedia({ url: "https://cdn/x.ogg", maxBytes: 100 })).rejects.toThrow();
+  });
+});

@@ -58,6 +58,11 @@ import {
 import { splitBotReply } from "@/core/bot/reply";
 import { renderStoreMap } from "@/core/bot/store-map";
 import { variantLabel } from "@/core/catalog/attributes";
+import {
+  historyTextForInbound,
+  isAudioAwaitingTranscription,
+  parseWaMediaMeta,
+} from "@/core/whatsapp/media";
 import { deriveWaMessageOrigin } from "@/core/whatsapp/origin";
 import {
   auditLog,
@@ -78,6 +83,7 @@ import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
+import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN } from "@/services/wa-media";
 import {
   computeTotalWeightGrams,
   DEFAULT_ITEM_WEIGHT_GRAMS,
@@ -1694,24 +1700,65 @@ export async function runBotTurn(
     // saída marcada (equipe/automático) e mídia resumida em marcadores.
     const recent = await tx
       .select({
+        id: waMessages.id,
         direction: waMessages.direction,
         body: waMessages.body,
         kind: waMessages.kind,
         dedupeKey: waMessages.dedupeKey,
         templateKey: waMessages.templateKey,
+        mediaUrl: waMessages.mediaUrl,
+        mediaMeta: waMessages.mediaMeta,
+        createdAt: waMessages.createdAt,
       })
       .from(waMessages)
       .where(eq(waMessages.conversationId, conversationId))
       .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
       .limit(HISTORY_LIMIT);
-    const messages: BotChatMessage[] = recent.reverse().map((message) =>
-      message.direction === "inbound"
-        ? { role: "user" as const, text: message.body }
-        : {
-            role: "assistant" as const,
-            text: historyTextForOutbound(message),
-          },
+    const rows = recent.reverse();
+
+    // "Pendentes" = o que a cliente mandou depois da última resposta: só
+    // essas fotos vão anexadas ao modelo; as antigas viram marcador.
+    const lastOutboundIndex = rows.reduce(
+      (found, row, index) => (row.direction === "outbound" ? index : found),
+      -1,
     );
+    const pending = rows.slice(lastOutboundIndex + 1).filter((row) => row.direction === "inbound");
+    const mediaEnabled = await isBotMediaEnabled(tx);
+    const now = new Date();
+    if (
+      mediaEnabled &&
+      pending.some(
+        (row) =>
+          row.kind === "audio" &&
+          isAudioAwaitingTranscription(parseWaMediaMeta(row.mediaMeta), row.createdAt, now),
+      )
+    ) {
+      // O turno enfileirado pela transcrição responde a tudo de uma vez.
+      return { skipped: "aguardando_transcricao" };
+    }
+    const imageUrls = pending
+      .filter((row) => row.kind === "image" && row.mediaUrl)
+      .slice(-MAX_IMAGES_PER_TURN)
+      .map((row) => row.mediaUrl as string);
+    const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
+
+    const messages: BotChatMessage[] = rows.map((message) => {
+      if (message.direction !== "inbound") {
+        return { role: "assistant" as const, text: historyTextForOutbound(message) };
+      }
+      const attached = message.mediaUrl ? images.get(message.mediaUrl) : undefined;
+      const isPending = pending.some((row) => row.id === message.id);
+      return {
+        role: "user" as const,
+        text: historyTextForInbound({
+          kind: message.kind,
+          body: message.body,
+          mediaMeta: parseWaMediaMeta(message.mediaMeta),
+          image: attached ? "attached" : isPending ? "unavailable" : "old",
+        }),
+        ...(attached ? { images: [attached] } : {}),
+      };
+    });
     const state = parseBotState(conversation.botState);
     const history = assembleHistory(state, messages);
 
@@ -1821,6 +1868,11 @@ export async function runBotTurn(
         attachments: attachments.map((attachment) => attachment.kind),
         bubbles: bubbles.length,
         durationMs: Date.now() - startedAt,
+        // Só contagens: a foto nunca é guardada.
+        media: {
+          images: images.size,
+          audios: pending.filter((row) => row.kind === "audio").length,
+        },
       },
     });
 

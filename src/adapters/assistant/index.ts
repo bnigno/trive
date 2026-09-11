@@ -6,9 +6,17 @@ import { FakeSalesAssistant } from "./fake";
 
 export type { ToolExecutor } from "@/core/bot/tools";
 
+/** Foto da cliente já reduzida (≤ 1024 px) e codificada para o modelo. */
+export type BotImageInput = {
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  base64: string;
+};
+
 export type BotChatMessage = {
   role: "user" | "assistant";
   text: string;
+  /** Só na mensagem do turno atual: fotos antigas viram marcador de texto. */
+  images?: BotImageInput[];
 };
 
 export type RespondTurnInput = {

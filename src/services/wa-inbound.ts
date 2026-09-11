@@ -17,9 +17,12 @@ import {
   waConversations,
   waMessages,
 } from "@/db/schema";
+import { isTranscriptionConfigured } from "@/adapters/transcription";
+import { INBOUND_MEDIA_MARKERS, type WaMediaMeta } from "@/core/whatsapp/media";
 import { isValidE164, toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { isBotEnabled } from "@/services/wa-bot";
+import { isBotMediaEnabled } from "@/services/wa-media";
 
 export const OPT_OUT_ACK_BODY =
   "Pronto! Você não receberá mais avisos. Se mudar de ideia, é só chamar. 💬";
@@ -57,9 +60,21 @@ const zapiInboundBodySchema = z
     // Mídia recebida (a Z-API manda um objeto por tipo). Registramos o fato
     // para a vendedora responder com honestidade em vez de ignorar a cliente.
     image: z
-      .object({ imageUrl: z.string().optional(), caption: z.string().optional() })
+      .object({
+        imageUrl: z.string().optional(),
+        caption: z.string().optional(),
+        mimeType: z.string().optional(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+      })
       .optional(),
-    audio: z.object({ audioUrl: z.string().optional() }).optional(),
+    audio: z
+      .object({
+        audioUrl: z.string().optional(),
+        mimeType: z.string().optional(),
+        seconds: z.number().optional(),
+      })
+      .optional(),
     video: z.object({ videoUrl: z.string().optional() }).optional(),
     document: z
       .object({ documentUrl: z.string().optional(), fileName: z.string().optional() })
@@ -96,7 +111,8 @@ export type ProcessZapiInboundResult =
       optedOut: boolean;
     }
   | { action: "forwarded"; conversationId: string; waMessageId: string }
-  | { action: "bot_queued"; conversationId: string; waMessageId: string };
+  | { action: "bot_queued"; conversationId: string; waMessageId: string }
+  | { action: "transcribe_queued"; conversationId: string; waMessageId: string };
 
 /** trim + maiúsculas + sem acento, para comparar comandos como SAIR/PARAR. */
 function normalizeKeyword(text: string): string {
@@ -130,31 +146,25 @@ function listResponseText(
   return list.title ?? list.message;
 }
 
-export const INBOUND_MEDIA_MARKERS = {
-  image: "[a cliente enviou uma foto]",
-  audio: "[a cliente enviou um áudio]",
-  video: "[a cliente enviou um vídeo]",
-  document: "[a cliente enviou um documento]",
-  sticker: "[a cliente enviou uma figurinha]",
-  location: "[a cliente enviou uma localização]",
-} as const;
+export { INBOUND_MEDIA_MARKERS };
 
 type InboundMedia = {
-  /** kind de wa_messages: só imagem tem representação própria no painel. */
-  kind: "image" | "text";
+  /** kind de wa_messages: foto e áudio têm representação própria no painel. */
+  kind: "image" | "audio" | "text";
   body: string;
   mediaUrl?: string;
+  mediaMeta?: WaMediaMeta;
 };
 
 /**
  * Mídia recebida vira uma mensagem inbound com um marcador em português: a
- * vendedora lê "[a cliente enviou um áudio]" e responde com honestidade que
- * ainda não ouve áudio por aqui, e o painel mostra o que chegou (a foto,
- * inclusive) em vez de sumir com a mensagem.
+ * vendedora lê "[a cliente enviou um áudio]" (ou a transcrição, quando a
+ * fila transcreve) e o painel mostra o que chegou em vez de sumir com a
+ * mensagem.
  */
 function describeInboundMedia(parsed: {
-  image?: { imageUrl?: string; caption?: string };
-  audio?: { audioUrl?: string };
+  image?: { imageUrl?: string; caption?: string; mimeType?: string; width?: number; height?: number };
+  audio?: { audioUrl?: string; mimeType?: string; seconds?: number };
   video?: { videoUrl?: string };
   document?: { documentUrl?: string; fileName?: string };
   sticker?: { stickerUrl?: string };
@@ -168,9 +178,24 @@ function describeInboundMedia(parsed: {
         ? `${INBOUND_MEDIA_MARKERS.image} ${caption}`
         : INBOUND_MEDIA_MARKERS.image,
       ...(parsed.image.imageUrl ? { mediaUrl: parsed.image.imageUrl } : {}),
+      mediaMeta: {
+        ...(parsed.image.mimeType ? { mimeType: parsed.image.mimeType } : {}),
+        ...(parsed.image.width ? { width: parsed.image.width } : {}),
+        ...(parsed.image.height ? { height: parsed.image.height } : {}),
+      },
     };
   }
-  if (parsed.audio) return { kind: "text", body: INBOUND_MEDIA_MARKERS.audio };
+  if (parsed.audio) {
+    return {
+      kind: "audio",
+      body: INBOUND_MEDIA_MARKERS.audio,
+      ...(parsed.audio.audioUrl ? { mediaUrl: parsed.audio.audioUrl } : {}),
+      mediaMeta: {
+        ...(parsed.audio.mimeType ? { mimeType: parsed.audio.mimeType } : {}),
+        ...(parsed.audio.seconds ? { seconds: parsed.audio.seconds } : {}),
+      },
+    };
+  }
   if (parsed.video) return { kind: "text", body: INBOUND_MEDIA_MARKERS.video };
   if (parsed.document) {
     const name = parsed.document.fileName?.trim();
@@ -186,6 +211,58 @@ function describeInboundMedia(parsed: {
     return { kind: "text", body: INBOUND_MEDIA_MARKERS.location };
   }
   return undefined;
+}
+
+/**
+ * Decisão de rota de uma mensagem da cliente, compartilhada pelo webhook e
+ * pela transcrição: conversa 'open', bot não silenciado e ligado → turno
+ * da vendedora na fila; senão → encaminha ao dono. Dedupes pelo id da
+ * mensagem na Z-API: reentrega nunca duplica.
+ */
+export async function routeInboundMessage(
+  tx: DbOrTx,
+  input: {
+    conversation: { id: string; status: string; botDisabledUntil: Date | null };
+    phoneE164: string;
+    zapiMessageId: string;
+    /** O que a vendedora lê. */
+    text: string;
+    /** O que o dono lê no encaminhamento (default: o próprio texto). */
+    forwardText?: string;
+    customerName?: string;
+    now: Date;
+  },
+): Promise<"bot_queued" | "forwarded"> {
+  const { conversation } = input;
+  const botEligible =
+    conversation.status === "open" &&
+    (conversation.botDisabledUntil === null ||
+      conversation.botDisabledUntil.getTime() <= input.now.getTime()) &&
+    (await isBotEnabled(tx));
+
+  if (botEligible) {
+    await enqueueOutboxEvent(tx, {
+      eventType: "wa.bot_turn",
+      dedupeKey: `wa.bot_turn:${input.zapiMessageId}`,
+      aggregateType: "wa_conversation",
+      aggregateId: conversation.id,
+      payload: { conversationId: conversation.id },
+    });
+    return "bot_queued";
+  }
+
+  await enqueueOutboxEvent(tx, {
+    eventType: "wa.owner_forward",
+    dedupeKey: `wa.fwd:${input.zapiMessageId}`,
+    aggregateType: "wa_conversation",
+    aggregateId: conversation.id,
+    payload: {
+      phoneE164: input.phoneE164,
+      body: (input.forwardText ?? input.text).slice(0, FORWARD_BODY_MAX_CHARS),
+      ...(input.customerName ? { customerName: input.customerName } : {}),
+    },
+  });
+  return "forwarded";
 }
 
 /** Z-API manda '5511999998888' (sem '+'): normaliza BR; aceita E.164 estrangeiro. */
@@ -343,6 +420,7 @@ export async function processZapiInbound(
         kind: media?.kind ?? "text",
         body: text,
         ...(media?.mediaUrl ? { mediaUrl: media.mediaUrl } : {}),
+        ...(media?.mediaMeta ? { mediaMeta: media.mediaMeta } : {}),
         status: "delivered",
         deliveredAt: now,
       })
@@ -447,51 +525,48 @@ export async function processZapiInbound(
       } as const;
     }
 
-    // Texto comum: se a conversa está 'open', o bot não está silenciado
-    // (bot_disabled_until nulo ou no passado) e o bot de vendas está ligado,
-    // o turno vai para a fila — a resposta acontece no handler 'wa.bot_turn',
-    // nunca inline no webhook. Checagens baratas primeiro; isBotEnabled (que
-    // consulta settings) só roda quando a conversa é elegível.
-    const botEligible =
-      conversation.status === "open" &&
-      (conversation.botDisabledUntil === null ||
-        conversation.botDisabledUntil.getTime() <= now.getTime()) &&
-      (await isBotEnabled(tx));
-
-    if (botEligible) {
+    // Áudio: com a vendedora ouvindo (setting + chave), a mensagem vai para a
+    // fila de transcrição; quem transcreve decide a rota depois (bot ou dono).
+    if (
+      media?.kind === "audio" &&
+      media.mediaUrl &&
+      (await isBotMediaEnabled(tx)) &&
+      isTranscriptionConfigured()
+    ) {
+      await tx
+        .update(waMessages)
+        .set({
+          mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || '{"transcript":{"status":"pending"}}'::jsonb`,
+        })
+        .where(eq(waMessages.id, message.id));
       await enqueueOutboxEvent(tx, {
-        eventType: "wa.bot_turn",
-        dedupeKey: `wa.bot_turn:${messageId}`,
+        eventType: "wa.transcribe",
+        dedupeKey: `wa.transcribe:${messageId}`,
         aggregateType: "wa_conversation",
         aggregateId: conversation.id,
-        payload: { conversationId: conversation.id },
+        payload: { waMessageId: message.id },
       });
-
       await markDone();
       return {
-        action: "bot_queued",
+        action: "transcribe_queued",
         conversationId: conversation.id,
         waMessageId: message.id,
       } as const;
     }
 
-    // Bot desligado/silenciado ou conversa assumida por humano: encaminha ao
-    // DONO (aviso interno, sem opt-in) e um humano responde.
-    await enqueueOutboxEvent(tx, {
-      eventType: "wa.owner_forward",
-      dedupeKey: `wa.fwd:${messageId}`,
-      aggregateType: "wa_conversation",
-      aggregateId: conversation.id,
-      payload: {
-        phoneE164,
-        body: text.slice(0, FORWARD_BODY_MAX_CHARS),
-        ...(customer ? { customerName: customer.fullName } : {}),
-      },
+    // Texto comum (ou mídia sem transcrição): a rota decide entre o turno da
+    // vendedora (fila) e o encaminhamento ao dono — nunca inline no webhook.
+    const route = await routeInboundMessage(tx, {
+      conversation,
+      phoneE164,
+      zapiMessageId: messageId,
+      text,
+      ...(customer ? { customerName: customer.fullName } : {}),
+      now,
     });
-
     await markDone();
     return {
-      action: "forwarded",
+      action: route,
       conversationId: conversation.id,
       waMessageId: message.id,
     } as const;

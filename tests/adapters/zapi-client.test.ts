@@ -139,3 +139,53 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
     await expect(failure).rejects.not.toThrow(/token-test/);
   });
 });
+
+describe("ZapiMessagingProvider.downloadMedia", () => {
+  beforeEach(() => {
+    vi.stubEnv("ZAPI_INSTANCE_ID", "inst-test");
+    vi.stubEnv("ZAPI_INSTANCE_TOKEN", "token-test");
+    vi.stubEnv("ZAPI_CLIENT_TOKEN", "client-token-test");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("faz GET na URL pública sem Client-Token e devolve bytes + content-type", async () => {
+    const calls: { url: string; headers: unknown }[] = [];
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), headers: init?.headers });
+      return new Response(Buffer.from("OggS-audio"), {
+        status: 200,
+        headers: { "content-type": "audio/ogg", "content-length": "10" },
+      });
+    }) as typeof fetch;
+    const media = await new ZapiMessagingProvider(fetchFn).downloadMedia({
+      url: "https://z-api.example/media/abc.ogg",
+      maxBytes: 1024,
+    });
+    expect(media.contentType).toBe("audio/ogg");
+    expect(media.data.toString()).toBe("OggS-audio");
+    expect(calls[0]?.url).toBe("https://z-api.example/media/abc.ogg");
+    expect(calls[0]?.headers).toBeUndefined();
+  });
+
+  it("recusa HTTP ≥ 400 e arquivo acima do limite (declarado ou real) sem expor a URL", async () => {
+    const gone = (async () => new Response("", { status: 404 })) as typeof fetch;
+    await expect(
+      new ZapiMessagingProvider(gone).downloadMedia({ url: "https://z-api.example/secret", maxBytes: 10 }),
+    ).rejects.toThrow(/HTTP 404/);
+
+    const big = (async () =>
+      new Response(Buffer.alloc(20), { status: 200, headers: { "content-length": "20" } })) as typeof fetch;
+    const error = (await new ZapiMessagingProvider(big)
+      .downloadMedia({ url: "https://z-api.example/secret", maxBytes: 10 })
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toMatch(/limite/);
+    expect(error.message).not.toContain("secret");
+
+    const lying = (async () => new Response(Buffer.alloc(20), { status: 200 })) as typeof fetch;
+    await expect(
+      new ZapiMessagingProvider(lying).downloadMedia({ url: "https://z-api.example/x", maxBytes: 10 }),
+    ).rejects.toThrow(/limite/);
+  });
+});

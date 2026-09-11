@@ -31,7 +31,12 @@ function toErrorMessage(error: unknown): string {
 // Interruptores (salvam na hora, sem botão): WhatsApp e vendedora
 // ---------------------------------------------------------------------------
 
-const toggleKeySchema = z.enum(["wa_enabled", "bot_enabled", "owner_digest_enabled"]);
+const toggleKeySchema = z.enum([
+  "wa_enabled",
+  "bot_enabled",
+  "owner_digest_enabled",
+  "bot_media_enabled",
+]);
 
 export async function setToggleAction(
   key: string,

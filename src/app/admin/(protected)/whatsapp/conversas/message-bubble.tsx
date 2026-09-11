@@ -72,6 +72,23 @@ export function MessageBubble({
             />
           </a>
         ) : null}
+        {message.kind === "audio" ? (
+          <div className="mb-1 flex flex-col gap-1">
+            <p
+              className={cx(
+                "text-[11px] font-medium",
+                outbound ? "text-ivory-300 dark:text-ink-500" : "text-ink-400",
+              )}
+            >
+              {message.body.startsWith("[a cliente enviou um áudio]")
+                ? "🎤 Áudio · não transcrito"
+                : "🎤 Áudio · transcrição automática"}
+            </p>
+            {message.mediaUrl ? (
+              <audio controls preload="none" src={message.mediaUrl} className="h-9 max-w-full" />
+            ) : null}
+          </div>
+        ) : null}
         {message.kind === "option_list" ? (
           <p
             className={cx(

@@ -73,6 +73,31 @@ const baseInput = {
 };
 
 describe("ClaudeSalesAssistant", () => {
+  it("foto anexada vira bloco de imagem base64 antes do texto; sem foto o content segue string", async () => {
+    const client = fakeClient([textMessage("Que peça linda! Vi aqui…")]);
+    await new ClaudeSalesAssistant(client).respondTurn({
+      ...baseInput,
+      history: [
+        { role: "user", text: "oi" },
+        { role: "assistant", text: "Oi! Como posso ajudar?" },
+        {
+          role: "user",
+          text: "[a cliente enviou uma foto] tem parecida?",
+          images: [{ mediaType: "image/jpeg", base64: "AAAA" }],
+        },
+      ],
+    });
+    const [call] = client.calls as Anthropic.MessageCreateParamsNonStreaming[];
+    expect(call.messages[0]).toEqual({ role: "user", content: "oi" });
+    expect(call.messages[2]).toEqual({
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "AAAA" } },
+        { type: "text", text: "[a cliente enviou uma foto] tem parecida?" },
+      ],
+    });
+  });
+
   it("roda o loop tool_use → tool_result e soma o uso, inclusive cache", async () => {
     const client = fakeClient([
       toolUseMessage("listar_produtos", { busca: "vestido" }),

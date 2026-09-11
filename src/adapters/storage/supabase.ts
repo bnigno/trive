@@ -40,6 +40,18 @@ export class SupabaseFileStorage implements FileStorage {
       .data.publicUrl;
   }
 
+  async download(path: string): Promise<{ data: Buffer; contentType: string | null }> {
+    const { data, error } = await this.client.storage
+      .from(PRODUCT_IMAGES_BUCKET)
+      .download(path);
+    if (error || !data) {
+      throw new Error(
+        `Falha ao baixar arquivo do storage (${path}): ${error?.message ?? "sem conteúdo"}`,
+      );
+    }
+    return { data: Buffer.from(await data.arrayBuffer()), contentType: data.type || null };
+  }
+
   async remove(path: string): Promise<void> {
     const { error } = await this.client.storage
       .from(PRODUCT_IMAGES_BUCKET)

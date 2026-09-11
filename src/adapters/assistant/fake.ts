@@ -19,12 +19,15 @@ export type FakeTurnScript = {
 export class FakeSalesAssistant implements SalesAssistant {
   private readonly scripts: FakeTurnScript[] = [];
   readonly turns: AssistantTurn[] = [];
+  /** O que cada turno recebeu (prompt, histórico com fotos) — para os testes. */
+  readonly inputs: RespondTurnInput[] = [];
 
   enqueueScript(script: FakeTurnScript): void {
     this.scripts.push(script);
   }
 
   async respondTurn(input: RespondTurnInput): Promise<AssistantTurn> {
+    this.inputs.push(input);
     const script = this.scripts.shift();
     const turn = script
       ? await this.playScript(script, input)
@@ -68,8 +71,9 @@ export class FakeSalesAssistant implements SalesAssistant {
     const lastUserMessage = input.history
       .filter((message) => message.role === "user")
       .at(-1);
+    const photos = lastUserMessage?.images?.length ?? 0;
     return {
-      reply: `FAKE: ${lastUserMessage?.text ?? ""}`,
+      reply: `FAKE: ${lastUserMessage?.text ?? ""}${photos > 0 ? ` [+${photos} foto(s)]` : ""}`,
       toolCalls: [],
       handedOff: false,
       usage: { inputTokens: 0, outputTokens: 0 },
@@ -79,5 +83,6 @@ export class FakeSalesAssistant implements SalesAssistant {
   reset(): void {
     this.scripts.length = 0;
     this.turns.length = 0;
+    this.inputs.length = 0;
   }
 }
