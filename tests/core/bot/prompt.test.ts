@@ -61,6 +61,17 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).not.toContain("PLANTA DA LOJA");
   });
 
+  it("fechamento: cadastro antes do frete, frete com o CEP do endereço de entrega e a regra 24", () => {
+    const prompt = buildBotSystemPrompt(OPCOES);
+    expect(prompt).toContain(
+      "buscar_cadastro (cliente que já comprou: confirme QUAL endereço salvo é o da entrega",
+    );
+    expect(prompt).toContain("cotar_frete com o CEP do endereço de entrega");
+    expect(prompt).toContain("24. FECHAMENTO É DESTA SACOLA");
+    expect(prompt).toContain("nunca de memória nem de mensagens de outros dias do histórico");
+    expect(prompt).toContain("o nome ou o número exatamente como cotar_frete devolveu");
+  });
+
   it("é determinístico (prefixo cacheável) e coloca as instruções do dono no fim", () => {
     const a = buildBotSystemPrompt({ ...OPCOES, extraInstructions: "Fale de 'amiga'." });
     const b = buildBotSystemPrompt({ ...OPCOES, extraInstructions: "Fale de 'amiga'." });

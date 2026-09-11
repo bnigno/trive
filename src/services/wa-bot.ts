@@ -26,11 +26,16 @@ import {
   cartAdd,
   cartRemove,
   formatCartLines,
+  formatCep,
   parseBotState,
   renderContextNote,
   type BotCartItem,
   type BotState,
 } from "@/core/bot/memory";
+import {
+  confirmQuoteUnchanged,
+  resolveApprovedQuote,
+} from "@/core/bot/shipping";
 import {
   OPTION_LIST_MAX_OPTIONS,
   truncateOptionTitle,
@@ -41,8 +46,10 @@ import {
   type ToolExecutor,
 } from "@/core/bot/tools";
 import {
-  isAddressUsable,
+  formatSavedAddressLines,
+  pickSavedAddressForCep,
   summarizeRegistration,
+  type SavedAddress,
   type SavedRegistration,
 } from "@/core/bot/customer";
 import {
@@ -121,7 +128,6 @@ import {
   quoteShipping,
   type PublicProductDetail,
   type PublicProductListItem,
-  type ShippingQuote,
 } from "@/services/store-catalog";
 import {
   createStoreOrder,
@@ -1118,6 +1124,7 @@ async function execCotarFrete(
     ...current,
     lastCep: input.cep,
     lastQuotes: quotes,
+    lastQuotedAt: new Date().toISOString(),
     chosenRateId: quotes.length === 1 ? quotes[0].rateId : undefined,
   }));
 
@@ -1138,7 +1145,8 @@ async function execCotarFrete(
 
 /**
  * Cadastro já salvo para este telefone: o cliente mais recente com o número,
- * mais o endereço padrão (ou o último cadastrado).
+ * mais TODOS os endereços dele (padrão primeiro, depois do mais recente) —
+ * qual vale para a entrega é decidido pelo CEP cotado, nunca em silêncio.
  *
  * Cliente anonimizado por LGPD é IGNORADO de propósito — quem pediu para ser
  * esquecido não volta como sugestão de preenchimento.
@@ -1165,7 +1173,7 @@ async function loadSavedRegistration(
     .limit(1);
   if (!customer) return null;
 
-  const [address] = await db
+  const addresses = await db
     .select({
       postalCode: customerAddresses.postalCode,
       street: customerAddresses.street,
@@ -1174,16 +1182,16 @@ async function loadSavedRegistration(
       district: customerAddresses.district,
       city: customerAddresses.city,
       state: customerAddresses.state,
+      isDefault: customerAddresses.isDefault,
     })
     .from(customerAddresses)
     .where(eq(customerAddresses.customerId, customer.id))
-    .orderBy(desc(customerAddresses.isDefault), desc(customerAddresses.createdAt))
-    .limit(1);
+    .orderBy(desc(customerAddresses.isDefault), desc(customerAddresses.createdAt));
 
   return {
     fullName: customer.fullName,
     documentDigits: customer.documentNumber,
-    address: address ?? null,
+    addresses,
   };
 }
 
@@ -1198,7 +1206,11 @@ async function execBuscarCadastro(
       text: "Este telefone ainda não tem cadastro — é a primeira compra dele por aqui. Colete os dados normalmente, um por vez.\n\n[NUNCA diga ao cliente que a loja não guarda dados: guardamos, este número é que ainda não tem cadastro.]",
     };
   }
-  return { ok: true, text: summarizeRegistration(registration) };
+  const state = await loadBotState(db, ctx.conversationId);
+  return {
+    ok: true,
+    text: summarizeRegistration(registration, { quotedCep: state.lastCep }),
+  };
 }
 
 /** Dados pessoais do pedido, vindos do cadastro salvo OU do que o bot coletou. */
@@ -1214,38 +1226,72 @@ type OrderIdentity = {
   state: string;
 };
 
+function identityFromSavedAddress(
+  registration: SavedRegistration,
+  address: SavedAddress,
+): OrderIdentity {
+  return {
+    fullName: registration.fullName,
+    documentDigits: (registration.documentDigits ?? "").replace(/\D/g, ""),
+    postalCode: (address.postalCode ?? "").replace(/\D/g, ""),
+    street: address.street ?? "",
+    number: address.number ?? "",
+    ...(address.complement ? { complement: address.complement } : {}),
+    district: address.district ?? "",
+    city: address.city ?? "",
+    state: address.state ?? "",
+  };
+}
+
 /**
- * A opção de frete que a cliente escolheu, entre as cotações REAIS de agora:
- * pelo nome ("SEDEX"), pelo número da lista ("2") ou pelo id já escolhido no
- * caderninho. Sem escolha reconhecível e com mais de uma opção: null, e o
- * executor pede a escolha em vez de decidir sozinho.
+ * Endereço do pedido no caminho do cadastro salvo: o salvo cujo CEP foi
+ * cotado nesta conversa. Nunca o "padrão" em silêncio — foi assim que o
+ * pedido #1012 saiu para a cidade errada.
  */
-function pickChosenQuote(
-  quotes: readonly ShippingQuote[],
-  input: string | undefined,
-  chosenRateId: string | undefined,
-): ShippingQuote | null {
-  if (quotes.length === 1) return quotes[0];
-  // Opções com o mesmo nome (duas faixas "PAC") não são uma escolha real:
-  // vale a mais barata, que é a primeira (quoteShipping ordena por preço).
-  if (new Set(quotes.map((quote) => quote.name.toLowerCase())).size === 1) {
-    return quotes[0];
+function resolveSavedIdentity(
+  registration: SavedRegistration,
+  quotedCep: string | undefined,
+): { ok: true; identity: OrderIdentity } | { ok: false; text: string } {
+  const pick = pickSavedAddressForCep(registration.addresses, quotedCep);
+  if (pick.kind === "one") {
+    return { ok: true, identity: identityFromSavedAddress(registration, pick.address) };
   }
-  const term = input?.trim().toLowerCase();
-  if (term) {
-    const byIndex = /^\d+$/.test(term) ? quotes[Number(term) - 1] : undefined;
-    if (byIndex) return byIndex;
-    const byName =
-      quotes.find((quote) => quote.name.toLowerCase() === term) ??
-      quotes.find((quote) => quote.name.toLowerCase().includes(term)) ??
-      quotes.find((quote) => term.includes(quote.name.toLowerCase()));
-    if (byName) return byName;
+  const outro =
+    "Se a entrega é em um endereço novo, colete-o e passe COMPLETO nos campos de criar_pedido junto com usar_cadastro_salvo true.";
+  if (pick.kind === "ambiguous") {
+    return {
+      ok: false,
+      text: [
+        `Há ${pick.matches.length} endereços salvos com o CEP ${formatCep(quotedCep ?? "")}. Confirme com a cliente QUAL deles é o da entrega e passe esse endereço completo nos campos de criar_pedido junto com usar_cadastro_salvo true:`,
+        ...formatSavedAddressLines(pick.matches),
+      ].join("\n"),
+    };
   }
-  if (chosenRateId) {
-    const byId = quotes.find((quote) => quote.rateId === chosenRateId);
-    if (byId) return byId;
+  if (pick.usable.length === 0) {
+    return {
+      ok: false,
+      text: `O cadastro deste telefone não tem endereço completo para entrega. Colete o endereço com a cliente, um dado por vez, e chame criar_pedido com o endereço COMPLETO nos campos junto com usar_cadastro_salvo true (nome e CPF continuam do cadastro).`,
+    };
   }
-  return null;
+  const lista = formatSavedAddressLines(pick.usable);
+  if (!quotedCep) {
+    return {
+      ok: false,
+      text: [
+        "Ainda não há cotação de frete nesta conversa e a cliente tem mais de um endereço salvo. Confirme com ela QUAL é o da entrega, chame cotar_frete com o CEP desse endereço, apresente o resumo e, com o SIM, chame criar_pedido de novo:",
+        ...lista,
+        outro,
+      ].join("\n"),
+    };
+  }
+  return {
+    ok: false,
+    text: [
+      `O frete foi cotado para o CEP ${formatCep(quotedCep)}, mas nenhum endereço salvo tem esse CEP. Confirme com a cliente onde é a entrega: se for em um dos salvos, chame cotar_frete com o CEP dele, apresente o novo resumo e, com o SIM, chame criar_pedido de novo:`,
+      ...lista,
+      outro,
+    ].join("\n"),
+  };
 }
 
 async function execCriarPedido(
@@ -1255,30 +1301,38 @@ async function execCriarPedido(
 ): Promise<ToolResult> {
   if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
 
+  const state = await loadBotState(db, ctx.conversationId);
   let identity: OrderIdentity;
 
   if (input.usar_cadastro_salvo) {
     // Caminho do cliente recorrente: os dados REAIS saem do banco, então o CPF
     // nunca passa pelo modelo nem por uma mensagem de WhatsApp.
     const registration = await loadSavedRegistration(db, ctx.phoneE164);
-    if (!registration || !isAddressUsable(registration.address)) {
+    if (!registration) {
       return {
         ok: false,
-        text: "Não consegui reaproveitar o cadastro deste telefone (não existe ou está sem endereço completo). Colete nome, CPF e endereço com o cliente, um dado por vez, e chame criar_pedido com os campos preenchidos.",
+        text: "Não consegui reaproveitar o cadastro deste telefone (não existe). Colete nome, CPF e endereço com o cliente, um dado por vez, e chame criar_pedido com os campos preenchidos.",
       };
     }
-    const address = registration.address;
-    identity = {
-      fullName: registration.fullName,
-      documentDigits: (registration.documentDigits ?? "").replace(/\D/g, ""),
-      postalCode: (address?.postalCode ?? "").replace(/\D/g, ""),
-      street: address?.street ?? "",
-      number: address?.number ?? "",
-      ...(address?.complement ? { complement: address.complement } : {}),
-      district: address?.district ?? "",
-      city: address?.city ?? "",
-      state: address?.state ?? "",
-    };
+    if (input.cep !== undefined) {
+      // Endereço novo dito pela cliente (o schema já exigiu todos os campos):
+      // nome e CPF do cadastro, entrega no endereço informado.
+      identity = {
+        fullName: registration.fullName,
+        documentDigits: (registration.documentDigits ?? "").replace(/\D/g, ""),
+        postalCode: input.cep,
+        street: input.rua ?? "",
+        number: input.numero ?? "",
+        ...(input.complemento !== undefined ? { complement: input.complemento } : {}),
+        district: input.bairro ?? "",
+        city: input.cidade ?? "",
+        state: input.uf ?? "",
+      };
+    } else {
+      const resolved = resolveSavedIdentity(registration, state.lastCep);
+      if (!resolved.ok) return resolved;
+      identity = resolved.identity;
+    }
   } else {
     // O superRefine de criarPedidoSchema já garantiu que todos vieram; o
     // fallback vazio existe só para o TypeScript estreitar os opcionais.
@@ -1304,7 +1358,6 @@ async function execCriarPedido(
   }
 
   // Itens: os passados explicitamente ou, no caminho normal, a sacola.
-  const state = await loadBotState(db, ctx.conversationId);
   const requested =
     input.itens ??
     (state.cart ?? []).map((item) => ({ sku: item.sku, quantidade: item.quantidade }));
@@ -1342,33 +1395,29 @@ async function execCriarPedido(
     });
   }
 
-  // Frete: recota com o peso real e usa a opção que a CLIENTE escolheu.
+  // Frete: SÓ a cotação que a cliente viu nesta conversa, para o CEP do
+  // endereço de entrega (o caderninho guarda CEP, opções e escolha). Depois,
+  // recota com o peso real e confere que a tarifa aprovada não mudou.
+  const approved = resolveApprovedQuote({
+    quotedCep: state.lastCep,
+    quotes: state.lastQuotes,
+    quotedAt: state.lastQuotedAt,
+    chosenRateId: state.chosenRateId,
+    orderCep: identity.postalCode,
+    freteInput: input.frete,
+  });
+  if (!approved.ok) return approved;
+
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
-  const quotes = await quoteShipping(db, {
+  const fresh = await quoteShipping(db, {
     cep: identity.postalCode,
     totalWeightGrams,
   });
-  if (quotes.length === 0) {
-    return {
-      ok: false,
-      text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
-    };
-  }
-  const chosen = pickChosenQuote(quotes, input.frete, state.chosenRateId);
-  if (!chosen) {
-    return {
-      ok: false,
-      text: [
-        "Há mais de uma opção de entrega e a escolha da cliente não veio (campo frete). Pergunte qual ela prefere e chame de novo:",
-        ...quotes.map(
-          (quote, index) =>
-            `${index + 1}. ${quote.name} — ${formatCentsBRL(quote.priceCents)} (${formatDeliveryDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})`,
-        ),
-      ].join("\n"),
-    };
-  }
+  const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
+  if (!confirmed.ok) return confirmed;
+  const chosen = confirmed.quote;
 
   const isCash = input.forma_de_pagamento === "dinheiro_na_entrega";
 
@@ -1448,7 +1497,9 @@ async function execCriarPedido(
       botState: {
         ...state,
         cart: [],
+        lastCep: undefined,
         lastQuotes: undefined,
+        lastQuotedAt: undefined,
         chosenRateId: undefined,
         lastOrderNumber: created.orderNumber,
       },

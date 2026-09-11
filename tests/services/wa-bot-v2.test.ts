@@ -347,6 +347,9 @@ describe("criar_pedido com a sacola e o frete escolhido", () => {
     const state = await botState(conversationId);
     expect(state.cart).toEqual([]);
     expect(state.lastQuotes).toBeUndefined();
+    // O CEP também sai: no próximo fechamento o frete tem de ser cotado de novo.
+    expect(state.lastCep).toBeUndefined();
+    expect(state.lastQuotedAt).toBeUndefined();
     expect(state.lastOrderNumber).toBe(order.orderNumber);
   });
 
@@ -355,6 +358,7 @@ describe("criar_pedido com a sacola e o frete escolhido", () => {
     await createRate("PAC", 1990);
     await createRate("SEDEX", 2990);
     const executor = executorFor(await createConversation());
+    await executor("cotar_frete", { cep: IDENTITY.cep });
     const result = await executor("criar_pedido", {
       ...IDENTITY,
       itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
@@ -369,6 +373,7 @@ describe("criar_pedido com a sacola e o frete escolhido", () => {
     await createRate("PAC", 1990);
     await createRate("SEDEX", 2990);
     const executor = executorFor(await createConversation());
+    await executor("cotar_frete", { cep: IDENTITY.cep });
     const result = await executor("criar_pedido", {
       ...IDENTITY,
       itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
@@ -385,6 +390,369 @@ describe("criar_pedido com a sacola e o frete escolhido", () => {
     const result = await executor("criar_pedido", IDENTITY);
     expect(result.ok).toBe(false);
     expect(result.text).toContain("A sacola está vazia");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fechamento só com o endereço e o frete que a cliente aprovou (#1012)
+// ---------------------------------------------------------------------------
+
+async function createRangedRate(
+  name: string,
+  priceCents: number,
+  cepStart: string,
+  cepEnd: string,
+): Promise<string> {
+  const [rate] = await db
+    .insert(schema.shippingRates)
+    .values({ name, priceCents, cepStart, cepEnd, deliveryDaysMin: 1, deliveryDaysMax: 3 })
+    .returning({ id: schema.shippingRates.id });
+  return rate.id;
+}
+
+type AddressFixture = {
+  postalCode: string;
+  street: string;
+  number: string;
+  district: string;
+  city: string;
+  state: string;
+};
+
+const BELEM: AddressFixture = {
+  postalCode: "66045335",
+  street: "Travessa Quintino Bocaiúva",
+  number: "1500",
+  district: "Batista Campos",
+  city: "Belém",
+  state: "PA",
+};
+const BENEVIDES: AddressFixture = {
+  postalCode: "68795000",
+  street: "Rua da Praça",
+  number: "12",
+  district: "Centro",
+  city: "Benevides",
+  state: "PA",
+};
+const VESTIDO_NA_SACOLA = {
+  cart: [{ sku: "VEST-DUNAS-M", quantidade: 1, nome: "Vestido Dunas", variacao: "", precoCents: 28900 }],
+};
+
+/** Cliente já cadastrada com este telefone; o primeiro endereço é o padrão (e o mais antigo). */
+async function createSavedCustomer(addresses: AddressFixture[]): Promise<string> {
+  const [customer] = await db
+    .insert(schema.customers)
+    .values({
+      fullName: "Marcielen Trindade",
+      phoneE164: PHONE,
+      documentType: "cpf",
+      documentNumber: VALID_CPF,
+    })
+    .returning({ id: schema.customers.id });
+  for (const [index, address] of addresses.entries()) {
+    await db.insert(schema.customerAddresses).values({
+      customerId: customer.id,
+      ...address,
+      isDefault: index === 0,
+      createdAt: new Date(Date.now() - (addresses.length - index) * 86_400_000),
+    });
+  }
+  return customer.id;
+}
+
+async function setupIncidente(): Promise<void> {
+  await createSimpleProduct("VEST-DUNAS-M", "Vestido Dunas", 28900);
+  await createRangedRate("Belém", 1000, "66000000", "66999999");
+  await createRangedRate("Benevides", 800, "68795000", "68797999");
+  await createSavedCustomer([BELEM, BENEVIDES]);
+}
+
+describe("fechamento só com endereço e frete aprovados (incidente #1012)", () => {
+  it("cadastro com Belém (padrão) e Benevides, CEP de Benevides sem cotação: recusa; após cotar, fecha em Benevides a R$ 8,00", async () => {
+    await setupIncidente();
+    // O caderninho como estava: sacola montada hoje, CEP de outro dia, sem cotação.
+    const conversationId = await createConversation({
+      botState: { ...VESTIDO_NA_SACOLA, lastCep: "68795000" },
+    });
+    const executor = executorFor(conversationId);
+
+    const semCotacao = await executor("criar_pedido", { usar_cadastro_salvo: true });
+    expect(semCotacao.ok).toBe(false);
+    expect(semCotacao.text).toContain("Ainda não há cotação de frete");
+    expect(semCotacao.text).toContain("68795-000");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+
+    const cotacao = await executor("cotar_frete", { cep: "68795000" });
+    expect(cotacao.ok).toBe(true);
+    expect(cotacao.text).toContain(`1. Benevides — ${formatCentsBRL(800)}`);
+    expect(cotacao.text).not.toContain("Belém");
+
+    const result = await executor("criar_pedido", { usar_cadastro_salvo: true });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain(`Frete (Benevides): ${formatCentsBRL(800)}`);
+    expect(result.text).toContain(`TOTAL: ${formatCentsBRL(28900 + 800)}`);
+
+    const [order] = await db.select().from(schema.orders);
+    expect(order.shippingCents).toBe(800);
+    expect(order.shippingAddress).toMatchObject({ city: "Benevides", postalCode: "68795000" });
+    // Nome e CPF vieram do cadastro; a cliente não foi duplicada.
+    expect(await db.select().from(schema.customers)).toHaveLength(1);
+
+    const state = await botState(conversationId);
+    expect(state.lastCep).toBeUndefined();
+    expect(state.lastQuotedAt).toBeUndefined();
+  });
+
+  it("frete cotado para Belém e o modelo escreve 'Benevides': recusa listando só o que foi cotado", async () => {
+    await setupIncidente();
+    const conversationId = await createConversation({ botState: VESTIDO_NA_SACOLA });
+    const executor = executorFor(conversationId);
+    await executor("cotar_frete", { cep: "66045335" });
+
+    const result = await executor("criar_pedido", { usar_cadastro_salvo: true, frete: "Benevides" });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain('"Benevides" não é nenhuma das cotadas');
+    expect(result.text).toContain(`1. Belém — ${formatCentsBRL(1000)}`);
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("dois endereços salvos e nenhuma cotação: pede QUAL antes de cotar, com os CEPs", async () => {
+    await setupIncidente();
+    const executor = executorFor(await createConversation({ botState: VESTIDO_NA_SACOLA }));
+    const result = await executor("criar_pedido", { usar_cadastro_salvo: true });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("mais de um endereço salvo");
+    expect(result.text).toContain("CEP 66045-335 (padrão)");
+    expect(result.text).toContain("CEP 68795-000");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("CEP cotado que não é de nenhum endereço salvo: pede confirmação ou o endereço novo completo", async () => {
+    await createSimpleProduct("VEST-DUNAS-M", "Vestido Dunas", 28900);
+    await createRate("PAC", 1990);
+    await createSavedCustomer([BELEM]);
+    const executor = executorFor(await createConversation({ botState: VESTIDO_NA_SACOLA }));
+    await executor("cotar_frete", { cep: "04538132" });
+
+    const result = await executor("criar_pedido", { usar_cadastro_salvo: true });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("cotado para o CEP 04538-132, mas nenhum endereço salvo tem esse CEP");
+    expect(result.text).toContain("Travessa Quintino Bocaiúva, 1500");
+    expect(result.text).toContain("passe COMPLETO nos campos");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("dois endereços salvos com o mesmo CEP: pede para confirmar qual", async () => {
+    await createSimpleProduct("VEST-DUNAS-M", "Vestido Dunas", 28900);
+    await createRate("PAC", 1990);
+    await createSavedCustomer([BELEM, { ...BELEM, number: "200" }]);
+    const executor = executorFor(await createConversation({ botState: VESTIDO_NA_SACOLA }));
+    await executor("cotar_frete", { cep: "66045335" });
+
+    const result = await executor("criar_pedido", { usar_cadastro_salvo: true });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("Há 2 endereços salvos com o CEP 66045-335");
+    expect(result.text).toContain("1500");
+    expect(result.text).toContain("200");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("usar_cadastro_salvo + endereço novo completo: nome e CPF do cadastro, entrega no endereço novo, cliente não duplicada", async () => {
+    await createSimpleProduct("VEST-DUNAS-M", "Vestido Dunas", 28900);
+    await createRate("PAC", 1990);
+    const customerId = await createSavedCustomer([BELEM]);
+    const executor = executorFor(await createConversation({ botState: VESTIDO_NA_SACOLA }));
+    await executor("cotar_frete", { cep: "04538132" });
+
+    const result = await executor("criar_pedido", {
+      usar_cadastro_salvo: true,
+      cep: "04538132",
+      rua: "Rua Nova",
+      numero: "7",
+      bairro: "Itaim Bibi",
+      cidade: "São Paulo",
+      uf: "SP",
+    });
+    expect(result.ok).toBe(true);
+
+    const [order] = await db.select().from(schema.orders);
+    expect(order.customerId).toBe(customerId);
+    expect(order.shippingAddress).toMatchObject({ street: "Rua Nova", city: "São Paulo", state: "SP" });
+    expect(await db.select().from(schema.customers)).toHaveLength(1);
+    const addresses = await db
+      .select()
+      .from(schema.customerAddresses)
+      .orderBy(schema.customerAddresses.createdAt);
+    expect(addresses).toHaveLength(2);
+    // O endereço novo é guardado, mas o padrão continua o de antes.
+    expect(addresses.map((a) => [a.city, a.isDefault])).toEqual([
+      ["Belém", true],
+      ["São Paulo", false],
+    ]);
+  });
+
+  it("usar_cadastro_salvo + endereço pela metade: recusado antes de qualquer efeito", async () => {
+    await createSimpleProduct("VEST-DUNAS-M", "Vestido Dunas", 28900);
+    await createRate("PAC", 1990);
+    await createSavedCustomer([BELEM]);
+    const executor = executorFor(await createConversation({ botState: VESTIDO_NA_SACOLA }));
+    await executor("cotar_frete", { cep: "04538132" });
+
+    const result = await executor("criar_pedido", {
+      usar_cadastro_salvo: true,
+      cep: "04538132",
+      numero: "7",
+      bairro: "Itaim Bibi",
+      cidade: "São Paulo",
+      uf: "SP",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("falta rua");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("cliente nova sem cotar_frete: recusa e nenhum pedido", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await createRate("PAC", 1990);
+    const executor = executorFor(await createConversation());
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("Ainda não há cotação de frete");
+    expect(result.text).toContain("01310-100");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("CEP cotado diferente do CEP do endereço: recusa citando os dois", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await createRate("PAC", 1990);
+    const executor = executorFor(await createConversation());
+    await executor("cotar_frete", { cep: "01310100" });
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      cep: "04538132",
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("cotado para o CEP 01310-100");
+    expect(result.text).toContain("CEP 04538-132");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("cotação antiga no caderninho: recusa e manda cotar de novo", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    const rateId = await createRate("PAC", 1990);
+    const executor = executorFor(
+      await createConversation({
+        botState: {
+          lastCep: "01310100",
+          lastQuotes: [{ rateId, name: "PAC", priceCents: 1990, deliveryDaysMin: 3, deliveryDaysMax: 10 }],
+          lastQuotedAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+          chosenRateId: rateId,
+        },
+      }),
+    );
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("antiga");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("preço mudou entre a cotação e o fechamento: recusa com os dois valores", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await createRate("PAC", 1990);
+    const sedexId = await createRate("SEDEX", 2990);
+    const executor = executorFor(await createConversation());
+    await executor("cotar_frete", { cep: "01310100" });
+    await db
+      .update(schema.shippingRates)
+      .set({ priceCents: 3490 })
+      .where(eq(schema.shippingRates.id, sedexId));
+
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      frete: "2",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain(`O frete SEDEX mudou de ${formatCentsBRL(2990)} para ${formatCentsBRL(3490)}`);
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("o número da opção aponta para a lista que a cliente viu, mesmo que a ordem de hoje seja outra", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    const pacId = await createRate("PAC", 1990);
+    await createRate("SEDEX", 2990);
+    const executor = executorFor(await createConversation());
+    const cotacao = await executor("cotar_frete", { cep: "01310100" });
+    expect(cotacao.text).toContain("2. SEDEX");
+    // PAC encareceu: hoje a lista por preço seria SEDEX (1), PAC (2).
+    await db
+      .update(schema.shippingRates)
+      .set({ priceCents: 3990 })
+      .where(eq(schema.shippingRates.id, pacId));
+
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      frete: "2",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain(`Frete (SEDEX): ${formatCentsBRL(2990)}`);
+    const [order] = await db.select().from(schema.orders);
+    expect(order.shippingCents).toBe(2990);
+  });
+
+  it("tarifa desativada depois da cotação: recusa e manda cotar de novo", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await createRate("PAC", 1990);
+    const sedexId = await createRate("SEDEX", 2990);
+    const executor = executorFor(await createConversation());
+    await executor("cotar_frete", { cep: "01310100" });
+    await db
+      .update(schema.shippingRates)
+      .set({ isActive: false })
+      .where(eq(schema.shippingRates.id, sedexId));
+
+    const result = await executor("criar_pedido", {
+      ...IDENTITY,
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      frete: "SEDEX",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("A opção SEDEX não está mais disponível para o CEP 01310-100");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("buscar_cadastro lista os endereços com CEP, marca o cotado e avisa quando o CEP cotado não bate", async () => {
+    await setupIncidente();
+    const conversationId = await createConversation({ botState: VESTIDO_NA_SACOLA });
+    const executor = executorFor(conversationId);
+
+    const semCotacao = await executor("buscar_cadastro", {});
+    expect(semCotacao.text).toContain("• Endereços salvos (2):");
+    expect(semCotacao.text).toContain("CEP 66045-335 (padrão)");
+    expect(semCotacao.text).toContain("CEP 68795-000");
+    expect(semCotacao.text).toContain("EM QUAL destes endereços é a entrega");
+    expect(semCotacao.text).not.toContain(VALID_CPF);
+
+    await executor("cotar_frete", { cep: "68795000" });
+    const cotado = await executor("buscar_cadastro", {});
+    expect(cotado.text).toContain("CEP 68795-000 (CEP já cotado nesta conversa)");
+    expect(cotado.text).not.toContain("ATENÇÃO");
+
+    await createRate("PAC", 1990);
+    await executor("cotar_frete", { cep: "04538132" });
+    const semBater = await executor("buscar_cadastro", {});
+    expect(semBater.text).toContain(
+      "ATENÇÃO: o CEP cotado nesta conversa (04538-132) não é de nenhum endereço salvo",
+    );
   });
 });
 

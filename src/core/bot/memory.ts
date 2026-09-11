@@ -32,6 +32,8 @@ const quoteSchema = z.object({
   deliveryDaysMax: z.number().int(),
 });
 
+export type BotQuote = z.infer<typeof quoteSchema>;
+
 export const botStateSchema = z
   .object({
     /** Nome do perfil do WhatsApp (vem do webhook), não o do cadastro. */
@@ -47,8 +49,11 @@ export const botStateSchema = z
         cor: z.string().nullable().optional(),
       })
       .optional(),
+    /** CEP da última cotação (cotar_frete) — o pedido só fecha com este CEP. */
     lastCep: z.string().optional(),
     lastQuotes: z.array(quoteSchema).optional(),
+    /** Quando a cotação foi feita (ISO); cotação velha não fecha pedido. */
+    lastQuotedAt: z.string().optional(),
     chosenRateId: z.string().optional(),
     lastOrderNumber: z.number().int().optional(),
     /** Última transferência para a equipe: motivo e resumo para o painel. */
@@ -134,7 +139,7 @@ export function formatCartLines(cart: readonly BotCartItem[] | undefined): strin
   ];
 }
 
-function formatCep(cep: string): string {
+export function formatCep(cep: string): string {
   const digitos = cep.replace(/\D/g, "");
   return digitos.length === 8 ? `${digitos.slice(0, 5)}-${digitos.slice(5)}` : cep;
 }
@@ -182,8 +187,12 @@ export function renderContextNote(
     const escolhido = state.lastQuotes?.find(
       (quote) => quote.rateId === state.chosenRateId,
     );
+    // Sacola mudou depois da cotação (adicionar/remover zeram lastQuotes):
+    // o CEP fica como pista, mas o frete tem de ser cotado de novo.
     linhas.push(
-      `• CEP informado: ${formatCep(state.lastCep)}${cotacoes ? ` · frete cotado: ${cotacoes}` : ""}${escolhido ? ` · escolhido: ${escolhido.name}` : ""}`,
+      cotacoes
+        ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.name}` : ""}`
+        : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
     );
   }
   if (state.lastOrderNumber !== undefined) {

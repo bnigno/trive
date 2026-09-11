@@ -220,7 +220,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "cotar_frete",
     description:
-      "Devolve as opções reais de entrega (transportadora, prazo e valor) para o CEP da cliente, com o peso das peças que estão na sacola. Chame depois de montar a sacola. A cliente ESCOLHE uma das opções; passe a escolha em criar_pedido (campo frete).",
+      "Devolve as opções reais de entrega (transportadora, prazo e valor) para um CEP, com o peso das peças que estão na sacola. Chame depois de montar a sacola e SEMPRE com o CEP do endereço que VAI no pedido (o salvo que a cliente confirmou, ou o novo). Se o endereço ou a sacola mudar, cote de novo. A cliente ESCOLHE uma das opções; passe a escolha em criar_pedido (campo frete).",
     input_schema: {
       type: "object",
       properties: {
@@ -237,7 +237,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "buscar_cadastro",
     description:
-      "Procura o cadastro já salvo da cliente DESTA conversa (nome, CPF e endereço da última compra). Chame ANTES de começar a pedir dados pessoais: se ela já comprou, você confirma tudo em uma pergunta em vez de coletar sete campos. Devolve o CPF mascarado de propósito — os dados reais nunca passam por você.",
+      "Procura o cadastro já salvo da cliente DESTA conversa: nome, CPF mascarado e até 3 endereços salvos, cada um com o CEP. Chame ANTES de começar a pedir dados pessoais e ANTES de cotar o frete: confirme QUAL endereço é o da entrega e cote com o CEP dele. Se ela já comprou, você confirma tudo em uma pergunta em vez de coletar sete campos. O CPF vem mascarado de propósito — os dados reais nunca passam por você.",
     input_schema: {
       type: "object",
       properties: {},
@@ -248,7 +248,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "criar_pedido",
     description:
-      "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após a cliente ler o resumo (peças, quantidades, dados pessoais, endereço e frete) e dizer SIM. Sem 'itens', fecha com a sacola desta conversa. O resumo devolvido é a única fonte de valores — retransmita sem alterar. TELEFONE: o pedido usa automaticamente o número desta conversa — NUNCA peça telefone.",
+      "Cria o pedido REAL com reserva de estoque e devolve o resumo oficial + LINK DE PAGAMENTO. Só chame após a cliente ler o resumo (peças, quantidades, dados pessoais, endereço e frete) e dizer SIM. Sem 'itens', fecha com a sacola desta conversa. Só fecha com o frete cotado NESTA conversa (cotar_frete) para o CEP do endereço de entrega, depois da última mudança na sacola — endereço com CEP diferente do cotado, cotação antiga ou frete que não é das opções cotadas devolvem ok:false: siga a instrução devolvida, mostre o resumo atualizado e espere um novo SIM. O resumo devolvido é a única fonte de valores — retransmita sem alterar. TELEFONE: o pedido usa automaticamente o número desta conversa — NUNCA peça telefone.",
     input_schema: {
       type: "object",
       properties: {
@@ -274,13 +274,13 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         frete: {
           type: "string",
           description:
-            "A opção de entrega que a cliente escolheu entre as de cotar_frete — o nome (ex.: 'SEDEX') ou o número da opção (ex.: '2'). Omita só se houver uma única opção.",
+            "A opção de entrega que a cliente escolheu — o nome ou o número EXATAMENTE como cotar_frete devolveu nesta conversa (ex.: 'SEDEX' ou '2'). Omita só se houver uma única opção. Nunca escreva um nome de frete que não veio de cotar_frete.",
         },
         usar_cadastro_salvo: {
           type: "boolean",
           default: false,
           description:
-            "true reaproveita nome, CPF e endereço já salvos deste telefone — o serviço lê os dados do banco, então NÃO envie nome_completo, cpf nem endereço. Só use depois de buscar_cadastro e da cliente CONFIRMAR que os dados estão certos. Se ela quiser mudar algo, omita este campo e envie todos os dados normalmente.",
+            "true reaproveita nome e CPF já salvos deste telefone — o serviço lê os dados do banco, então NÃO envie nome_completo nem cpf. O endereço de entrega é o salvo cujo CEP foi cotado nesta conversa (por isso cote com o CEP do endereço que a cliente confirmou). Se a entrega for em OUTRO endereço, envie-o COMPLETO nos campos cep, rua, numero, bairro, cidade e uf junto com este true (endereço pela metade é recusado). Só use depois de buscar_cadastro e da cliente CONFIRMAR os dados.",
         },
         nome_completo: {
           type: "string",
@@ -634,7 +634,22 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     // Ou o pedido reaproveita o cadastro salvo, ou traz o conjunto COMPLETO de
     // dados pessoais. Meio-termo produziria pedido sem endereço de entrega.
     .superRefine((valor, ctx) => {
-      if (valor.usar_cadastro_salvo) return;
+      const endereco = ["cep", "rua", "numero", "bairro", "cidade", "uf"] as const;
+      if (valor.usar_cadastro_salvo) {
+        // Cadastro salvo + endereço novo: ou vem inteiro, ou não vem. Um
+        // endereço pela metade cairia em silêncio no salvo (incidente #1012).
+        if (!endereco.some((campo) => valor[campo] !== undefined)) return;
+        for (const campo of endereco) {
+          if (valor[campo] === undefined) {
+            ctx.addIssue({
+              code: "custom",
+              path: [campo],
+              message: `Com usar_cadastro_salvo e endereço novo, informe o endereço COMPLETO — falta ${campo}.`,
+            });
+          }
+        }
+        return;
+      }
       const obrigatorios = [
         "nome_completo",
         "cpf",
