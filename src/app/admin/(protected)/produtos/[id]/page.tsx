@@ -7,6 +7,7 @@ import { categories } from "@/db/schema";
 import { getFileStorage } from "@/adapters/storage";
 import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
+import { listProductReadiness } from "@/services/catalog-readiness";
 import { axisValues } from "@/core/catalog/attributes";
 import { suggestSkuForVariant } from "@/core/catalog/sku";
 import { findColorAxis } from "@/core/catalog/product-images";
@@ -27,6 +28,7 @@ import { EditProductForm } from "./edit-product-form";
 import { ImageColorForm } from "./image-color-form";
 import { ImageUploadForm } from "./image-upload-form";
 import { AddVariantForm, EditVariantForm } from "./variant-forms";
+import { readinessIssueHref } from "../readiness-badge";
 
 export const dynamic = "force-dynamic";
 
@@ -72,12 +74,15 @@ function formatAttributes(attributes: Record<string, string>): string {
 
 export default async function ProdutoDetalhePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ foco?: string }>;
 }) {
   await requireUser();
   const owner = await isOwner();
   const { id } = await params;
+  const { foco } = await searchParams;
 
   const db = getDb();
   let detail: Awaited<ReturnType<typeof getProductDetail>>;
@@ -88,10 +93,21 @@ export default async function ProdutoDetalhePage({
     notFound();
   }
 
-  const categoryRows = await db
-    .select({ id: categories.id, name: categories.name })
-    .from(categories)
-    .orderBy(asc(categories.name));
+  const [categoryRows, readiness] = await Promise.all([
+    db
+      .select({ id: categories.id, name: categories.name })
+      .from(categories)
+      .orderBy(asc(categories.name)),
+    listProductReadiness(db, { productIds: [detail.id] }).then((map) => map.get(detail.id)),
+  ]);
+  // Vindo do selo "sem peso": abre e foca a primeira variação ativa sem peso.
+  const focusWeightVariantId =
+    foco === "weightGrams"
+      ? (detail.variants.find(
+          (variant) =>
+            variant.isActive && (variant.weightGrams === null || variant.weightGrams <= 0),
+        )?.id ?? detail.variants[0]?.id ?? null)
+      : null;
 
   // Fornecedor é dado do dono: a equipe nem consulta a lista.
   const supplierOptions = owner
@@ -136,7 +152,35 @@ export default async function ProdutoDetalhePage({
         }
       />
 
-      <Card title="Status">
+      {readiness && readiness.level !== "ready" && readiness.level !== "archived" ? (
+        <section
+          aria-label="O que falta nesta peça"
+          className={
+            readiness.level === "blocked"
+              ? "rounded-lg border border-red-200 bg-red-50 px-5 py-4 dark:border-red-900 dark:bg-red-950/40"
+              : "rounded-lg border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-900 dark:bg-amber-950/40"
+          }
+        >
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {readiness.level === "blocked"
+              ? "Esta peça ainda não pode ser vendida"
+              : "Quase pronta — falta pouco"}
+          </h2>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {readiness.issues.map((issue) => (
+              <li key={issue.code}>
+                <Link href={readinessIssueHref(detail.id, issue)} className="hover:underline">
+                  <Badge tone={issue.severity === "blocked" ? "danger" : "warning"}>
+                    {issue.label}
+                  </Badge>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <Card id="status" title="Status">
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
             <StatusPill
@@ -186,8 +230,9 @@ export default async function ProdutoDetalhePage({
 
       {/* Dados básicos incluem o fornecedor: card inteiro só para o dono. */}
       <OwnerOnly>
-        <Card title="Dados básicos">
+        <Card id="dados-basicos" title="Dados básicos">
           <EditProductForm
+            autoFocusDescription={foco === "description"}
             product={{
               id: detail.id,
               name: detail.name,
@@ -203,7 +248,7 @@ export default async function ProdutoDetalhePage({
         </Card>
       </OwnerOnly>
 
-      <Card title="Imagens">
+      <Card id="imagens" title="Imagens">
         <div className="flex flex-col gap-4">
           {detail.images.length === 0 ? (
             <EmptyState
@@ -279,7 +324,7 @@ export default async function ProdutoDetalhePage({
         </div>
       </Card>
 
-      <Card title="Variações">
+      <Card id="variacoes" title="Variações">
         <div className="flex flex-col gap-5">
           {detail.variants.length === 0 ? (
             <EmptyState
@@ -367,6 +412,7 @@ export default async function ProdutoDetalhePage({
                 {detail.variants.map((variant) => (
                   <details
                     key={variant.id}
+                    open={variant.id === focusWeightVariantId}
                     className="rounded-md border border-zinc-200 dark:border-zinc-800"
                   >
                     <summary className="cursor-pointer px-4 py-2 text-sm text-zinc-700 dark:text-zinc-300">
@@ -385,6 +431,7 @@ export default async function ProdutoDetalhePage({
                           axes,
                           variant.attributes,
                         )}
+                        autoFocusWeight={variant.id === focusWeightVariantId}
                       />
                     </div>
                   </details>

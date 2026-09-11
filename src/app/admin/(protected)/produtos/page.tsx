@@ -15,6 +15,7 @@ import {
   thumbPathFor,
   type ProductListItem,
 } from "@/services/catalog";
+import { listProductReadiness } from "@/services/catalog-readiness";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -31,6 +32,7 @@ import {
   RemoveCategoryCoverForm,
 } from "./category-cover-form";
 import { CategoryForm } from "./category-form";
+import { ReadinessBadge } from "./readiness-badge";
 
 export const dynamic = "force-dynamic";
 
@@ -65,10 +67,22 @@ function parseStatus(value: string): ProductStatus | undefined {
     : undefined;
 }
 
-function listUrl(q: string, status: string): string {
+type ReadinessFilter = "faltando" | "pronta";
+
+const READINESS_FILTERS: { value: ReadinessFilter; label: string }[] = [
+  { value: "faltando", label: "Faltando algo" },
+  { value: "pronta", label: "Prontas" },
+];
+
+function parseReadinessFilter(value: string): ReadinessFilter | undefined {
+  return value === "faltando" || value === "pronta" ? value : undefined;
+}
+
+function listUrl(q: string, status: string, prontidao = ""): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (status) params.set("status", status);
+  if (prontidao) params.set("prontidao", prontidao);
   const query = params.toString();
   return query ? `/admin/produtos?${query}` : "/admin/produtos";
 }
@@ -91,21 +105,34 @@ function PriceRange({ item }: { item: ProductListItem }) {
 export default async function ProdutosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; prontidao?: string }>;
 }) {
   await requireUser();
   const params = await searchParams;
   const q = (params.q ?? "").trim();
   const statusParam = (params.status ?? "").trim();
   const status = parseStatus(statusParam);
+  const readinessParam = (params.prontidao ?? "").trim();
+  const readinessFilter = parseReadinessFilter(readinessParam);
 
   const db = getDb();
   const storage = getFileStorage();
 
-  const [items, categoryRows] = await Promise.all([
+  const [allItems, categoryRows] = await Promise.all([
     listProducts(db, { search: q || undefined, status }),
     db.select().from(categories).orderBy(asc(categories.name)),
   ]);
+  const readiness = await listProductReadiness(db, {
+    productIds: allItems.map((item) => item.id),
+  });
+  // "Faltando algo" = quase pronta ou bloqueada; arquivadas ficam fora dos dois chips.
+  const items = allItems.filter((item) => {
+    if (!readinessFilter) return true;
+    const level = readiness.get(item.id)?.level;
+    return readinessFilter === "pronta"
+      ? level === "ready"
+      : level === "almost" || level === "blocked";
+  });
 
   // Leituras simples na page (permitido): primeira imagem de cada produto e
   // quais produtos têm alguma variação com estoque disponível <= limite.
@@ -153,7 +180,7 @@ export default async function ProdutosPage({
     }
   }
 
-  const hasFilters = Boolean(q || status);
+  const hasFilters = Boolean(q || status || readinessFilter);
 
   return (
     <div className="flex flex-col gap-6">
@@ -189,6 +216,9 @@ export default async function ProdutosPage({
           {statusParam ? (
             <input type="hidden" name="status" value={statusParam} />
           ) : null}
+          {readinessFilter ? (
+            <input type="hidden" name="prontidao" value={readinessFilter} />
+          ) : null}
           <Button type="submit" variant="outline" className="shrink-0">
             Buscar
           </Button>
@@ -200,11 +230,29 @@ export default async function ProdutosPage({
             return (
               <Link
                 key={filter.value || "todos"}
-                href={listUrl(q, filter.value)}
+                href={listUrl(q, filter.value, readinessFilter)}
                 className={cx(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   isCurrent
                     ? "bg-indigo-600 text-white"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                )}
+              >
+                {filter.label}
+              </Link>
+            );
+          })}
+          <span className="mx-1 hidden h-4 w-px bg-zinc-200 sm:block dark:bg-zinc-700" />
+          {READINESS_FILTERS.map((filter) => {
+            const isCurrent = filter.value === readinessFilter;
+            return (
+              <Link
+                key={filter.value}
+                href={listUrl(q, statusParam, isCurrent ? "" : filter.value)}
+                className={cx(
+                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  isCurrent
+                    ? "bg-amber-600 text-white"
                     : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
                 )}
               >
@@ -290,6 +338,10 @@ export default async function ProdutosPage({
                       {item.brand}
                     </p>
                   ) : null}
+                  {/* O selo mora embaixo do nome: no celular, a última coluna fica fora da tela. */}
+                  <div className="mt-1">
+                    <ReadinessBadge productId={item.id} readiness={readiness.get(item.id)} />
+                  </div>
                 </Td>
                 <Td>{item.variantCount}</Td>
                 <Td>
@@ -319,7 +371,7 @@ export default async function ProdutosPage({
         </Table>
       )}
 
-      <Card title="Categorias">
+      <Card id="categorias" title="Categorias">
         <div className="flex flex-col gap-4">
           {categoryRows.length === 0 ? (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">

@@ -52,12 +52,20 @@ export function EditVariantForm({
   variant,
   axes,
   suggestedSku,
+  autoFocusWeight = false,
 }: {
   productId: string;
-  variant: { id: string; sku: string; attributes: Record<string, string> };
+  variant: {
+    id: string;
+    sku: string;
+    attributes: Record<string, string>;
+    weightGrams: number | null;
+  };
   axes: string[];
   /** Código que o cadastro sugeriria hoje (nome atual + eixos). */
   suggestedSku: string;
+  /** Vindo do selo "sem peso": o cursor já cai no campo. */
+  autoFocusWeight?: boolean;
 }) {
   const [state, formAction] = useActionState(updateVariantAction, initialState);
   const skuInputRef = useRef<HTMLInputElement>(null);
@@ -101,6 +109,22 @@ export function EditVariantForm({
             />
           </Field>
         ))}
+        <Field
+          label="Peso (g)"
+          className="min-w-32"
+          hint="Usado no frete. Vazio = peso padrão de 300 g."
+        >
+          <Input
+            name="weightGrams"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            defaultValue={variant.weightGrams ?? ""}
+            placeholder="ex.: 350"
+            autoFocus={autoFocusWeight}
+          />
+        </Field>
         <SubmitButton pendingLabel="Salvando…" size="sm" className="mb-1">
           Salvar
         </SubmitButton>

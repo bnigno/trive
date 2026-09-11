@@ -276,6 +276,17 @@ export async function updateVariantAction(
     if (!value) return { error: `Preencha o campo "${axis}".` };
   }
 
+  // Peso em gramas: vazio mantém o que está; o frete por faixa depende dele.
+  const weightRaw = String(formData.get("weightGrams") ?? "").trim();
+  let weightGrams: number | undefined;
+  if (weightRaw !== "") {
+    const parsedWeight = Number(weightRaw);
+    if (!Number.isInteger(parsedWeight) || parsedWeight <= 0) {
+      return { error: "Peso em gramas: use um número inteiro maior que zero." };
+    }
+    weightGrams = parsedWeight;
+  }
+
   // O código só viaja quando o dono mexeu nele (o service normaliza e valida).
   const skuChanged = typedSku !== "" && typedSku !== currentSku;
   let updated: { sku: string };
@@ -285,6 +296,7 @@ export async function updateVariantAction(
       variantId,
       userId: user.id,
       attributes,
+      ...(weightGrams !== undefined ? { weightGrams } : {}),
       ...(skuChanged ? { sku: typedSku } : {}),
     });
   } catch (error) {

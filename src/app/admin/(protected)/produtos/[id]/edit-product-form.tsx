@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { DESCRIPTION_MIN_CHARS } from "@/core/catalog/readiness";
 import {
   Field,
   FormError,
@@ -21,6 +22,7 @@ export function EditProductForm({
   product,
   categoryOptions,
   supplierOptions,
+  autoFocusDescription = false,
 }: {
   product: {
     id: string;
@@ -33,8 +35,17 @@ export function EditProductForm({
   };
   categoryOptions: CategoryOption[];
   supplierOptions: SupplierOption[];
+  /** Vindo do selo "descrição curta": o cursor já cai no campo. */
+  autoFocusDescription?: boolean;
 }) {
   const [state, formAction] = useActionState(updateProductAction, initialState);
+  const [descriptionLength, setDescriptionLength] = useState(
+    (product.description ?? "").trim().length,
+  );
+  const descriptionHint =
+    descriptionLength >= DESCRIPTION_MIN_CHARS
+      ? `${descriptionLength} caracteres — boa para a vitrine e para a Lia.`
+      : `${descriptionLength} de ${DESCRIPTION_MIN_CHARS} caracteres. Conte tecido, caimento, ocasião e como veste no calor.`;
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -48,11 +59,14 @@ export function EditProductForm({
         >
           <Input name="name" defaultValue={product.name} required />
         </Field>
-        <Field label="Descrição" className="sm:col-span-2">
+        <Field label="Descrição" className="sm:col-span-2" hint={descriptionHint}>
           <TextArea
             name="description"
             defaultValue={product.description ?? ""}
-            placeholder="Descreva o produto (opcional)"
+            placeholder="Descreva a peça: tecido, caimento, ocasião, como veste no calor de Belém."
+            rows={5}
+            autoFocus={autoFocusDescription}
+            onChange={(event) => setDescriptionLength(event.target.value.trim().length)}
           />
         </Field>
         <Field label="Marca">
