@@ -5,7 +5,7 @@ import type {
   SalesAssistant,
   ToolExecutor,
 } from "@/adapters/assistant";
-import { FakeSalesAssistant } from "@/adapters/assistant/fake";
+import { FakeSalesAssistant, FAKE_PRODUCT_DRAFT_JSON } from "@/adapters/assistant/fake";
 
 type ExecutedCall = { name: string; input: unknown };
 
@@ -143,5 +143,38 @@ describe("FakeSalesAssistant (contrato SalesAssistant)", () => {
   it("satisfaz a interface SalesAssistant", () => {
     const assistant: SalesAssistant = new FakeSalesAssistant();
     expect(assistant.respondTurn).toBeTypeOf("function");
+  });
+});
+
+describe("FakeSalesAssistant.extractFromPhotos", () => {
+  const input = {
+    system: "prompt",
+    images: [{ mediaType: "image/jpeg" as const, base64: "AAAA" }],
+    userText: "Fotos em anexo.",
+    model: "claude-sonnet-5",
+    jsonSchema: { type: "object" },
+  };
+
+  it("sem roteiro devolve o rascunho canônico e grava o que recebeu", async () => {
+    const assistant = new FakeSalesAssistant();
+    const result = await assistant.extractFromPhotos(input);
+    expect(result.json).toEqual(FAKE_PRODUCT_DRAFT_JSON);
+    expect(result.usage.inputTokens).toBeGreaterThan(0);
+    expect(assistant.extractions).toHaveLength(1);
+    expect(assistant.extractions[0].images).toHaveLength(1);
+    expect(assistant.extractions[0].system).toBe("prompt");
+  });
+
+  it("roteiro devolve o JSON pedido; Error na fila é lançado; reset limpa", async () => {
+    const assistant = new FakeSalesAssistant();
+    assistant.enqueueExtraction({ name: "Outra peça" });
+    expect((await assistant.extractFromPhotos(input)).json).toEqual({ name: "Outra peça" });
+
+    assistant.enqueueExtraction(new Error("modelo fora do ar"));
+    await expect(assistant.extractFromPhotos(input)).rejects.toThrow("modelo fora do ar");
+
+    assistant.reset();
+    expect(assistant.extractions).toHaveLength(0);
+    expect((await assistant.extractFromPhotos(input)).json).toEqual(FAKE_PRODUCT_DRAFT_JSON);
   });
 });

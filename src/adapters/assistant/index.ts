@@ -40,13 +40,31 @@ export type AssistantTurn = {
   };
 };
 
+/** Extração estruturada a partir de fotos (ficha da peça pela foto). */
+export type ExtractFromPhotosInput = {
+  system: string;
+  images: BotImageInput[];
+  userText: string;
+  model: string;
+  /** JSON Schema simples (sem $ref) para a saída estruturada. */
+  jsonSchema: Record<string, unknown>;
+  maxTokens?: number;
+};
+
+export type ExtractFromPhotosResult = {
+  json: unknown;
+  usage: AssistantTurn["usage"];
+};
+
 /**
  * Contrato do assistente de vendas. A IA conversa, mas nunca é fonte de
  * fatos: preços/estoque/frete/pedidos vêm das ferramentas, que devolvem
- * blocos de texto prontos que o modelo retransmite.
+ * blocos de texto prontos que o modelo retransmite. extractFromPhotos é a
+ * mesma inteligência lendo fotos e devolvendo JSON no formato pedido.
  */
 export interface SalesAssistant {
   respondTurn(input: RespondTurnInput): Promise<AssistantTurn>;
+  extractFromPhotos(input: ExtractFromPhotosInput): Promise<ExtractFromPhotosResult>;
 }
 
 export class AssistantUnavailableError extends Error {

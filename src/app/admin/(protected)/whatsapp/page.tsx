@@ -62,6 +62,7 @@ interface PageData {
   ownerPhone: string;
   recoveryAfterMinutes: number;
   botEnabledSetting: boolean;
+  catalogDraftEnabled: boolean;
   handoffSilenceHours: number;
   handoffAutoReturnHours: number;
   botModel: string;
@@ -105,6 +106,7 @@ async function loadPageData(): Promise<PageData | null> {
         "bot_cards_enabled",
         "handoff_silence_hours",
         "handoff_auto_return_hours",
+        "catalog_draft_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -141,6 +143,7 @@ async function loadPageData(): Promise<PageData | null> {
         ? rawMinutes
         : 60,
     botEnabledSetting: settingsMap["bot_enabled"] === true,
+    catalogDraftEnabled: settingsMap["catalog_draft_enabled"] !== false,
     handoffSilenceHours: hours("handoff_silence_hours", 24),
     handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
     botModel: text("bot_model") || "claude-sonnet-5",
@@ -328,6 +331,12 @@ export default async function WhatsappPage() {
                 ? "Foto da cliente (print, peça do armário, convite) vai para a inteligência; áudio é transcrito. Centavos por uso; nada é guardado."
                 : "Fotos vão para a inteligência (centavos por uso). Áudio exige a chave da OpenAI na hospedagem — sem ela, a vendedora pede para escrever."
             }
+          />
+          <ToggleSwitch
+            settingKey="catalog_draft_enabled"
+            checked={data.catalogDraftEnabled}
+            label="Começar pela foto no cadastro"
+            hint="Em Novo produto, você fotografa a peça e a etiqueta e a ficha volta preenchida para revisar (nome, descrição, composição, cuidados, cores, tamanhos, peso e preço sugerido). Centavos por peça; nada é salvo sem a sua revisão."
           />
           <ToggleSwitch
             settingKey="bot_cards_enabled"

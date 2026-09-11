@@ -162,6 +162,29 @@ describe("selectGridVariants", () => {
     ]);
   });
 
+  it("preço e peso valem para todas as combinações escolhidas", () => {
+    const variants = selectGridVariants({
+      name: "Blusa",
+      axes,
+      rows: [
+        row({ attributes: { cor: "Verde", tamanho: "P" }, quantity: 1 }),
+        row({ attributes: { cor: "Verde", tamanho: "M" }, quantity: 2 }),
+      ],
+      priceCents: 12990,
+      weightGrams: 320,
+    });
+    expect(variants.map((variant) => variant.priceCents)).toEqual([12990, 12990]);
+    expect(variants.map((variant) => variant.weightGrams)).toEqual([320, 320]);
+    // Sem peso informado, a variação nasce sem peso (o frete usa o padrão).
+    expect(
+      selectGridVariants({
+        name: "Blusa",
+        axes,
+        rows: [row({ attributes: { cor: "Verde", tamanho: "P" }, quantity: 1 })],
+      })[0].weightGrams,
+    ).toBeUndefined();
+  });
+
   it("quantidade 0 cria a variação sem estoque (diferente de branco)", () => {
     const variants = selectGridVariants({
       name: "Blusa",

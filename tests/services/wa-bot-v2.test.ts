@@ -245,6 +245,10 @@ function recorder(reply = "ok"): SalesAssistant & { seen: RespondTurnInput[] } {
         usage: { inputTokens: 0, outputTokens: 0 },
       };
     },
+    // Este recorder é só do turno de conversa; a ficha pela foto não passa por aqui.
+    async extractFromPhotos() {
+      throw new Error("extractFromPhotos não é usado neste teste");
+    },
   };
 }
 

@@ -49,6 +49,7 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "handoff_silence_hours", value: 24 },
   { key: "handoff_auto_return_hours", value: 12 },
   { key: "drop_audience_limit", value: 60 },
+  { key: "catalog_draft_enabled", value: true },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca

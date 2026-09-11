@@ -535,6 +535,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .max(168, "A volta automática vai de 0 (nunca) a 168 horas."),
   /** Teto de convidadas por lançamento VIP. */
   drop_audience_limit: z.number().int().min(1).max(500),
+  /** "Começar pela foto" no cadastro de peça (ausente = ligado). */
+  catalog_draft_enabled: z.boolean(),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);
