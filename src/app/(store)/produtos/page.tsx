@@ -3,6 +3,8 @@
 // cabeço de salas fixo abaixo do header e a grade editorial com ritmo 7/5.
 // A rota lê searchParams, então o Next a renderiza sob demanda — sem
 // force-dynamic. A página só busca e apresenta; a malha vive em lib/.
+import { tryOrBuildFallback } from "@/lib/build-safe";
+import { collectionCanonical } from "@/core/seo/canonical";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -27,10 +29,34 @@ import {
   listPublicProducts,
 } from "@/services/store-catalog";
 
-export const metadata: Metadata = {
-  title: "A coleção",
-  description: "Todas as peças da maison, por sala ou por busca.",
-};
+const COLLECTION_DESCRIPTION = "Todas as peças da maison, por sala ou por busca.";
+
+/** Cada sala é uma página de verdade (canonical); a busca não é indexável. */
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<{ categoria?: string; q?: string }>;
+}): Promise<Metadata> {
+  const params = await searchParams;
+  const { canonical, noindex } = collectionCanonical(params);
+  const categoria = (params.categoria ?? "").trim();
+  const sala = categoria
+    ? (await tryOrBuildFallback([], () => listPublicCategories(getDb()))).find(
+        (category) => category.slug === categoria,
+      )
+    : undefined;
+  const title = sala ? `Sala ${sala.name}` : "A coleção";
+  const description = sala
+    ? `As peças da sala ${sala.name} da maison, escolhidas com calma.`
+    : COLLECTION_DESCRIPTION;
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: { title, description, url: canonical, type: "website" },
+    ...(noindex ? { robots: { index: false, follow: true } } : {}),
+  };
+}
 
 const PAGE_LIMIT = 60;
 

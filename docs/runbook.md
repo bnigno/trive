@@ -157,6 +157,15 @@ primeira semana de jan/abr/jul/out):
 4. Registrar a data do teste (basta uma linha ao final deste arquivo) e
    descartar o banco de teste.
 
+## Ver visitas e eventos da loja (Vercel Web Analytics)
+
+A loja registra visitas e alguns eventos (peça vista, peça na sacola, checkout iniciado, pedido feito, cartela concluída) sem cookie e sem dado pessoal — os links com token (`/pedido/…`, `/lancamento/…`) chegam ao painel só como `/pedido` e `/lancamento`, e cupons não são enviados.
+
+1. No celular, abra o app da Vercel (ou vercel.com) → projeto **trive** → aba **Analytics**.
+2. "Visitors" e "Page Views" mostram quem chegou e por onde (aba **Referrers**: Instagram, WhatsApp, Google).
+3. Aba **Events** mostra os eventos da loja — eventos personalizados exigem o plano Pro; no Hobby só as visitas aparecem.
+4. Bloqueadores de anúncio derrubam parte da contagem: os números são um piso, não o total.
+
 ## Custos mensais e gatilhos de upgrade
 
 | Serviço                            | Custo                              |

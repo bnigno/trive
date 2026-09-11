@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Finalizar pedido",
   description: "Informe seus dados de entrega e conclua sua compra.",
+  robots: { index: false, follow: false },
 };
 
 export default async function CheckoutPage({

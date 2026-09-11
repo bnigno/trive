@@ -6,6 +6,7 @@
 // escolhida" é pura (core/catalog/variant-selection). Tudo que é texto fixo
 // (título, descrição) continua vindo pronto do Server Component pelas props
 // `heading` e `children`.
+import { trackStoreEvent } from "@/components/store/analytics";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { findColorAxis, imagesForColor } from "@/core/catalog/product-images";
@@ -44,6 +45,10 @@ export function ProductDetailClient({
   const [selected, setSelected] = useState<Record<string, string>>(() =>
     initialAxisSelection(axes, variants),
   );
+  // Peça vista: um evento por abertura da página (sem dado pessoal).
+  useEffect(() => {
+    trackStoreEvent("product_view", { slug });
+  }, [slug]);
   const [buyBarVisible, setBuyBarVisible] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 

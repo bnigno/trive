@@ -16,6 +16,8 @@ export const metadata: Metadata = {
   title: "Política de privacidade",
   description:
     "Quais dados coletamos, para quê, por quanto tempo e quais são os seus direitos segundo a LGPD.",
+  alternates: { canonical: "/privacidade" },
+  openGraph: { title: "Política de privacidade", description: "Quais dados coletamos, para quê, por quanto tempo e quais são os seus direitos segundo a LGPD.", url: "/privacidade", type: "website" },
 };
 
 const TOC = [

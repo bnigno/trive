@@ -131,6 +131,8 @@ export interface PublicProductListItem {
    * uma capa só, e a escolha de cor acontece na página do produto.
    */
   imagePath: string | null;
+  /** Última alteração da peça (sitemap). */
+  updatedAt: Date | null;
   /** Segunda foto por sort_order (troca no hover do card), ou null. */
   hoverImagePath: string | null;
   /** true se a soma de disponível (on_hand - reserved) das variantes > 0. */
@@ -164,6 +166,7 @@ export async function listPublicProducts(
       id: products.id,
       name: products.name,
       slug: products.slug,
+      updatedAt: products.updatedAt,
       brand: products.brand,
       categoryName: categories.name,
       priceFromCents: sql<string>`min(${priceVersions.priceCents})`,
@@ -197,6 +200,7 @@ export async function listPublicProducts(
     id: row.id,
     name: row.name,
     slug: row.slug,
+    updatedAt: row.updatedAt ?? null,
     brand: row.brand,
     categoryName: row.categoryName,
     priceFromCents: Number(row.priceFromCents),

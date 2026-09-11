@@ -27,6 +27,7 @@ export const metadata: Metadata = {
   },
   description:
     "TRIVÉ — Maison Féminine. Peças escolhidas com calma, para a mulher que se veste de si. Envio para todo o Brasil.",
+  twitter: { card: "summary_large_image" },
 };
 
 export default function RootLayout({

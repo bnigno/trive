@@ -1,9 +1,7 @@
 // Robots: vitrine indexável; admin, API e fluxos privados fora dos buscadores.
 import type { MetadataRoute } from "next";
 
-const BASE_URL = (
-  process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
-).replace(/\/+$/, "");
+import { siteUrl } from "@/lib/site-url";
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -11,9 +9,9 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/admin", "/api", "/carrinho", "/checkout", "/pedido"],
+        disallow: ["/admin", "/api", "/carrinho", "/checkout", "/pedido", "/lancamento"],
       },
     ],
-    sitemap: `${BASE_URL}/sitemap.xml`,
+    sitemap: `${siteUrl()}/sitemap.xml`,
   };
 }

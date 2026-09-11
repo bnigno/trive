@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 // Home "Noite de Estreia": véu noir, hero grudado (sticky) coberto pela
 // "manhã" marfim ao rolar (a cortina), manifesto, coleção, salas, cuidados e
 // o convite noir que emenda no rodapé. Vitrine com ISR — nunca force-dynamic
@@ -40,6 +41,18 @@ import {
   listPublicCategories,
   listPublicProducts,
 } from "@/services/store-catalog";
+
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "TRIVÉ — Maison Féminine",
+    description:
+      "Peças escolhidas com calma, para a mulher que se veste de si. Envio para todo o Brasil.",
+    url: "/",
+    type: "website",
+  },
+};
 
 export const revalidate = 300;
 
