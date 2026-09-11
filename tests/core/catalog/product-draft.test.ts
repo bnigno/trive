@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildProductDraftPrompt,
   DRAFT_MAX_COLORS,
+  DRAFT_MAX_SIZES,
   normalizeProductDraft,
   PRODUCT_DRAFT_JSON_SCHEMA,
   rawProductDraftSchema,
@@ -104,14 +105,59 @@ describe("normalizeProductDraft", () => {
     expect(semPeso.warnings).toEqual(["Sem estimativa de peso: cadastre o peso para o frete não usar 300 g."]);
   });
 
-  it("respeita os tetos de cores, corta o nome em 80 e avisa quando não há nome", () => {
+  it("respeita os tetos de cores e tamanhos (avisando o corte), corta o nome em 80 e avisa quando não há nome", () => {
     const cores = Array.from({ length: 10 }, (_, i) => `Cor ${i}`);
-    const draft = normalizeProductDraft(raw({ colors: cores, name: "x".repeat(100) }), { categories: CATEGORIES });
+    const tamanhos = Array.from({ length: 11 }, (_, i) => `T${i}`);
+    const draft = normalizeProductDraft(
+      raw({ colors: cores, sizes: tamanhos, name: "x".repeat(100), warnings: [] }),
+      { categories: CATEGORIES },
+    );
     expect(draft.colors).toHaveLength(DRAFT_MAX_COLORS);
+    expect(draft.sizes).toHaveLength(DRAFT_MAX_SIZES);
+    expect(draft.colors).toEqual(cores.slice(0, DRAFT_MAX_COLORS));
+    expect(draft.sizes).toEqual(tamanhos.slice(0, DRAFT_MAX_SIZES));
+    expect(draft.warnings).toContain(
+      `O modelo leu 10 cores; mantive as ${DRAFT_MAX_COLORS} primeiras — confira as fichas de cor.`,
+    );
+    expect(draft.warnings).toContain(
+      `O modelo leu 11 tamanhos; mantive os ${DRAFT_MAX_SIZES} primeiros — confira as fichas de tamanho.`,
+    );
+    // Dentro do teto, nenhum aviso de corte.
+    expect(
+      normalizeProductDraft(raw({ warnings: [] }), { categories: CATEGORIES }).warnings.some((w) =>
+        w.includes("mantive as"),
+      ),
+    ).toBe(false);
     expect(draft.name).toHaveLength(80);
     expect(normalizeProductDraft(raw({ name: "  " }), { categories: CATEGORIES }).warnings).toContain(
       "O modelo não sugeriu nome: escreva um.",
     );
+  });
+
+  it("corta textos longos e avisa quando a etiqueta traz recado de terceiro", () => {
+    const draft = normalizeProductDraft(
+      raw({
+        description: "d".repeat(2000),
+        composition: "c".repeat(500),
+        fitNotes: "Fale no (91) 98888-7777 para pedidos",
+        careFreeText: "Compre direto: www.fornecedor.com",
+        warnings: [],
+      }),
+      { categories: CATEGORIES },
+    );
+    expect(draft.description).toHaveLength(1200);
+    expect(draft.composition).toHaveLength(200);
+    const aviso = draft.warnings.find((warning) => warning.includes("recado do fornecedor"));
+    expect(aviso).toBeDefined();
+    expect(aviso).toContain("telefone");
+    expect(aviso).toContain("link");
+    expect(aviso).toContain("vai para a loja e para a vendedora");
+    // Texto limpo não vira aviso.
+    expect(
+      normalizeProductDraft(raw({ warnings: [] }), { categories: CATEGORIES }).warnings.some((w) =>
+        w.includes("recado do fornecedor"),
+      ),
+    ).toBe(false);
   });
 
   it("JSON fora do formato lança", () => {

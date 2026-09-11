@@ -12,7 +12,7 @@ import {
   AssistantUnavailableError,
   type SalesAssistant,
 } from "@/adapters/assistant";
-import { estimateUsageCostUsdCents, type ModelUsage } from "@/core/catalog/model-cost";
+import { estimateUsageCostUsdCents, type ModelUsage } from "@/core/ai/model-cost";
 import {
   buildProductDraftPrompt,
   DRAFT_MAX_PHOTOS,
@@ -52,10 +52,19 @@ export type DraftProductFromPhotosResult = {
   elapsedMs: number;
 };
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+function withTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new ServiceError("ia_demorou", message)), ms);
-    promise.then(
+    const timer = setTimeout(() => {
+      // Sem o abort a chamada seguiria até o fim — e seria cobrada.
+      controller.abort();
+      reject(new ServiceError("ia_demorou", message));
+    }, ms);
+    run(controller.signal).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -94,8 +103,18 @@ export async function draftProductFromPhotos(
   }
 
   const startedAt = Date.now();
-  const [images, settingsMap, categoryRows, storeMap] = await Promise.all([
-    Promise.all(parsed.photos.map((photo) => prepareImageForModel(photo.data))),
+  let images;
+  try {
+    images = await Promise.all(parsed.photos.map((photo) => prepareImageForModel(photo.data)));
+  } catch {
+    // HEIC do iPhone e afins: o sharp não decodifica. A dona precisa saber o
+    // que fazer, e não gastamos a chamada ao modelo.
+    throw new ServiceError(
+      "foto_ilegivel",
+      "Não consegui ler uma das fotos (formato não suportado, como HEIC). Nos ajustes da câmera escolha “Mais compatível” e fotografe de novo.",
+    );
+  }
+  const [settingsMap, categoryRows, storeMap] = await Promise.all([
     getSettingsMap(db, ["store_name", "store_manifesto", "bot_model"]),
     db
       .select({ id: categories.id, name: categories.name, slug: categories.slug })
@@ -115,21 +134,39 @@ export async function draftProductFromPhotos(
     knownSizes: storeMap.sizes,
   });
 
+  /** Toda tentativa vira audit: a que falha também custou tokens. */
+  const auditAttempt = async (after: Record<string, unknown>): Promise<void> => {
+    await db.insert(auditLog).values({
+      actorType: "user",
+      actorId: parsed.userId,
+      action: "product.draft_from_photos",
+      entityType: "product",
+      entityId: null,
+      after: { model, photos: parsed.photos.length, elapsedMs: Date.now() - startedAt, ...after },
+    });
+  };
+
   let extraction;
   try {
     extraction = await withTimeout(
-      assistant.extractFromPhotos({
-        system,
-        images: images.map(({ mediaType, base64 }) => ({ mediaType, base64 })),
-        userText: PRODUCT_DRAFT_USER_TEXT,
-        model,
-        jsonSchema: PRODUCT_DRAFT_JSON_SCHEMA,
-        maxTokens: 2048,
-      }),
+      (signal) =>
+        assistant.extractFromPhotos({
+          system,
+          images: images.map(({ mediaType, base64 }) => ({ mediaType, base64 })),
+          userText: PRODUCT_DRAFT_USER_TEXT,
+          model,
+          jsonSchema: PRODUCT_DRAFT_JSON_SCHEMA,
+          maxTokens: 2048,
+          signal,
+        }),
       DRAFT_TIME_BUDGET_MS,
       "A ficha demorou demais para ficar pronta. Tente de novo com menos fotos.",
     );
   } catch (error) {
+    await auditAttempt({
+      ok: false,
+      reason: error instanceof ServiceError ? error.code : "ia_indisponivel",
+    });
     if (error instanceof AssistantUnavailableError) {
       throw new ServiceError("ia_indisponivel", `${error.message}. Preencha a ficha à mão por enquanto.`);
     }
@@ -140,32 +177,39 @@ export async function draftProductFromPhotos(
   try {
     draft = normalizeProductDraft(extraction.json, { categories: categoryRows });
   } catch {
+    await auditAttempt({
+      ok: false,
+      reason: "json_invalido",
+      usage: extraction.usage,
+      estimatedCostUsdCents: estimateUsageCostUsdCents(extraction.usage, model),
+    });
     throw new ServiceError(
       "ia_indisponivel",
       "A resposta do modelo não veio no formato esperado. Tente de novo ou preencha à mão.",
     );
   }
 
-  const suggestedPrice = await suggestPriceForCost(db, parsed.costCents);
+  // Política de margem inviável (divisor ≤ 0) lança no core: o rascunho segue
+  // sem preço em vez de se perder depois de a chamada já ter sido paga.
+  let suggestedPrice = null;
+  try {
+    suggestedPrice = await suggestPriceForCost(db, parsed.costCents);
+  } catch {
+    draft.warnings.push(
+      "Não consegui sugerir o preço: a política de margem atual não fecha com esse custo. Confira em Configurações › Preços.",
+    );
+  }
   const estimatedCostUsdCents = estimateUsageCostUsdCents(extraction.usage, model);
   const elapsedMs = Date.now() - startedAt;
 
-  await db.insert(auditLog).values({
-    actorType: "user",
-    actorId: parsed.userId,
-    action: "product.draft_from_photos",
-    entityType: "product",
-    entityId: null,
-    after: {
-      model,
-      photos: parsed.photos.length,
-      usage: extraction.usage,
-      estimatedCostUsdCents,
-      elapsedMs,
-      name: draft.name,
-      warnings: draft.warnings,
-      suggestedPriceCents: suggestedPrice?.priceCents ?? null,
-    },
+
+  await auditAttempt({
+    ok: true,
+    usage: extraction.usage,
+    estimatedCostUsdCents,
+    name: draft.name,
+    warnings: draft.warnings,
+    suggestedPriceCents: suggestedPrice?.priceCents ?? null,
   });
 
   return { draft, suggestedPrice, usage: extraction.usage, estimatedCostUsdCents, elapsedMs };

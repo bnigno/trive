@@ -49,6 +49,8 @@ export type ExtractFromPhotosInput = {
   /** JSON Schema simples (sem $ref) para a saída estruturada. */
   jsonSchema: Record<string, unknown>;
   maxTokens?: number;
+  /** Cancela a chamada de verdade quando o orçamento de tempo estoura. */
+  signal?: AbortSignal;
 };
 
 export type ExtractFromPhotosResult = {

@@ -16,6 +16,33 @@ export const DRAFT_MAX_PHOTOS = 3;
 /** Faixa honesta para peso de roupa/acessório (g). */
 export const DRAFT_WEIGHT_MIN_GRAMS = 50;
 export const DRAFT_WEIGHT_MAX_GRAMS = 3000;
+/** Tetos do texto vindo da foto (a etiqueta é texto de terceiro). */
+export const DRAFT_MAX_DESCRIPTION_CHARS = 1200;
+export const DRAFT_MAX_SHORT_TEXT_CHARS = 200;
+
+/**
+ * A etiqueta fotografada pode trazer recado de terceiro (telefone, chave Pix,
+ * link, "instrução" para o sistema). O texto entra assim mesmo — é a dona que
+ * revisa — mas ela é avisada na faixa amarela.
+ */
+const THIRD_PARTY_HINTS: { pattern: RegExp; label: string }[] = [
+  { pattern: /https?:\/\/|www\.[a-z]/i, label: "link" },
+  { pattern: /\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}/, label: "telefone" },
+  { pattern: /\bpix\b|\bchave pix\b/i, label: "menção a Pix" },
+  { pattern: /\b(instru(ç|c)(ã|a)o|sistema|ignore|desconto de \d+%)\b/i, label: "instrução" },
+  { pattern: /@[a-z0-9._]{3,}/i, label: "perfil/@" },
+];
+
+function thirdPartyWarning(fields: Record<string, string>): string | null {
+  const found = new Set<string>();
+  for (const [field, value] of Object.entries(fields)) {
+    for (const hint of THIRD_PARTY_HINTS) {
+      if (hint.pattern.test(value)) found.add(`${hint.label} em "${field}"`);
+    }
+  }
+  if (found.size === 0) return null;
+  return `Achei ${[...found].join(", ")} no texto lido da foto — pode ser recado do fornecedor. Apague antes de publicar: esse texto vai para a loja e para a vendedora.`;
+}
 
 /**
  * O que o modelo devolve. Mantido simples de propósito: saída estruturada
@@ -126,7 +153,10 @@ export function buildProductDraftPrompt(input: ProductDraftPromptInput): string 
 export const PRODUCT_DRAFT_USER_TEXT =
   "Fotos da peça em anexo. Monte a ficha conforme as regras e devolva o JSON.";
 
-function uniqueNormalized(values: readonly string[], max: number): string[] {
+function uniqueNormalized(
+  values: readonly string[],
+  max: number,
+): { kept: string[]; dropped: number } {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const value of values) {
@@ -136,9 +166,8 @@ function uniqueNormalized(values: readonly string[], max: number): string[] {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(normalized);
-    if (out.length >= max) break;
   }
-  return out;
+  return { kept: out.slice(0, max), dropped: Math.max(0, out.length - max) };
 }
 
 function isCareSymbolKey(value: string): value is CareSymbolKey {
@@ -174,10 +203,23 @@ export function normalizeProductDraft(
     }
   }
 
-  const description = parsed.description.trim();
+  const description = parsed.description.trim().slice(0, DRAFT_MAX_DESCRIPTION_CHARS);
   if (description.length < DESCRIPTION_MIN_CHARS) {
     warnings.push(
       `Descrição curta (${description.length} caracteres; a peça fica pronta com ${DESCRIPTION_MIN_CHARS}).`,
+    );
+  }
+
+  const colorsRead = uniqueNormalized(parsed.colors, DRAFT_MAX_COLORS);
+  const sizesRead = uniqueNormalized(parsed.sizes, DRAFT_MAX_SIZES);
+  if (colorsRead.dropped > 0) {
+    warnings.push(
+      `O modelo leu ${colorsRead.kept.length + colorsRead.dropped} cores; mantive as ${DRAFT_MAX_COLORS} primeiras — confira as fichas de cor.`,
+    );
+  }
+  if (sizesRead.dropped > 0) {
+    warnings.push(
+      `O modelo leu ${sizesRead.kept.length + sizesRead.dropped} tamanhos; mantive os ${DRAFT_MAX_SIZES} primeiros — confira as fichas de tamanho.`,
     );
   }
 
@@ -205,17 +247,27 @@ export function normalizeProductDraft(
     warnings.push("Sem estimativa de peso: cadastre o peso para o frete não usar 300 g.");
   }
 
+  const composition = parsed.composition.trim().slice(0, DRAFT_MAX_SHORT_TEXT_CHARS);
+  const fitNotes = parsed.fitNotes.trim().slice(0, DRAFT_MAX_SHORT_TEXT_CHARS);
+  const thirdParty = thirdPartyWarning({
+    descrição: description,
+    composição: composition,
+    "como veste": fitNotes,
+    cuidados: careFreeText.join(" "),
+  });
+  if (thirdParty) warnings.push(thirdParty);
+
   return {
     name,
     categoryId,
     categoryName,
-    colors: uniqueNormalized(parsed.colors, DRAFT_MAX_COLORS),
-    sizes: uniqueNormalized(parsed.sizes, DRAFT_MAX_SIZES),
+    colors: colorsRead.kept,
+    sizes: sizesRead.kept,
     description,
-    composition: parsed.composition.trim(),
+    composition,
     careSymbols,
-    careFreeText,
-    fitNotes: parsed.fitNotes.trim(),
+    careFreeText: careFreeText.map((line) => line.slice(0, DRAFT_MAX_SHORT_TEXT_CHARS)),
+    fitNotes,
     weightGrams,
     warnings,
   };

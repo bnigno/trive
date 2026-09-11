@@ -23,6 +23,7 @@ export type MessagesClient = {
   messages: {
     create(
       params: Anthropic.MessageCreateParamsNonStreaming,
+      options?: { signal?: AbortSignal },
     ): Promise<Anthropic.Message>;
   };
 };
@@ -58,7 +59,9 @@ export class ClaudeSalesAssistant implements SalesAssistant {
     const client = this.getClient();
     const request: Anthropic.MessageCreateParamsNonStreaming = {
       model: input.model,
-      max_tokens: input.maxTokens ?? 2048,
+      // O teto cobre raciocínio + resposta. A ficha pede descrição de 300+
+      // caracteres: com 2048 o modelo pensava e entregava JSON cortado.
+      max_tokens: input.maxTokens ?? 4096,
       system: input.system,
       messages: [
         {
@@ -72,11 +75,19 @@ export class ClaudeSalesAssistant implements SalesAssistant {
           ],
         },
       ],
-      output_config: { format: { type: "json_schema", schema: input.jsonSchema } },
+      output_config: {
+        // Extrair de foto não pede raciocínio longo — e o pensamento sai do
+        // mesmo teto de max_tokens (Haiku não aceita effort).
+        ...(input.model.startsWith("claude-haiku") ? {} : { effort: "low" as const }),
+        format: { type: "json_schema", schema: input.jsonSchema },
+      },
     };
     let response: Anthropic.Message;
     try {
-      response = await client.messages.create(request);
+      response = await client.messages.create(
+        request,
+        input.signal ? { signal: input.signal } : undefined,
+      );
     } catch (error) {
       if (error instanceof Anthropic.APIError) {
         throw new AssistantUnavailableError(
@@ -93,6 +104,11 @@ export class ClaudeSalesAssistant implements SalesAssistant {
     };
     if (response.stop_reason === "refusal") {
       throw new AssistantUnavailableError("O modelo recusou ler estas fotos.");
+    }
+    if (response.stop_reason === "max_tokens") {
+      throw new AssistantUnavailableError(
+        "A ficha ficou longa demais e foi cortada antes do fim. Tente de novo com menos fotos.",
+      );
     }
     const text = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === "text")

@@ -89,6 +89,13 @@ export function NewProductForm({
    */
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [draftVersion, setDraftVersion] = useState(0);
+  /**
+   * Remontar os cards para receber o rascunho zera os campos não controlados.
+   * O que a dona já tinha escrito (e o que o rascunho não traz) é lido do
+   * formulário ANTES e volta como valor padrão.
+   */
+  const [kept, setKept] = useState<Record<string, string>>({});
+  const formRef = useRef<HTMLFormElement>(null);
   const [colors, setColors] = useState<string[]>([]);
   const [sizes, setSizes] = useState<string[]>([]);
   const [cells, setCells] = useState<Record<string, GridCell>>({});
@@ -260,19 +267,67 @@ export function NewProductForm({
     [goToProduct],
   );
 
-  const handleDraft = useCallback(
-    (result: DraftResult) => {
-      setDraft(result);
-      setDraftVersion((current) => current + 1);
-      setName(result.draft.name);
-      setColors(result.draft.colors);
-      setSizes(result.draft.sizes);
-      // O custo digitado no card do rascunho vale para a grade inteira.
-      if (result.costInput.trim() !== "") handleFillAll({ cost: result.costInput });
-      handleAddPhotos(result.photos);
-    },
-    [handleAddPhotos, handleFillAll],
-  );
+  const handleDraft = useCallback((result: DraftResult) => {
+    const form = formRef.current;
+    if (form) {
+      const data = new FormData(form);
+      const text = (name: string) => String(data.get(name) ?? "").trim();
+      setKept({
+        description: text("description"),
+        composition: text("composition"),
+        fitNotes: text("fitNotes"),
+        brand: text("brand"),
+        categoryId: text("categoryId"),
+        careText: text("careText"),
+        price: text("price"),
+        weightGrams: text("weightGrams"),
+        careSymbols: CARE_SYMBOL_KEYS.filter((key) => data.get(`care:${key}`) === "on").join(","),
+      });
+    }
+    setDraft(result);
+    setDraftVersion((current) => current + 1);
+    setName(result.draft.name);
+    setColors(result.draft.colors);
+    setSizes(result.draft.sizes);
+
+    // O custo digitado no card vale para a grade INTEIRA — e a grade só existe
+    // com as cores e os tamanhos que acabaram de chegar, então ela é montada
+    // aqui (a `grid` do render anterior ainda está vazia).
+    const cost = result.costInput.trim();
+    if (cost !== "") {
+      const nextGrid = buildVariantGrid({
+        name: result.draft.name,
+        colors: result.draft.colors,
+        sizes: result.draft.sizes,
+      });
+      setCells((current) => {
+        const next: Record<string, GridCell> = { ...current };
+        for (const combination of nextGrid.combinations) {
+          next[combination.key] = { ...(current[combination.key] ?? EMPTY_CELL), cost };
+        }
+        return next;
+      });
+    }
+
+    // Só a PRIMEIRA foto vira foto da peça: a etiqueta e a tabela de medidas
+    // são material de leitura. Um segundo rascunho troca o lote, não soma.
+    const [firstPhoto] = result.photos;
+    setPhotos((current) => {
+      const kept = current.filter((photo) => photo.source !== "draft");
+      if (!firstPhoto) return kept;
+      photoCounter.current += 1;
+      return [
+        ...kept,
+        {
+          id: `foto-${photoCounter.current}`,
+          file: firstPhoto,
+          color: "",
+          status: "pending" as const,
+          source: "draft" as const,
+        },
+      ];
+    });
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -345,8 +400,14 @@ export function NewProductForm({
     await sendPhotos(result.productId, photos, photoColors);
   }
 
+  const keptCareSymbols = (kept.careSymbols ?? "")
+    .split(",")
+    .filter((key): key is (typeof CARE_SYMBOL_KEYS)[number] =>
+      (CARE_SYMBOL_KEYS as readonly string[]).includes(key),
+    );
+
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+    <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-6">
       {draftEnabled ? <DraftFromPhotos disabled={locked} onDraft={handleDraft} /> : null}
       {/* fieldset desabilitado congela a tela inteira depois que o produto
           nasce: mexer nos campos aqui não mudaria mais nada no banco. */}
@@ -369,7 +430,7 @@ export function NewProductForm({
               <TextArea
                 name="description"
                 rows={4}
-                defaultValue={draft?.draft.description ?? ""}
+                defaultValue={draft?.draft.description || kept.description || undefined}
                 placeholder="Tecido, caimento, ocasião, como veste no calor de Belém (200 caracteres deixam a peça pronta)"
               />
             </Field>
@@ -377,26 +438,34 @@ export function NewProductForm({
               <Input
                 name="composition"
                 placeholder="Tecido e forro (opcional)"
-                defaultValue={draft?.draft.composition ?? ""}
+                defaultValue={draft?.draft.composition || kept.composition || undefined}
               />
             </Field>
             <CareFields
-              symbols={draft?.draft.careSymbols ?? []}
-              freeText={draft?.draft.careFreeText ?? []}
+              symbols={
+                draft?.draft.careSymbols.length ? draft.draft.careSymbols : keptCareSymbols
+              }
+              freeText={
+                draft?.draft.careFreeText.length
+                  ? draft.draft.careFreeText
+                  : kept.careText
+                    ? kept.careText.split("\n")
+                    : []
+              }
             />
             <Field label="Como veste" className="sm:col-span-2" hint="Caimento, modelagem, altura da modelo.">
               <TextArea
                 name="fitNotes"
                 rows={2}
                 placeholder="Opcional"
-                defaultValue={draft?.draft.fitNotes ?? ""}
+                defaultValue={draft?.draft.fitNotes || kept.fitNotes || undefined}
               />
             </Field>
             <Field label="Marca">
-              <Input name="brand" placeholder="Ex.: TRIVÉ (opcional)" />
+              <Input name="brand" placeholder="Ex.: TRIVÉ (opcional)" defaultValue={kept.brand || undefined} />
             </Field>
             <Field label="Categoria">
-              <Select name="categoryId" defaultValue={draft?.draft.categoryId ?? ""}>
+              <Select name="categoryId" defaultValue={draft?.draft.categoryId ?? kept.categoryId ?? ""}>
                 <option value="">Sem categoria</option>
                 {categoryOptions.map((category) => (
                   <option key={category.id} value={category.id}>
@@ -438,9 +507,15 @@ export function NewProductForm({
               onFillAll={handleFillAll}
               selectedCount={selectedCount}
               defaultPrice={
-                draft?.suggestedPriceCents != null ? centsToInput(draft.suggestedPriceCents) : ""
+                draft?.suggestedPriceCents != null
+                  ? centsToInput(draft.suggestedPriceCents)
+                  : (kept.price ?? "")
               }
-              defaultWeightGrams={draft?.draft.weightGrams != null ? String(draft.draft.weightGrams) : ""}
+              defaultWeightGrams={
+                draft?.draft.weightGrams != null
+                  ? String(draft.draft.weightGrams)
+                  : (kept.weightGrams ?? "")
+              }
             />
           </div>
         </Card>
