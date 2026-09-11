@@ -48,6 +48,14 @@ export const products = pgTable(
     name: text("name").notNull(),
     slug: text("slug").unique().notNull(),
     description: text("description"),
+    // Ficha da peça (Onda 5): o que a placa de museu, o cartão da caixa e a
+    // Lia contam sobre tecido, cuidados e caimento. Texto livre; os cuidados
+    // aceitam chaves de pictograma por linha (src/core/catalog/care.ts).
+    composition: text("composition"),
+    careNotes: text("care_notes"),
+    fitNotes: text("fit_notes"),
+    // Uma frase da curadora sobre a peça (o áudio chega em outro PR).
+    curatorNote: text("curator_note"),
     categoryId: uuid("category_id").references(() => categories.id, {
       onDelete: "restrict",
     }),
@@ -94,6 +102,10 @@ export const productVariants = pgTable(
     attributes: jsonb("attributes").notNull().default({}),
     barcodeEan: text("barcode_ean"),
     weightGrams: integer("weight_grams"),
+    // Medidas da peça deitada, em cm, por variação ({bust, waist, hip,
+    // length, sleeve, shoulder}); NULL = sem medida. A forma é garantida pelo
+    // Zod do service (src/core/catalog/measurements.ts), não por CHECK.
+    measurements: jsonb("measurements"),
     lengthMm: integer("length_mm"),
     widthMm: integer("width_mm"),
     heightMm: integer("height_mm"),

@@ -1,6 +1,10 @@
 // Página de produto (PDP), "o camarim": galeria, seletor de variação, compra,
 // fichas em <details> e peças relacionadas. Vitrine com ISR — revalida a cada
 // 5 minutos; nunca force-dynamic.
+import { parseCareNotes } from "@/core/catalog/care";
+import { buildSizeChart, isSizeChartEmpty } from "@/core/catalog/measurements";
+import { hasMuseumPlaque, MuseumPlaque } from "@/components/store/museum-plaque";
+import { SizeChartTable } from "@/components/store/size-chart";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -54,6 +58,7 @@ function buildProductJsonLd(product: {
   name: string;
   slug: string;
   description: string | null;
+  composition?: string | null;
   brand: string | null;
   images: { path: string }[];
   variants: { priceCents: number; availableQty: number }[];
@@ -77,6 +82,7 @@ function buildProductJsonLd(product: {
     ...(product.brand
       ? { brand: { "@type": "Brand", name: product.brand } }
       : {}),
+    ...(product.composition?.trim() ? { material: product.composition.trim() } : {}),
     ...(cheapestCents !== null
       ? {
           offers: {
@@ -126,6 +132,14 @@ export default async function ProdutoPage({ params }: Props) {
   const db = getDb();
   const product = await getPublicProductBySlug(db, slug);
   if (!product) notFound();
+
+  // Ficha da peça (placa de museu) e fita métrica, quando a maison cadastrou.
+  const plaque = {
+    composition: product.composition,
+    careNotes: product.careNotes,
+    fitNotes: product.fitNotes,
+  };
+  const sizeChart = buildSizeChart(product.variants, product.attributesSchema);
 
   const related = await listRelatedPublicProducts(db, {
     productId: product.id,
@@ -193,18 +207,31 @@ export default async function ProdutoPage({ params }: Props) {
               <p className="whitespace-pre-line">{product.description}</p>
             </DetailsSheet>
           ) : null}
+          {hasMuseumPlaque(plaque) ? (
+            <DetailsSheet title="Ficha da peça" open>
+              <MuseumPlaque data={plaque} />
+            </DetailsSheet>
+          ) : null}
+          {!isSizeChartEmpty(sizeChart) ? (
+            <DetailsSheet title="Medidas (cm)">
+              <SizeChartTable chart={sizeChart} />
+            </DetailsSheet>
+          ) : null}
           <DetailsSheet title="Envio e trocas">
             <p>
               Enviamos para todo o Brasil. Primeira troca em até 7 dias corridos
               após o recebimento, conforme o Código de Defesa do Consumidor.
             </p>
           </DetailsSheet>
-          <DetailsSheet title="Cuidados com a peça">
-            <p>
-              Lave à mão ou no ciclo delicado, com água fria. Seque à sombra e
-              passe do avesso. Cada peça vem com instruções próprias na etiqueta.
-            </p>
-          </DetailsSheet>
+          {!parseCareNotes(plaque.careNotes).symbols.length &&
+          !parseCareNotes(plaque.careNotes).freeText.length ? (
+            <DetailsSheet title="Cuidados com a peça">
+              <p>
+                Lave à mão ou no ciclo delicado, com água fria. Seque à sombra e
+                passe do avesso. Cada peça vem com instruções próprias na etiqueta.
+              </p>
+            </DetailsSheet>
+          ) : null}
         </div>
       </ProductDetailClient>
 

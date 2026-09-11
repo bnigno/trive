@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
@@ -369,6 +370,7 @@ describe("getPublicProductBySlug", () => {
     expect(detail!.variants[0]).toEqual({
       variantId: expect.any(String),
       sku: "BL-PRATA",
+      measurements: null,
       attributes: { cor: "prata" },
       priceCents: 4500,
       compareAtPriceCents: 5900,
@@ -680,5 +682,47 @@ describe("publicMdUrl", () => {
     expect(publicMdUrl("products/p1/abc-full.webp")).toBe(
       "https://x.supabase.co/storage/v1/object/public/product-images/products/p1/abc-md.webp",
     );
+  });
+});
+
+describe("ficha da peça e medidas na vitrine", () => {
+  it("getPublicProductBySlug expõe composição, cuidados, como veste e as medidas por variação", async () => {
+    const { productId, variantIds } = await createPublicProduct({
+      name: "Camisa Brisa",
+      attributesSchema: ["tamanho"],
+      variants: [
+        { sku: "BRI-P", attributes: { tamanho: "P" }, onHand: 2, priceCents: 15900 },
+        { sku: "BRI-M", attributes: { tamanho: "M" }, onHand: 2, priceCents: 15900 },
+      ],
+    });
+    await db
+      .update(schema.products)
+      .set({ composition: "100% algodão", careNotes: "machine_cold", fitNotes: "Reta" })
+      .where(eq(schema.products.id, productId));
+    await db
+      .update(schema.productVariants)
+      .set({ measurements: { bust: 100, length: 70 } })
+      .where(eq(schema.productVariants.id, variantIds[0]));
+    await db
+      .update(schema.productVariants)
+      .set({ measurements: { garbage: true } })
+      .where(eq(schema.productVariants.id, variantIds[1]));
+
+    const detail = await getPublicProductBySlug(db, "camisa-brisa");
+    expect(detail).toMatchObject({ composition: "100% algodão", careNotes: "machine_cold", fitNotes: "Reta" });
+    const bySku = new Map(detail!.variants.map((v) => [v.sku, v.measurements]));
+    expect(bySku.get("BRI-P")).toEqual({ bust: 100, length: 70 });
+    // jsonb torto não derruba a página: vira null.
+    expect(bySku.get("BRI-M")).toBeNull();
+  });
+
+  it("produto sem ficha devolve nulls", async () => {
+    await createPublicProduct({
+      name: "Lenço Mar",
+      variants: [{ sku: "MAR-U", onHand: 1, priceCents: 5900 }],
+    });
+    const detail = await getPublicProductBySlug(db, "lenço-mar");
+    expect(detail).toMatchObject({ composition: null, careNotes: null, fitNotes: null });
+    expect(detail!.variants[0].measurements).toBeNull();
   });
 });

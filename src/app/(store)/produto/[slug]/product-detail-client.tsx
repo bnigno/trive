@@ -88,7 +88,8 @@ export function ProductDetailClient({
         />
       </div>
 
-      <div className="flex flex-col gap-4">
+      {/* min-w-0: a coluna não cresce com conteúdo largo (tabela de medidas rola dentro). */}
+      <div className="flex min-w-0 flex-col gap-4">
         {heading}
         <VariantPicker
           productName={productName}

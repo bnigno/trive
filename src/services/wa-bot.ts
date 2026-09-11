@@ -75,6 +75,12 @@ import {
   lookCardTitle,
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
+import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
+import {
+  buildSizeChart,
+  isSizeChartEmpty,
+  renderSizeChartLines,
+} from "@/core/catalog/measurements";
 import {
   historyTextForInbound,
   isAudioAwaitingTranscription,
@@ -905,9 +911,14 @@ async function execDetalharProduto(
     );
   } else {
     lines.push(
-      "[Sem descrição cadastrada: não afirme tecido, caimento ou medidas — diga que confere com a equipe se a cliente perguntar.]",
+      "[Sem descrição cadastrada: não afirme tecido nem caimento — diga que confere com a equipe se a cliente perguntar.]",
     );
   }
+  // Ficha da peça: o que a placa de museu mostra, a Lia também sabe.
+  if (detail.composition?.trim()) lines.push(`Composição: ${detail.composition.trim()}`);
+  const careLabels = careNotesToLabels(parseCareNotes(detail.careNotes));
+  if (careLabels.length > 0) lines.push(`Cuidados: ${careLabels.join(" · ")}`);
+  if (detail.fitNotes?.trim()) lines.push(`Como veste: ${detail.fitNotes.trim()}`);
   // Promoção "de/por" quando todas as combinações têm o mesmo preço anterior.
   const compareAt = detail.variants[0]?.compareAtPriceCents ?? null;
   if (
@@ -923,6 +934,14 @@ async function execDetalharProduto(
     );
   }
   lines.push(...formatVariantLines(detail.variants, axes));
+  const sizeChart = buildSizeChart(detail.variants, axes);
+  if (isSizeChartEmpty(sizeChart)) {
+    lines.push(
+      "[Sem tabela de medidas cadastrada: não afirme medidas — diga que confere com a maison.]",
+    );
+  } else {
+    lines.push(...renderSizeChartLines(sizeChart));
+  }
   if (detail.variants.every((variant) => variant.availableQty === 0)) {
     lines.push(
       "Atenção: esta peça está esgotada no momento. Ofereça outra parecida do catálogo ou avisar_quando_voltar (UMA mensagem quando voltar) — não avise o dono.",

@@ -1,5 +1,7 @@
 "use client";
 
+import { CARE_SYMBOL_KEYS, formatCareNotes } from "@/core/catalog/care";
+import { CareFields } from "../care-fields";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
 import { Card } from "@/components/ui/card";
@@ -264,6 +266,13 @@ export function NewProductForm({
     const payload = {
       name: String(formData.get("name") ?? ""),
       description: String(formData.get("description") ?? ""),
+      composition: String(formData.get("composition") ?? ""),
+      careNotes:
+        formatCareNotes(
+          CARE_SYMBOL_KEYS.filter((key) => formData.get(`care:${key}`) === "on"),
+          String(formData.get("careText") ?? "").split("\n"),
+        ) ?? "",
+      fitNotes: String(formData.get("fitNotes") ?? ""),
       brand: String(formData.get("brand") ?? ""),
       categoryId: String(formData.get("categoryId") ?? ""),
       price: String(formData.get("price") ?? ""),
@@ -327,8 +336,16 @@ export function NewProductForm({
             <Field label="Descrição" className="sm:col-span-2">
               <TextArea
                 name="description"
-                placeholder="Descreva o produto para você e seus clientes (opcional)"
+                rows={4}
+                placeholder="Tecido, caimento, ocasião, como veste no calor de Belém (200 caracteres deixam a peça pronta)"
               />
+            </Field>
+            <Field label="Composição" className="sm:col-span-2" hint="Ex.: 100% linho · forro 100% viscose">
+              <Input name="composition" placeholder="Tecido e forro (opcional)" />
+            </Field>
+            <CareFields symbols={[]} freeText={[]} />
+            <Field label="Como veste" className="sm:col-span-2" hint="Caimento, modelagem, altura da modelo.">
+              <TextArea name="fitNotes" rows={2} placeholder="Opcional" />
             </Field>
             <Field label="Marca">
               <Input name="brand" placeholder="Ex.: TRIVÉ (opcional)" />

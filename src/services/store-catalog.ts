@@ -4,6 +4,11 @@
 // status 'active'); preço exibido é sempre o do banco, nunca o do cliente.
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import {
+  compareSizeLabels,
+  parseMeasurements,
+  type Measurements,
+} from "@/core/catalog/measurements";
 import { z } from "zod";
 
 import * as schema from "@/db/schema";
@@ -309,6 +314,8 @@ export interface PublicVariant {
   /** Disponível para venda: max(0, on_hand - reserved). */
   availableQty: number;
   weightGrams: number | null;
+  /** Medidas da peça deitada, em cm (fita métrica); null = sem medida. */
+  measurements: Measurements | null;
 }
 
 export interface PublicProductImage {
@@ -323,6 +330,10 @@ export interface PublicProductDetail {
   name: string;
   slug: string;
   description: string | null;
+  /** Ficha da peça (placa de museu): tecido, cuidados e como veste. */
+  composition: string | null;
+  careNotes: string | null;
+  fitNotes: string | null;
   brand: string | null;
   categoryName: string | null;
   /** Slug da categoria (link "Coleção / Sala" e relacionados), ou null. */
@@ -370,6 +381,7 @@ export async function getPublicProductBySlug(
       sku: productVariants.sku,
       attributes: productVariants.attributes,
       weightGrams: productVariants.weightGrams,
+      measurements: productVariants.measurements,
       priceCents: priceVersions.priceCents,
       compareAtPriceCents: priceVersions.compareAtPriceCents,
       onHand: sql<string>`coalesce(${stockLevels.onHand}, 0)`,
@@ -401,6 +413,9 @@ export async function getPublicProductBySlug(
     name: product.name,
     slug: product.slug,
     description: product.description,
+    composition: product.composition,
+    careNotes: product.careNotes,
+    fitNotes: product.fitNotes,
     brand: product.brand,
     categoryName: row.categoryName,
     categorySlug: row.categorySlug,
@@ -415,6 +430,7 @@ export async function getPublicProductBySlug(
         variant.compareAtPriceCents == null ? null : Number(variant.compareAtPriceCents),
       availableQty: Math.max(0, Number(variant.onHand) - Number(variant.reserved)),
       weightGrams: variant.weightGrams,
+      measurements: parseMeasurements(variant.measurements),
     })),
   };
 }
@@ -659,19 +675,9 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
   };
 }
 
-const SIZE_ORDER = ["PP", "P", "M", "G", "GG", "XG", "XGG"];
-
-function compareSizes(a: string, b: string): number {
-  const ia = SIZE_ORDER.indexOf(a.toUpperCase());
-  const ib = SIZE_ORDER.indexOf(b.toUpperCase());
-  if (ia !== -1 && ib !== -1) return ia - ib;
-  if (ia !== -1) return -1;
-  if (ib !== -1) return 1;
-  const na = Number(a);
-  const nb = Number(b);
-  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-  return a.localeCompare(b, "pt-BR");
-}
+// A ordem de tamanhos mora no core (src/core/catalog/measurements.ts):
+// a fita métrica e a Lia usam a mesma.
+const compareSizes = compareSizeLabels;
 
 /**
  * Ids dos produtos que têm ao menos uma variante vendável COM ESTOQUE na cor

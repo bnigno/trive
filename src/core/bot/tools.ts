@@ -159,7 +159,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "detalhar_produto",
     description:
-      "Devolve tudo sobre uma peça: descrição completa (tecido, caimento, medidas quando o dono cadastrou), categoria, cores e tamanhos com estoque, preço exato (e preço 'de/por' quando houver promoção) e o SKU de cada combinação — E envia à cliente a foto e, quando cabem até 10, a lista tocável de cores e tamanhos. Chame SEMPRE antes de adicionar à sacola. Passe cor quando a cliente já disse a cor: a foto passa a ser a daquela cor. Se houver mais de uma peça com o nome, a ferramenta devolve as candidatas para você perguntar qual.",
+      "Devolve tudo sobre uma peça: descrição completa, ficha (composição, cuidados, como veste) e tabela de medidas por tamanho em cm quando a maison cadastrou, categoria, cores e tamanhos com estoque, preço exato (e preço 'de/por' quando houver promoção) e o SKU de cada combinação — E envia à cliente a foto e, quando cabem até 10, a lista tocável de cores e tamanhos. Chame SEMPRE antes de adicionar à sacola. Passe cor quando a cliente já disse a cor: a foto passa a ser a daquela cor. Se houver mais de uma peça com o nome, a ferramenta devolve as candidatas para você perguntar qual.",
     input_schema: {
       type: "object",
       properties: {
