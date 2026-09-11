@@ -6,6 +6,7 @@ import { orders, outboxEvents, priceVersions } from "@/db/schema";
 import { isOwner, requireUser } from "@/services/auth";
 import { listOrders } from "@/services/orders";
 import { countOrdersAwaitingPacking } from "@/services/packing";
+import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
 import { getStockOverview } from "@/services/stock";
 import {
@@ -89,24 +90,108 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount] = await Promise.all([
-    safe(async () => {
-      const db = getDb();
-      const [row] = await db
-        .select({ total: count() })
-        .from(orders)
-        .where(gte(orders.createdAt, startOfTodaySaoPaulo()));
-      return row.total;
-    }),
-    safe(async () => {
-      const overview = await getStockOverview(getDb());
-      return overview.filter((row) => row.low).length;
-    }),
-    safe((): Promise<RecentOrder[]> => listOrders(getDb(), { limit: 5 })),
-    safe(() => countOrdersAwaitingPacking(getDb())),
-  ]);
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness] =
+    await Promise.all([
+      safe(async () => {
+        const db = getDb();
+        const [row] = await db
+          .select({ total: count() })
+          .from(orders)
+          .where(gte(orders.createdAt, startOfTodaySaoPaulo()));
+        return row.total;
+      }),
+      safe(async () => {
+        const overview = await getStockOverview(getDb());
+        return overview.filter((row) => row.low).length;
+      }),
+      safe((): Promise<RecentOrder[]> => listOrders(getDb(), { limit: 5 })),
+      safe(() => countOrdersAwaitingPacking(getDb())),
+      safe(() => getReadinessSummary(getDb())),
+    ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness };
+}
+
+/**
+ * O termômetro da estreia: quantas peças estão prontas para vender de verdade
+ * (ativa, com foto, preço, estoque, descrição, sala com capa). Área
+ * compartilhada — a equipe também ajuda a completar as fichas.
+ */
+function ReadinessCard({
+  summary,
+  owner,
+}: {
+  summary: { ready: number; total: number; allReady: boolean } | null;
+  owner: boolean;
+}) {
+  if (summary === null) return null;
+  const percent = summary.total === 0 ? 0 : Math.round((summary.ready / summary.total) * 100);
+  return (
+    <Card title="Pronta para abrir">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+            {summary.total === 0 ? (
+              "Nenhuma peça cadastrada"
+            ) : (
+              <>
+                {summary.ready} de {summary.total}{" "}
+                <span className="text-base font-medium text-zinc-500 dark:text-zinc-400">
+                  {summary.total === 1 ? "peça pronta" : "peças prontas"}
+                </span>
+              </>
+            )}
+          </p>
+          {summary.total > 0 && !summary.allReady ? (
+            <Link
+              href="/admin/produtos?prontidao=faltando"
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+            >
+              Ver o que falta
+            </Link>
+          ) : null}
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Peças prontas para a loja"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+        >
+          <div
+            className={
+              summary.allReady
+                ? "h-full rounded-full bg-emerald-500"
+                : "h-full rounded-full bg-amber-500"
+            }
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+        {summary.allReady ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-emerald-700 dark:text-emerald-400">
+              Tudo pronto — cada peça tem foto, preço, estoque, descrição e sala com capa.
+            </p>
+            {owner ? (
+              <Link
+                href="/admin/lancamentos"
+                className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+              >
+                Agendar lançamento
+              </Link>
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Uma peça está pronta quando está ativa, com ao menos 2 fotos, preço aprovado,
+            estoque, descrição de 200 caracteres, peso e sala com capa. Toque no selo de
+            cada peça para ir direto ao que falta.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 /**
@@ -286,6 +371,8 @@ export default async function AdminDashboardPage() {
           </Link>
         ) : null}
       </div>
+
+      <ReadinessCard summary={data.readiness} owner={owner} />
 
       {ownerData ? (
         <section className="flex flex-col gap-3">

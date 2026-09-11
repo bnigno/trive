@@ -3,16 +3,20 @@ import type { BadgeTone } from "./badge";
 import { cx } from "./cx";
 
 export function Card({
+  id,
   title,
   className,
   children,
 }: {
+  /** Âncora (#id) para links que levam direto ao bloco. */
+  id?: string;
   title?: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <section
+      id={id}
       className={cx(
         "rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900",
         className,
