@@ -105,4 +105,17 @@ describe("renderContextNote", () => {
     );
     expect(note).toContain("• Último pedido nesta conversa: #1042");
   });
+
+  it("CEP sem cotação (a sacola mudou): avisa que o frete ainda NÃO foi cotado", () => {
+    const note = renderContextNote({ lastCep: "68795000" });
+    expect(note).toContain(
+      "• CEP informado: 68795-000 · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo",
+    );
+    expect(note).not.toContain("escolhido");
+  });
+
+  it("guarda quando a cotação foi feita", () => {
+    const state = parseBotState({ lastCep: "68795000", lastQuotedAt: "2026-09-11T12:00:00.000Z" });
+    expect(state.lastQuotedAt).toBe("2026-09-11T12:00:00.000Z");
+  });
 });

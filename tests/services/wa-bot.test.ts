@@ -281,6 +281,7 @@ describe("runBotTurn", () => {
       toolCalls: [
         { name: "listar_produtos", input: {} },
         { name: "detalhar_produto", input: { produto: "Caneca Azul" } },
+        { name: "cotar_frete", input: { cep: "01310100" } },
         {
           name: "criar_pedido",
           input: {
@@ -304,7 +305,7 @@ describe("runBotTurn", () => {
     expect(result).toEqual({ replied: true, handedOff: false });
 
     const turn = assistant.turns[0];
-    expect(turn.toolCalls.map((c) => c.ok)).toEqual([true, true, true]);
+    expect(turn.toolCalls.map((c) => c.ok)).toEqual([true, true, true, true]);
     // detalhar_produto devolve SKU, preço EXATO e disponibilidade.
     expect(turn.toolCalls[1].name).toBe("detalhar_produto");
 
@@ -877,6 +878,7 @@ describe("runBotTurn — cor e tamanho", () => {
       lastInboundId: DUMMY_INBOUND_ID,
     });
 
+    await executor("cotar_frete", { cep: "01310100" });
     const result = await executor("criar_pedido", {
       itens: [{ sku: "POLO-AM-G", quantidade: 1 }],
       nome_completo: "Maria da Silva",
@@ -1140,6 +1142,7 @@ describe("runBotTurn — enviar_chave_pix / avisar_dono / dinheiro na entrega", 
 
     assistant.enqueueScript({
       toolCalls: [
+        { name: "cotar_frete", input: { cep: "01310100" } },
         {
           name: "criar_pedido",
           input: {
@@ -1156,11 +1159,11 @@ describe("runBotTurn — enviar_chave_pix / avisar_dono / dinheiro na entrega", 
           },
         },
       ],
-      replyTemplate: (toolTexts) => toolTexts[0],
+      replyTemplate: (toolTexts) => toolTexts[1],
     });
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(result).toEqual({ replied: true, handedOff: false });
-    expect(assistant.turns[0].toolCalls[0].ok).toBe(true);
+    expect(assistant.turns[0].toolCalls[1].ok).toBe(true);
 
     const [order] = await db.select().from(schema.orders);
     expect(order.channel).toBe("whatsapp");
@@ -1385,6 +1388,7 @@ describe("buscar_cadastro + usar_cadastro_salvo", () => {
       lastInboundId: DUMMY_INBOUND_ID,
     });
 
+    await executor("cotar_frete", { cep: "01310100" });
     const result = await executor("criar_pedido", {
       itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
       usar_cadastro_salvo: true,
