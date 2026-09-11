@@ -9,6 +9,7 @@ import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { axisValues } from "@/core/catalog/attributes";
+import { buildSizeChart, compareSizeLabels, findSizeAxis } from "@/core/catalog/measurements";
 import { suggestSkuForVariant } from "@/core/catalog/sku";
 import { findColorAxis } from "@/core/catalog/product-images";
 import { listSuppliers } from "@/services/suppliers";
@@ -28,6 +29,7 @@ import { EditProductForm } from "./edit-product-form";
 import { ImageColorForm } from "./image-color-form";
 import { ImageUploadForm } from "./image-upload-form";
 import { AddVariantForm, EditVariantForm } from "./variant-forms";
+import { MeasurementsForm } from "./measurements-form";
 import { readinessIssueHref } from "../readiness-badge";
 
 export const dynamic = "force-dynamic";
@@ -136,6 +138,14 @@ export default async function ProdutoDetalhePage({
         detail.variants.map((variant) => variant.attributes),
       )
     : [];
+  const sizeAxis = findSizeAxis(axes);
+  const sizeOptions = sizeAxis
+    ? axisValues(
+        sizeAxis,
+        detail.variants.filter((variant) => variant.isActive).map((variant) => variant.attributes),
+      ).sort(compareSizeLabels)
+    : [];
+  const sizeChart = buildSizeChart(detail.variants, axes);
 
   return (
     <div className="flex max-w-5xl flex-col gap-6">
@@ -241,6 +251,9 @@ export default async function ProdutoDetalhePage({
               categoryId: detail.categoryId,
               supplierId: detail.supplierId,
               attributesSchema: axes,
+              composition: detail.composition,
+              careNotes: detail.careNotes,
+              fitNotes: detail.fitNotes,
             }}
             categoryOptions={categoryRows}
             supplierOptions={supplierOptions}
@@ -448,6 +461,19 @@ export default async function ProdutoDetalhePage({
           </OwnerOnly>
         </div>
       </Card>
+
+      <OwnerOnly>
+        <Card id="fita-metrica" title="Fita métrica">
+          {sizeAxis && sizeOptions.length > 0 ? (
+            <MeasurementsForm productId={detail.id} sizes={sizeOptions} chart={sizeChart} />
+          ) : (
+            <EmptyState
+              title="Esta peça não tem o eixo “tamanho”."
+              hint='Adicione "tamanho" nos eixos de variação e crie as variações para cadastrar as medidas.'
+            />
+          )}
+        </Card>
+      </OwnerOnly>
     </div>
   );
 }

@@ -11,6 +11,8 @@ import {
   SubmitButton,
   TextArea,
 } from "@/components/ui/form";
+import { parseCareNotes } from "@/core/catalog/care";
+import { CareFields } from "../care-fields";
 import { updateProductAction, type FormState } from "./actions";
 
 export type CategoryOption = { id: string; name: string };
@@ -32,6 +34,9 @@ export function EditProductForm({
     categoryId: string | null;
     supplierId: string | null;
     attributesSchema: string[];
+    composition: string | null;
+    careNotes: string | null;
+    fitNotes: string | null;
   };
   categoryOptions: CategoryOption[];
   supplierOptions: SupplierOption[];
@@ -42,6 +47,7 @@ export function EditProductForm({
   const [descriptionLength, setDescriptionLength] = useState(
     (product.description ?? "").trim().length,
   );
+  const care = parseCareNotes(product.careNotes);
   const descriptionHint =
     descriptionLength >= DESCRIPTION_MIN_CHARS
       ? `${descriptionLength} caracteres — boa para a vitrine e para a Lia.`
@@ -109,6 +115,31 @@ export function EditProductForm({
             name="axes"
             defaultValue={product.attributesSchema.join(", ")}
             placeholder="cor, tamanho"
+          />
+        </Field>
+      </div>
+
+      <div className="flex flex-col gap-1 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Ficha da peça</h3>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Vira a placa de museu na página da peça, entra no cartão da caixa e a Lia responde por ela.
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Composição" className="sm:col-span-2" hint="Ex.: 100% linho · forro 100% viscose">
+          <Input name="composition" defaultValue={product.composition ?? ""} placeholder="Tecido e forro" />
+        </Field>
+        <CareFields symbols={care.symbols} freeText={care.freeText} />
+        <Field
+          label="Como veste"
+          className="sm:col-span-2"
+          hint="Caimento, modelagem, altura da modelo, se marca ou solta."
+        >
+          <TextArea
+            name="fitNotes"
+            rows={3}
+            defaultValue={product.fitNotes ?? ""}
+            placeholder="Ex.: Caimento fluido, comprimento midi; a modelo tem 1,68 m e veste M."
           />
         </Field>
       </div>

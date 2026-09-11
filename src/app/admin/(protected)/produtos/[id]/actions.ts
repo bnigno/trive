@@ -11,9 +11,12 @@ import {
   removeProductImage,
   ServiceError,
   setProductImageColor,
+  setProductMeasurementsBySize,
   updateProduct,
   updateVariant,
 } from "@/services/catalog";
+import { CARE_SYMBOL_KEYS, formatCareNotes } from "@/core/catalog/care";
+import { MEASUREMENT_KEYS, type Measurements } from "@/core/catalog/measurements";
 
 export type FormState = { error?: string; success?: string };
 
@@ -68,6 +71,12 @@ export async function updateProductAction(
     .split(",")
     .map((axis) => axis.trim())
     .filter(Boolean);
+  // Ficha da peça: pictogramas marcados + linhas livres viram um texto só.
+  const composition = String(formData.get("composition") ?? "").trim();
+  const careSymbols = CARE_SYMBOL_KEYS.filter((key) => formData.get(`care:${key}`) === "on");
+  const careText = String(formData.get("careText") ?? "").split("\n");
+  const careNotes = formatCareNotes(careSymbols, careText);
+  const fitNotes = String(formData.get("fitNotes") ?? "").trim();
 
   try {
     const db = getDb();
@@ -76,6 +85,9 @@ export async function updateProductAction(
       userId: user.id,
       name,
       description: description || null,
+      composition: composition || null,
+      careNotes,
+      fitNotes: fitNotes || null,
       brand: brand || null,
       categoryId: categoryId || null,
       supplierId: supplierId || null,
@@ -308,4 +320,51 @@ export async function updateVariantAction(
     return { success: `Código alterado de ${currentSku} para ${updated.sku}.` };
   }
   return { success: "Variação atualizada." };
+}
+
+// ---------------------------------------------------------------------------
+// Fita métrica
+// ---------------------------------------------------------------------------
+
+export async function setProductMeasurementsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const productId = String(formData.get("productId") ?? "");
+  const sizes = String(formData.get("sizes") ?? "")
+    .split("\n")
+    .map((size) => size.trim())
+    .filter(Boolean);
+
+  const bySize: Record<string, Measurements> = {};
+  for (const size of sizes) {
+    const measurements: Measurements = {};
+    for (const key of MEASUREMENT_KEYS) {
+      const raw = String(formData.get(`m:${size}:${key}`) ?? "").trim().replace(",", ".");
+      if (raw === "") continue;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) {
+        return { error: `Medida inválida em ${size}: use números em centímetros.` };
+      }
+      measurements[key] = value;
+    }
+    bySize[size] = measurements;
+  }
+
+  let result: { updated: number; unknownSizes: string[] };
+  try {
+    const db = getDb();
+    result = await setProductMeasurementsBySize(db, { productId, userId: user.id, bySize });
+  } catch (error) {
+    return toErrorState(error);
+  }
+
+  revalidateProduct(productId);
+  return {
+    success:
+      result.updated === 0
+        ? "Nada mudou na fita métrica."
+        : `Fita métrica salva em ${result.updated} ${result.updated === 1 ? "variação" : "variações"}.`,
+  };
 }

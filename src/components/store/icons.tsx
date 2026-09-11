@@ -97,3 +97,81 @@ export function IconWhatsApp({ className }: IconProps) {
     </svg>
   );
 }
+
+// Pictogramas de cuidado da placa de museu (mesmo traço fino, herdam a cor).
+export function IconHandWash({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <path d="M4 10h16l-1.5 8h-13L4 10Z" />
+      <path d="M12 3v4M9 5l1.5 2M15 5l-1.5 2" />
+    </svg>
+  );
+}
+
+export function IconMachineCold({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <circle cx="12" cy="13" r="4" />
+      <path d="M7 7h2M15 7h2" />
+    </svg>
+  );
+}
+
+export function IconNoBleach({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <path d="M12 4 20 19H4L12 4Z" />
+      <path d="M5 5l14 14" />
+    </svg>
+  );
+}
+
+export function IconDryShade({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <rect x="4" y="4" width="16" height="16" rx="1" />
+      <path d="M4 20 20 4" />
+      <path d="M8 4v6M12 4v4" />
+    </svg>
+  );
+}
+
+export function IconIronLow({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <path d="M6 16h13a1 1 0 0 0 1-1v-4a5 5 0 0 0-5-5H9" />
+      <path d="M4 16h16" />
+      <circle cx="12" cy="12" r="0.6" />
+    </svg>
+  );
+}
+
+export function IconNoIron({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <path d="M6 16h13a1 1 0 0 0 1-1v-4a5 5 0 0 0-5-5H9" />
+      <path d="M4 16h16" />
+      <path d="M5 5l14 14" />
+    </svg>
+  );
+}
+
+export function IconDryClean({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M9 14a3 3 0 0 0 6 0" />
+    </svg>
+  );
+}
+
+export function IconNoTumble({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <rect x="4" y="4" width="16" height="16" rx="1" />
+      <circle cx="12" cy="12" r="4" />
+      <path d="M5 5l14 14" />
+    </svg>
+  );
+}

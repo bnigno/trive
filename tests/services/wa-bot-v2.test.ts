@@ -1011,8 +1011,18 @@ describe("detalhar_produto 2.0", () => {
     const descricao = "Linho puro. ".repeat(40).trim();
     await db
       .update(schema.products)
-      .set({ description: descricao, brand: "TRIVÉ" })
+      .set({
+        description: descricao,
+        brand: "TRIVÉ",
+        composition: "100% linho",
+        careNotes: "hand_wash\ndry_shade\nNão torcer",
+        fitNotes: "Caimento fluido",
+      })
       .where(eq(schema.products.id, productId));
+    await db
+      .update(schema.productVariants)
+      .set({ measurements: { bust: 88, length: 110.5 } })
+      .where(eq(schema.productVariants.id, variantId));
     await db
       .update(schema.priceVersions)
       .set({ compareAtPriceCents: 25900 })
@@ -1023,10 +1033,17 @@ describe("detalhar_produto 2.0", () => {
     expect(result.text).toContain("Categoria: Vestidos · Marca: TRIVÉ");
     expect(result.text).toContain(descricao);
     expect(result.text).toContain(`Promoção: de ${formatCentsBRL(25900)} por ${formatCentsBRL(18900)}.`);
+    // Ficha da peça e fita métrica entram no texto da Lia.
+    expect(result.text).toContain("Composição: 100% linho");
+    expect(result.text).toContain("Cuidados: Lavar à mão · Secar à sombra · Não torcer");
+    expect(result.text).toContain("Como veste: Caimento fluido");
+    expect(result.text).toContain("Tabela de medidas da peça (cm, peça deitada):");
+    expect(result.text).toContain("Único — busto 88, comprimento 110,5");
 
     await createSimpleProduct("SEM-DESC", "Peça Muda", 5000);
     const muda = await executor("detalhar_produto", { produto: "Peça Muda" });
     expect(muda.text).toContain("[Sem descrição cadastrada");
+    expect(muda.text).toContain("[Sem tabela de medidas cadastrada");
   });
 });
 

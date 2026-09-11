@@ -113,6 +113,9 @@ const axisValuesSchema = z
 const payloadSchema = z.object({
   name: z.string().trim().min(1, "Informe o nome do produto."),
   description: z.string().trim().default(""),
+  composition: z.string().trim().default(""),
+  careNotes: z.string().trim().default(""),
+  fitNotes: z.string().trim().default(""),
   brand: z.string().trim().default(""),
   categoryId: z
     .string()
@@ -191,6 +194,9 @@ export async function createProductAction(
     const result = await createProduct(db, {
       name: data.name,
       description: data.description || undefined,
+      composition: data.composition || undefined,
+      careNotes: data.careNotes || undefined,
+      fitNotes: data.fitNotes || undefined,
       brand: data.brand || undefined,
       categoryId: data.categoryId || undefined,
       attributesSchema: axes,

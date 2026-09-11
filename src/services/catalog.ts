@@ -23,6 +23,11 @@ import {
 import { normalizeAxisValue } from "@/core/catalog/attributes";
 import { findColorAxis } from "@/core/catalog/product-images";
 import { normalizeSkuInput, validateSku } from "@/core/catalog/sku";
+import {
+  compactMeasurements,
+  measurementsSchema,
+  parseMeasurements,
+} from "@/core/catalog/measurements";
 import { suggestMarginForPrice } from "@/core/pricing";
 import { applyMovement } from "@/core/stock/ledger";
 import type { FileStorage } from "@/adapters/storage";
@@ -270,9 +275,19 @@ const variantInputSchema = z.object({
   heightMm: z.number().int().positive().optional(),
 });
 
+const fichaSchema = {
+  composition: z.string().trim().max(200, "Composição: no máximo 200 caracteres."),
+  careNotes: z.string().trim().max(1000, "Cuidados: no máximo 1000 caracteres."),
+  fitNotes: z.string().trim().max(600, "Como veste: no máximo 600 caracteres."),
+  curatorNote: z.string().trim().max(240, "Nota da curadora: no máximo 240 caracteres."),
+};
+
 const createProductSchema = z.object({
   name: z.string().trim().min(1, "Informe o nome do produto."),
   description: z.string().optional(),
+  composition: fichaSchema.composition.optional(),
+  careNotes: fichaSchema.careNotes.optional(),
+  fitNotes: fichaSchema.fitNotes.optional(),
   brand: z.string().trim().min(1).optional(),
   categoryId: z.uuid().optional(),
   // Eixos de variação, ex.: ["cor", "tamanho"].
@@ -323,6 +338,9 @@ export async function createProduct(db: ServiceDb, input: CreateProductInput) {
           name: parsed.name,
           slug,
           description: parsed.description ?? null,
+          composition: parsed.composition || null,
+          careNotes: parsed.careNotes || null,
+          fitNotes: parsed.fitNotes || null,
           brand: parsed.brand ?? null,
           categoryId: parsed.categoryId ?? null,
           attributesSchema: parsed.attributesSchema,
@@ -459,6 +477,10 @@ const updateProductSchema = z.object({
   userId: z.uuid(),
   name: z.string().trim().min(1).optional(),
   description: z.string().nullable().optional(),
+  composition: fichaSchema.composition.nullable().optional(),
+  careNotes: fichaSchema.careNotes.nullable().optional(),
+  fitNotes: fichaSchema.fitNotes.nullable().optional(),
+  curatorNote: fichaSchema.curatorNote.nullable().optional(),
   brand: z.string().trim().min(1).nullable().optional(),
   categoryId: z.uuid().nullable().optional(),
   supplierId: z.uuid().nullable().optional(),
@@ -477,6 +499,11 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
     const patch: Partial<typeof current> = {};
     if (parsed.name !== undefined) patch.name = parsed.name;
     if (parsed.description !== undefined) patch.description = parsed.description;
+    // Ficha: string vazia e null significam a mesma coisa (sem informação).
+    if (parsed.composition !== undefined) patch.composition = parsed.composition || null;
+    if (parsed.careNotes !== undefined) patch.careNotes = parsed.careNotes || null;
+    if (parsed.fitNotes !== undefined) patch.fitNotes = parsed.fitNotes || null;
+    if (parsed.curatorNote !== undefined) patch.curatorNote = parsed.curatorNote || null;
     if (parsed.brand !== undefined) patch.brand = parsed.brand;
     if (parsed.categoryId !== undefined) patch.categoryId = parsed.categoryId;
     if (parsed.supplierId !== undefined) patch.supplierId = parsed.supplierId;
@@ -656,6 +683,8 @@ const updateVariantSchema = z.object({
   lengthMm: z.number().int().positive().nullable().optional(),
   widthMm: z.number().int().positive().nullable().optional(),
   heightMm: z.number().int().positive().nullable().optional(),
+  // Medidas em cm (fita métrica); null limpa. Objeto sem nenhuma chave = null.
+  measurements: measurementsSchema.nullable().optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -703,6 +732,12 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
       if (parsed.heightMm !== undefined && parsed.heightMm !== current.heightMm) {
         patch.heightMm = parsed.heightMm;
       }
+      if (parsed.measurements !== undefined) {
+        const next = parsed.measurements ? parseMeasurements(compactMeasurements(parsed.measurements)) : null;
+        if (stableJson(next) !== stableJson(parseMeasurements(current.measurements))) {
+          patch.measurements = next;
+        }
+      }
       if (parsed.isActive !== undefined && parsed.isActive !== current.isActive) {
         patch.isActive = parsed.isActive;
       }
@@ -738,6 +773,84 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
   } catch (error) {
     throw mapCatalogUniqueViolation(error) ?? error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fita métrica: medidas por tamanho (as cores do mesmo tamanho compartilham)
+// ---------------------------------------------------------------------------
+
+const setProductMeasurementsBySizeSchema = z.object({
+  productId: z.uuid(),
+  userId: z.uuid(),
+  /** Tamanho (valor do eixo "tamanho") → medidas; {} limpa aquele tamanho. */
+  bySize: z.record(z.string().trim().min(1), measurementsSchema),
+});
+
+export type SetProductMeasurementsBySizeInput = z.input<
+  typeof setProductMeasurementsBySizeSchema
+>;
+
+/**
+ * Uma transação: para cada tamanho informado, grava as mesmas medidas em
+ * todas as variações (não apagadas) daquele tamanho, com audit por variação
+ * só quando algo mudou. Tamanhos que o produto não tem voltam em unknownSizes.
+ */
+export async function setProductMeasurementsBySize(
+  db: ServiceDb,
+  input: SetProductMeasurementsBySizeInput,
+): Promise<{ updated: number; unknownSizes: string[] }> {
+  const parsed = setProductMeasurementsBySizeSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const product = await requireProduct(tx, parsed.productId);
+    const axes = Array.isArray(product.attributesSchema)
+      ? (product.attributesSchema as unknown[]).filter((a): a is string => typeof a === "string")
+      : [];
+    const sizeAxis = axes.find((axis) => axis.trim().toLowerCase() === "tamanho");
+    if (!sizeAxis) {
+      throw new ServiceError(
+        "sem_eixo_tamanho",
+        'Este produto não tem o eixo "tamanho": adicione-o nas variações para cadastrar medidas.',
+      );
+    }
+
+    const rows = await tx
+      .select()
+      .from(productVariants)
+      .where(and(eq(productVariants.productId, parsed.productId), isNull(productVariants.deletedAt)));
+
+    const wanted = new Map(
+      Object.entries(parsed.bySize).map(([size, value]) => [
+        size.trim().toLowerCase(),
+        parseMeasurements(compactMeasurements(value)),
+      ]),
+    );
+    const seen = new Set<string>();
+    let updated = 0;
+    for (const variant of rows) {
+      const attributes = (variant.attributes ?? {}) as Record<string, string>;
+      const size = (attributes[sizeAxis] ?? "").trim().toLowerCase();
+      if (size === "" || !wanted.has(size)) continue;
+      seen.add(size);
+      const next = wanted.get(size) ?? null;
+      const before = parseMeasurements(variant.measurements);
+      if (stableJson(before) === stableJson(next)) continue;
+      await tx
+        .update(productVariants)
+        .set({ measurements: next, updatedAt: new Date() })
+        .where(eq(productVariants.id, variant.id));
+      await writeAudit(tx, {
+        actorId: parsed.userId,
+        action: "variant.measurements_update",
+        entityType: "product_variant",
+        entityId: variant.id,
+        before: { measurements: before },
+        after: { measurements: next },
+      });
+      updated += 1;
+    }
+    const unknownSizes = [...wanted.keys()].filter((size) => !seen.has(size));
+    return { updated, unknownSizes };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +1010,7 @@ export async function getProductDetail(db: ServiceDb, productId: string) {
         attributes: (row.variant.attributes ?? {}) as Record<string, string>,
         barcodeEan: row.variant.barcodeEan,
         weightGrams: row.variant.weightGrams,
+        measurements: parseMeasurements(row.variant.measurements),
         isActive: row.variant.isActive,
         costCents: row.variant.costCents,
         onHand,

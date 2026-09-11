@@ -16,6 +16,7 @@ import {
   ServiceError,
   setCategoryCover,
   setProductImageColor,
+  setProductMeasurementsBySize,
   mdPathFor,
   thumbPathFor,
   updateCategoryCoverFocus,
@@ -1119,5 +1120,133 @@ describe("updateVariant — código (SKU) editável", () => {
         userId: FIXED_USER_ID,
       }),
     ).rejects.toMatchObject({ code: "sku_duplicado" });
+  });
+});
+
+describe("ficha da peça e fita métrica", () => {
+  it("createProduct grava composição, cuidados e como veste; getProductDetail devolve", async () => {
+    const { product } = await createProduct(db, {
+      name: "Vestido Aurora",
+      composition: "100% linho",
+      careNotes: "hand_wash\nNão torcer",
+      fitNotes: "Caimento fluido",
+      variants: [{ sku: "AUR-P", attributes: { tamanho: "P" } }],
+      attributesSchema: ["tamanho"],
+      userId: FIXED_USER_ID,
+    });
+    const detail = await getProductDetail(db, product.id);
+    expect(detail.composition).toBe("100% linho");
+    expect(detail.careNotes).toBe("hand_wash\nNão torcer");
+    expect(detail.fitNotes).toBe("Caimento fluido");
+    expect(detail.variants[0].measurements).toBeNull();
+  });
+
+  it("updateProduct altera a ficha e string vazia limpa (vira null)", async () => {
+    const { product } = await createProduct(db, {
+      name: "Blusa Sol",
+      variants: [{ sku: "SOL-U" }],
+      userId: FIXED_USER_ID,
+    });
+    await updateProduct(db, {
+      productId: product.id,
+      userId: FIXED_USER_ID,
+      composition: "Viscose",
+      careNotes: "dry_clean",
+      fitNotes: "Solta",
+      curatorNote: "Escolhi pelo caimento.",
+    });
+    let detail = await getProductDetail(db, product.id);
+    expect(detail).toMatchObject({
+      composition: "Viscose",
+      careNotes: "dry_clean",
+      fitNotes: "Solta",
+      curatorNote: "Escolhi pelo caimento.",
+    });
+    await updateProduct(db, { productId: product.id, userId: FIXED_USER_ID, composition: "", fitNotes: null });
+    detail = await getProductDetail(db, product.id);
+    expect(detail.composition).toBeNull();
+    expect(detail.fitNotes).toBeNull();
+    expect(detail.careNotes).toBe("dry_clean");
+  });
+
+  it("updateVariant grava medidas compactas, audita, e null limpa", async () => {
+    const { product, variants } = await createProduct(db, {
+      name: "Saia Lua",
+      variants: [{ sku: "LUA-M", attributes: { tamanho: "M" } }],
+      attributesSchema: ["tamanho"],
+      userId: FIXED_USER_ID,
+    });
+    const variant = { ...variants[0], productId: product.id };
+    await updateVariant(db, {
+      variantId: variant.id,
+      userId: FIXED_USER_ID,
+      measurements: { bust: 92, waist: 74.5, hip: undefined },
+    });
+    let detail = await getProductDetail(db, variant.productId);
+    expect(detail.variants[0].measurements).toEqual({ bust: 92, waist: 74.5 });
+
+    await expect(
+      updateVariant(db, { variantId: variant.id, userId: FIXED_USER_ID, measurements: { bust: 0 } }),
+    ).rejects.toThrow();
+
+    await updateVariant(db, { variantId: variant.id, userId: FIXED_USER_ID, measurements: null });
+    detail = await getProductDetail(db, variant.productId);
+    expect(detail.variants[0].measurements).toBeNull();
+  });
+
+  it("setProductMeasurementsBySize grava em todas as cores do tamanho, audita só o que mudou e aponta tamanhos desconhecidos", async () => {
+    const { product, variants } = await createProduct(db, {
+      name: "Longo Dunas",
+      variants: [
+        { sku: "DUN-PRET-M", attributes: { cor: "Preto", tamanho: "M" } },
+        { sku: "DUN-AREI-M", attributes: { cor: "Areia", tamanho: "M" } },
+        { sku: "DUN-PRET-P", attributes: { cor: "Preto", tamanho: "P" } },
+      ],
+      attributesSchema: ["cor", "tamanho"],
+      userId: FIXED_USER_ID,
+    });
+
+    const first = await setProductMeasurementsBySize(db, {
+      productId: product.id,
+      userId: FIXED_USER_ID,
+      bySize: { M: { bust: 92, waist: 74 }, g: { bust: 99 } },
+    });
+    expect(first).toEqual({ updated: 2, unknownSizes: ["g"] });
+
+    const detail = await getProductDetail(db, product.id);
+    const bySku = new Map(detail.variants.map((v) => [v.sku, v.measurements]));
+    expect(bySku.get("DUN-PRET-M")).toEqual({ bust: 92, waist: 74 });
+    expect(bySku.get("DUN-AREI-M")).toEqual({ bust: 92, waist: 74 });
+    expect(bySku.get("DUN-PRET-P")).toBeNull();
+
+    // Segunda vez com o mesmo valor: nada muda, nenhum audit novo.
+    const again = await setProductMeasurementsBySize(db, {
+      productId: product.id,
+      userId: FIXED_USER_ID,
+      bySize: { M: { bust: 92, waist: 74 } },
+    });
+    expect(again.updated).toBe(0);
+    const audits = await db
+      .select({ total: count() })
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "variant.measurements_update"));
+    expect(audits[0].total).toBe(2);
+
+    // {} limpa o tamanho.
+    await setProductMeasurementsBySize(db, { productId: product.id, userId: FIXED_USER_ID, bySize: { M: {} } });
+    const cleared = await getProductDetail(db, product.id);
+    expect(cleared.variants.every((v) => v.measurements === null)).toBe(true);
+    expect(variants).toHaveLength(3);
+  });
+
+  it("setProductMeasurementsBySize recusa produto sem eixo tamanho", async () => {
+    const { product } = await createProduct(db, {
+      name: "Bolsa Rio",
+      variants: [{ sku: "RIO-U" }],
+      userId: FIXED_USER_ID,
+    });
+    await expect(
+      setProductMeasurementsBySize(db, { productId: product.id, userId: FIXED_USER_ID, bySize: { M: { bust: 90 } } }),
+    ).rejects.toMatchObject({ code: "sem_eixo_tamanho" });
   });
 });
