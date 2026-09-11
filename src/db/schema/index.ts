@@ -20,4 +20,4 @@ export { stockLevels, stockMovements } from "./stock";
 export { suppliers } from "./suppliers";
 export { financialEntries } from "./financial";
 export { shippingRates } from "./shipping";
-export { waConversations, waMessages, waTemplates } from "./whatsapp";
+export { botCards, waConversations, waMessages, waTemplates } from "./whatsapp";

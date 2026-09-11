@@ -21,6 +21,7 @@ const eslintConfig = defineConfig([
         { type: "app", pattern: "src/app", partialMatch: false },
         { type: "components", pattern: "src/components", partialMatch: false },
         { type: "receipts", pattern: "src/receipts", partialMatch: false },
+        { type: "cards", pattern: "src/cards", partialMatch: false },
       ],
     },
     rules: {
@@ -45,7 +46,7 @@ const eslintConfig = defineConfig([
             {
               // src/receipts só apresenta: os dados chegam por parâmetro
               // (core/receipts/types) e nada de banco, serviços ou app entra aqui.
-              from: { element: { type: "receipts" } },
+              from: { element: { types: { anyOf: ["receipts", "cards"] } } },
               disallow: {
                 to: {
                   element: {

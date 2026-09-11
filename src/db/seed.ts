@@ -40,6 +40,7 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "store_pix_key", value: "" },
   { key: "owner_digest_enabled", value: true },
   { key: "bot_media_enabled", value: true },
+  { key: "bot_cards_enabled", value: true },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca

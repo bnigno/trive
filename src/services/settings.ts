@@ -513,6 +513,7 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
    * transcrição). Ausente = ligado; o áudio ainda exige OPENAI_API_KEY.
    */
   bot_media_enabled: z.boolean(),
+  bot_cards_enabled: z.boolean(),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

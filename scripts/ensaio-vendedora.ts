@@ -13,6 +13,9 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { ClaudeSalesAssistant } from "@/adapters/assistant/claude";
+import { getFileStorage } from "@/adapters/storage";
+import { renderCardPng } from "@/cards/render";
+import { loadReceiptAssets } from "@/receipts/assets";
 import type { BotChatMessage, BotImageInput } from "@/adapters/assistant";
 import { OpenAiTranscriber } from "@/adapters/transcription/client";
 import { splitBotReply } from "@/core/bot/reply";
@@ -114,6 +117,10 @@ async function main() {
       lastInboundId: randomUUID(),
       onAttachment: (attachment) => attachments.push(attachment),
       dryRun: true,
+      cards: {
+        storage: getFileStorage(),
+        render: async (data) => renderCardPng(data, await loadReceiptAssets()),
+      },
     });
     // Ensaio sem conversa gravada: o caderninho fica vazio de propósito.
     const history = assembleHistory({}, messages);
@@ -138,7 +145,7 @@ async function main() {
             .join(" | ")}`,
         );
       } else {
-        console.log(`   🖼️ foto: ${attachment.caption}`);
+        console.log(`   🖼️ ${attachment.caption} → ${attachment.imageUrl}`);
       }
     }
     const bubbles = turn.reply ? splitBotReply(turn.reply) : [];

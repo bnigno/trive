@@ -19,6 +19,7 @@ import {
   type SalesAssistant,
 } from "@/adapters/assistant";
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
 import {
   addNote,
@@ -55,8 +56,17 @@ import {
   DEFAULT_SELLER_NAME,
   truncateForWhatsApp,
 } from "@/core/bot/prompt";
+import { pickLookComplements } from "@/core/bot/look";
 import { splitBotReply } from "@/core/bot/reply";
 import { renderStoreMap } from "@/core/bot/store-map";
+import {
+  CARD_MAX_ITEMS,
+  catalogCardEyebrow,
+  catalogCardTitle,
+  LOOK_EYEBROW,
+  LOOK_MAX_COMPLEMENTS,
+  lookCardTitle,
+} from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
 import {
   historyTextForInbound,
@@ -82,6 +92,13 @@ import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import {
+  findCachedBotCard,
+  isBotCardsEnabled,
+  publishBotCard,
+  type CardProductRef,
+  type CardRenderer,
+} from "@/services/bot-cards";
 import { getSettingsMap } from "@/services/settings";
 import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN } from "@/services/wa-media";
 import {
@@ -159,10 +176,22 @@ export type BotAttachment =
     }
   | { kind: "image"; imageUrl: string; caption: string };
 
+/** O que o turno precisa para desenhar o cartão editorial (vitrine/look). */
+export type BotCardDeps = { storage: FileStorage; render: CardRenderer };
+
+/**
+ * Teto para desenhar um cartão DENTRO do turno — só no ensaio (dryRun), onde
+ * ninguém está no WhatsApp esperando. Na conversa real, cartão fora do cache
+ * vai para a fila e chega logo depois do texto.
+ */
+export const CARD_TIMEOUT_MS = 12_000;
+
 export type BotExecutorContext = {
   conversationId: string;
   phoneE164: string;
   customerId: string | null;
+  /** Sem isto (ou com bot_cards_enabled=false) a vendedora manda só a lista. */
+  cards?: BotCardDeps;
   /**
    * Id da última wa_message inbound do turno — base dos dedupes das
    * ferramentas com efeito externo (enviar_chave_pix, avisar_dono): o retry
@@ -181,6 +210,86 @@ export type BotExecutorContext = {
 export type RunBotTurnResult =
   | { replied: boolean; handedOff: boolean }
   | { skipped: string };
+
+type CardRequest = {
+  kind: "catalog" | "look";
+  title: string;
+  eyebrow: string;
+  items: CardProductRef[];
+  caption: string;
+};
+
+/**
+ * "sent" = anexo de imagem emitido no turno (cache); "queued" = vai pela fila
+ * e chega logo depois do texto; false = sem cartão.
+ */
+type CardEmitter = (request: CardRequest) => Promise<"sent" | "queued" | false>;
+
+type ExecutorCtx = BotExecutorContext & { emitCard: CardEmitter };
+
+/**
+ * Um cartão por turno, melhor esforço: cache → anexo na hora; sem cache, na
+ * conversa real enfileira `wa.card_render` (o texto sai sem esperar o render
+ * frio) e no ensaio desenha inline com teto de tempo. Falha = sem cartão.
+ */
+function makeCardEmitter(db: DbOrTx, ctx: BotExecutorContext): CardEmitter {
+  let emitted = false;
+  return async (request) => {
+    if (emitted || !ctx.cards || !ctx.onAttachment) return false;
+    if (!(await isBotCardsEnabled(db))) return false;
+    emitted = true;
+    const { storage, render } = ctx.cards;
+    const input = {
+      kind: request.kind,
+      storeName: await storeNameFor(db),
+      eyebrow: request.eyebrow,
+      title: request.title,
+      items: request.items,
+    };
+    try {
+      const cached = await findCachedBotCard(db, storage, input);
+      if (cached) {
+        ctx.onAttachment({ kind: "image", imageUrl: cached.url, caption: request.caption });
+        return "sent";
+      }
+      if (!ctx.dryRun) {
+        await enqueueOutboxEvent(db, {
+          eventType: "wa.card_render",
+          dedupeKey: `wa.card:${ctx.lastInboundId}`,
+          aggregateType: "wa_conversation",
+          aggregateId: ctx.conversationId,
+          payload: {
+            conversationId: ctx.conversationId,
+            phoneE164: ctx.phoneE164,
+            customerId: ctx.customerId,
+            lastInboundId: ctx.lastInboundId,
+            caption: request.caption,
+            request: input,
+          },
+        });
+        return "queued";
+      }
+      const card = await Promise.race([
+        publishBotCard(db, storage, render, input),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("cartão: tempo esgotado")), CARD_TIMEOUT_MS),
+        ),
+      ]);
+      ctx.onAttachment({ kind: "image", imageUrl: card.url, caption: request.caption });
+      return "sent";
+    } catch (error) {
+      console.warn("[wa-bot] cartão editorial não enviado:", error instanceof Error ? error.message : error);
+      return false;
+    }
+  };
+}
+
+async function storeNameFor(db: DbOrTx): Promise<string> {
+  const map = await getSettingsMap(db, ["store_name"]);
+  return typeof map["store_name"] === "string" && map["store_name"].trim() !== ""
+    ? map["store_name"].trim()
+    : STORE_NAME_DEFAULT;
+}
 
 // ---------------------------------------------------------------------------
 // isBotEnabled — toggle bot_enabled E WhatsApp funcional E (modo fake OU
@@ -389,7 +498,7 @@ async function resolveCategorySlug(
 
 async function execListarProdutos(
   db: DbOrTx,
-  ctx: BotExecutorContext,
+  ctx: ExecutorCtx,
   input: BotToolInputs["listar_produtos"],
 ): Promise<ToolResult> {
   const busca = input.busca?.trim();
@@ -482,7 +591,124 @@ async function execListarProdutos(
     lines.push(
       "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
     );
+
+    // A lista é o atalho; o cartão é a vitrine: só na primeira página e só
+    // com 2+ peças com foto (uma foto só já sai por detalhar_produto).
+    const withPhoto = page.filter((item) => item.imagePath).slice(0, CARD_MAX_ITEMS);
+    if (paginaEfetiva === 1 && withPhoto.length >= 2) {
+      const sent = await ctx.emitCard({
+        kind: "catalog",
+        title: catalogCardTitle(withPhoto.length),
+        eyebrow: catalogCardEyebrow(filtros),
+        items: withPhoto.map((item) => ({
+          slug: item.slug,
+          name: item.name,
+          priceLabel: formatPriceRange(item.priceFromCents, item.priceToCents),
+          imagePath: item.imagePath as string,
+        })),
+        caption: `Vitrine: ${withPhoto.map((item) => item.name).join(" · ")}`,
+      });
+      if (sent) {
+        lines.push(
+          `[Um cartão com as fotos de ${withPhoto.map((item) => item.name).join(", ")} ${
+            sent === "sent" ? "foi enviado junto com a lista" : "chega logo depois da sua resposta"
+          } — mencione em meia frase ("mandei um cartão com as três"), não descreva a imagem.]`,
+        );
+      }
+    }
   }
+  return { ok: true, text: lines.join("\n") };
+}
+
+async function execMontarLook(
+  db: DbOrTx,
+  ctx: ExecutorCtx,
+  input: BotToolInputs["montar_look"],
+): Promise<ToolResult> {
+  const resolved = await resolveProductDetail(db, input.produto);
+  if (resolved.kind === "none") {
+    return {
+      ok: false,
+      text: `Não encontrei a peça "${input.produto}". Use o nome exato ou o slug de listar_produtos.`,
+    };
+  }
+  if (resolved.kind === "ambiguous") {
+    return {
+      ok: true,
+      text: `Há ${resolved.candidates.length} peças com "${input.produto}" no nome — chame de novo com o slug exato: ${resolved.candidates
+        .slice(0, 6)
+        .map((item) => `${item.name} (${item.slug})`)
+        .join("; ")}.`,
+    };
+  }
+  const { detail } = resolved;
+  const heroPrice = Math.min(...detail.variants.map((variant) => variant.priceCents));
+  const state = parseBotState(
+    (
+      await db
+        .select({ botState: waConversations.botState })
+        .from(waConversations)
+        .where(eq(waConversations.id, ctx.conversationId))
+        .limit(1)
+    )[0]?.botState,
+  );
+  const heroColor = state.focus?.slug === detail.slug ? (state.focus.cor ?? null) : null;
+  const heroImage = pickImagePath(detail.images, heroColor);
+
+  const list = await listPublicProducts(db, { limit: 200 });
+  const picks = pickLookComplements(
+    { id: detail.id, name: detail.name, categoryName: detail.categoryName, priceCents: heroPrice },
+    list.map((item) => ({
+      id: item.id,
+      slug: item.slug,
+      name: item.name,
+      categoryName: item.categoryName,
+      priceCents: item.priceFromCents,
+      available: item.available,
+      imagePath: item.imagePath,
+    })),
+    {
+      max: LOOK_MAX_COMPLEMENTS,
+      ...(input.orcamento_reais !== undefined ? { budgetCents: input.orcamento_reais * 100 } : {}),
+    },
+  );
+  if (picks.length === 0) {
+    return {
+      ok: true,
+      text: `Nenhuma peça do catálogo completa ${detail.name} com honestidade (só há peças da mesma família, sem foto, esgotadas ou fora do orçamento). Não invente combinação: siga com a peça em vista.`,
+    };
+  }
+
+  let cardSent: "sent" | "queued" | false = false;
+  if (heroImage) {
+    cardSent = await ctx.emitCard({
+      kind: "look",
+      title: lookCardTitle(detail.name),
+      eyebrow: LOOK_EYEBROW,
+      items: [
+        { slug: detail.slug, name: detail.name, priceLabel: formatCentsBRL(heroPrice), imagePath: heroImage },
+        ...picks.map((pick) => ({
+          slug: pick.item.slug,
+          name: pick.item.name,
+          priceLabel: formatCentsBRL(pick.item.priceCents),
+          imagePath: pick.item.imagePath as string,
+        })),
+      ],
+      caption: `Look: ${detail.name} + ${picks.map((pick) => pick.item.name).join(" + ")}`,
+    });
+  }
+
+  const total = heroPrice + picks.reduce((sum, pick) => sum + pick.item.priceCents, 0);
+  const lines = [
+    `Look com ${detail.name} (${formatCentsBRL(heroPrice)}):`,
+    ...picks.map(
+      (pick) => `• ${pick.item.name} — ${formatCentsBRL(pick.item.priceCents)} (${pick.reason}; slug ${pick.item.slug})`,
+    ),
+    `Total do look: ${formatCentsBRL(total)}.`,
+    cardSent
+      ? `[O cartão do look em imagem ${cardSent === "sent" ? "foi enviado à cliente" : "chega logo depois da sua resposta"} — mencione em meia frase, não descreva a imagem.]`
+      : "[Sem cartão em imagem neste turno: apresente o look em texto, 1 frase por peça.]",
+  ];
   return { ok: true, text: lines.join("\n") };
 }
 
@@ -1528,8 +1754,9 @@ async function execTransferir(
 
 export function buildToolExecutor(
   db: DbOrTx,
-  ctx: BotExecutorContext,
+  baseCtx: BotExecutorContext,
 ): ToolExecutor {
+  const ctx: ExecutorCtx = { ...baseCtx, emitCard: makeCardEmitter(db, baseCtx) };
   return async (name, rawInput) => {
     const schema = BOT_TOOL_INPUT_SCHEMAS[name];
     const parsed = schema.safeParse(rawInput);
@@ -1591,6 +1818,8 @@ export function buildToolExecutor(
           ctx,
           parsed.data as BotToolInputs["avisar_dono"],
         );
+      case "montar_look":
+        return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
       case "transferir_para_atendente":
@@ -1662,6 +1891,7 @@ export async function runBotTurn(
   assistant: SalesAssistant,
   provider: MessagingProvider,
   input: { conversationId: string },
+  deps: { cards?: BotCardDeps } = {},
 ): Promise<RunBotTurnResult> {
   const { conversationId } = input;
 
@@ -1772,6 +2002,7 @@ export async function runBotTurn(
       customerId: conversation.customerId,
       lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
+      ...(deps.cards ? { cards: deps.cards } : {}),
     });
 
     const replyDedupeKey = `wa.bot_reply:${lastInbound.id}`;

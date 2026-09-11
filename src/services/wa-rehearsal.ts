@@ -11,6 +11,7 @@ import {
   buildBotPromptBundle,
   buildToolExecutor,
   type BotAttachment,
+  type BotCardDeps,
 } from "@/services/wa-bot";
 
 const rehearsalSchema = z.object({
@@ -45,6 +46,7 @@ export async function rehearseBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   input: RehearsalInput,
+  deps: { cards?: BotCardDeps } = {},
 ): Promise<RehearsalTurn> {
   const parsed = rehearsalSchema.parse(input);
   const bundle = await buildBotPromptBundle(db);
@@ -61,6 +63,7 @@ export async function rehearseBotTurn(
     lastInboundId: "00000000-0000-4000-8000-0000000000e5",
     onAttachment: (attachment) => attachments.push(attachment),
     dryRun: true,
+    ...(deps.cards ? { cards: deps.cards } : {}),
   });
 
   const startedAt = Date.now();
