@@ -38,7 +38,7 @@ export function ToggleSwitch({
   label,
   hint,
 }: {
-  settingKey: "wa_enabled" | "bot_enabled" | "owner_digest_enabled";
+  settingKey: "wa_enabled" | "bot_enabled" | "owner_digest_enabled" | "bot_media_enabled";
   checked: boolean;
   label: string;
   hint: string;

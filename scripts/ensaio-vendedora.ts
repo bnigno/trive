@@ -6,12 +6,17 @@
 //
 // Uso:
 //   ANTHROPIC_API_KEY=... DATABASE_URL=postgres://... npx tsx scripts/ensaio-vendedora.ts [roteiro]
-// Roteiros: casamento (padrão), direto, troca, audio
+//   … ensaio-vendedora.ts foto --foto ./print.jpg      (a Lia vê a foto no 1º turno)
+//   … ensaio-vendedora.ts audio-real --audio ./x.ogg   (transcreve com OPENAI_API_KEY e usa como fala)
+// Roteiros: casamento (padrão), direto, troca, audio, foto, audio-real
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import { ClaudeSalesAssistant } from "@/adapters/assistant/claude";
-import type { BotChatMessage } from "@/adapters/assistant";
+import type { BotChatMessage, BotImageInput } from "@/adapters/assistant";
+import { OpenAiTranscriber } from "@/adapters/transcription/client";
 import { splitBotReply } from "@/core/bot/reply";
+import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
 import { getDb } from "@/db/client";
 import {
   assembleHistory,
@@ -19,6 +24,7 @@ import {
   buildToolExecutor,
   type BotAttachment,
 } from "@/services/wa-bot";
+import { prepareImageForModel } from "@/services/wa-media";
 
 const ROTEIROS: Record<string, string[]> = {
   casamento: [
@@ -38,7 +44,14 @@ const ROTEIROS: Record<string, string[]> = {
     "comprei um vestido semana passada e veio com um fio puxado, quero trocar",
   ],
   audio: ["[a cliente enviou um áudio]", "ah tá, quero um look pra jantar"],
+  foto: [`${INBOUND_MEDIA_MARKERS.image} tem alguma parecida com essa?`, "e no M, tem?"],
+  "audio-real": ["<audio>", "uso M"],
 };
+
+function flagValue(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
 
 const PROIBIDAS = /\b(menu|menus|card[áa]pio|card[áa]pios)\b/iu;
 
@@ -49,6 +62,28 @@ async function main() {
   const roteiroNome = process.argv[2] ?? "casamento";
   const roteiro = ROTEIROS[roteiroNome];
   if (!roteiro) throw new Error(`Roteiro desconhecido: ${roteiroNome}`);
+
+  // --foto: a imagem vai anexada no 1º turno, como no WhatsApp.
+  const fotoPath = flagValue("--foto");
+  let foto: BotImageInput | undefined;
+  if (fotoPath) {
+    const prepared = await prepareImageForModel(await readFile(fotoPath));
+    foto = { mediaType: prepared.mediaType, base64: prepared.base64 };
+    console.log(`foto: ${fotoPath} → ${prepared.width}×${prepared.height} (${Math.round(prepared.base64.length * 0.75 / 1024)} KB)`);
+  }
+  // --audio: transcreve de verdade (OPENAI_API_KEY) e usa o texto como fala.
+  const audioPath = flagValue("--audio");
+  if (audioPath) {
+    const started = Date.now();
+    const transcription = await new OpenAiTranscriber().transcribe({
+      data: await readFile(audioPath),
+      mimeType: audioPath.endsWith(".mp3") ? "audio/mpeg" : audioPath.endsWith(".m4a") ? "audio/mp4" : "audio/ogg",
+      languageHint: "pt",
+    });
+    console.log(`áudio: ${audioPath} → "${transcription.text}" (${Date.now() - started} ms, ${transcription.model})`);
+    const index = roteiro.indexOf("<audio>");
+    if (index >= 0) roteiro[index] = `[áudio da cliente, transcrição automática] ${transcription.text}`;
+  }
 
   const db = getDb();
   const assistant = new ClaudeSalesAssistant();
@@ -65,7 +100,12 @@ async function main() {
 
   for (const fala of roteiro) {
     console.log(`\n👩 cliente: ${fala}`);
-    messages.push({ role: "user", text: fala });
+    const anexa = foto !== undefined && messages.length === 0;
+    messages.push({
+      role: "user",
+      text: anexa ? `${fala} (a foto está anexada nesta mensagem)` : fala,
+      ...(anexa && foto ? { images: [foto] } : {}),
+    });
     const attachments: BotAttachment[] = [];
     const executeTool = buildToolExecutor(db, {
       conversationId,

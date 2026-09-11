@@ -1,4 +1,5 @@
 import type {
+  DownloadedMedia,
   MessagingProvider,
   OutboundImageMessage,
   OutboundOptionListMessage,
@@ -78,6 +79,23 @@ export class FakeMessagingProvider implements MessagingProvider {
     return !this.nonexistentPhones.has(toE164);
   }
 
+  // Mídias "recebidas": os testes semeiam por URL; URL desconhecida simula a
+  // URL expirada da Z-API (lança, como o cliente real).
+  private readonly mediaFixtures = new Map<string, DownloadedMedia>();
+
+  async downloadMedia(input: { url: string; maxBytes: number }): Promise<DownloadedMedia> {
+    const fixture = this.mediaFixtures.get(input.url);
+    if (!fixture) throw new Error("Mídia da Z-API indisponível (fake: sem fixture).");
+    if (fixture.data.byteLength > input.maxBytes) {
+      throw new Error("Mídia da Z-API maior que o limite aceito.");
+    }
+    return fixture;
+  }
+
+  setMediaFixture(url: string, data: Buffer | Uint8Array, contentType: string | null): void {
+    this.mediaFixtures.set(url, { data: Buffer.from(data), contentType });
+  }
+
   // --- Helpers de teste (não fazem parte da interface MessagingProvider) ---
 
   /** Marca um número como SEM WhatsApp (phoneExists passa a responder false). */
@@ -102,5 +120,6 @@ export class FakeMessagingProvider implements MessagingProvider {
     this.sequence = 0;
     this.runId = Math.random().toString(36).slice(2, 8);
     this.nonexistentPhones.clear();
+    this.mediaFixtures.clear();
   }
 }

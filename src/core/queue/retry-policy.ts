@@ -12,6 +12,14 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
     baseDelayMs: 5_000,
     maxDelayMs: 3_600_000,
   },
+  // Transcrição de áudio da cliente: a resposta da vendedora espera por ela,
+  // então poucas tentativas e rápidas; na última, o serviço cai no marcador
+  // "não foi possível transcrever" e a conversa segue.
+  "wa.transcribe": {
+    maxAttempts: 3,
+    baseDelayMs: 5_000,
+    maxDelayMs: 20_000,
+  },
 };
 
 export function getRetryPolicy(eventType: string): RetryPolicy {

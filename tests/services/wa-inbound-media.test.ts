@@ -53,21 +53,57 @@ describe("processZapiInbound → mídia recebida", () => {
     else process.env.ZAPI_WEBHOOK_SECRET = originalSecret;
   });
 
-  it("áudio vira inbound com marcador e vai para a vendedora responder", async () => {
+  it("áudio vira inbound kind audio com URL e vai para a fila de transcrição", async () => {
     const result = await processZapiInbound(sdb, {
       providedSecret: SECRET,
-      body: { ...base("MSG-AUDIO"), audio: { audioUrl: "https://cdn/x.ogg", mimeType: "audio/ogg" } },
+      body: {
+        ...base("MSG-AUDIO"),
+        audio: { audioUrl: "https://cdn/x.ogg", mimeType: "audio/ogg; codecs=opus", seconds: 12 },
+      },
+    });
+    expect(result.action).toBe("transcribe_queued");
+
+    const [message] = await db.select().from(schema.waMessages);
+    expect(message.direction).toBe("inbound");
+    expect(message.kind).toBe("audio");
+    expect(message.body).toBe(INBOUND_MEDIA_MARKERS.audio);
+    expect(message.mediaUrl).toBe("https://cdn/x.ogg");
+    expect(message.mediaMeta).toEqual({
+      mimeType: "audio/ogg; codecs=opus",
+      seconds: 12,
+      transcript: { status: "pending" },
+    });
+
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events.map((event) => event.eventType)).toEqual(["wa.transcribe"]);
+    expect(events[0]?.dedupeKey).toBe("wa.transcribe:MSG-AUDIO");
+    expect(events[0]?.payload).toEqual({ waMessageId: message.id });
+  });
+
+  it("com a vendedora sem ouvir (bot_media_enabled=false), o áudio segue como marcador para o turno", async () => {
+    await db.insert(schema.settings).values({ key: "bot_media_enabled", value: false });
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...base("MSG-AUDIO-2"), audio: { audioUrl: "https://cdn/y.ogg", mimeType: "audio/ogg" } },
     });
     expect(result.action).toBe("bot_queued");
 
     const [message] = await db.select().from(schema.waMessages);
-    expect(message.direction).toBe("inbound");
-    expect(message.kind).toBe("text");
+    expect(message.kind).toBe("audio");
     expect(message.body).toBe(INBOUND_MEDIA_MARKERS.audio);
-    expect(message.mediaUrl).toBeNull();
+    expect(message.mediaMeta).toEqual({ mimeType: "audio/ogg" });
 
     const events = await db.select().from(schema.outboxEvents);
     expect(events.map((event) => event.eventType)).toEqual(["wa.bot_turn"]);
+  });
+
+  it("reentrega do webhook de áudio não duplica a transcrição na fila", async () => {
+    const body = { ...base("MSG-AUDIO-3"), audio: { audioUrl: "https://cdn/z.ogg" } };
+    await processZapiInbound(sdb, { providedSecret: SECRET, body });
+    const again = await processZapiInbound(sdb, { providedSecret: SECRET, body });
+    expect(again.action).toBe("duplicate");
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events).toHaveLength(1);
   });
 
   it("foto vira inbound kind image com URL e legenda", async () => {
@@ -75,7 +111,13 @@ describe("processZapiInbound → mídia recebida", () => {
       providedSecret: SECRET,
       body: {
         ...base("MSG-FOTO"),
-        image: { imageUrl: "https://cdn/foto.jpg", caption: "tem igual a essa?", mimeType: "image/jpeg" },
+        image: {
+          imageUrl: "https://cdn/foto.jpg",
+          caption: "tem igual a essa?",
+          mimeType: "image/jpeg",
+          width: 1080,
+          height: 1350,
+        },
       },
     });
     expect(result.action).toBe("bot_queued");
@@ -83,6 +125,7 @@ describe("processZapiInbound → mídia recebida", () => {
     expect(message.kind).toBe("image");
     expect(message.mediaUrl).toBe("https://cdn/foto.jpg");
     expect(message.body).toBe(`${INBOUND_MEDIA_MARKERS.image} tem igual a essa?`);
+    expect(message.mediaMeta).toEqual({ mimeType: "image/jpeg", width: 1080, height: 1350 });
   });
 
   it("figurinha e documento também registram; status puro continua ignorado", async () => {

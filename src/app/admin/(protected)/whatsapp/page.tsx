@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getAdapterMode } from "@/adapters/adapter-mode";
+import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,7 @@ interface PageData {
   activity: BotActivityEvent[];
   awaitingOwner: number;
   digestEnabled: boolean;
+  mediaEnabled: boolean;
   lastDigest: { date: string; url: string; at: Date } | null;
 }
 
@@ -96,6 +98,7 @@ async function loadPageData(): Promise<PageData | null> {
         "bot_extra_instructions",
         "wa_quick_replies",
         "owner_digest_enabled",
+        "bot_media_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -138,6 +141,7 @@ async function loadPageData(): Promise<PageData | null> {
     activity,
     awaitingOwner,
     digestEnabled: settingsMap["owner_digest_enabled"] !== false,
+    mediaEnabled: settingsMap["bot_media_enabled"] !== false,
     lastDigest: lastDigestRow
       ? {
           date: lastDigestRow.date,
@@ -199,6 +203,7 @@ export default async function WhatsappPage() {
     activity,
     awaitingOwner,
     digestEnabled,
+    mediaEnabled,
     lastDigest,
   } = data;
 
@@ -299,6 +304,16 @@ export default async function WhatsappPage() {
             checked={botEnabledSetting}
             label={`Deixar a ${sellerName} vender sozinha`}
             hint="Ligada, ela apresenta as peças, cota o frete, monta o pedido e manda o link de pagamento. Desligada, as mensagens das clientes chegam para você."
+          />
+          <ToggleSwitch
+            settingKey="bot_media_enabled"
+            checked={mediaEnabled}
+            label={`A ${sellerName} vê fotos e ouve áudios`}
+            hint={
+              isTranscriptionConfigured()
+                ? "Foto da cliente (print, peça do armário, convite) vai para a inteligência; áudio é transcrito. Centavos por uso; nada é guardado."
+                : "Fotos vão para a inteligência (centavos por uso). Áudio exige a chave da OpenAI na hospedagem — sem ela, a vendedora pede para escrever."
+            }
           />
         </div>
         {botEnabledSetting && anthropicKeyMissing ? (

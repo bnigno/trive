@@ -109,3 +109,13 @@ Conferido em 2026-09-04: o bucket é público, aceita `image/webp`, `image/png`,
 `image/jpeg` e `image/avif`, com limite de 10 MB por arquivo. O comprovante de
 pagamento (`receipts/<orderId>/comprovante.jpg`, gerado pelo evento
 `order.receipt`) depende de `image/jpeg` estar nessa lista.
+
+## 8. OpenAI — a vendedora ouve os áudios (Onda 4)
+
+A Lia transcreve os áudios que as clientes mandam no WhatsApp com a API da OpenAI (modelo `gpt-4o-mini-transcribe`, cerca de US$ 0,003 por minuto de áudio — centavos por mês numa loja pequena). As fotos ela vê com a própria Anthropic, sem chave extra.
+
+1. Crie uma conta em <https://platform.openai.com>, coloque um crédito pequeno (US$ 5 duram meses) e gere uma chave em **API keys**.
+2. Cadastre `OPENAI_API_KEY` na Vercel (Production e Preview) — a chave nunca vai para o navegador (o CI bloqueia).
+3. Na Central "Vendedora & WhatsApp", o interruptor **"A Lia vê fotos e ouve áudios"** liga e desliga o recurso. Sem a chave, o áudio vira "[a cliente enviou um áudio]" e a vendedora pede para escrever.
+
+Privacidade: o arquivo de áudio e a foto são processados na hora e não ficam guardados por nós; o texto transcrito fica na conversa como qualquer mensagem.

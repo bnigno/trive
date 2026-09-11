@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type {
+  DownloadedMedia,
   MessagingProvider,
   OutboundImageMessage,
   OutboundOptionListMessage,
@@ -194,6 +195,32 @@ export class ZapiMessagingProvider implements MessagingProvider {
     } catch {
       return true;
     }
+  }
+
+  async downloadMedia(input: { url: string; maxBytes: number }): Promise<DownloadedMedia> {
+    // URL pública do storage da Z-API: sem Client-Token. Nunca logamos a URL
+    // inteira (pode carregar identificadores da instância).
+    let response: Response;
+    try {
+      response = await this.fetchFn(input.url, {
+        method: "GET",
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new Error("Mídia da Z-API indisponível (rede ou tempo esgotado).");
+    }
+    if (response.status >= 400) {
+      throw new Error(`Mídia da Z-API indisponível (HTTP ${response.status}).`);
+    }
+    const declared = Number(response.headers.get("content-length") ?? "0");
+    if (declared > input.maxBytes) {
+      throw new Error("Mídia da Z-API maior que o limite aceito.");
+    }
+    const data = Buffer.from(await response.arrayBuffer());
+    if (data.byteLength > input.maxBytes) {
+      throw new Error("Mídia da Z-API maior que o limite aceito.");
+    }
+    return { data, contentType: response.headers.get("content-type") };
   }
 
   async getQrCode(): Promise<QrCode | null> {

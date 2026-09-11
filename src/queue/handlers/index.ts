@@ -13,7 +13,9 @@ import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadReceiptAssets } from "@/receipts/assets";
 import { renderReceiptPng } from "@/receipts/render";
 import { renderDailyDigestPng } from "@/receipts/render-digest";
+import { getTranscriber } from "@/adapters/transcription";
 import { sendDailyDigestWa } from "@/services/daily-digest";
+import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
 import { processPaymentEvent } from "@/services/payments";
@@ -125,6 +127,8 @@ const emailSendPayloadSchema = z.object({
 // Resposta de cliente encaminhada ao dono (bot desligado: humano responde).
 // raw: true envia o corpo como está — avisos do sistema (ex.: transferência
 // do bot) já chegam formatados e não são "fala de cliente".
+const waTranscribePayloadSchema = z.object({ waMessageId: z.uuid() });
+
 const digestDailyPayloadSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
@@ -212,6 +216,19 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     console.info(
       `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
     );
+  },
+  // Áudio da cliente: baixa, transcreve e só então decide a rota (turno da
+  // vendedora ou dono). Falha do vendor relança até a política esgotar; na
+  // última tentativa o serviço grava o marcador e a conversa segue.
+  "wa.transcribe": async (event) => {
+    const { waMessageId } = waTranscribePayloadSchema.parse(event.payload);
+    const result = await transcribeInboundAudio(
+      getDb(),
+      getMessagingProvider(),
+      getTranscriber(),
+      { waMessageId, attempt: event.attempts },
+    );
+    console.info(`[wa.transcribe] ${waMessageId} → ${JSON.stringify(result)}`);
   },
   // "Bom dia da maison": o cron das 8h só enfileira; aqui a imagem é
   // montada, desenhada e enviada ao dono (retry e DLQ da fila). Skips

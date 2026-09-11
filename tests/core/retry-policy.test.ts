@@ -74,3 +74,13 @@ describe("classifyOutcome", () => {
     expect(classifyOutcome(9, 8)).toBe("dead");
   });
 });
+
+describe("wa.transcribe", () => {
+  it("tenta 3 vezes com espera curta: a cliente está esperando a resposta", () => {
+    expect(getRetryPolicy("wa.transcribe")).toEqual({
+      maxAttempts: 3,
+      baseDelayMs: 5_000,
+      maxDelayMs: 20_000,
+    });
+  });
+});

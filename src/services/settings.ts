@@ -508,6 +508,11 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .max(2000, "As respostas rápidas devem ter no máximo 2000 caracteres."),
   /** "Bom dia da maison": imagem diária às 8h no WhatsApp do dono. Ausente = ligado. */
   owner_digest_enabled: z.boolean(),
+  /**
+   * A vendedora vê fotos e ouve áudios das clientes (visão do modelo +
+   * transcrição). Ausente = ligado; o áudio ainda exige OPENAI_API_KEY.
+   */
+  bot_media_enabled: z.boolean(),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);
