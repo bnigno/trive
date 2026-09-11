@@ -4,7 +4,10 @@
 // total via createStoreOrder — o cliente só informa o que VIU (expected*)
 // para o serviço detectar divergência (CDC: preço anunciado vincula).
 
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
+
+import { getCepLookup } from "@/adapters/cep";
+import { lookupAddressByCep, type AddressLookupResult } from "@/services/address-lookup";
 
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getDb } from "@/db/client";
@@ -106,4 +109,13 @@ export async function placeOrderAction(
       message: "Algo deu errado ao enviar o pedido. Tente novamente em instantes.",
     };
   }
+}
+
+const lookupCepSchema = z.object({ cep: z.string().trim().min(1).max(12) });
+
+/** Endereço pelo CEP para o preenchimento automático do checkout (sem banco). */
+export async function lookupCepAction(input: { cep: string }): Promise<AddressLookupResult> {
+  const parsed = lookupCepSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, reason: "cep_invalido" };
+  return lookupAddressByCep(getCepLookup(), parsed.data.cep);
 }

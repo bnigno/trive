@@ -1,6 +1,7 @@
 // "Testar a vendedora": um turno de ensaio com o prompt e o catálogo reais,
 // sem conversa gravada e sem efeito externo (dryRun) — o dono sente o tom
 // antes de salvar as instruções. Custa centavos por mensagem (API real).
+import { getCepLookup } from "@/adapters/cep";
 import { z } from "zod";
 
 import type { BotChatMessage, SalesAssistant } from "@/adapters/assistant";
@@ -63,6 +64,7 @@ export async function rehearseBotTurn(
     lastInboundId: "00000000-0000-4000-8000-0000000000e5",
     onAttachment: (attachment) => attachments.push(attachment),
     dryRun: true,
+    cepLookup: getCepLookup(),
     ...(deps.cards ? { cards: deps.cards } : {}),
   });
 

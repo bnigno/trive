@@ -70,6 +70,7 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("24. FECHAMENTO É DESTA SACOLA");
     expect(prompt).toContain("nunca de memória nem de mensagens de outros dias do histórico");
     expect(prompt).toContain("o nome ou o número exatamente como cotar_frete devolveu");
+    expect(prompt).toContain("peça SÓ número e complemento");
   });
 
   it("é determinístico (prefixo cacheável) e coloca as instruções do dono no fim", () => {

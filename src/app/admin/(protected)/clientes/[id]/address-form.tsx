@@ -1,6 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef } from "react";
+
+import { CEP_AUTOFILL_MESSAGES, useCepAutofill } from "@/components/forms/use-cep-autofill";
 
 import {
   Field,
@@ -9,15 +11,17 @@ import {
   Input,
   SubmitButton,
 } from "@/components/ui/form";
-import { addAddressAction, type FormState } from "../actions";
+import { addAddressAction, lookupCepAction, type FormState } from "../actions";
 
 const initialState: FormState = {};
 
 export function AddressForm({ customerId }: { customerId: string }) {
   const [state, formAction] = useActionState(addAddressAction, initialState);
+  const formRef = useRef<HTMLFormElement>(null);
+  const cepAutofill = useCepAutofill(formRef, (cep) => lookupCepAction({ cep }));
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form ref={formRef} action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="customerId" value={customerId} />
 
       <Field
@@ -28,8 +32,16 @@ export function AddressForm({ customerId }: { customerId: string }) {
       </Field>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="CEP">
-          <Input name="postalCode" placeholder="01310-100" />
+        <Field
+          label="CEP"
+          hint={cepAutofill.status === "idle" ? "Preenche o endereço sozinho." : CEP_AUTOFILL_MESSAGES[cepAutofill.status]}
+        >
+          <Input
+            name="postalCode"
+            placeholder="01310-100"
+            inputMode="numeric"
+            onChange={(event) => cepAutofill.onCepChange(event.target.value)}
+          />
         </Field>
         <Field label="Rua" className="sm:col-span-2">
           <Input name="street" placeholder="Av. Paulista" />

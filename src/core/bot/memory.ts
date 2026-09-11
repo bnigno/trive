@@ -51,6 +51,15 @@ export const botStateSchema = z
       .optional(),
     /** CEP da última cotação (cotar_frete) — o pedido só fecha com este CEP. */
     lastCep: z.string().optional(),
+    /** Endereço que o CEP devolveu (sem número): a Lia pede só número e complemento. */
+    lastCepAddress: z
+      .object({
+        street: z.string(),
+        district: z.string(),
+        city: z.string(),
+        state: z.string(),
+      })
+      .optional(),
     lastQuotes: z.array(quoteSchema).optional(),
     /** Quando a cotação foi feita (ISO); cotação velha não fecha pedido. */
     lastQuotedAt: z.string().optional(),
@@ -194,6 +203,13 @@ export function renderContextNote(
         ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.name}` : ""}`
         : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
     );
+    if (state.lastCepAddress) {
+      const endereco = state.lastCepAddress;
+      const local = [endereco.street, endereco.district].filter((parte) => parte.trim() !== "").join(", ");
+      linhas.push(
+        `• Endereço do CEP: ${local ? `${local} — ` : ""}${endereco.city}/${endereco.state} (peça só número e complemento)`,
+      );
+    }
   }
   if (state.lastOrderNumber !== undefined) {
     linhas.push(`• Último pedido nesta conversa: #${state.lastOrderNumber}`);

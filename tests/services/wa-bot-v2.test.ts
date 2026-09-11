@@ -11,6 +11,7 @@ import type {
   SalesAssistant,
 } from "@/adapters/assistant";
 import { FakeSalesAssistant } from "@/adapters/assistant/fake";
+import { FakeCepLookup } from "@/adapters/cep/fake";
 import { FakeMessagingProvider } from "@/adapters/zapi/fake";
 import * as schema from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
@@ -219,13 +220,14 @@ async function outboundTexts(conversationId: string) {
     .orderBy(schema.waMessages.createdAt);
 }
 
-function executorFor(conversationId: string, dryRun = false) {
+function executorFor(conversationId: string, dryRun = false, cepLookup?: FakeCepLookup) {
   return buildToolExecutor(sdb, {
     conversationId,
     phoneE164: PHONE,
     customerId: null,
     lastInboundId: DUMMY_INBOUND_ID,
     ...(dryRun ? { dryRun: true } : {}),
+    ...(cepLookup ? { cepLookup } : {}),
   });
 }
 
@@ -321,6 +323,34 @@ describe("sacola", () => {
     expect(state.lastQuotes).toHaveLength(1);
     // Uma opção só: já é a escolhida.
     expect(state.chosenRateId).toBeDefined();
+  });
+});
+
+describe("cotar_frete com endereço pelo CEP", () => {
+  it("com o adapter, a cotação traz rua/bairro/cidade/UF e guarda no caderninho; vendor fora não atrapalha", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await createRate("PAC", 1990);
+    const cep = new FakeCepLookup();
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId, false, cep);
+
+    const result = await executor("cotar_frete", { cep: "01310100" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("Endereço do CEP: Avenida Paulista, Bela Vista — São Paulo/SP.");
+    expect(result.text).toContain("peça SÓ número e complemento");
+    expect((await botState(conversationId)).lastCepAddress).toEqual({
+      street: "Avenida Paulista",
+      district: "Bela Vista",
+      city: "São Paulo",
+      state: "SP",
+    });
+
+    cep.failNext();
+    const semEndereco = await executor("cotar_frete", { cep: "01310100" });
+    expect(semEndereco.ok).toBe(true);
+    expect(semEndereco.text).toContain("1. PAC");
+    expect(semEndereco.text).not.toContain("Endereço do CEP");
+    expect((await botState(conversationId)).lastCepAddress).toBeUndefined();
   });
 });
 
