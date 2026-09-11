@@ -1,6 +1,7 @@
 // Pedidos da LOJA pública (Fase 2): checkout com pagamento manual (Pix via
 // WhatsApp), reserva de estoque com expiração curta e página pública de
 // acompanhamento por token SEM dados pessoais.
+import { RESERVATION_EXPIRED_REASON } from "@/core/orders/reasons";
 import { and, asc, eq, gte, isNull, lt, lte } from "drizzle-orm";
 import { z } from "zod";
 
@@ -75,8 +76,9 @@ export class ShippingChangedError extends Error {
   }
 }
 
-export const RESERVATION_EXPIRED_REASON =
-  "Reserva expirada — pagamento não confirmado no prazo";
+// O texto vive no core (friendlyCancelReason o traduz para a cliente);
+// re-exportado para quem já importava daqui.
+export { RESERVATION_EXPIRED_REASON };
 
 const DEFAULT_RESERVATION_TTL_MINUTES = 120;
 
