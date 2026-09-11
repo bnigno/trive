@@ -17,12 +17,19 @@ import {
   COLOR_AXIS,
   MAX_AXIS_VALUES,
   MAX_GRID_ROWS,
+  SIZE_AXIS,
   buildVariantGrid,
 } from "@/core/catalog/variant-grid";
+import {
+  MEASUREMENT_KEYS,
+  measurementsSchema,
+  type MeasurementKey,
+} from "@/core/catalog/measurements";
 import { uploadImagesAction } from "../[id]/actions";
 import { createProductAction } from "./actions";
 import { ChipsField } from "./chips-field";
 import { DraftFromPhotos, type DraftResult } from "./draft-from-photos";
+import { MeasurementsEditor, type MeasurementsDraft } from "./measurements-editor";
 import { PhotoPicker, type PhotoItem } from "./photo-picker";
 import {
   EMPTY_CELL,
@@ -31,6 +38,25 @@ import {
 } from "./variant-grid-editor";
 
 export type CategoryOption = { id: string; name: string };
+
+/**
+ * "88,5" → 88.5. Campo vazio ou texto sem número não entra (o servidor
+ * recusaria a peça inteira por causa de uma medida mal digitada).
+ */
+function parseMeasurementsInput(
+  values: Partial<Record<MeasurementKey, string>> | undefined,
+): Record<string, number> | undefined {
+  if (!values) return undefined;
+  const out: Record<string, number> = {};
+  for (const key of MEASUREMENT_KEYS) {
+    const raw = (values[key] ?? "").trim().replace(",", ".");
+    if (raw === "") continue;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) out[key] = parsed;
+  }
+  const checked = measurementsSchema.safeParse(out);
+  return checked.success && Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** Centavos → "129,90" para o campo de texto do formulário. */
 function centsToInput(cents: number): string {
@@ -89,6 +115,9 @@ export function NewProductForm({
    */
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [draftVersion, setDraftVersion] = useState(0);
+  /** Fita métrica por tamanho, como texto (vem da foto da tabela ou da mão). */
+  const [measurements, setMeasurements] = useState<MeasurementsDraft>({});
+  const [measurementsFromPhoto, setMeasurementsFromPhoto] = useState(false);
   /**
    * Remontar os cards para receber o rascunho zera os campos não controlados.
    * O que a dona já tinha escrito (e o que o rascunho não traz) é lido do
@@ -267,8 +296,26 @@ export function NewProductForm({
     [goToProduct],
   );
 
+  const handleMeasurement = useCallback((size: string, key: MeasurementKey, value: string) => {
+    setMeasurements((current) => ({
+      ...current,
+      [size]: { ...(current[size] ?? {}), [key]: value },
+    }));
+  }, []);
+
   const handleDraft = useCallback((result: DraftResult) => {
     const form = formRef.current;
+    const fromPhoto: MeasurementsDraft = {};
+    for (const [size, values] of Object.entries(result.draft.measurementsBySize)) {
+      fromPhoto[size] = Object.fromEntries(
+        MEASUREMENT_KEYS.filter((key) => values[key] !== undefined).map((key) => [
+          key,
+          String(values[key]).replace(".", ","),
+        ]),
+      );
+    }
+    setMeasurements(fromPhoto);
+    setMeasurementsFromPhoto(Object.keys(fromPhoto).length > 0);
     if (form) {
       const data = new FormData(form);
       const text = (name: string) => String(data.get(name) ?? "").trim();
@@ -366,8 +413,11 @@ export function NewProductForm({
       sizes,
       rows: grid.combinations.map((combination) => {
         const cell = cells[combination.key];
+        const size = combination.attributes[SIZE_AXIS];
+        const rowMeasurements = size ? parseMeasurementsInput(measurements[size]) : undefined;
         return {
           attributes: combination.attributes,
+          ...(rowMeasurements ? { measurements: rowMeasurements } : {}),
           // O SKU que o dono está vendo é o que vai — em branco, o servidor
           // gera o dele.
           sku: cell?.sku ?? combination.sku,
@@ -497,6 +547,18 @@ export function NewProductForm({
                 suggestions={SIZE_SUGGESTIONS}
                 suggestionsLabel="Atalhos:"
                 maxValues={MAX_AXIS_VALUES}
+              />
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                Medidas por tamanho (fita métrica)
+              </h3>
+              <MeasurementsEditor
+                sizes={sizes}
+                values={measurements}
+                fromPhoto={measurementsFromPhoto}
+                onChange={handleMeasurement}
               />
             </div>
 

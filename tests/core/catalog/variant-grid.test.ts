@@ -7,6 +7,7 @@ import {
   buildVariantGrid,
   combinationKey,
   gridAxes,
+  measurementsForCombination,
   selectGridVariants,
   type GridSelectionRow,
 } from "@/core/catalog/variant-grid";
@@ -183,6 +184,27 @@ describe("selectGridVariants", () => {
         rows: [row({ attributes: { cor: "Verde", tamanho: "P" }, quantity: 1 })],
       })[0].weightGrams,
     ).toBeUndefined();
+  });
+
+  it("as medidas seguem o TAMANHO da combinação; linha sem tamanho fica sem medidas", () => {
+    const porTamanho = { P: { bust: 88 }, M: { bust: 92 } };
+    expect(measurementsForCombination(porTamanho, { cor: "Verde", tamanho: "P" })).toEqual({ bust: 88 });
+    expect(measurementsForCombination(porTamanho, { cor: "Verde", tamanho: "m" })).toEqual({ bust: 92 });
+    expect(measurementsForCombination(porTamanho, { cor: "Verde" })).toBeUndefined();
+    expect(measurementsForCombination(porTamanho, { tamanho: "GG" })).toBeUndefined();
+    expect(measurementsForCombination(undefined, { tamanho: "P" })).toBeUndefined();
+    expect(measurementsForCombination({ P: {} }, { tamanho: "P" })).toBeUndefined();
+
+    const variants = selectGridVariants({
+      name: "Blusa",
+      axes,
+      rows: [
+        row({ attributes: { cor: "Verde", tamanho: "P" }, quantity: 1, measurements: { bust: 88 } }),
+        row({ attributes: { cor: "Verde", tamanho: "M" }, quantity: 1 }),
+      ],
+    });
+    expect(variants[0].measurements).toEqual({ bust: 88 });
+    expect(variants[1].measurements).toBeUndefined();
   });
 
   it("quantidade 0 cria a variação sem estoque (diferente de branco)", () => {

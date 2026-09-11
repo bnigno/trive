@@ -4,6 +4,7 @@
 // funções.
 
 import { buildAttributes, cartesian, normalizeAxisValue, variantLabel } from "./attributes";
+import { isMeasurementsEmpty, type Measurements } from "./measurements";
 import { buildSku, dedupeSkus, skuBaseFromName } from "./sku";
 
 /**
@@ -101,6 +102,8 @@ export function buildVariantGrid(input: {
 /** Uma linha da grade como o dono a deixou. */
 export interface GridSelectionRow {
   attributes: Record<string, string>;
+  /** Medidas do TAMANHO desta combinação (as cores compartilham a tabela). */
+  measurements?: Measurements;
   /** SKU vindo da tela: sugestão. Em branco, geramos de novo aqui. */
   sku: string;
   /** null = quantidade em branco, ou seja, essa combinação não existe. */
@@ -117,6 +120,20 @@ export interface SelectedVariant {
   priceCents?: number;
   /** Peso da peça (g) — igual para todas as combinações, como o preço. */
   weightGrams?: number;
+  measurements?: Measurements;
+}
+
+/** Medidas da combinação: pelo valor do eixo "tamanho" (sem tamanho, nenhuma). */
+export function measurementsForCombination(
+  measurementsBySize: Record<string, Measurements> | undefined,
+  attributes: Record<string, string>,
+): Measurements | undefined {
+  const size = attributes[SIZE_AXIS];
+  if (!measurementsBySize || !size) return undefined;
+  const entry =
+    measurementsBySize[size] ??
+    Object.entries(measurementsBySize).find(([key]) => key.toLowerCase() === size.toLowerCase())?.[1];
+  return entry && !isMeasurementsEmpty(entry) ? entry : undefined;
 }
 
 /**
@@ -160,6 +177,9 @@ export function selectGridVariants(input: {
     costCents: entry.row.costCents,
     priceCents: input.priceCents,
     weightGrams: input.weightGrams,
+    ...(entry.row.measurements && !isMeasurementsEmpty(entry.row.measurements)
+      ? { measurements: entry.row.measurements }
+      : {}),
   }));
 }
 

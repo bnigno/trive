@@ -110,6 +110,24 @@ describe("draftProductFromPhotos", () => {
     expect(await db.select().from(schema.products)).toHaveLength(0);
   });
 
+  it("transcreve a tabela de medidas do fornecedor, casada com os tamanhos lidos", async () => {
+    assistant.enqueueExtraction({
+      ...FAKE_PRODUCT_DRAFT_JSON,
+      sizes: ["P", "M"],
+      measurementsBySize: { P: { bust: 88, waist: 70 }, M: { bust: 92, waist: 74 }, GG: { bust: 104 } },
+    });
+    const result = await draftProductFromPhotos(sdb, assistant, {
+      photos: [await photo(), await photo()],
+      costCents: 12000,
+      userId: FIXED_USER_ID,
+    });
+    expect(result.draft.measurementsBySize).toEqual({
+      P: { bust: 88, waist: 70 },
+      M: { bust: 92, waist: 74 },
+    });
+    expect(result.draft.warnings.some((warning) => warning.includes("GG"))).toBe(true);
+  });
+
   it("resolve a sala pelo slug que o modelo devolveu", async () => {
     const [category] = await db
       .insert(schema.categories)

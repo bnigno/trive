@@ -269,6 +269,8 @@ const variantInputSchema = z.object({
     .positive("O preço da variação deve ser maior que zero.")
     .optional(),
   barcodeEan: z.string().trim().min(1).optional(),
+  /** Fita métrica do tamanho desta variação (cm). */
+  measurements: measurementsSchema.optional(),
   weightGrams: z.number().int().positive().optional(),
   lengthMm: z.number().int().positive().optional(),
   widthMm: z.number().int().positive().optional(),
@@ -355,6 +357,9 @@ export async function createProduct(db: ServiceDb, input: CreateProductInput) {
             sku: variant.sku,
             attributes: variant.attributes,
             barcodeEan: variant.barcodeEan ?? null,
+            measurements: variant.measurements
+              ? parseMeasurements(compactMeasurements(variant.measurements))
+              : null,
             weightGrams: variant.weightGrams ?? null,
             lengthMm: variant.lengthMm ?? null,
             widthMm: variant.widthMm ?? null,
