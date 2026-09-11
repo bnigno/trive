@@ -6,6 +6,7 @@ import {
   MAX_AXIS_VALUES,
   MAX_GRID_ROWS,
   gridAxes,
+  measurementsForCombination,
   selectGridVariants,
 } from "@/core/catalog/variant-grid";
 import { measurementsSchema } from "@/core/catalog/measurements";
@@ -106,8 +107,6 @@ const rowSchema = z.object({
     }),
   quantity: quantitySchema,
   cost: optionalCents("O custo"),
-  /** Medidas do tamanho desta combinação (cm), já validadas pelo core. */
-  measurements: measurementsSchema.optional(),
 });
 
 const axisValuesSchema = z
@@ -152,6 +151,8 @@ const payloadSchema = z.object({
     ),
   colors: axisValuesSchema,
   sizes: axisValuesSchema,
+  /** Fita métrica por tamanho (cm); o servidor casa com cada combinação. */
+  measurementsBySize: z.record(z.string(), measurementsSchema).default({}),
   price: optionalCents("O preço de venda"),
   rows: z
     .array(rowSchema)
@@ -197,13 +198,16 @@ export async function createProductAction(
   const variants = selectGridVariants({
     name: data.name,
     axes,
-    rows: data.rows.map((row) => ({
-      attributes: row.attributes,
-      sku: row.sku,
-      quantity: row.quantity,
-      costCents: row.cost,
-      ...(row.measurements ? { measurements: row.measurements } : {}),
-    })),
+    rows: data.rows.map((row) => {
+      const measurements = measurementsForCombination(data.measurementsBySize, row.attributes);
+      return {
+        attributes: row.attributes,
+        sku: row.sku,
+        quantity: row.quantity,
+        costCents: row.cost,
+        ...(measurements ? { measurements } : {}),
+      };
+    }),
     priceCents: data.price,
     weightGrams: data.weightGrams,
   });
