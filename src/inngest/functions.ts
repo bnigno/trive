@@ -9,6 +9,7 @@ import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { yesterdaySpDayKey } from "@/services/daily-digest";
 import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
+import { dispatchDueDrops } from "@/services/drops";
 import { expireOverdueHolds, remindExpiringHolds } from "@/services/stock-holds";
 import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
@@ -80,6 +81,13 @@ export const holdExpiry = inngest.createFunction(
       : { reminded: 0, skipped: 0 };
     return { ...expired, ...reminded };
   },
+);
+
+// Lançamentos: abre a janela VIP (um evento por convidada, escalonado) e
+// publica na hora marcada. A vitrine é ISR (5 min): a peça aparece em breve.
+export const dropDispatch = inngest.createFunction(
+  { id: "drop-dispatch", triggers: [{ cron: "*/10 * * * *" }] },
+  async () => dispatchDueDrops(getDb()),
 );
 
 // Conciliação diária com o Mercado Pago (03:00 BRT = 06:00 UTC): rede de
@@ -155,6 +163,7 @@ export const functions = [
   outboxKick,
   reservationExpiry,
   holdExpiry,
+  dropDispatch,
   mpReconciliation,
   waSessionMonitor,
   waRecovery,

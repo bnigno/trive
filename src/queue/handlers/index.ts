@@ -9,6 +9,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { sendGiftNoteWa } from "@/services/gifts";
+import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
@@ -136,6 +137,7 @@ const waTranscribePayloadSchema = z.object({ waMessageId: z.uuid() });
 
 const stockRestockedPayloadSchema = z.object({ variantId: z.uuid(), movementId: z.uuid() });
 const restockNotifyPayloadSchema = z.object({ alertId: z.uuid(), movementId: z.uuid() });
+const dropInvitePayloadSchema = z.object({ inviteId: z.uuid() });
 
 const digestDailyPayloadSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -395,6 +397,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "order.canceled": async () => {},
   // Estoque cruzou o limiar para baixo → aviso interno ao dono (sem opt-in).
   // Busca nome/SKU/disponível na hora do envio (o payload pode estar velho).
+  // Convite VIP de lançamento: um por convidada, na fase VIP e na janela.
+  "wa.drop_invite": async (event) => {
+    const payload = dropInvitePayloadSchema.parse(event.payload);
+    const result = await sendDropInvite(getDb(), getMessagingProvider(), { inviteId: payload.inviteId });
+    console.info(`[wa.drop_invite] ${payload.inviteId} → ${JSON.stringify(result)}`);
+  },
   // Peça voltou: um evento por aviso aberto, escalonado na janela de envio.
   "stock.restocked": async (event) => {
     const payload = stockRestockedPayloadSchema.parse(event.payload);

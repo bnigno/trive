@@ -32,6 +32,7 @@ export function ProductCard({
   priority = false,
   frame = true,
   className,
+  href,
 }: {
   product: PublicProductListItem;
   /** "cover" liga a rendição 1600w no desktop (só nas capas da coleção). */
@@ -43,6 +44,8 @@ export function ProductCard({
   /** Caixa com borda e fundo (home, relacionados) ou só a foto + hairline. */
   frame?: boolean;
   className?: string;
+  /** Destino alternativo (ex.: a peça vista pela convidada do lançamento). */
+  href?: string;
 }) {
   const soldOut = !product.available;
   const hasRange = product.priceFromCents !== product.priceToCents;
@@ -74,7 +77,7 @@ export function ProductCard({
 
   return (
     <Link
-      href={`/produto/${product.slug}`}
+      href={href ?? `/produto/${product.slug}`}
       className={cx(
         "group flex h-full flex-col focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
         frame &&
