@@ -169,6 +169,13 @@
       "when": 1789155118805,
       "tag": "0023_brave_xorn",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789156029112,
+      "tag": "0024_stiff_wildside",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import {
-  boolean,
   bigint,
+  boolean,
   check,
   index,
   integer,
@@ -9,10 +9,10 @@ import {
   smallint,
   text,
   timestamp,
+  type AnyPgColumn,
   unique,
   uniqueIndex,
   uuid,
-  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { suppliers } from "./suppliers";
@@ -56,6 +56,12 @@ export const products = pgTable(
     fitNotes: text("fit_notes"),
     // Uma frase da curadora sobre a peça (o áudio chega em outro PR).
     curatorNote: text("curator_note"),
+    /** Áudio da nota falada (bucket product-images); null = só texto. */
+    curatorAudioPath: text("curator_audio_path"),
+    curatorAudioMime: text("curator_audio_mime"),
+    curatorAudioSeconds: integer("curator_audio_seconds"),
+    /** Carimbo da última gravação/edição: fura o cache do player. */
+    curatorNoteUpdatedAt: timestamp("curator_note_updated_at", { withTimezone: true }),
     /** Post 4:5 mais recente no Storage: é a prévia do link da peça. */
     postCardPath: text("post_card_path"),
     categoryId: uuid("category_id").references(() => categories.id, {
