@@ -18,7 +18,6 @@ import {
   MAX_AXIS_VALUES,
   MAX_GRID_ROWS,
   buildVariantGrid,
-  measurementsForCombination,
 } from "@/core/catalog/variant-grid";
 import { MEASUREMENT_KEYS, type MeasurementKey } from "@/core/catalog/measurements";
 import { parseMeasurementCm } from "./measurements-editor";
@@ -416,15 +415,11 @@ export function NewProductForm({
       weightGrams: String(formData.get("weightGrams") ?? ""),
       colors,
       sizes,
+      measurementsBySize: measurementsBySizeParsed,
       rows: grid.combinations.map((combination) => {
         const cell = cells[combination.key];
-        const rowMeasurements = measurementsForCombination(
-          measurementsBySizeParsed,
-          combination.attributes,
-        );
         return {
           attributes: combination.attributes,
-          ...(rowMeasurements ? { measurements: rowMeasurements } : {}),
           // O SKU que o dono está vendo é o que vai — em branco, o servidor
           // gera o dele.
           sku: cell?.sku ?? combination.sku,
