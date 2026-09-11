@@ -23,9 +23,9 @@ const SHARED_AREAS: AdminArea[] = [
 ];
 
 describe("core/auth/access", () => {
-  it("lista as 18 áreas do painel sem repetição", () => {
+  it("lista as 19 áreas do painel sem repetição", () => {
     expect(new Set(ADMIN_AREAS).size).toBe(ADMIN_AREAS.length);
-    expect(ADMIN_AREAS).toHaveLength(18);
+    expect(ADMIN_AREAS).toHaveLength(19);
   });
 
   it("owner-only é exatamente o mapa aprovado", () => {
@@ -40,6 +40,7 @@ describe("core/auth/access", () => {
       "cupons",
       "fila",
       "usuarios",
+      "lancamentos",
     ]);
   });
 

@@ -21,6 +21,7 @@ export const ADMIN_AREAS = [
   "ajuda",
   "fila",
   "usuarios",
+  "lancamentos",
 ] as const;
 
 export type AdminArea = (typeof ADMIN_AREAS)[number];
@@ -50,6 +51,7 @@ export const OWNER_ONLY_AREAS = [
   "cupons",
   "fila",
   "usuarios",
+  "lancamentos",
 ] as const satisfies readonly AdminArea[];
 
 export type OwnerOnlyArea = (typeof OWNER_ONLY_AREAS)[number];
@@ -66,6 +68,7 @@ export const AREA_LABELS: Record<AdminArea, string> = {
   frete: "Frete",
   financeiro: "Financeiro",
   configuracoes: "Configurações",
+  lancamentos: "Lançamentos",
   whatsapp: "WhatsApp",
   conversas: "Conversas",
   emails: "E-mails",

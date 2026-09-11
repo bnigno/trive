@@ -192,6 +192,18 @@ const initialWaTemplates: Array<{
     variables: ["nome", "produto", "quantidade", "link"],
   },
   {
+    // Convite VIP de lançamento: UMA mensagem por cliente, só com opt-in,
+    // dentro da janela de envio, algumas horas antes da peça abrir para todas.
+    key: "drop_vip_invite",
+    label: "Convite VIP de lançamento",
+    bodyTemplate:
+      "{{nome}}, você vê primeiro 🤍\n" +
+      "{{lancamento}} abre para todo mundo em {{prazo}} — e as peças ({{pecas}}) já estão liberadas para você por aqui: {{link}}\n" +
+      "Quer que a Lia separe alguma por 24 h? É só responder.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "lancamento", "pecas", "prazo", "link"],
+  },
+  {
     key: "owner_queue_dead",
     label: "[interno] Fila com problemas",
     bodyTemplate:

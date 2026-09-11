@@ -530,6 +530,7 @@ async function execListarProdutos(
   let items: PublicProductListItem[] = await listPublicProducts(db, {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
+    viewer: { customerId: ctx.customerId },
     limit: 200,
   });
 
@@ -738,6 +739,7 @@ type ResolvedProduct =
 async function resolveProductDetail(
   db: DbOrTx,
   term: string,
+  viewer?: { customerId: string | null },
 ): Promise<ResolvedProduct> {
   let trimmed = term.trim();
   if (trimmed.startsWith("produto:")) trimmed = trimmed.slice("produto:".length);
@@ -758,11 +760,11 @@ async function resolveProductDetail(
     )
     .limit(1);
   if (bySku) {
-    const detail = await getPublicProductBySlug(db, bySku.slug);
+    const detail = await getPublicProductBySlug(db, bySku.slug, viewer);
     if (detail) return { kind: "found", detail, matchedSku: bySku.sku };
   }
 
-  const list = await listPublicProducts(db, { limit: 200 });
+  const list = await listPublicProducts(db, { limit: 200, viewer });
   const lowered = trimmed.toLowerCase();
   const exact = list.filter((p) => p.name.toLowerCase() === lowered);
   const contains =
@@ -775,7 +777,7 @@ async function resolveProductDetail(
       : list.filter((p) => lowered.includes(p.name.toLowerCase()));
   if (matches.length === 0) return { kind: "none" };
   if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
-  const detail = await getPublicProductBySlug(db, matches[0].slug);
+  const detail = await getPublicProductBySlug(db, matches[0].slug, viewer);
   return detail ? { kind: "found", detail, matchedSku: null } : { kind: "none" };
 }
 
@@ -784,7 +786,7 @@ async function execDetalharProduto(
   ctx: BotExecutorContext,
   input: BotToolInputs["detalhar_produto"],
 ): Promise<ToolResult> {
-  const resolved = await resolveProductDetail(db, input.produto);
+  const resolved = await resolveProductDetail(db, input.produto, { customerId: ctx.customerId });
   if (resolved.kind === "none") {
     return {
       ok: false,

@@ -2,7 +2,7 @@
 // Fase 2: vitrine sem autenticação. Nada aqui muta estado — sem audit/outbox.
 // Regra central: só é visível o que está ativo E tem preço ativo (price_versions
 // status 'active'); preço exibido é sempre o do banco, nunca o do cliente.
-import { and, asc, desc, eq, gte, ilike, isNull, lte, ne, or, sql, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -55,12 +55,51 @@ const activePriceJoin = () =>
     eq(priceVersions.status, "active"),
   );
 
+/** Quem está olhando: convidada de lançamento enxerga a peça escondida. */
+export interface CatalogViewer {
+  customerId?: string | null;
+  inviteToken?: string | null;
+}
+
+/**
+ * Peça visível: sem visible_from, ou já passou, ou a viewer é convidada de
+ * um lançamento (agendado/VIP) com a peça e a janela VIP já abriu.
+ */
+function publiclyVisible(viewer?: CatalogViewer, now: Date = new Date()) {
+  const base = or(isNull(products.visibleFrom), lte(products.visibleFrom, now));
+  const customerId = viewer?.customerId ?? null;
+  const token = viewer?.inviteToken ?? null;
+  if (!customerId && !token) return base!;
+  const who = customerId && token
+    ? sql`(di.customer_id = ${customerId} or di.token = ${token})`
+    : customerId
+      ? sql`di.customer_id = ${customerId}`
+      : sql`di.token = ${token}`;
+  return or(
+    base,
+    sql`exists (
+      select 1 from drop_products dp
+      join drops d on d.id = dp.drop_id
+      join drop_invites di on di.drop_id = d.id
+      where dp.product_id = ${products.id}
+        and d.status in ('scheduled', 'vip_sent')
+        and ${who}
+        and d.publish_at - make_interval(hours => d.vip_window_hours) <= ${now}
+    )`,
+  )!;
+}
+
 // ---------------------------------------------------------------------------
 // 1. listPublicProducts
 // ---------------------------------------------------------------------------
 
 const listPublicProductsSchema = z.object({
   categorySlug: z.string().trim().min(1).optional(),
+  /** Só estes produtos (página do lançamento). */
+  productIds: z.array(z.uuid()).max(50).optional(),
+  /** Ignora visible_from (só para quem já provou o convite). */
+  includeHidden: z.boolean().default(false),
+  viewer: z.object({ customerId: z.uuid().nullable().optional(), inviteToken: z.string().nullable().optional() }).optional(),
   q: z.string().trim().min(1).optional(),
   /** Busca também na descrição (a vendedora do WhatsApp procura por "linho"). */
   includeDescription: z.boolean().default(false),
@@ -100,6 +139,8 @@ export async function listPublicProducts(
   const parsed = listPublicProductsSchema.parse(input);
 
   const filters = [eq(products.status, "active"), isNull(products.deletedAt)];
+  if (!parsed.includeHidden) filters.push(publiclyVisible(parsed.viewer));
+  if (parsed.productIds) filters.push(inArray(products.id, parsed.productIds));
   if (parsed.categorySlug) filters.push(eq(categories.slug, parsed.categorySlug));
   if (parsed.excludeProductId) filters.push(ne(products.id, parsed.excludeProductId));
   if (parsed.q) {
@@ -237,6 +278,7 @@ export async function listPublicCategories(db: ServiceDb): Promise<PublicCategor
         eq(products.categoryId, categories.id),
         eq(products.status, "active"),
         isNull(products.deletedAt),
+        publiclyVisible(),
       ),
     )
     .innerJoin(productVariants, sellableVariantJoin())
@@ -298,6 +340,7 @@ export interface PublicProductDetail {
 export async function getPublicProductBySlug(
   db: ServiceDb,
   slug: string,
+  viewer?: CatalogViewer,
 ): Promise<PublicProductDetail | null> {
   const parsedSlug = z.string().trim().min(1).parse(slug);
 
@@ -314,6 +357,7 @@ export async function getPublicProductBySlug(
         eq(products.slug, parsedSlug),
         eq(products.status, "active"),
         isNull(products.deletedAt),
+        publiclyVisible(viewer),
       ),
     )
     .limit(1);
@@ -574,7 +618,7 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
     .innerJoin(productVariants, sellableVariantJoin())
     .innerJoin(priceVersions, activePriceJoin())
     .leftJoin(categories, eq(categories.id, products.categoryId))
-    .where(and(eq(products.status, "active"), isNull(products.deletedAt)))
+    .where(and(eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible()))
     .groupBy(categories.id, categories.name, categories.slug)
     .orderBy(asc(categories.name));
 
@@ -588,7 +632,7 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
     .innerJoin(productVariants, sellableVariantJoin())
     .innerJoin(priceVersions, activePriceJoin())
     .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
-    .where(and(eq(products.status, "active"), isNull(products.deletedAt)))
+    .where(and(eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible()))
     .groupBy(sql`1`, sql`2`);
 
   const colors = new Set<string>();

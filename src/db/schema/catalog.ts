@@ -57,6 +57,9 @@ export const products = pgTable(
       onDelete: "restrict",
     }),
     status: text("status").notNull().default("draft"),
+    // Lançamento: peça ativa mas escondida da vitrine até este instante
+    // (só convidadas do lançamento veem antes). NULL = visível.
+    visibleFrom: timestamp("visible_from", { withTimezone: true }),
     // Eixos de variação do produto, ex.: ["cor","tamanho"].
     attributesSchema: jsonb("attributes_schema").default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
