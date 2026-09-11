@@ -288,8 +288,12 @@ export function normalizeProductDraft(
     for (const key of MEASUREMENT_KEYS) {
       const value = row[key];
       if (typeof value !== "number") continue;
-      const checked = measurementsSchema.safeParse({ [key]: value });
-      if (checked.success) kept[key] = value;
+      // A fita mede em meio centímetro. Tabela em polegadas convertida cai em
+      // 88,9: arredondar é o que a dona faria — jogar fora seria perder a
+      // tabela inteira por causa da conversão que o prompt manda fazer.
+      const rounded = Math.round(value * 2) / 2;
+      const checked = measurementsSchema.safeParse({ [key]: rounded });
+      if (checked.success) kept[key] = rounded;
       else droppedMeasurements.push(`${MEASUREMENT_LABELS[key]} do ${known} (${value})`);
     }
     if (!isMeasurementsEmpty(kept)) measurementsBySize[known] = kept;

@@ -206,17 +206,31 @@ describe("normalizeProductDraft", () => {
     ).toEqual({});
   });
 
+  it("tabela em polegadas convertida entra arredondada no meio centímetro", () => {
+    // 35 in = 88,9 cm; 27,5 in = 69,85 cm — o que o prompt manda converter.
+    const draft = normalizeProductDraft(
+      raw({
+        sizes: ["P"],
+        measurementsBySize: [{ size: "P", bust: 88.9, waist: 69.85, hip: 94 }],
+        warnings: [],
+      }),
+      { categories: CATEGORIES },
+    );
+    expect(draft.measurementsBySize).toEqual({ P: { bust: 89, waist: 70, hip: 94 } });
+    expect(draft.warnings.some((warning) => warning.includes("Não entendi estas medidas"))).toBe(false);
+  });
+
   it("uma medida torta não leva junto as outras do mesmo tamanho, e a dona é avisada", () => {
     const draft = normalizeProductDraft(
       raw({
         sizes: ["P"],
-        measurementsBySize: [{ size: "P", bust: 88, waist: 70.3, hip: 94 }],
+        measurementsBySize: [{ size: "P", bust: 88, waist: 900, hip: 94 }],
         warnings: [],
       }),
       { categories: CATEGORIES },
     );
     expect(draft.measurementsBySize).toEqual({ P: { bust: 88, hip: 94 } });
-    expect(draft.warnings.some((warning) => warning.includes("Cintura do P (70.3)"))).toBe(true);
+    expect(draft.warnings.some((warning) => warning.includes("Cintura do P (900)"))).toBe(true);
   });
 
   it("o prompt manda transcrever a tabela em centímetros e nunca estimar", () => {
