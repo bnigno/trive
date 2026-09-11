@@ -27,6 +27,7 @@ import { toE164BR } from "@/lib/phone";
 import { normalizeGiftName, normalizeGiftText } from "@/core/gifts/text";
 import { GIFT_MESSAGE_MAX, GIFT_RECIPIENT_MAX } from "@/core/gifts/types";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { consumeMatchingHoldsTx } from "@/services/stock-holds";
 import {
   quoteCoupon,
   redeemCouponInTx,
@@ -557,6 +558,14 @@ export async function createStoreOrder(
       fromStatus: null,
       toStatus: "draft",
       changedBy: null,
+    });
+
+    // Reserva gentil desta cliente para uma peça do pedido vira 'converted':
+    // libera a reserva da vendedora aqui e o pedido reserva logo abaixo.
+    await consumeMatchingHoldsTx(tx, {
+      phoneE164: phone,
+      variantIds: itemRows.map((r) => r.productVariantId),
+      orderId: order.id,
     });
 
     // (e) draft→pending_payment: reserva o estoque (reuso da máquina de

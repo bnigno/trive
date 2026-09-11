@@ -127,6 +127,13 @@
       "when": 1789089291033,
       "tag": "0017_gigantic_the_renegades",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789090723181,
+      "tag": "0018_premium_switch",
+      "breakpoints": true
     }
   ]
 }

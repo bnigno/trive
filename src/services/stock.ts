@@ -19,6 +19,7 @@ import {
   isLowStock,
   movementsForTransition,
   type StockLevel,
+  restockCrossed,
 } from "@/core/stock/ledger";
 import {
   repriceAfterCostChangeTx,
@@ -102,6 +103,28 @@ async function updateLevel(
 }
 
 /** Enfileira 'stock.low' apenas quando o disponível CRUZOU o limiar para baixo. */
+/**
+ * Disponível saiu de zero → evento stock.restocked (uma vez por movimento):
+ * quem pediu "me avisa quando voltar" é avisado pelo handler, escalonado.
+ */
+async function maybeEnqueueRestocked(
+  tx: DbOrTx,
+  variantId: string,
+  before: StockLevel,
+  after: StockLevel,
+  movementId: string,
+): Promise<void> {
+  if (restockCrossed(before, after)) {
+    await enqueueOutboxEvent(tx, {
+      eventType: "stock.restocked",
+      dedupeKey: `stock.restocked:${movementId}`,
+      aggregateType: "product_variant",
+      aggregateId: variantId,
+      payload: { variantId, movementId, available: after.onHand - after.reserved },
+    });
+  }
+}
+
 async function maybeEnqueueLowStock(
   tx: DbOrTx,
   variantId: string,
@@ -166,6 +189,7 @@ export async function receiveStock(
       .returning({ id: stockMovements.id });
 
     await updateLevel(tx, parsed.variantId, after);
+    await maybeEnqueueRestocked(tx, parsed.variantId, before, after, movement.id);
 
     if (parsed.unitCostCents !== undefined) {
       await tx.insert(variantCosts).values({
@@ -286,6 +310,7 @@ export async function receivePurchase(
       .returning({ id: stockMovements.id });
 
     await updateLevel(tx, parsed.variantId, after);
+    await maybeEnqueueRestocked(tx, parsed.variantId, before, after, movement.id);
 
     await tx.insert(variantCosts).values({
       productVariantId: parsed.variantId,
@@ -396,6 +421,7 @@ export async function adjustStock(
 
     await updateLevel(tx, parsed.variantId, after);
     await maybeEnqueueLowStock(tx, parsed.variantId, before, after, before.lowStockThreshold);
+    await maybeEnqueueRestocked(tx, parsed.variantId, before, after, movement.id);
 
     await tx.insert(auditLog).values({
       actorType: "user",
@@ -420,7 +446,7 @@ const applyStockEffectSchema = z.object({
   effect: z.enum(["reserve", "consume", "release", "return"]),
   variantId: z.uuid(),
   quantity: z.number().int().positive(),
-  referenceType: z.literal("order"),
+  referenceType: z.enum(["order", "hold"]),
   referenceId: z.uuid(),
   createdBy: z.uuid().optional(),
 });
@@ -444,6 +470,7 @@ export async function applyStockEffectTx(
 
     let current: StockLevel = { onHand: before.onHand, reserved: before.reserved };
     let appliedAny = false;
+    let lastMovementId: string | null = null;
 
     for (const movement of movementsForTransition(parsed.effect, parsed.quantity)) {
       // onConflictDoNothing => idempotência: movimento já existente não é
@@ -466,6 +493,7 @@ export async function applyStockEffectTx(
       if (inserted.length > 0) {
         current = applyMovement(current, movement);
         appliedAny = true;
+        lastMovementId = inserted[0].id;
       }
     }
 
@@ -478,6 +506,7 @@ export async function applyStockEffectTx(
         current,
         before.lowStockThreshold,
       );
+      await maybeEnqueueRestocked(trx, parsed.variantId, before, current, lastMovementId ?? parsed.referenceId);
     }
 
     return { applied: appliedAny, onHand: current.onHand, reserved: current.reserved };

@@ -13,6 +13,11 @@ import {
 } from "@/db/schema";
 import { isOwner, requireUser } from "@/services/auth";
 import { listMovements } from "@/services/stock";
+import { listAlertsByVariant } from "@/services/stock-alerts";
+import { listHoldsByVariant } from "@/services/stock-holds";
+import { HoldsAndAlerts } from "@/components/admin/holds-and-alerts";
+import { cancelAlertAction, releaseHoldAction } from "./hold-actions";
+import { HoldForm } from "./hold-form";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Card, StatCard } from "@/components/ui/card";
@@ -87,6 +92,10 @@ export default async function StockVariantPage({
   const threshold = item.lowStockThreshold ?? 3;
 
   const movements = await listMovements(db, { variantId, limit: 100 });
+  const [holds, alerts] = await Promise.all([
+    listHoldsByVariant(db, variantId),
+    listAlertsByVariant(db, variantId),
+  ]);
 
   // Fornecedores ativos para o select de entrada de compra. Compra é do dono:
   // para a equipe a lista nem é consultada.
@@ -177,6 +186,20 @@ export default async function StockVariantPage({
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <Card title="Separar para cliente (reserva gentil)">
+          <HoldForm variantId={variantId} available={available} />
+          <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <HoldsAndAlerts
+              holds={holds}
+              alerts={alerts}
+              back={`/admin/estoque/${variantId}`}
+              releaseAction={releaseHoldAction}
+              cancelAction={cancelAlertAction}
+              showPhone
+            />
+          </div>
+        </Card>
+
         <Card title="Registrar entrada">
           <ReceiveStockForm
             variantId={item.variantId}

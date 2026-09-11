@@ -143,6 +143,21 @@ export function ContextPanel({
         )}
       </Section>
 
+      {context && (context.hold || context.alerts.length > 0) ? (
+        <Section title="Reserva e avisos">
+          <div className="flex flex-col gap-1.5 text-xs text-ink-800 dark:text-ivory-100">
+            {context.hold ? (
+              <p className="rounded-md bg-gold-300/25 px-2.5 py-1.5">⏳ {context.hold}</p>
+            ) : null}
+            {context.alerts.map((alert) => (
+              <p key={alert} className="rounded-md bg-ivory-200/70 px-2.5 py-1.5 dark:bg-ink-800">
+                🔔 Avisar quando voltar: {alert}
+              </p>
+            ))}
+          </div>
+        </Section>
+      ) : null}
+
       <Section title="Sacola">
         {context && context.cart.length > 0 ? (
           <div className="flex flex-col gap-1.5">

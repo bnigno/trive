@@ -514,6 +514,15 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
    */
   bot_media_enabled: z.boolean(),
   bot_cards_enabled: z.boolean(),
+  /** Janela de envio em lote (avisos de "voltou", convites VIP), horas de São Paulo. */
+  wa_send_window_start: z.number().int().min(0).max(23),
+  wa_send_window_end: z.number().int().min(1).max(24),
+  /** Intervalo entre mensagens de um mesmo lote (segundos). */
+  wa_bulk_interval_seconds: z.number().int().min(5).max(300),
+  /** Prazo da reserva gentil (horas). */
+  hold_ttl_hours: z.number().int().min(1).max(168),
+  /** Teto de convidadas por lançamento VIP. */
+  drop_audience_limit: z.number().int().min(1).max(500),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

@@ -14,6 +14,8 @@ import { parseBotState, type BotCartItem } from "@/core/bot/memory";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
+import { listOpenAlertsByPhone } from "@/services/stock-alerts";
+import { getActiveHoldByPhone } from "@/services/stock-holds";
 
 // "Não vista" = inbound criada depois da última leitura do dono; conversa
 // nunca aberta (owner_last_seen_at NULL) conta tudo desde a época.
@@ -248,6 +250,9 @@ export interface WaThreadTailMessage {
 
 /** O que o painel mostra ao lado da conversa: caderninho, sacola e pedidos. */
 export interface WaConversationContext {
+  /** Reserva gentil ativa (descrição pronta) e avisos de "voltou" pedidos. */
+  hold: string | null;
+  alerts: string[];
   customerId: string | null;
   customerName: string | null;
   displayName: string | null;
@@ -288,6 +293,7 @@ async function loadConversationContext(
   db: DbOrTx,
   conversation: {
     id: string;
+    phoneE164: string;
     customerId: string | null;
     customerName: string | null;
     botState: unknown;
@@ -308,7 +314,13 @@ async function loadConversationContext(
         .orderBy(desc(orders.createdAt))
         .limit(3)
     : [];
+  const [hold, alerts] = await Promise.all([
+    getActiveHoldByPhone(db, conversation.phoneE164),
+    listOpenAlertsByPhone(db, conversation.phoneE164),
+  ]);
   return {
+    hold: hold?.description ?? null,
+    alerts: alerts.map((alert) => `${alert.productName}${alert.variantLabel ? ` (${alert.variantLabel})` : ""}`),
     customerId: conversation.customerId,
     customerName: conversation.customerName,
     displayName: state.displayName?.trim() || null,
@@ -389,6 +401,7 @@ export async function getWaThreadTail(
       status: waConversations.status,
       botDisabledUntil: waConversations.botDisabledUntil,
       ownerLastSeenAt: waConversations.ownerLastSeenAt,
+      phoneE164: waConversations.phoneE164,
       customerId: waConversations.customerId,
       customerName: customers.fullName,
       botState: waConversations.botState,

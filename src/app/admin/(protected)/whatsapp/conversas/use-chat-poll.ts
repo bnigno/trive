@@ -61,6 +61,8 @@ const chatContextSchema = z.object({
       at: z.string(),
     })
     .nullable(),
+  hold: z.string().nullable().default(null),
+  alerts: z.array(z.string()).default([]),
   recentOrders: z.array(
     z.object({
       id: z.string(),

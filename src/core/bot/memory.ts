@@ -148,7 +148,10 @@ function formatDays(min: number, max: number): string {
  * sistema, para o prefixo cacheado não mudar). null quando não há nada a
  * lembrar — a primeira mensagem de uma cliente nova entra limpa.
  */
-export function renderContextNote(state: BotState): string | null {
+export function renderContextNote(
+  state: BotState,
+  extras: { lines?: readonly string[] } = {},
+): string | null {
   const linhas: string[] = [];
 
   if (state.displayName?.trim()) {
@@ -185,6 +188,11 @@ export function renderContextNote(state: BotState): string | null {
   }
   if (state.lastOrderNumber !== undefined) {
     linhas.push(`• Último pedido nesta conversa: #${state.lastOrderNumber}`);
+  }
+  // Linhas vindas de outras fontes de verdade (reserva ativa, avisos pedidos,
+  // cartela) — o caderninho não duplica o que já mora em tabela própria.
+  for (const line of extras.lines ?? []) {
+    if (line.trim() !== "") linhas.push(`• ${line.trim()}`);
   }
 
   if (linhas.length === 0) return null;

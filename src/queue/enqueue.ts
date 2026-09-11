@@ -12,6 +12,8 @@ export const enqueueOutboxEventSchema = z.object({
   dedupeKey: z.string().min(1).optional(),
   aggregateType: z.string().min(1).optional(),
   aggregateId: z.uuid().optional(),
+  /** Agenda o evento para depois (envios em lote escalonados, janela de envio). */
+  nextAttemptAt: z.date().optional(),
 });
 
 export type EnqueueOutboxEventInput = z.input<typeof enqueueOutboxEventSchema>;
@@ -36,6 +38,7 @@ export async function enqueueOutboxEvent(
       dedupeKey: parsed.dedupeKey ?? null,
       aggregateType: parsed.aggregateType ?? null,
       aggregateId: parsed.aggregateId ?? null,
+      ...(parsed.nextAttemptAt ? { nextAttemptAt: parsed.nextAttemptAt } : {}),
     })
     .onConflictDoNothing({ target: outboxEvents.dedupeKey })
     .returning({ id: outboxEvents.id });
