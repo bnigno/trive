@@ -85,6 +85,13 @@ export type BotExecutorContext = {
    * respondem um texto explicando que estão desligados no ensaio.
    */
   dryRun?: boolean;
+  /**
+   * Caderninho em memória do ensaio: no dryRun nada é gravado, mas as
+   * ferramentas do MESMO turno se enxergam (adicionar_a_sacola → validar_cupom
+   * → cotar_frete). buildToolExecutor cria; os executores só usam via
+   * readBotState/updateBotState.
+   */
+  stateOverlay?: { current: BotState | null };
   /** Consulta de CEP: cotar_frete devolve também rua/bairro/cidade/UF. */
   cepLookup?: CepLookup;
 };
@@ -197,15 +204,33 @@ export async function saveBotState(
     .where(eq(waConversations.id, conversationId));
 }
 
+/** O caderninho como o executor deve ler: no ensaio, o overlay do turno; na conversa real, o banco. */
+export async function readBotState(
+  db: DbOrTx,
+  ctx: Pick<BotExecutorContext, "conversationId" | "stateOverlay">,
+): Promise<BotState> {
+  if (ctx.stateOverlay) {
+    if (ctx.stateOverlay.current === null) {
+      ctx.stateOverlay.current = await loadBotState(db, ctx.conversationId);
+    }
+    return ctx.stateOverlay.current;
+  }
+  return loadBotState(db, ctx.conversationId);
+}
+
 /** Lê, aplica a mudança e grava — o padrão de todo executor que lembra algo. */
 export async function updateBotState(
   db: DbOrTx,
   ctx: BotExecutorContext,
   change: (state: BotState) => BotState,
 ): Promise<BotState> {
-  const current = await loadBotState(db, ctx.conversationId);
+  const current = await readBotState(db, ctx);
   const next = change(current);
-  if (!ctx.dryRun) await saveBotState(db, ctx.conversationId, next);
+  if (ctx.stateOverlay) {
+    ctx.stateOverlay.current = next;
+  } else if (!ctx.dryRun) {
+    await saveBotState(db, ctx.conversationId, next);
+  }
   return next;
 }
 

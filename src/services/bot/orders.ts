@@ -1,5 +1,5 @@
 // Fechamento e pós-venda pela vendedora: criar_pedido, status_do_pedido, enviar_chave_pix.
-import { and, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import {
@@ -33,7 +33,7 @@ import { orderPublicUrl } from "@/services/wa-messaging";
 import { resolveVariantBySku } from "./catalog";
 import { loadSavedRegistration, resolveSavedIdentity } from "./customer";
 import type { OrderIdentity } from "./customer";
-import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, loadBotState } from "./shared";
+import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 
 export const ORDER_STATUS_LABELS = BOT_ORDER_STATUS_LABELS;
@@ -45,7 +45,7 @@ export async function execCriarPedido(
 ): Promise<ToolResult> {
   if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
 
-  const state = await loadBotState(db, ctx.conversationId);
+  const state = await readBotState(db, ctx);
   let identity: OrderIdentity;
 
   if (input.usar_cadastro_salvo) {
@@ -219,6 +219,20 @@ export async function execCriarPedido(
       error instanceof ShippingChangedError ||
       error instanceof ServiceError
     ) {
+      // Cupom do caderninho (aplicado sozinho) recusado agora: esquece e diz
+      // ao modelo — senão todo criar_pedido seguinte tropeça no mesmo cupom.
+      const savedCouponFailed =
+        error instanceof ServiceError &&
+        error.code.startsWith("COUPON_") &&
+        input.cupom === undefined &&
+        state.coupon !== undefined;
+      if (savedCouponFailed) {
+        await updateBotState(db, ctx, (current) => ({ ...current, coupon: undefined }));
+        return {
+          ok: false,
+          text: `${error.message}\n[O cupom ${couponCode}, validado antes nesta conversa, foi aplicado sozinho e recusado agora; já o esqueci. Avise a cliente e chame criar_pedido de novo para fechar sem cupom — ou valide outro código com validar_cupom.]`,
+        };
+      }
       return { ok: false, text: error.message };
     }
     if (error instanceof z.ZodError) {
@@ -317,12 +331,16 @@ export async function resolveConversationCustomerId(
   db: DbOrTx,
   ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
 ): Promise<string | null> {
-  if (ctx.customerId) return ctx.customerId;
+  // Cliente apagada ou anonimizada (LGPD) nunca volta pela conversa — nem
+  // pelo vínculo gravado, nem pelo telefone.
+  const alive = [isNull(customers.deletedAt), isNull(customers.anonymizedAt)];
   const [customer] = await db
     .select({ id: customers.id })
     .from(customers)
     .where(
-      and(eq(customers.phoneE164, ctx.phoneE164), isNull(customers.deletedAt)),
+      ctx.customerId
+        ? and(eq(customers.id, ctx.customerId), ...alive)
+        : and(eq(customers.phoneE164, ctx.phoneE164), ...alive),
     )
     .limit(1);
   return customer?.id ?? null;
@@ -413,7 +431,8 @@ export async function loadPurchaseHistory(
     .from(orderItems)
     .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
     .innerJoin(products, eq(products.id, productVariants.productId))
-    .where(inArray(orderItems.orderId, rows.map((row) => row.id)));
+    .where(inArray(orderItems.orderId, rows.map((row) => row.id)))
+    .orderBy(asc(orderItems.nameSnapshot), asc(orderItems.id));
 
   return rows.map((row) => ({
     orderNumber: row.orderNumber,

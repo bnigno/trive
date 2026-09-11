@@ -11,7 +11,7 @@ import {
 import { customerAddresses, customers } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
-import { loadBotState } from "./shared";
+import { readBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 
 /**
@@ -77,7 +77,7 @@ export async function execBuscarCadastro(
       text: "Este telefone ainda não tem cadastro — é a primeira compra dele por aqui. Colete os dados normalmente, um por vez.\n\n[NUNCA diga ao cliente que a loja não guarda dados: guardamos, este número é que ainda não tem cadastro.]",
     };
   }
-  const state = await loadBotState(db, ctx.conversationId);
+  const state = await readBotState(db, ctx);
   return {
     ok: true,
     text: summarizeRegistration(registration, { quotedCep: state.lastCep }),
