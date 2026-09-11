@@ -84,6 +84,9 @@ export function StoreFooter({
             <Link href="/privacidade" className={footerLink}>
               Política de Privacidade
             </Link>
+            <Link href="/estilo" className={footerLink}>
+              Sua cartela de estilo
+            </Link>
             <Link href="/trocas-e-devolucoes" className={footerLink}>
               Trocas e Devoluções
             </Link>

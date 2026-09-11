@@ -119,6 +119,12 @@ export default async function PrivacyPage() {
           na hora e não afeta em nada seus pedidos.
         </p>
         <p>
+          A sua <strong>cartela de estilo</strong> (tamanhos, cores, caimento,
+          ocasiões) só é guardada se você pedir, ligada ao seu WhatsApp, e
+          serve para a vitrine e a nossa atendente sugerirem peças. Você pode
+          esquecê-la a qualquer momento na própria página da cartela.
+        </p>
+        <p>
           Se você mandar uma foto ou um áudio para o nosso WhatsApp, a nossa
           atendente digital pode usar inteligência artificial (Anthropic e
           OpenAI) para entender a peça mostrada ou transcrever o que você

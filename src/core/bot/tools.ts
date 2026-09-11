@@ -21,6 +21,7 @@ export const BOT_TOOL_NAMES = [
   "reservar_peca",
   "liberar_reserva",
   "avisar_quando_voltar",
+  "atualizar_cartela",
   "montar_look",
   "anotar",
   "transferir_para_atendente",
@@ -85,6 +86,14 @@ export type BotToolInputs = {
   reservar_peca: { sku: string; quantidade?: number };
   liberar_reserva: Record<string, never>;
   avisar_quando_voltar: { sku: string };
+  atualizar_cartela: {
+    tamanhos?: { vestido?: string; blusa?: string; calca?: string };
+    cores_ama?: string[];
+    cores_evita?: string[];
+    caimento?: "justo" | "fluido" | "tanto_faz";
+    ocasioes?: ("trabalho" | "dia_a_dia" | "festa" | "casamento" | "viagem" | "praia" | "jantar")[];
+    compra_para?: "mim" | "presente" | "os_dois";
+  };
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
   transferir_para_atendente: { motivo: string; resumo?: string };
@@ -446,6 +455,36 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "atualizar_cartela",
+    description:
+      "Guarda na cartela de estilo desta cliente o que ela contou: tamanho por tipo de peça, cores que ama ou evita, caimento, ocasiões e para quem compra. Campos próprios (a vitrine e as próximas conversas usam); só passe o que ela disse agora — o resto é preservado. Não é anotação livre: para isso existe anotar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tamanhos: {
+          type: "object",
+          properties: {
+            vestido: { type: "string", description: "Tamanho em vestidos (ex.: 'M', '40')." },
+            blusa: { type: "string", description: "Tamanho em blusas/camisas." },
+            calca: { type: "string", description: "Tamanho em calças/saias." },
+          },
+          additionalProperties: false,
+        },
+        cores_ama: { type: "array", items: { type: "string" }, maxItems: 8, description: "Cores que ela ama vestir." },
+        cores_evita: { type: "array", items: { type: "string" }, maxItems: 8, description: "Cores que ela evita." },
+        caimento: { type: "string", enum: ["justo", "fluido", "tanto_faz"] },
+        ocasioes: {
+          type: "array",
+          items: { type: "string", enum: ["trabalho", "dia_a_dia", "festa", "casamento", "viagem", "praia", "jantar"] },
+          maxItems: 7,
+        },
+        compra_para: { type: "string", enum: ["mim", "presente", "os_dois"] },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "montar_look",
     description:
       "Monta o look completo a partir de UMA peça: escolhe 1 ou 2 complementos reais do catálogo (categoria diferente e que combina, com foto e estoque, preço na vizinhança) e envia à cliente o cartão do look em imagem. Chame UMA vez, depois do pedido fechado ou quando ela perguntar o que combina/como usar. Nunca invente combinação fora do que a ferramenta devolveu.",
@@ -634,6 +673,25 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   avisar_quando_voltar: z.strictObject({
     sku: z.string().min(1),
   }),
+  atualizar_cartela: z
+    .strictObject({
+      tamanhos: z
+        .strictObject({
+          vestido: z.string().trim().min(1).max(8).optional(),
+          blusa: z.string().trim().min(1).max(8).optional(),
+          calca: z.string().trim().min(1).max(8).optional(),
+        })
+        .optional(),
+      cores_ama: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
+      cores_evita: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
+      caimento: z.enum(["justo", "fluido", "tanto_faz"]).optional(),
+      ocasioes: z
+        .array(z.enum(["trabalho", "dia_a_dia", "festa", "casamento", "viagem", "praia", "jantar"]))
+        .max(7)
+        .optional(),
+      compra_para: z.enum(["mim", "presente", "os_dois"]).optional(),
+    })
+    .refine((value) => Object.keys(value).length > 0, { message: "Passe ao menos um campo da cartela." }),
   montar_look: z.strictObject({
     produto: z.string().min(1),
     orcamento_reais: z.number().int().min(1).optional(),

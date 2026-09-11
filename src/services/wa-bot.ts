@@ -100,7 +100,9 @@ import {
   type CardRenderer,
 } from "@/services/bot-cards";
 import { getSettingsMap } from "@/services/settings";
+import { renderProfileNote } from "@/core/style/profile";
 import { listOpenAlertsByPhone, requestStockAlert } from "@/services/stock-alerts";
+import { getStyleProfileByPhone, saveStyleProfile } from "@/services/style-profiles";
 import {
   createStockHold,
   getActiveHoldByPhone,
@@ -1811,13 +1813,38 @@ async function execAvisarQuandoVoltar(
   };
 }
 
-/** Linhas do caderninho que moram em tabela própria (reserva ativa, avisos). */
+async function execAtualizarCartela(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["atualizar_cartela"],
+): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+  const saved = await saveStyleProfile(db, {
+    phoneE164: ctx.phoneE164,
+    customerId: ctx.customerId,
+    source: "lia",
+    patch: {
+      ...(input.tamanhos ? { sizes: input.tamanhos } : {}),
+      ...(input.cores_ama ? { colorsLove: input.cores_ama } : {}),
+      ...(input.cores_evita ? { colorsAvoid: input.cores_evita } : {}),
+      ...(input.caimento ? { fit: input.caimento } : {}),
+      ...(input.ocasioes ? { occasions: input.ocasioes } : {}),
+      ...(input.compra_para ? { buysFor: input.compra_para } : {}),
+    },
+  });
+  const [note] = renderProfileNote(saved.profile, saved.paletteName);
+  return { ok: true, text: `Cartela atualizada. ${note ?? ""}`.trim() };
+}
+
+/** Linhas do caderninho que moram em tabela própria (cartela, reserva, avisos). */
 async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<string[]> {
-  const [hold, alerts] = await Promise.all([
+  const [profile, hold, alerts] = await Promise.all([
+    getStyleProfileByPhone(db, phoneE164),
     getActiveHoldByPhone(db, phoneE164),
     listOpenAlertsByPhone(db, phoneE164),
   ]);
   const lines: string[] = [];
+  if (profile) lines.push(...renderProfileNote(profile.profile, profile.paletteName));
   if (hold) lines.push(`Reserva ativa (gentil): ${hold.description}`);
   if (alerts.length > 0) {
     lines.push(
@@ -1948,6 +1975,8 @@ export function buildToolExecutor(
         return execLiberarReserva(db, ctx);
       case "avisar_quando_voltar":
         return execAvisarQuandoVoltar(db, ctx, parsed.data as BotToolInputs["avisar_quando_voltar"]);
+      case "atualizar_cartela":
+        return execAtualizarCartela(db, ctx, parsed.data as BotToolInputs["atualizar_cartela"]);
       case "montar_look":
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":

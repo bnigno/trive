@@ -44,6 +44,7 @@ import { formatCep } from "@/lib/cep";
 import { normalizeDocument } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
+import { readStoredStyle } from "@/lib/style-storage";
 import type { ShippingQuote } from "@/services/store-catalog";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
@@ -369,6 +370,7 @@ export function CheckoutClient({
       expectedShippingCents: shippingCents,
       paymentMethod,
       ...(couponCode ? { couponCode } : {}),
+      ...(readStoredStyle()?.token ? { styleToken: readStoredStyle()?.token } : {}),
       ...(isGift
         ? {
             gift: {

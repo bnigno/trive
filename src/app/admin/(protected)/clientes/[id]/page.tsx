@@ -9,6 +9,9 @@ import { ServiceError } from "@/services/catalog";
 import { getCustomerDetail } from "@/services/customers";
 import { listAlertsByCustomer } from "@/services/stock-alerts";
 import { listHoldsByCustomer } from "@/services/stock-holds";
+import { getStyleProfileByCustomer } from "@/services/style-profiles";
+import { StyleProfileCard } from "@/components/admin/style-profile-card";
+import { forgetStyleProfileAdminAction } from "./style-actions";
 import { HoldsAndAlerts } from "@/components/admin/holds-and-alerts";
 import { cancelAlertAction, releaseHoldAction } from "../../estoque/[variantId]/hold-actions";
 import { Badge } from "@/components/ui/badge";
@@ -71,9 +74,10 @@ export default async function CustomerDetailPage({
     throw error;
   }
 
-  const [holds, alerts] = await Promise.all([
+  const [holds, alerts, styleProfile] = await Promise.all([
     listHoldsByCustomer(db, { customerId: detail.id, phoneE164: detail.phoneE164 }),
     listAlertsByCustomer(db, { customerId: detail.id, phoneE164: detail.phoneE164 }),
+    getStyleProfileByCustomer(db, { customerId: detail.id, phoneE164: detail.phoneE164 }),
   ]);
 
   return (
@@ -185,6 +189,10 @@ export default async function CustomerDetailPage({
                 <AddressForm customerId={detail.id} />
               </div>
             </details>
+          </Card>
+
+          <Card title="Cartela de estilo">
+            <StyleProfileCard profile={styleProfile} customerId={detail.id} forgetAction={forgetStyleProfileAdminAction} />
           </Card>
 
           <Card title="Reservas gentis e avisos de “voltou”">

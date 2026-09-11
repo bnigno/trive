@@ -124,6 +124,11 @@ export function ContextPanel({
       ) : null}
 
       <Section title="Caderninho">
+        {context?.style ? (
+          <p className="mb-2 rounded-md bg-rose-300/30 px-2.5 py-1.5 text-xs text-ink-800 dark:bg-ink-800 dark:text-ivory-100">
+            🎨 Cartela: {context.style}
+          </p>
+        ) : null}
         {context && context.notes.length > 0 ? (
           <ul className="flex flex-col gap-1">
             {context.notes.map((note) => (

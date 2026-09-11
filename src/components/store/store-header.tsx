@@ -54,6 +54,9 @@ export function StoreHeader({ storeName }: { storeName: string }) {
           <Link href="/produtos" className={navLink}>
             Coleção
           </Link>
+          <Link href="/estilo" className={cx(navLink, "max-md:hidden")}>
+            Sua cartela
+          </Link>
         </nav>
 
         <div className="ml-auto flex items-center gap-1 sm:gap-3">

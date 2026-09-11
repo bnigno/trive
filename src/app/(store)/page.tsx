@@ -11,6 +11,7 @@ import { Monogram, markSrcSet } from "@/components/store/brand/monogram";
 import { Tagline } from "@/components/store/brand/tagline";
 import { Wordmark } from "@/components/store/brand/wordmark";
 import { CategoryCover } from "@/components/store/category-cover";
+import { EditionForYou } from "@/components/store/edition-for-you";
 import { HeroSentinel } from "@/components/store/hero-sentinel";
 import {
   IconArrowRight,
@@ -280,6 +281,9 @@ export default async function HomePage() {
                     ))}
                   </div>
                 </section>
+
+                {/* 3b. A edição para você (ilha cliente; a home segue estática) */}
+                <EditionForYou />
 
                 {/* 4. As Salas */}
                 {categories.length > 0 ? (
