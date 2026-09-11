@@ -100,6 +100,13 @@ import {
   type CardRenderer,
 } from "@/services/bot-cards";
 import { getSettingsMap } from "@/services/settings";
+import { listOpenAlertsByPhone, requestStockAlert } from "@/services/stock-alerts";
+import {
+  createStockHold,
+  getActiveHoldByPhone,
+  HoldError,
+  releaseStockHold,
+} from "@/services/stock-holds";
 import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN } from "@/services/wa-media";
 import {
   computeTotalWeightGrams,
@@ -908,7 +915,7 @@ async function execDetalharProduto(
   lines.push(...formatVariantLines(detail.variants, axes));
   if (detail.variants.every((variant) => variant.availableQty === 0)) {
     lines.push(
-      "Atenção: esta peça está esgotada no momento. Ofereça outra parecida do catálogo ou anote (anotar + avisar_dono) para avisar quando voltar.",
+      "Atenção: esta peça está esgotada no momento. Ofereça outra parecida do catálogo ou avisar_quando_voltar (UMA mensagem quando voltar) — não avise o dono.",
     );
   }
   if (photoEmitted) {
@@ -1001,7 +1008,7 @@ async function execAdicionarASacola(
       ok: false,
       text:
         available === 0
-          ? `${rotulo} está esgotada agora. Ofereça outra cor ou tamanho disponível (detalhar_produto) ou anote para avisar quando voltar.`
+          ? `${rotulo} está esgotada agora. Ofereça outra cor ou tamanho disponível (detalhar_produto) ou avisar_quando_voltar com este SKU.`
           : `${rotulo} tem só ${available} ${available === 1 ? "unidade" : "unidades"} disponível — pedi ${input.quantidade}. Ajuste a quantidade com a cliente.`,
     };
   }
@@ -1719,6 +1726,109 @@ async function execAvisarDono(
   };
 }
 
+/** Combinação pelo SKU exato (sem caixa), com o rótulo para a resposta. */
+async function findVariantForBot(
+  db: DbOrTx,
+  sku: string,
+): Promise<{ id: string; sku: string; label: string } | null> {
+  const [row] = await db
+    .select({
+      id: productVariants.id,
+      sku: productVariants.sku,
+      attributes: productVariants.attributes,
+      productName: products.name,
+      attributesSchema: products.attributesSchema,
+    })
+    .from(productVariants)
+    .innerJoin(products, eq(products.id, productVariants.productId))
+    .where(and(ilike(productVariants.sku, sku.trim()), isNull(productVariants.deletedAt)))
+    .limit(1);
+  if (!row) return null;
+  const axes = Array.isArray(row.attributesSchema) ? (row.attributesSchema as string[]) : [];
+  const label = variantLabel((row.attributes ?? {}) as Record<string, string>, axes);
+  return { id: row.id, sku: row.sku, label: `${row.productName}${label ? ` (${label})` : ""}` };
+}
+
+async function execReservarPeca(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["reservar_peca"],
+): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+  const variant = await findVariantForBot(db, input.sku);
+  if (!variant) {
+    return { ok: false, text: `SKU "${input.sku}" não encontrado. Use o SKU exato devolvido por detalhar_produto.` };
+  }
+  try {
+    const hold = await createStockHold(db, {
+      variantId: variant.id,
+      phoneE164: ctx.phoneE164,
+      customerId: ctx.customerId,
+      conversationId: ctx.conversationId,
+      quantity: input.quantidade ?? 1,
+      createdBy: "lia",
+    });
+    return {
+      ok: true,
+      text: `Reserva feita: ${hold.description}. Diga à cliente até quando a peça fica guardada e que, passado o prazo, ela volta para a vitrine. Para fechar, siga o caminho normal (sacola → frete → pedido): o pedido converte a reserva sozinho.`,
+    };
+  } catch (error) {
+    if (error instanceof HoldError) return { ok: false, text: error.message };
+    throw error;
+  }
+}
+
+async function execLiberarReserva(db: DbOrTx, ctx: BotExecutorContext): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+  const hold = await getActiveHoldByPhone(db, ctx.phoneE164);
+  if (!hold) return { ok: true, text: "Esta cliente não tem reserva ativa no momento." };
+  await releaseStockHold(db, { holdId: hold.id, reason: "released" });
+  return { ok: true, text: `Reserva liberada: ${hold.description}. A peça voltou para a vitrine.` };
+}
+
+async function execAvisarQuandoVoltar(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["avisar_quando_voltar"],
+): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+  const variant = await findVariantForBot(db, input.sku);
+  if (!variant) {
+    return { ok: false, text: `SKU "${input.sku}" não encontrado. Use o SKU exato devolvido por detalhar_produto.` };
+  }
+  const result = await requestStockAlert(db, {
+    variantId: variant.id,
+    phoneE164: ctx.phoneE164,
+    customerId: ctx.customerId,
+    conversationId: ctx.conversationId,
+    source: "lia",
+  });
+  return {
+    ok: true,
+    text: result.created
+      ? `Aviso registrado para ${variant.label}. Diga à cliente que ela recebe UMA mensagem quando a peça voltar — sem prometer data.`
+      : `A cliente já tinha pedido aviso para ${variant.label}. Confirme que está registrado, sem prometer data.`,
+  };
+}
+
+/** Linhas do caderninho que moram em tabela própria (reserva ativa, avisos). */
+async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<string[]> {
+  const [hold, alerts] = await Promise.all([
+    getActiveHoldByPhone(db, phoneE164),
+    listOpenAlertsByPhone(db, phoneE164),
+  ]);
+  const lines: string[] = [];
+  if (hold) lines.push(`Reserva ativa (gentil): ${hold.description}`);
+  if (alerts.length > 0) {
+    lines.push(
+      `Avisos pedidos (quando voltar): ${alerts
+        .map((alert) => `${alert.productName}${alert.variantLabel ? ` (${alert.variantLabel})` : ""}`)
+        .join(", ")}`,
+    );
+  }
+  return lines;
+}
+
 async function execAnotar(
   db: DbOrTx,
   ctx: BotExecutorContext,
@@ -1832,6 +1942,12 @@ export function buildToolExecutor(
           ctx,
           parsed.data as BotToolInputs["avisar_dono"],
         );
+      case "reservar_peca":
+        return execReservarPeca(db, ctx, parsed.data as BotToolInputs["reservar_peca"]);
+      case "liberar_reserva":
+        return execLiberarReserva(db, ctx);
+      case "avisar_quando_voltar":
+        return execAvisarQuandoVoltar(db, ctx, parsed.data as BotToolInputs["avisar_quando_voltar"]);
       case "montar_look":
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":
@@ -1888,8 +2004,9 @@ export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle>
 export function assembleHistory(
   state: BotState,
   messages: BotChatMessage[],
+  extras: { lines?: readonly string[] } = {},
 ): BotChatMessage[] {
-  const note = renderContextNote(state);
+  const note = renderContextNote(state, extras);
   return note ? [{ role: "user", text: note }, ...messages] : messages;
 }
 
@@ -2004,7 +2121,9 @@ export async function runBotTurn(
       };
     });
     const state = parseBotState(conversation.botState);
-    const history = assembleHistory(state, messages);
+    const history = assembleHistory(state, messages, {
+      lines: await loadMemoryLines(tx, conversation.phoneE164),
+    });
 
     const { system, model } = await buildBotPromptBundle(tx);
 

@@ -9,6 +9,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { sendGiftNoteWa } from "@/services/gifts";
+import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
@@ -132,6 +133,9 @@ const emailSendPayloadSchema = z.object({
 // raw: true envia o corpo como está — avisos do sistema (ex.: transferência
 // do bot) já chegam formatados e não são "fala de cliente".
 const waTranscribePayloadSchema = z.object({ waMessageId: z.uuid() });
+
+const stockRestockedPayloadSchema = z.object({ variantId: z.uuid(), movementId: z.uuid() });
+const restockNotifyPayloadSchema = z.object({ alertId: z.uuid(), movementId: z.uuid() });
 
 const digestDailyPayloadSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -391,6 +395,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "order.canceled": async () => {},
   // Estoque cruzou o limiar para baixo → aviso interno ao dono (sem opt-in).
   // Busca nome/SKU/disponível na hora do envio (o payload pode estar velho).
+  // Peça voltou: um evento por aviso aberto, escalonado na janela de envio.
+  "stock.restocked": async (event) => {
+    const payload = stockRestockedPayloadSchema.parse(event.payload);
+    const result = await fanOutRestockAlerts(getDb(), payload);
+    console.info(`[stock.restocked] ${payload.variantId} → ${JSON.stringify(result)}`);
+  },
+  // UMA mensagem para quem pediu o aviso (foto + texto), dentro da janela.
+  "wa.restock_notify": async (event) => {
+    const payload = restockNotifyPayloadSchema.parse(event.payload);
+    const result = await notifyRestockAlert(getDb(), getMessagingProvider(), payload);
+    console.info(`[wa.restock_notify] ${payload.alertId} → ${JSON.stringify(result)}`);
+  },
   "stock.low": async (event) => {
     const db = getDb();
     if (!(await isWaEnabled(db))) return;

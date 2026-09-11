@@ -18,6 +18,9 @@ export const BOT_TOOL_NAMES = [
   "status_do_pedido",
   "enviar_chave_pix",
   "avisar_dono",
+  "reservar_peca",
+  "liberar_reserva",
+  "avisar_quando_voltar",
   "montar_look",
   "anotar",
   "transferir_para_atendente",
@@ -79,6 +82,9 @@ export type BotToolInputs = {
   status_do_pedido: { numero_do_pedido?: number };
   enviar_chave_pix: { numero_do_pedido?: number };
   avisar_dono: { mensagem: string };
+  reservar_peca: { sku: string; quantidade?: number };
+  liberar_reserva: Record<string, never>;
+  avisar_quando_voltar: { sku: string };
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
   transferir_para_atendente: { motivo: string; resumo?: string };
@@ -386,7 +392,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "avisar_dono",
     description:
-      "Envia um aviso interno ao dono da loja. Use APENAS para fatos que exigem ação dele — ex.: cliente informa que fez o Pix; cliente quer ser avisada quando uma peça esgotada voltar. Nunca para conversa comum.",
+      "Envia um aviso interno ao dono da loja. Use APENAS para fatos que exigem ação dele — ex.: cliente informa que fez o Pix. Peça esgotada NÃO é caso de aviso ao dono: use avisar_quando_voltar. Nunca para conversa comum.",
     input_schema: {
       type: "object",
       properties: {
@@ -399,6 +405,43 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         },
       },
       required: ["mensagem"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "reservar_peca",
+    description:
+      "Segura UMA combinação (SKU) para esta cliente por um prazo curto (padrão 24 h), sem pedido — a reserva gentil. Só chame quando ELA pedir para guardar/segurar a peça, com a combinação já confirmada por detalhar_produto. Vale uma reserva ativa por cliente e no máximo 2 unidades. A resposta diz até quando vale: repita esse prazo para ela.",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: skuProperty,
+        quantidade: {
+          type: "integer",
+          minimum: 1,
+          maximum: 2,
+          default: 1,
+          description: "1 ou 2 unidades.",
+        },
+      },
+      required: ["sku"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "liberar_reserva",
+    description:
+      "Libera a reserva gentil ativa desta cliente (ela desistiu ou quer guardar outra peça). Sem parâmetros.",
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
+  {
+    name: "avisar_quando_voltar",
+    description:
+      "Registra que a cliente quer receber UMA mensagem no WhatsApp quando uma combinação esgotada (SKU) voltar ao estoque. Só com o sim dela. É o caminho certo para peça esgotada (não avise o dono).",
+    input_schema: {
+      type: "object",
+      properties: { sku: skuProperty },
+      required: ["sku"],
       additionalProperties: false,
     },
   },
@@ -582,6 +625,14 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   }),
   avisar_dono: z.strictObject({
     mensagem: z.string().min(1).max(300),
+  }),
+  reservar_peca: z.strictObject({
+    sku: z.string().min(1),
+    quantidade: z.number().int().min(1).max(2).default(1),
+  }),
+  liberar_reserva: z.strictObject({}),
+  avisar_quando_voltar: z.strictObject({
+    sku: z.string().min(1),
   }),
   montar_look: z.strictObject({
     produto: z.string().min(1),

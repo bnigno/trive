@@ -7,6 +7,10 @@ import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
 import { ServiceError } from "@/services/catalog";
 import { getCustomerDetail } from "@/services/customers";
+import { listAlertsByCustomer } from "@/services/stock-alerts";
+import { listHoldsByCustomer } from "@/services/stock-holds";
+import { HoldsAndAlerts } from "@/components/admin/holds-and-alerts";
+import { cancelAlertAction, releaseHoldAction } from "../../estoque/[variantId]/hold-actions";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -66,6 +70,11 @@ export default async function CustomerDetailPage({
     }
     throw error;
   }
+
+  const [holds, alerts] = await Promise.all([
+    listHoldsByCustomer(db, { customerId: detail.id, phoneE164: detail.phoneE164 }),
+    listAlertsByCustomer(db, { customerId: detail.id, phoneE164: detail.phoneE164 }),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -176,6 +185,16 @@ export default async function CustomerDetailPage({
                 <AddressForm customerId={detail.id} />
               </div>
             </details>
+          </Card>
+
+          <Card title="Reservas gentis e avisos de “voltou”">
+            <HoldsAndAlerts
+              holds={holds}
+              alerts={alerts}
+              back={`/admin/clientes/${detail.id}`}
+              releaseAction={releaseHoldAction}
+              cancelAction={cancelAlertAction}
+            />
           </Card>
 
           <Card title="Últimos pedidos">

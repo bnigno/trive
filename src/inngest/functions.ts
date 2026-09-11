@@ -9,6 +9,7 @@ import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { yesterdaySpDayKey } from "@/services/daily-digest";
 import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
+import { expireOverdueHolds, remindExpiringHolds } from "@/services/stock-holds";
 import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
 import { checkSessionAndAlert } from "@/services/wa-session";
@@ -64,6 +65,20 @@ export const reservationExpiry = inngest.createFunction(
   { id: "reservation-expiry", triggers: [{ cron: "*/10 * * * *" }] },
   async () => {
     return expireOverdueReservations(getDb());
+  },
+);
+
+// Reserva gentil: devolve ao estoque as reservas vencidas e manda o lembrete
+// único 2 h antes de vencer (só com opt-in; nunca lança por skip).
+export const holdExpiry = inngest.createFunction(
+  { id: "hold-expiry", triggers: [{ cron: "*/10 * * * *" }] },
+  async () => {
+    const db = getDb();
+    const expired = await expireOverdueHolds(db);
+    const reminded = (await isWaEnabled(db))
+      ? await remindExpiringHolds(db, getMessagingProvider())
+      : { reminded: 0, skipped: 0 };
+    return { ...expired, ...reminded };
   },
 );
 
@@ -139,6 +154,7 @@ export const functions = [
   outboxSweep,
   outboxKick,
   reservationExpiry,
+  holdExpiry,
   mpReconciliation,
   waSessionMonitor,
   waRecovery,

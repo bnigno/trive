@@ -17,6 +17,7 @@ export {
 } from "./pricing";
 export { orderItems, orders, orderStatusHistory } from "./orders";
 export { stockLevels, stockMovements } from "./stock";
+export { stockAlerts, stockHolds } from "./holds";
 export { suppliers } from "./suppliers";
 export { financialEntries } from "./financial";
 export { shippingRates } from "./shipping";

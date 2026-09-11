@@ -12,6 +12,8 @@ import { findColorAxis } from "@/core/catalog/product-images";
 import { formatCentsBRL } from "@/lib/money";
 import type { PublicVariant } from "@/services/store-catalog";
 
+import { RestockAlertForm } from "./restock-alert-form";
+
 function Check() {
   return (
     <svg
@@ -80,6 +82,21 @@ export function VariantPicker({
     );
   }
 
+  // Combinação que EXISTE (mesmo esgotada) continua clicável: é assim que a
+  // cliente chega ao "me avisa quando voltar". Só o que não existe trava.
+  function isValueOffered(axis: string, value: string): boolean {
+    return variants.some(
+      (variant) =>
+        variant.attributes[axis] === value &&
+        axes.every(
+          (other) =>
+            other === axis ||
+            !selected[other] ||
+            variant.attributes[other] === selected[other],
+        ),
+    );
+  }
+
   const soldOut = matched ? matched.availableQty <= 0 : false;
   const lowStock = matched && matched.availableQty > 0 && matched.availableQty <= 3;
   const attributesLabel =
@@ -127,11 +144,13 @@ export function VariantPicker({
               {(valuesByAxis.get(axis) ?? []).map((value) => {
                 const isSelected = selected[axis] === value;
                 const enabled = isValueEnabled(axis, value);
+                const offered = isValueOffered(axis, value);
                 return (
                   <button
                     key={value}
                     type="button"
-                    disabled={!enabled && !isSelected}
+                    disabled={!offered && !isSelected}
+                    title={offered && !enabled ? "Esgotado — toque para pedir aviso" : undefined}
                     aria-pressed={isSelected}
                     onClick={() => onSelect(axis, value)}
                     className={cx(
@@ -144,7 +163,9 @@ export function VariantPicker({
                           : "border-ink-950 bg-ink-950 text-ivory-50"
                         : enabled
                           ? "border-ivory-400 bg-ivory-50 text-ink-700 hover:border-ink-900"
-                          : "cursor-not-allowed border-ivory-300 bg-transparent text-ink-300 line-through",
+                          : offered
+                            ? "border-ivory-300 bg-transparent text-ink-400 line-through hover:border-ink-500"
+                            : "cursor-not-allowed border-ivory-300 bg-transparent text-ink-300 line-through",
                     )}
                   >
                     {isSelected && isColor ? <Check /> : null}
@@ -158,9 +179,12 @@ export function VariantPicker({
       })}
 
       {matched && soldOut ? (
-        <p className="font-store text-sm font-medium text-ink-500">
-          Esgotado — esta variação está sem estoque no momento.
-        </p>
+        <div>
+          <p className="font-store text-sm font-medium text-ink-500">
+            Esgotado — esta variação está sem estoque no momento.
+          </p>
+          <RestockAlertForm variantId={matched.variantId} />
+        </div>
       ) : null}
       {matched && lowStock ? (
         <p className="font-store text-sm font-medium text-rose-700">

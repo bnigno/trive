@@ -669,6 +669,8 @@ describe("wa-conversations (onda 3)", () => {
       cart: [],
       lastOrderNumber: null,
       handoff: null,
+      hold: null,
+      alerts: [],
       recentOrders: [],
     });
     expect(tail?.activity).toEqual([]);

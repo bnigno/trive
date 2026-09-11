@@ -41,6 +41,11 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "owner_digest_enabled", value: true },
   { key: "bot_media_enabled", value: true },
   { key: "bot_cards_enabled", value: true },
+  { key: "wa_send_window_start", value: 9 },
+  { key: "wa_send_window_end", value: 21 },
+  { key: "wa_bulk_interval_seconds", value: 20 },
+  { key: "hold_ttl_hours", value: 24 },
+  { key: "drop_audience_limit", value: 60 },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca
@@ -165,6 +170,26 @@ const initialWaTemplates: Array<{
       "{{produto}} (SKU {{sku}})\n" +
       "Disponível: {{disponivel}}",
     variables: ["produto", "sku", "disponivel"],
+  },
+  {
+    // Reserva gentil: lembrete único 2 h antes de vencer; só com opt-in.
+    key: "hold_reminder",
+    label: "Reserva gentil (lembrete)",
+    bodyTemplate:
+      "{{nome}}, a {{produto}} continua guardada para você até {{prazo}} 🤎\n" +
+      "Quer fechar? Responda por aqui ou veja a peça: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "produto", "prazo", "link"],
+  },
+  {
+    // "Me avisa quando voltar": UMA mensagem quando a peça volta ao estoque.
+    key: "stock_back",
+    label: "Peça voltou (aviso pedido)",
+    bodyTemplate:
+      "{{nome}}, voltou! {{produto}} está de novo em estoque — e tem só {{quantidade}}.\n" +
+      "Veja por aqui: {{link}}\n" +
+      "Você pediu este aviso e ele é único. Para não receber outros, responda SAIR.",
+    variables: ["nome", "produto", "quantidade", "link"],
   },
   {
     key: "owner_queue_dead",

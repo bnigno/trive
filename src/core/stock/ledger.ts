@@ -115,3 +115,8 @@ export function movementsForTransition(
 export function isLowStock(level: StockLevel, threshold: number): boolean {
   return level.onHand - level.reserved <= threshold;
 }
+
+/** O disponível (em mãos − reservado) saiu de zero (ou menos) para positivo? */
+export function restockCrossed(before: StockLevel, after: StockLevel): boolean {
+  return before.onHand - before.reserved <= 0 && after.onHand - after.reserved > 0;
+}
