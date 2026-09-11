@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { FakeFileStorage } from "@/adapters/storage/fake";
 import type { CardData } from "@/core/cards/types";
 import * as schema from "@/db/schema";
+import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import {
   getProductPostFile,
@@ -131,6 +132,49 @@ describe("publishProductPost", () => {
       userId: FIXED_USER_ID,
     });
     expect(result.caption).toContain("a partir de");
+  });
+
+  it("peça em rascunho ou agendada não vira post (o link da legenda daria 404)", async () => {
+    const productId = await setupProduct();
+    await db.update(schema.products).set({ status: "draft" }).where(eq(schema.products.id, productId));
+    await expect(
+      publishProductPost(sdb, storage, render, { productId, userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/ainda não está na vitrine/);
+
+    await db
+      .update(schema.products)
+      .set({ status: "active", visibleFrom: new Date(Date.now() + 86_400_000) })
+      .where(eq(schema.products.id, productId));
+    await expect(
+      publishProductPost(sdb, storage, render, { productId, userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/ainda não apareceu na loja/);
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it("variação desativada não entra no preço do post", async () => {
+    const productId = await setupProduct();
+    const [barata] = await db
+      .insert(schema.productVariants)
+      .values({ productId, sku: "DUNAS-AREIA-P", attributes: { tamanho: "P" }, costCents: 9000, isActive: false })
+      .returning({ id: schema.productVariants.id });
+    await db.insert(schema.priceVersions).values({
+      productVariantId: barata.id,
+      versionNumber: 1,
+      status: "active",
+      priceCents: 9900,
+      origin: "initial",
+      breakdown: {},
+      costSnapshotCents: 9000,
+      computedMarginRate: "0.3000",
+      activatedAt: new Date(),
+    });
+    const result = await publishProductPost(sdb, storage, render, {
+      productId,
+      userId: FIXED_USER_ID,
+    });
+    // Só a variação vendável conta: nada de "a partir de" com o preço da inativa.
+    expect(result.caption).toContain(formatCentsBRL(28900));
+    expect(result.caption).not.toContain("a partir de");
   });
 
   it("peça sem foto ou sem preço não vira post — e diz o que falta", async () => {

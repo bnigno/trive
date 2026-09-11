@@ -103,7 +103,7 @@ export function cardFrameSize(
   }
   // Post e story: a peça ocupa a tela, com respiro para a faixa noir (≈223),
   // o título, o nome/preço da moldura e o rodapé — senão a arte sai cortada.
-  if (kind === "post") return { width: 570, height: 760 };
+  if (kind === "post") return { width: 540, height: 720 };
   if (kind === "story") return { width: 900, height: 1200 };
   if (count >= 3) return { width: 310, height: 413 };
   if (count === 2) return { width: 440, height: 587 };

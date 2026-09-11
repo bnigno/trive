@@ -48,7 +48,22 @@ async function loadBasis(db: DbOrTx, productId: string): Promise<PostBasis> {
       "Esta peça ainda não tem foto — o post é a foto. Suba uma foto e tente de novo.",
     );
   }
+  if (detail.status !== "active") {
+    throw new ServiceError(
+      "peca_nao_publicada",
+      "Esta peça ainda não está na vitrine — o link da legenda daria em página não encontrada. Publique a peça e volte aqui.",
+    );
+  }
+  if (detail.visibleFrom && detail.visibleFrom.getTime() > Date.now()) {
+    throw new ServiceError(
+      "peca_agendada",
+      "Esta peça ainda não apareceu na loja (tem data para entrar na vitrine). Espere a estreia ou tire a data e volte aqui.",
+    );
+  }
+  // Só variação vendável entra no preço: anunciar "a partir de" com variação
+  // desativada é prometer um valor que a loja não vende.
   const prices = detail.variants
+    .filter((variant) => variant.isActive)
     .map((variant) => variant.activePriceCents)
     .filter((price): price is number => price !== null);
   if (prices.length === 0) {
@@ -119,7 +134,12 @@ export async function publishProductPost(
   } catch (error) {
     // A causa quase sempre é a foto: arquivo que sumiu do Storage ou formato
     // que o recorte não abre. Dizer isso poupa a dona de tentar de novo à toa.
-    if (error instanceof Error && /storage|download|foto/i.test(error.message)) {
+    // Arquivo que sumiu do Storage, formato que o recorte não abre ou imagem
+    // corrompida: para a dona é tudo "a foto não serve".
+    if (
+      error instanceof Error &&
+      /storage|download|foto|image|unsupported|buffer|sharp/i.test(error.message)
+    ) {
       throw new ServiceError(
         "foto_indisponivel",
         "Não consegui abrir a foto desta peça para montar o post. Suba a foto de novo na tela da peça e tente outra vez.",

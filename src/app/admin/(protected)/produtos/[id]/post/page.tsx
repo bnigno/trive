@@ -5,6 +5,9 @@ import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { getFileStorage } from "@/adapters/storage";
 import { getDb } from "@/db/client";
+import { notFound } from "next/navigation";
+import { z } from "zod";
+
 import { requireUser } from "@/services/auth";
 import { getProductPostPreview } from "@/services/product-posts";
 import { ServiceError } from "@/services/settings";
@@ -24,14 +27,17 @@ export default async function PostDaPecaPage({
 }) {
   await requireUser();
   const { id } = await params;
+  if (!z.uuid().safeParse(id).success) notFound();
 
   let preview;
   let blocked: string | null = null;
   try {
     preview = await getProductPostPreview(getDb(), getFileStorage(), id);
   } catch (error) {
-    if (error instanceof ServiceError) blocked = error.message;
-    else throw error;
+    if (error instanceof ServiceError) {
+      if (error.code === "nao_encontrado") notFound();
+      blocked = error.message;
+    } else throw error;
   }
 
   return (
