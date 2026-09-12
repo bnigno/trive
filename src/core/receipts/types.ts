@@ -53,6 +53,10 @@ export function normalizeReceiptText(value: string): string {
       .replace(/[\u2010\u2011]/g, "-")
       .replace(/\u2032/g, "'")
       .replace(/\u2033/g, '"')
+      .replace(/[\u201e\u201f]/g, '"')
+      .replace(/\u2039/g, "'")
+      .replace(/\u203a/g, "'")
+      .replace(/\u2030/g, "%")
       // Símbolos que uma ficha usa ("30°C", "R$", "2+1", "×", "%") ficam.
       .replace(/[^\p{Script=Latin}\p{N}\p{P}\p{Zs}°$+×%]/gu, "")
       .replace(/\s{2,}/g, " ")

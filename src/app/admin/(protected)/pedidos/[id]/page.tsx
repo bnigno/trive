@@ -29,6 +29,7 @@ import { OrderMarginCard } from "./margin-card";
 import { OrderActions } from "./order-actions";
 import { PackForm } from "./pack-form";
 import { giftNoteUrl } from "@/services/gifts";
+import { editionCardsStaleByOrder } from "@/services/edition-cards";
 import { packagePhotoUrl } from "@/services/packing";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +61,8 @@ export default async function PedidoDetalhePage({
   const db = getDb();
   const order = await getOrderDetail(db, id);
   if (!order) notFound();
+  // Os cartões gerados ficaram velhos? (a mesma régua da tela dos cartões)
+  const editionCardsStale = (await editionCardsStaleByOrder(db, [order])).get(order.id) ?? false;
 
   const status = order.status as OrderStatus;
   // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
@@ -389,7 +392,7 @@ export default async function PedidoDetalhePage({
                   }
                   packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
                 />
-                <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} />
+                <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} />
               </div>
             </Card>
           ) : order.packagePhotoPath && order.packedAt ? (
@@ -404,7 +407,7 @@ export default async function PedidoDetalhePage({
               </p>
               {order.editionCardsAt ? (
                 <div className="mt-3">
-                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} />
+                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} />
                 </div>
               ) : null}
             </Card>
@@ -425,18 +428,22 @@ export default async function PedidoDetalhePage({
   );
 }
 
-/** O cartão de bolso que vai na caixa: "Gerar" antes, "Imprimir" depois. */
-function EditionCardsLink({ orderId, generatedAt }: { orderId: string; generatedAt: Date | null }) {
+/** O cartão de bolso que vai na caixa: "Gerar" antes, "Imprimir" depois — e "gerar de novo" se ficou velho. */
+function EditionCardsLink({ orderId, generatedAt, stale }: { orderId: string; generatedAt: Date | null; stale: boolean }) {
   return (
     <p className="text-sm text-zinc-600 dark:text-zinc-400">
       <Link
         href={`/admin/pedidos/${orderId}/cartoes`}
         className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
       >
-        {generatedAt ? "Imprimir cartões da edição" : "Gerar cartões da edição"}
+        {generatedAt ? (stale ? "Gerar de novo os cartões da edição" : "Imprimir cartões da edição") : "Gerar cartões da edição"}
       </Link>
       {generatedAt ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400"> · gerados em {formatDateTimeSP(generatedAt)}</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {" · gerados em "}
+          {formatDateTimeSP(generatedAt)}
+          {stale ? " · a ficha ou a nota mudou depois" : ""}
+        </span>
       ) : (
         <span className="text-xs text-zinc-500 dark:text-zinc-400"> · um cartão de bolso por peça, com a frase da curadora e o QR</span>
       )}

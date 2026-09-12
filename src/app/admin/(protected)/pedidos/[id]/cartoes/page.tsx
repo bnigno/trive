@@ -9,7 +9,6 @@ import { z } from "zod";
 
 import { getFileStorage } from "@/adapters/storage";
 import { PrintButton } from "@/components/admin/print-button";
-import { EDITION_CURATOR_MAX } from "@/core/edition/text";
 import { getDb } from "@/db/client";
 import { isOwner, requireUser } from "@/services/auth";
 import { getEditionCards, ServiceError } from "@/services/edition-cards";
@@ -50,26 +49,60 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
   }
   const owner = await isOwner();
   const generated = cards.at !== null;
-  const warnings: string[] = [];
+  const hasCards = cards.cards.length > 0;
+  const warnings: { key: string; text: string }[] = [];
   if (generated && cards.stale) {
-    warnings.push("A ficha ou a nota de uma peça mudou depois dos cartões — gere de novo antes de imprimir.");
+    warnings.push({
+      key: "stale",
+      text: "O que sai no cartão mudou depois da geração (ficha, nota, nome da edição ou presente) — gere de novo antes de imprimir.",
+    });
   }
-  if (cards.isGift) {
-    warnings.push("Pedido presente: o QR dos cartões leva à página inicial da loja, não à peça com preço.");
+  if (cards.isGift && hasCards) {
+    warnings.push({
+      key: "gift",
+      text: "Pedido presente: o QR dos cartões leva à página inicial da loja, não à peça com preço.",
+    });
   }
   for (const card of cards.cards) {
-    if (!card.publicPage) {
-      warnings.push(`A página de “${card.name}” está fora do ar (peça arquivada, excluída ou ainda escondida): o QR daria página não encontrada.`);
+    // Presente: o QR nem aponta para a peça, então a página dela não importa.
+    if (!cards.isGift && card.publicPage === "agendada" && card.visibleFrom) {
+      warnings.push({
+        key: `${card.productId}:pagina`,
+        text: `A página de “${card.name}” só entra no ar em ${formatDateTimeSP(card.visibleFrom)}: até lá o QR daria página não encontrada.`,
+      });
+    } else if (!cards.isGift && card.publicPage === "fora_do_ar") {
+      warnings.push({
+        key: `${card.productId}:pagina`,
+        text: `A página de “${card.name}” está fora do ar (peça arquivada, excluída ou rascunho): o QR daria página não encontrada.`,
+      });
     }
     if (card.curatorTruncated) {
-      warnings.push(`A frase da curadora de “${card.name}” não coube inteira (o cartão usa até ${EDITION_CURATOR_MAX} caracteres): sai até o fim da última frase que cabe.`);
+      warnings.push({
+        key: `${card.productId}:curadora`,
+        text: `A frase da curadora de “${card.name}” não coube inteira (cabem umas cinco linhas): sai até o fim da última frase que cabe.`,
+      });
+    }
+    if (card.wearTruncated) {
+      warnings.push({
+        key: `${card.productId}:veste`,
+        text: `O “como veste” de “${card.name}” não coube inteiro (cabem umas três linhas): sai cortado com reticências.`,
+      });
     }
     if (card.careTruncated) {
-      warnings.push(`Os cuidados de “${card.name}” não couberam inteiros: o texto escrito fica, e sobram só os pictogramas que cabem.`);
+      warnings.push({
+        key: `${card.productId}:cuidados`,
+        text: `Os cuidados escritos de “${card.name}” não couberam inteiros (cabem umas três linhas): saem cortados.`,
+      });
+    }
+    if (card.careSymbolsDropped > 0) {
+      warnings.push({
+        key: `${card.productId}:pictogramas`,
+        text: `Em “${card.name}”, ${card.careSymbolsDropped === 1 ? "um pictograma de cuidado ficou" : `${card.careSymbolsDropped} pictogramas de cuidado ficaram`} de fora do cartão por falta de espaço.`,
+      });
     }
   }
   for (const skip of cards.skipped) {
-    warnings.push(`“${skip.name}” não é peça de roupa: fica sem cartão.`);
+    warnings.push({ key: `${skip.productId}:sem-cartao`, text: `“${skip.name}” não é peça de roupa: fica sem cartão.` });
   }
 
   return (
@@ -86,16 +119,18 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
             {generated && cards.at ? ` Gerados em ${formatDateTimeSP(cards.at)}.` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <CardsForm orderId={id} generated={generated} stale={cards.stale} />
-          {generated ? <PrintButton label="Imprimir cartões" /> : null}
-        </div>
+        {hasCards ? (
+          <div className="flex items-center gap-3">
+            <CardsForm orderId={id} generated={generated} stale={cards.stale} />
+            {generated ? <PrintButton label="Imprimir cartões" /> : null}
+          </div>
+        ) : null}
       </div>
 
       {warnings.length > 0 ? (
         <ul className="mb-6 flex flex-col gap-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 print:hidden dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
           {warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
+            <li key={warning.key}>{warning.text}</li>
           ))}
         </ul>
       ) : null}

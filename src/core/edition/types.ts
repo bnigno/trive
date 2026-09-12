@@ -16,6 +16,8 @@ export interface EditionCardData {
   careNote: string;
   /** O que o QR abre: a página da peça — ou a home, quando o pedido é presente. */
   qrUrl: string;
+  /** Muda o convite ao lado do QR: "veja a peça" ou "conheça a maison". */
+  qrTarget: "peca" | "home";
   /** O que sai escrito sob o QR: só o domínio ("trivemaison.com.br"). */
   printedAddress: string;
 }

@@ -7,28 +7,49 @@
 import { CARE_SYMBOLS, parseCareNotes } from "@/core/catalog/care";
 import { isNotClothing } from "@/core/catalog/family";
 import { fold } from "@/core/catalog/product-images";
-
-/** A frase da curadora: há espaço para umas quatro linhas em itálico. */
-export const EDITION_CURATOR_MAX = 320;
-/** Cada quadro pequeno ("Como vestir", "Cuidados"): cabe em três linhas. */
-export const EDITION_NOTE_MAX = 170;
+import { normalizeReceiptText } from "@/core/receipts/types";
 
 /**
- * Só o que as fontes embutidas desenham: latino, números, pontuação, espaço
- * e uns poucos símbolos que uma ficha usa ("30°C", "R$", "2+1", "×", "%").
- * Emoji e o resto fariam o desenho buscar fonte pela rede.
+ * Os tetos são em UNIDADES DE LARGURA, não em caracteres: uma minúscula vale
+ * 1, uma maiúscula 1,3 (é mais larga na fonte), espaço e pontuação 0,45.
+ * Assim uma ficha em CAIXA ALTA é cortada antes de estourar a altura do
+ * cartão — o desenho tem lugar para ~5 linhas de frase e ~3 por quadro.
  */
-const NOT_PRINTABLE = /[^\p{Script=Latin}\p{N}\p{P}\p{Zs}°$+×%]/gu;
+export const EDITION_CURATOR_MAX = 300;
+/** Cada quadro pequeno ("Como veste", "Cuidados"): três linhas de 30 px. */
+export const EDITION_NOTE_MAX = 165;
+/** O nome da peça: duas linhas de título. */
+export const EDITION_TITLE_MAX = 60;
+
+/** Largura estimada do texto, na régua dos tetos acima. */
+export function textWidthUnits(text: string): number {
+  let units = 0;
+  for (const char of text) {
+    if (/[\p{Lu}]/u.test(char)) units += 1.3;
+    else if (/[\p{Ll}\p{N}]/u.test(char)) units += 1;
+    else units += 0.45;
+  }
+  return units;
+}
+
+/** Quantos caracteres cabem em `maxUnits`, do início do texto. */
+function charsWithinUnits(text: string, maxUnits: number): number {
+  let units = 0;
+  let index = 0;
+  for (const char of text) {
+    const next = units + (/[\p{Lu}]/u.test(char) ? 1.3 : /[\p{Ll}\p{N}]/u.test(char) ? 1 : 0.45);
+    if (next > maxUnits) break;
+    units = next;
+    index += char.length;
+  }
+  return index;
+}
 
 function cleanLine(raw: string): string {
-  return raw
-    .normalize("NFC")
-    .replace(/[\t\f\v]+/g, " ")
-    .replace(NOT_PRINTABLE, "")
-    .replace(/\s{2,}/g, " ")
-    // "Linho puro , respira." depois de tirar um emoji: cola a pontuação.
-    .replace(/\s+([,.;:!?…])/g, "$1")
-    .trim();
+  // A mesma régua do desenho (normalizeReceiptText): NFC, traços e aspas
+  // tipográficos, só o que as fontes embutidas têm — contada aqui para o
+  // teto valer sobre o texto que de fato sai.
+  return normalizeReceiptText(raw.replace(/[\t\f\v]+/g, " "));
 }
 
 /** As linhas limpas de um texto, sem as vazias. */
@@ -56,15 +77,17 @@ export type FittedNote = { text: string | null; truncated: boolean };
  * cabe (". ! ?"), sem reticências; se nenhuma frase cabe, na última palavra,
  * com reticências. Nunca termina em "·", "—" ou outra pontuação solta.
  */
-function fitText(text: string, max: number): FittedNote {
-  if (text.length <= max) return { text, truncated: false };
-  const room = text.slice(0, max);
+function fitText(text: string, maxUnits: number): FittedNote {
+  if (textWidthUnits(text) <= maxUnits) return { text, truncated: false };
+  const roomChars = charsWithinUnits(text, maxUnits);
+  const room = text.slice(0, roomChars);
   // Uma frase inteira que ocupe ao menos um quarto do quadro vale mais do
   // que uma frase e meia com reticências.
   const sentenceEnd = Math.max(room.lastIndexOf(". "), room.lastIndexOf("! "), room.lastIndexOf("? "));
-  if (sentenceEnd >= max / 4) return { text: room.slice(0, sentenceEnd + 1), truncated: true };
-  const lastSpace = room.slice(0, max - 1).lastIndexOf(" ");
-  const cut = lastSpace > max / 2 ? room.slice(0, lastSpace) : room.slice(0, max - 1);
+  if (sentenceEnd >= roomChars / 4) return { text: room.slice(0, sentenceEnd + 1), truncated: true };
+  const roomForEllipsis = room.slice(0, Math.max(0, roomChars - 1));
+  const lastSpace = roomForEllipsis.lastIndexOf(" ");
+  const cut = lastSpace > roomChars / 2 ? roomForEllipsis.slice(0, lastSpace) : roomForEllipsis;
   return { text: `${cut.replace(/[\p{P}\p{S}\s]+$/u, "")}…`, truncated: true };
 }
 
@@ -79,9 +102,29 @@ export function fitEditionNote(
   options: { quotes?: boolean } = {},
 ): FittedNote {
   const lines = cleanLines(value);
-  const joined = options.quotes ? stripQuotes(lines.join(" ")) : lines.join(" · ");
+  const joined = options.quotes
+    ? // Parágrafos da nota viram frases: o que não termina em pontuação ganha ponto.
+      lines
+        .map(stripQuotes)
+        .filter((line) => line !== "")
+        .map((line) => (/[.!?…:;,—-]$/.test(line) ? line : `${line}.`))
+        .join(" ")
+    : lines.join(" · ");
   if (joined === "" || !hasWords(joined)) return { text: null, truncated: false };
   return fitText(joined, max);
+}
+
+/** O nome da peça no título: até duas linhas; mais que isso corta na palavra. */
+export function fitEditionTitle(name: string): string {
+  const clean = cleanLine(name);
+  return fitText(clean, EDITION_TITLE_MAX).text ?? clean;
+}
+
+/** O convite ao lado do QR, conforme o destino dele. */
+export function editionInvite(qrTarget: "peca" | "home"): string {
+  return qrTarget === "peca"
+    ? "Veja a peça, a ficha e a nossa conversa."
+    : "Conheça a maison e fale com a curadora.";
 }
 
 /** Só o texto, para quem não precisa do aviso de corte. */
@@ -109,13 +152,13 @@ export type EditionFamily =
 const FAMILY_HINTS: [Exclude<EditionFamily, "geral" | "nenhuma">, RegExp][] = [
   [
     "acessorio",
-    /acessor|bijut|bolsa|tote|clutch|mochila|carteira|necessaire|brinc|colar|pulseir|anel\b|lenco|echarpe|cachecol|chapeu|bone\b|cinto|oculos|meia\b|meias\b|calcad|sandal|sapat|tenis|rasteir|mule\b|bota\b|chinel|scarpin/,
+    /acessor|bijut|\bbolsas?\b|\btote\b|clutch|mochila|carteira|necessaire|\bbrincos?\b|\bcolar(es)?\b|pulseir|\banel\b|\blencos?\b|echarpe|cachecol|chapeu|\bbone\b|\bcintos?\b|oculos|\bmeias?\b|calcad|sandal|sapat|\btenis\b|rasteir|\bmule\b|\bbotas?\b|chinel|scarpin/,
   ],
   ["sobreposicao", /kimono|jaquet|casaco|blazer|cardig|colete|parka|trench|sobretudo/],
   ["conjunto", /conjunt|macac/],
   ["saia", /\bsaias?\b/],
   ["calca", /\bcalcas?\b|\bjeans\b|pantalon|\bshorts?\b|bermud|legging/],
-  ["blusa", /blus|camis|cropp|baby ?look|regat|\btop\b|\bbody\b|tricot|malha|moletom|sueter|t-shirt/],
+  ["blusa", /\bblus|\bcamis(a|eta|ete)s?\b|cropp|baby ?look|regat|\btop\b|\bbody\b|\btricot\b|\bmalha\b|moletom|sueter|t-shirt/],
   ["vestido", /vestid|\blongo\b|\bmidi\b|\bcurto\b/],
 ];
 
@@ -127,9 +170,33 @@ function familyFrom(text: string): EditionFamily | null {
   return null;
 }
 
+/**
+ * A peça vem na frente do nome ("Vestido Áurea", "Saia Lua", "Blusa com
+ * Colar"): a primeira palavra decide. "Conjunto" não entra aqui de propósito:
+ * "Conjunto colar e brinco" é acessório, e isso a lista geral resolve.
+ */
+const FIRST_WORD_HINTS: [Exclude<EditionFamily, "geral" | "nenhuma">, RegExp][] = [
+  ["vestido", /^vestid/],
+  ["blusa", /^(blus|camis(a|eta|ete)s?$|cropp|regat|top|body|tricot|moletom|sueter|t-shirt|baby)/],
+  ["saia", /^saia/],
+  ["calca", /^(calc|jeans|pantalon|short|bermud|legging)/],
+  ["sobreposicao", /^(kimono|jaquet|casaco|blazer|cardig|colete|parka|trench|sobretudo)/],
+  ["conjunto", /^macac/],
+  ["acessorio", /^(bolsa|tote|clutch|mochila|carteira|necessaire|brinc|colar|pulseir|anel|lenco|echarpe|cachecol|chapeu|bone|cinto|oculos|meia|sandal|sapat|tenis|rasteir|mule|bota|chinel|scarpin|bijut)/],
+];
+
+function familyFromName(name: string): EditionFamily | null {
+  const folded = fold(name);
+  const first = folded.split(/\s+/)[0] ?? "";
+  for (const [family, pattern] of FIRST_WORD_HINTS) {
+    if (pattern.test(first)) return family;
+  }
+  return familyFrom(folded);
+}
+
 export function editionFamily(categoryName: string | null | undefined, productName: string): EditionFamily {
   if (isNotClothing(categoryName, productName)) return "nenhuma";
-  return familyFrom(fold(categoryName ?? "")) ?? familyFrom(fold(productName)) ?? "geral";
+  return familyFrom(fold(categoryName ?? "")) ?? familyFromName(productName) ?? "geral";
 }
 
 /** "Como vestir em Belém" quando a ficha não diz: o clima da cidade fala. */
@@ -166,24 +233,24 @@ export type NoteSource = "ficha" | "padrao";
 export function careNoteFor(
   careNotes: string | null | undefined,
   family: Exclude<EditionFamily, "nenhuma">,
-): FittedNote & { source: NoteSource } {
+): FittedNote & { source: NoteSource; symbolsDropped: number } {
   const parsed = parseCareNotes(careNotes);
   const free = fitEditionNote(parsed.freeText.join("\n"));
   const labels = parsed.symbols.map((key) => CARE_SYMBOLS[key].label);
   if (free.text === null && labels.length === 0) {
-    return { text: DEFAULT_CARE[family], truncated: false, source: "padrao" };
+    return { text: DEFAULT_CARE[family], truncated: false, source: "padrao", symbolsDropped: 0 };
   }
   const parts = free.text ? [free.text] : [];
-  let truncated = free.truncated;
+  let symbolsDropped = 0;
   for (const label of labels) {
     const candidate = [...parts, label].join(" · ");
-    if (candidate.length > EDITION_NOTE_MAX) {
-      truncated = true;
-      break;
+    if (textWidthUnits(candidate) > EDITION_NOTE_MAX) {
+      symbolsDropped += 1;
+      continue;
     }
     parts.push(label);
   }
-  return { text: parts.join(" · "), truncated, source: "ficha" };
+  return { text: parts.join(" · "), truncated: free.truncated, source: "ficha", symbolsDropped };
 }
 
 /** "Como veste" da ficha (caimento, altura da modelo); sem ela, o padrão de Belém. */
@@ -212,8 +279,12 @@ export type EditionTexts = {
   wearNote: string;
   /** "ficha" = o rótulo do cartão diz "COMO VESTE"; "padrao" = "COMO VESTIR EM BELÉM". */
   wearSource: NoteSource;
+  wearTruncated: boolean;
   careNote: string;
+  /** O texto de cuidados escrito pela dona foi cortado. */
   careTruncated: boolean;
+  /** Pictogramas que ficaram de fora por falta de espaço. */
+  careSymbolsDropped: number;
 };
 
 /** Os três textos do cartão, prontos para o desenho; null = a peça não é roupa. */
@@ -229,7 +300,9 @@ export function editionTexts(input: EditionTextsInput): EditionTexts | null {
     curatorTruncated: curator.truncated,
     wearNote: wear.text as string,
     wearSource: wear.source,
+    wearTruncated: wear.truncated,
     careNote: care.text as string,
     careTruncated: care.truncated,
+    careSymbolsDropped: care.symbolsDropped,
   };
 }

@@ -19,9 +19,11 @@ import {
   publishEditionCards,
   ServiceError,
 } from "@/services/edition-cards";
+import { updateProduct } from "@/services/catalog";
 import { listOrdersAwaitingPacking } from "@/services/packing";
+import { updateSetting } from "@/services/settings";
 import { createStoreOrder } from "@/services/store-orders";
-import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 const VALID_CPF = "529.982.247-25";
 
@@ -64,15 +66,19 @@ async function priced(variantId: string, priceCents: number) {
   });
 }
 
-/** Um pedido com duas peças: o Longo Dunas em dois tamanhos e uma bolsa (nesta ordem no recibo). */
+/**
+ * Um pedido com duas peças: o Longo Dunas em dois tamanhos e uma bolsa. A
+ * bolsa é criada e posta no pedido ANTES do vestido: a ordem do recibo (pelo
+ * código, DUNAS-G < DUNAS-M < TOTE) é a única coisa que põe o vestido na frente.
+ */
 async function createOrder(opts: { gift?: boolean; extra?: { name: string; sku: string } } = {}) {
+  const bolsa = await createTestVariant(db, { sku: "TOTE", costCents: 4000, onHand: 5, name: "Bolsa Tote de Algodão" });
   const dunasM = await createTestVariant(db, { sku: "DUNAS-M", costCents: 9000, onHand: 5, name: "Longo Dunas" });
   const [dunasG] = await db
     .insert(schema.productVariants)
     .values({ productId: dunasM.productId, sku: "DUNAS-G", attributes: { tamanho: "G" }, costCents: 9000 })
     .returning({ id: schema.productVariants.id });
   await db.insert(schema.stockLevels).values({ productVariantId: dunasG.id, onHand: 5, reserved: 0 });
-  const bolsa = await createTestVariant(db, { sku: "TOTE", costCents: 4000, onHand: 5, name: "Bolsa Tote de Algodão" });
   const [vestidos] = await db
     .insert(schema.categories)
     .values({ name: "Vestidos", slug: "vestidos" })
@@ -91,9 +97,9 @@ async function createOrder(opts: { gift?: boolean; extra?: { name: string; sku: 
   await priced(dunasG.id, 28900);
   await priced(bolsa.variantId, 12900);
   const items = [
+    { variantId: bolsa.variantId, quantity: 1, expectedUnitPriceCents: 12900 },
     { variantId: dunasM.variantId, quantity: 1, expectedUnitPriceCents: 28900 },
     { variantId: dunasG.id, quantity: 2, expectedUnitPriceCents: 28900 },
-    { variantId: bolsa.variantId, quantity: 1, expectedUnitPriceCents: 12900 },
   ];
   let extraId: string | null = null;
   if (opts.extra) {
@@ -130,14 +136,23 @@ describe("buildEditionCardsBasis", () => {
     expect(basis.cards[0].data).toEqual({
       editionName: "Edição Círio",
       productName: "Longo Dunas",
-      curatorNote: "Escolhi pelo caimento no calor",
+      // A nota sem ponto final ganha um: no cartão ela sai como frase.
+      curatorNote: "Escolhi pelo caimento no calor.",
       wearNote: DEFAULT_WEAR.vestido,
       wearSource: "padrao",
       careNote: "Lavar à mão · Secar à sombra",
       qrUrl: "https://trivemaison.com.br/produto/longo-dunas",
+      qrTarget: "peca",
       printedAddress: "trivemaison.com.br",
     });
-    expect(basis.cards[0]).toMatchObject({ publicPage: true, curatorTruncated: false, careTruncated: false });
+    expect(basis.cards[0]).toMatchObject({
+      publicPage: "ok",
+      visibleFrom: null,
+      curatorTruncated: false,
+      wearTruncated: false,
+      careTruncated: false,
+      careSymbolsDropped: 0,
+    });
     // A bolsa não tem ficha nem categoria: família pelo nome, padrão inteiro.
     expect(basis.cards[1].data).toMatchObject({
       curatorNote: null,
@@ -147,21 +162,27 @@ describe("buildEditionCardsBasis", () => {
     });
   });
 
-  it("presente: o QR leva à home, não à peça com preço", async () => {
+  it("presente: o QR leva à home, não à peça com preço, e o convite muda", async () => {
     const { orderId } = await createOrder({ gift: true });
     const basis = await buildEditionCardsBasis(sdb, orderId);
     expect(basis.isGift).toBe(true);
-    expect(basis.cards.every((card) => card.data.qrUrl === "https://trivemaison.com.br")).toBe(true);
+    expect(basis.cards).toHaveLength(2);
+    expect(basis.cards.map((card) => [card.data.qrUrl, card.data.qrTarget])).toEqual([
+      ["https://trivemaison.com.br", "home"],
+      ["https://trivemaison.com.br", "home"],
+    ]);
   });
 
-  it("o que não é roupa fica sem cartão e é listado; peça arquivada tem a página fora do ar", async () => {
-    const { orderId, dunasId, extraId } = await createOrder({ extra: { name: "Caneca de Cerâmica", sku: "ZZ-CANECA" } });
+  it("o que não é roupa fica sem cartão e é listado; peça arquivada tem a página fora do ar; agendada diz quando entra", async () => {
+    const { orderId, dunasId, bolsaId, extraId } = await createOrder({ extra: { name: "Caneca de Cerâmica", sku: "ZZ-CANECA" } });
     await db.update(schema.products).set({ status: "archived" }).where(eq(schema.products.id, dunasId));
+    const amanha = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.update(schema.products).set({ visibleFrom: amanha }).where(eq(schema.products.id, bolsaId));
     const basis = await buildEditionCardsBasis(sdb, orderId);
     expect(basis.skipped).toEqual([{ productId: extraId, name: "Caneca de Cerâmica", reason: "nao_roupa" }]);
-    expect(basis.cards.map((card) => [card.name, card.publicPage])).toEqual([
-      ["Longo Dunas", false],
-      ["Bolsa Tote de Algodão", true],
+    expect(basis.cards.map((card) => [card.name, card.publicPage, card.visibleFrom?.getTime() ?? null])).toEqual([
+      ["Longo Dunas", "fora_do_ar", null],
+      ["Bolsa Tote de Algodão", "agendada", amanha.getTime()],
     ]);
   });
 
@@ -205,12 +226,10 @@ describe("publishEditionCards / getEditionCards", () => {
     expect(after.stale).toBe(false);
     expect(after.cards.every((card) => card.url?.includes(`?v=${result.at.getTime()}`))).toBe(true);
 
-    // Nota escrita depois: o cartão da bolsa fica velho (só ele), e a mesa sabe.
+    // A ficha editada pela tela da peça (o "como veste") depois: o cartão da
+    // bolsa fica velho (só ele), e a mesa sabe.
     vi.setSystemTime(new Date(t0.getTime() + 5000));
-    await db
-      .update(schema.products)
-      .set({ curatorNote: "Agora com nota.", curatorNoteUpdatedAt: new Date(), updatedAt: new Date() })
-      .where(eq(schema.products.id, bolsaId));
+    await updateProduct(db, { productId: bolsaId, fitNotes: "Alça longa, cabe um livro.", userId: FIXED_USER_ID });
     const stale = await getEditionCards(sdb, storage, orderId);
     expect(stale.stale).toBe(true);
     expect(stale.cards.map((card) => [card.name, card.stale])).toEqual([
@@ -224,7 +243,7 @@ describe("publishEditionCards / getEditionCards", () => {
     vi.setSystemTime(new Date(t0.getTime() + 9000));
     render.mockClear();
     const again = await publishEditionCards(sdb, storage, render, { orderId });
-    expect(render.mock.calls[1][0].curatorNote).toBe("Agora com nota.");
+    expect(render.mock.calls[1][0]).toMatchObject({ wearNote: "Alça longa, cabe um livro.", wearSource: "ficha" });
     expect(again.cards.map((card) => card.path)).toEqual(result.cards.map((card) => card.path));
     expect(storage.list()).toHaveLength(2);
     expect(again.at.getTime()).toBe(t0.getTime() + 9000);
@@ -232,6 +251,36 @@ describe("publishEditionCards / getEditionCards", () => {
     expect(fresh.stale).toBe(false);
     expect(fresh.cards.every((card) => card.url?.includes(`?v=${t0.getTime() + 9000}`))).toBe(true);
     expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: false });
+
+    // O nome da edição está em todo cartão: trocá-lo envelhece todos.
+    vi.setSystemTime(new Date(t0.getTime() + 12000));
+    await updateSetting(db, { key: "edition_name", value: "Edição Círio", userId: FIXED_USER_ID });
+    const renamed = await getEditionCards(sdb, storage, orderId);
+    expect(renamed.cards.map((card) => card.stale)).toEqual([true, true]);
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: true });
+  });
+
+  it("mexer no que não é roupa (sem cartão), no cartão do post ou na descrição não envelhece os cartões; virar presente, sim", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = new Date("2026-09-12T15:00:00Z");
+    vi.setSystemTime(t0);
+    const { orderId, dunasId, extraId } = await createOrder({ extra: { name: "Caneca de Cerâmica", sku: "ZZ-CANECA" } });
+    await publishEditionCards(sdb, storage, render, { orderId });
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
+
+    vi.setSystemTime(new Date(t0.getTime() + 5000));
+    await updateProduct(db, { productId: extraId!, fitNotes: "Cabe 300 ml.", userId: FIXED_USER_ID });
+    // O cartão do post redesenhado (foto nova) não é mudança na ficha.
+    await db.update(schema.products).set({ postCardPath: "cards/x.png" }).where(eq(schema.products.id, dunasId));
+    // Uma mudança na peça que não entra no cartão (a descrição) também não.
+    await updateProduct(db, { productId: dunasId, description: "Linho puro, forro de algodão.", userId: FIXED_USER_ID });
+    expect((await getEditionCards(sdb, storage, orderId)).stale).toBe(false);
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: false });
+
+    // Virou presente depois: o QR muda de destino, os cartões ficam velhos.
+    await db.update(schema.orders).set({ isGift: true }).where(eq(schema.orders.id, orderId));
+    expect((await getEditionCards(sdb, storage, orderId)).cards.map((card) => card.stale)).toEqual([true, true]);
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: true });
   });
 
   it("falha no meio: nada sobe e o carimbo não muda; a mensagem diz qual peça", async () => {

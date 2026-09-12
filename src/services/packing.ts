@@ -17,13 +17,12 @@ import {
   customers,
   orderItems,
   orders,
-  products,
-  productVariants,
   waMessages,
   waTemplates,
 } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { editionCardsStaleByOrder } from "@/services/edition-cards";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { getSettingsMap } from "@/services/settings";
 import {
@@ -216,6 +215,7 @@ export async function listOrdersAwaitingPacking(
       packagePhotoPath: orders.packagePhotoPath,
       isGift: orders.isGift,
       editionCardsAt: orders.editionCardsAt,
+      editionCardsFingerprint: orders.editionCardsFingerprint,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -239,33 +239,13 @@ export async function listOrdersAwaitingPacking(
     itemsByOrder.set(row.orderId, (itemsByOrder.get(row.orderId) ?? 0) + row.quantity);
   }
 
-  // Cartões velhos: alguma peça do pedido mudou (ficha ou nota) depois da geração.
-  const changed = await db
-    .select({
-      orderId: orderItems.orderId,
-      updatedAt: products.updatedAt,
-      curatorNoteUpdatedAt: products.curatorNoteUpdatedAt,
-    })
-    .from(orderItems)
-    .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
-    .innerJoin(products, eq(products.id, productVariants.productId))
-    .where(
-      inArray(
-        orderItems.orderId,
-        rows.filter((row) => row.editionCardsAt !== null).map((row) => row.id),
-      ),
-    );
-  const latestChange = new Map<string, number>();
-  for (const row of changed) {
-    const at = Math.max(row.updatedAt.getTime(), row.curatorNoteUpdatedAt?.getTime() ?? 0);
-    latestChange.set(row.orderId, Math.max(latestChange.get(row.orderId) ?? 0, at));
-  }
+  // Cartões velhos: a mesma régua da tela dos cartões (o que o cartão diria hoje).
+  const stale = await editionCardsStaleByOrder(db, rows);
 
-  return rows.map((row) => ({
+  return rows.map(({ editionCardsFingerprint: _fingerprint, ...row }) => ({
     ...row,
     itemsCount: itemsByOrder.get(row.id) ?? 0,
-    editionCardsStale:
-      row.editionCardsAt !== null && (latestChange.get(row.id) ?? 0) > row.editionCardsAt.getTime(),
+    editionCardsStale: stale.get(row.id) ?? false,
   }));
 }
 

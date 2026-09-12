@@ -92,8 +92,11 @@ export const orders = pgTable(
     // Cartões da edição (Onda 5): um por peça do pedido, publicados em
     // editions/<orderId>/<productId>.jpg (por id, não slug: sobrevive a
     // renome) quando a dona gera; o carimbo é o cache-busting do "Imprimir"
-    // e diz ao painel que já existem.
+    // e diz ao painel que já existem. A impressão digital é o hash do que
+    // foi desenhado: se o que o cartão diria hoje é outro, ele ficou velho
+    // (o updated_at da peça sobe por gatilho a cada UPDATE e não serve).
     editionCardsAt: timestamp("edition_cards_at", { withTimezone: true }),
+    editionCardsFingerprint: jsonb("edition_cards_fingerprint").$type<Record<string, string>>(),
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),

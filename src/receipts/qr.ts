@@ -17,3 +17,8 @@ export async function qrPngDataUrl(text: string, size = QR_PNG_SIZE): Promise<st
   });
   return `data:image/png;base64,${png.toString("base64")}`;
 }
+
+/** Versão (1–40) que o texto pede em EC "M": mais versão = mais módulos = QR mais denso. */
+export function qrVersion(text: string): number {
+  return QRCode.create(text, { errorCorrectionLevel: "M" }).version;
+}

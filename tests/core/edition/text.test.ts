@@ -9,10 +9,14 @@ import {
   DEFAULT_WEAR,
   EDITION_CURATOR_MAX,
   EDITION_NOTE_MAX,
+  EDITION_TITLE_MAX,
   editionFamily,
+  editionInvite,
   editionTexts,
   fitEditionNote,
+  fitEditionTitle,
   normalizeEditionNote,
+  textWidthUnits,
   wearNoteFor,
 } from "@/core/edition/text";
 
@@ -22,6 +26,8 @@ describe("fitEditionNote / normalizeEditionNote", () => {
     expect(normalizeEditionNote("Lavar a 30°C, R$ 10, 2+1 × 3, 50%")).toBe("Lavar a 30°C, R$ 10, 2+1 × 3, 50%");
     expect(normalizeEditionNote("Coração")).toBe("Coração");
     expect(normalizeEditionNote("Lave\tà mão")).toBe("Lave à mão");
+    // Aspas e traços que a fonte não tem viram os ASCII, como no recibo.
+    expect(normalizeEditionNote("„Linho‟ ‹puro› a 10‰ — non‑stop")).toBe("\"Linho\" 'puro' a 10% — non-stop");
     expect(normalizeEditionNote("   ")).toBeNull();
     expect(normalizeEditionNote("…")).toBeNull();
     expect(normalizeEditionNote(null)).toBeNull();
@@ -40,20 +46,49 @@ describe("fitEditionNote / normalizeEditionNote", () => {
     expect(frases).toEqual({ text: "Primeira frase curta. Segunda frase também curta.", truncated: true });
     const palavras = fitEditionNote(Array.from({ length: 60 }, () => "palavra").join(" "));
     expect(palavras.truncated).toBe(true);
-    expect(palavras.text!.length).toBeLessThanOrEqual(EDITION_NOTE_MAX);
+    expect(textWidthUnits(palavras.text!)).toBeLessThanOrEqual(EDITION_NOTE_MAX);
     expect(palavras.text!.endsWith("palavra…")).toBe(true);
     const separador = fitEditionNote(Array.from({ length: 40 }, () => "abc").join("\n"));
     expect(separador.text).not.toMatch(/[·—,]\s*…$/);
     expect(fitEditionNote("cabe", 10)).toEqual({ text: "cabe", truncated: false });
   });
 
-  it("a frase da curadora: aspas nas pontas saem (o desenho põe as dele) e o teto é maior", () => {
+  it("a frase da curadora: aspas nas pontas saem (o desenho põe as dele), parágrafos viram frases e o teto é maior", () => {
     expect(fitEditionNote("“Amei esta peça.”", EDITION_CURATOR_MAX, { quotes: true })).toEqual({
       text: "Amei esta peça.",
       truncated: false,
     });
     expect(fitEditionNote('"Amei." ', EDITION_CURATOR_MAX, { quotes: true }).text).toBe("Amei.");
+    expect(fitEditionNote("Linho puro\nRespira no calor\nÉ isso.", EDITION_CURATOR_MAX, { quotes: true }).text).toBe(
+      "Linho puro. Respira no calor. É isso.",
+    );
     expect(EDITION_CURATOR_MAX).toBeGreaterThan(EDITION_NOTE_MAX);
+  });
+
+  it("o teto é em largura: CAIXA ALTA conta mais e é cortada antes de estourar as linhas do cartão", () => {
+    expect(textWidthUnits("ABC")).toBeGreaterThan(textWidthUnits("abc"));
+    expect(textWidthUnits("a b")).toBeLessThan(textWidthUnits("abb"));
+    const minusculas = "lave a mao com sabao neutro e seque a sombra sem torcer longe do sol e do calor ";
+    const cabe = fitEditionNote(minusculas.repeat(2));
+    const caixaAlta = fitEditionNote(minusculas.toUpperCase().repeat(2));
+    expect(cabe.truncated).toBe(false);
+    expect(caixaAlta.truncated).toBe(true);
+    expect(textWidthUnits(caixaAlta.text!)).toBeLessThanOrEqual(EDITION_NOTE_MAX);
+    expect(caixaAlta.text!.length).toBeLessThan(cabe.text!.length);
+  });
+
+  it("o título cabe em duas linhas; mais que isso corta na palavra", () => {
+    expect(fitEditionTitle("Longo Dunas")).toBe("Longo Dunas");
+    const enorme = fitEditionTitle("Vestido Longo de Linho Puro com Bordado Feito à Mão pelas Artesãs da Ilha do Marajó");
+    expect(enorme.endsWith("…")).toBe(true);
+    expect(textWidthUnits(enorme)).toBeLessThanOrEqual(EDITION_TITLE_MAX);
+    expect(enorme).not.toMatch(/\s…$/);
+  });
+
+  it("o convite ao lado do QR muda com o destino", () => {
+    expect(editionInvite("peca")).toMatch(/peça/);
+    expect(editionInvite("home")).toMatch(/maison/);
+    expect(editionInvite("home")).not.toBe(editionInvite("peca"));
   });
 });
 
@@ -75,13 +110,25 @@ describe("editionFamily", () => {
   it("acessório e calçado antes de calça; sobreposição e conjunto de brincos no lugar certo", () => {
     expect(editionFamily("Calçados", "Sandália Rasteira")).toBe("acessorio");
     expect(editionFamily("Calçados", "Tênis Branco")).toBe("acessorio");
-    expect(editionFamily(null, "Rasteira Ipê")).not.toBe("calca");
+    expect(editionFamily(null, "Rasteira Ipê")).toBe("acessorio");
     expect(editionFamily("Calças", "Pantalona Areia")).toBe("calca");
     expect(editionFamily("Bijuterias", "Conjunto de brincos")).toBe("acessorio");
     expect(editionFamily(null, "Conjunto colar e brinco")).toBe("acessorio");
     expect(editionFamily("Casacos", "Kimono Rio")).toBe("sobreposicao");
     expect(editionFamily(null, "Jaqueta Jeans")).toBe("sobreposicao");
     expect(editionFamily("Conjuntos", "Conjunto Alfaiataria")).toBe("conjunto");
+  });
+
+  it("no nome, a primeira palavra é a peça: 'Saia de Malha' é saia, 'Blusa com Colar' é blusa, 'Top Meia Lua' é blusa", () => {
+    expect(editionFamily(null, "Saia de Malha Lua")).toBe("saia");
+    expect(editionFamily(null, "Blusa com Colar Bordado")).toBe("blusa");
+    expect(editionFamily(null, "Top Meia Lua")).toBe("blusa");
+    expect(editionFamily(null, "Calça Tricot Areia")).toBe("calca");
+    expect(editionFamily(null, "Vestido Anelise")).toBe("vestido");
+    // Palavra inteira: "camisola" não é camisa, "anelise" não é anel, "boneca" não é boné.
+    expect(editionFamily(null, "Pijama Camisola Noite")).not.toBe("blusa");
+    expect(editionFamily(null, "Body Boneca")).toBe("blusa");
+    expect(editionFamily(null, "Blusa térmica")).toBe("blusa");
   });
 
   it("o que não é roupa não tem família — a mesma lista que a Lia usa", () => {
@@ -96,7 +143,7 @@ describe("padrões por família", () => {
   it("cabem no cartão e passam pela limpeza sem mudar", () => {
     for (const table of [DEFAULT_WEAR, DEFAULT_CARE]) {
       for (const text of Object.values(table)) {
-        expect(text.length).toBeLessThanOrEqual(EDITION_NOTE_MAX);
+        expect(textWidthUnits(text)).toBeLessThanOrEqual(EDITION_NOTE_MAX);
         expect(normalizeEditionNote(text)).toBe(text);
       }
     }
@@ -116,16 +163,22 @@ describe("wearNoteFor / careNoteFor / editionTexts", () => {
       text: "Não torcer · Lavar à mão · Secar à sombra",
       truncated: false,
       source: "ficha",
+      symbolsDropped: 0,
     });
-    expect(careNoteFor(null, "calca")).toEqual({ text: DEFAULT_CARE.calca, truncated: false, source: "padrao" });
+    expect(careNoteFor(null, "calca")).toEqual({ text: DEFAULT_CARE.calca, truncated: false, source: "padrao", symbolsDropped: 0 });
   });
 
-  it("nos cuidados, o texto da dona entra inteiro e os pictogramas só enquanto couberem; linha só de emoji não deixa ' ·'", () => {
+  it("nos cuidados, o texto da dona entra inteiro e os pictogramas só enquanto couberem (contando os que ficam de fora); linha só de emoji não deixa ' ·'", () => {
     const livre = "Lave à mão com sabão de coco, seque na sombra do quintal e passe em temperatura baixa, do avesso, sempre.";
     const cheio = careNoteFor(`hand_wash\nmachine_cold\nno_bleach\ndry_shade\niron_low\nno_iron\ndry_clean\nno_tumble\n${livre}`, "vestido");
     expect(cheio.text!.startsWith(livre)).toBe(true);
-    expect(cheio.text!.length).toBeLessThanOrEqual(EDITION_NOTE_MAX);
-    expect(cheio.truncated).toBe(true);
+    expect(textWidthUnits(cheio.text!)).toBeLessThanOrEqual(EDITION_NOTE_MAX);
+    // O texto escrito coube inteiro: o corte é só dos pictogramas.
+    expect(cheio.truncated).toBe(false);
+    expect(cheio.symbolsDropped).toBeGreaterThan(0);
+    expect(cheio.symbolsDropped).toBeLessThan(8);
+    const soTexto = careNoteFor(`hand_wash\n${livre} ${livre}`, "vestido");
+    expect(soTexto.truncated).toBe(true);
     expect(careNoteFor("hand_wash\n🌿\ndry_shade", "vestido").text).toBe("Lavar à mão · Secar à sombra");
   });
 
@@ -143,8 +196,10 @@ describe("wearNoteFor / careNoteFor / editionTexts", () => {
       curatorTruncated: false,
       wearNote: DEFAULT_WEAR.vestido,
       wearSource: "padrao",
+      wearTruncated: false,
       careNote: "Lavagem a seco",
       careTruncated: false,
+      careSymbolsDropped: 0,
     });
     const longa = editionTexts({
       productName: "Longo Dunas",
@@ -154,8 +209,18 @@ describe("wearNoteFor / careNoteFor / editionTexts", () => {
       careNotes: null,
     })!;
     expect(longa.curatorTruncated).toBe(true);
-    expect(longa.curatorNote!.length).toBeLessThanOrEqual(EDITION_CURATOR_MAX);
+    expect(textWidthUnits(longa.curatorNote!)).toBeLessThanOrEqual(EDITION_CURATOR_MAX);
     expect(longa.curatorNote!.endsWith(".")).toBe(true);
     expect(longa.wearSource).toBe("ficha");
+    expect(longa.wearTruncated).toBe(false);
+    const fichaLonga = editionTexts({
+      productName: "Longo Dunas",
+      categoryName: "Vestidos",
+      curatorNote: null,
+      fitNotes: Array.from({ length: 30 }, () => "caimento solto").join(", "),
+      careNotes: null,
+    })!;
+    expect(fichaLonga.wearTruncated).toBe(true);
+    expect(fichaLonga.wearNote.endsWith("…")).toBe(true);
   });
 });

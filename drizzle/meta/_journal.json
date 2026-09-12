@@ -183,6 +183,13 @@
       "when": 1789213257299,
       "tag": "0025_luxuriant_marauders",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789224132160,
+      "tag": "0026_lush_tyrannus",
+      "breakpoints": true
     }
   ]
 }

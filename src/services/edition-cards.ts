@@ -5,17 +5,22 @@
 // editions/<orderId>/<productId>.jpg (upsert: gerar de novo sobrescreve; o
 // id, e não o slug, para a imagem continuar achável se a peça for renomeada).
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
+import {
+  editionFingerprintsOf,
+  isEditionCardStale,
+  parseEditionFingerprints,
+  type EditionFingerprints,
+} from "@/core/edition/fingerprint";
 import { editionTexts } from "@/core/edition/text";
 import type { EditionCardData } from "@/core/edition/types";
-import { categories, orderItems, orders, products, productVariants } from "@/db/schema";
+import { categories, orderItems, orders, products, productVariants, settings } from "@/db/schema";
 import { siteUrl } from "@/lib/site-url";
 import type { DbOrTx } from "@/queue/enqueue";
-import { getSettingsMap } from "@/services/settings";
 
 export class ServiceError extends Error {
   readonly code: string;
@@ -45,19 +50,24 @@ export function printedSiteAddress(): string {
   return siteUrl().replace(/^https?:\/\//, "");
 }
 
+/** A página da peça: no ar, ainda agendada (visível a partir de uma data) ou fora do ar. */
+export type EditionPublicPage = "ok" | "agendada" | "fora_do_ar";
+
 /** Uma peça do pedido, na ordem do recibo (código), com os textos prontos. */
 export type EditionCardPlan = {
   productId: string;
   slug: string;
   name: string;
   data: EditionCardData;
-  /** A frase da curadora ou os cuidados não couberam inteiros no cartão. */
+  /** Os textos que não couberam inteiros no cartão. */
   curatorTruncated: boolean;
+  wearTruncated: boolean;
   careTruncated: boolean;
-  /** A página da peça está no ar (ativa, visível, não excluída): o QR funciona. */
-  publicPage: boolean;
-  /** Última mudança da ficha ou da nota — para saber se o cartão gerado ficou velho. */
-  changedAt: Date;
+  /** Pictogramas de cuidado que ficaram de fora por falta de espaço. */
+  careSymbolsDropped: number;
+  publicPage: EditionPublicPage;
+  /** Quando a página entra no ar, se ainda está agendada. */
+  visibleFrom: Date | null;
 };
 
 /** Peça do pedido que fica sem cartão, e por quê. */
@@ -68,42 +78,47 @@ export type EditionCardsBasis = {
   orderNumber: number;
   /** Quando os cartões foram gerados pela última vez; null = ainda não. */
   editionCardsAt: Date | null;
+  /** O que foi desenhado da última vez (hash por peça); null = ainda não. */
+  editionCardsFingerprint: EditionFingerprints | null;
   /** Presente: o QR vai para a home, não para a página com preço. */
   isGift: boolean;
   cards: EditionCardPlan[];
   skipped: EditionCardSkip[];
 };
 
+/** O nome da edição, como sai na faixa do cartão. */
+async function editionNameSetting(db: DbOrTx): Promise<string | null> {
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "edition_name")).limit(1);
+  return row && typeof row.value === "string" && row.value.trim() !== "" ? row.value.trim() : null;
+}
+
+export type EditionCardsPlan = { cards: EditionCardPlan[]; skipped: EditionCardSkip[] };
+
 /**
- * As peças do pedido (uma por produto, mesmo com dois tamanhos ou duas
- * unidades), na ordem do recibo, com os textos de cada cartão. Peça sem ficha
- * usa o padrão da família — o cartão nunca sai com um quadro em branco; o que
- * não é roupa (caneca, caderno) fica sem cartão e é listado.
+ * As peças de cada pedido (uma por produto, mesmo com dois tamanhos ou duas
+ * unidades), na ordem do recibo, com os textos de cada cartão — de uma vez
+ * para vários pedidos (a mesa de embalagem) ou para um só (a tela). Peça sem
+ * ficha usa o padrão da família — o cartão nunca sai com um quadro em
+ * branco; o que não é roupa (caneca, caderno) fica sem cartão e é listado.
  */
-export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promise<EditionCardsBasis> {
-  const id = z.uuid().parse(orderId);
-  const [order] = await db
-    .select({
-      id: orders.id,
-      orderNumber: orders.orderNumber,
-      editionCardsAt: orders.editionCardsAt,
-      isGift: orders.isGift,
-    })
-    .from(orders)
-    .where(eq(orders.id, id))
-    .limit(1);
-  if (!order) throw new ServiceError("pedido_nao_encontrado", "Pedido não encontrado.");
+export async function planEditionCardsByOrder(
+  db: DbOrTx,
+  targets: { id: string; isGift: boolean }[],
+): Promise<Map<string, EditionCardsPlan>> {
+  const plans = new Map<string, EditionCardsPlan>();
+  if (targets.length === 0) return plans;
+  for (const target of targets) plans.set(target.id, { cards: [], skipped: [] });
+  const giftByOrder = new Map(targets.map((target) => [target.id, target.isGift]));
 
   const rows = await db
     .select({
+      orderId: orderItems.orderId,
       productId: products.id,
       slug: products.slug,
       name: products.name,
       status: products.status,
       deletedAt: products.deletedAt,
       visibleFrom: products.visibleFrom,
-      updatedAt: products.updatedAt,
-      curatorNoteUpdatedAt: products.curatorNoteUpdatedAt,
       curatorNote: products.curatorNote,
       fitNotes: products.fitNotes,
       careNotes: products.careNotes,
@@ -113,23 +128,21 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
     .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
     .innerJoin(products, eq(products.id, productVariants.productId))
     .leftJoin(categories, eq(categories.id, products.categoryId))
-    .where(eq(orderItems.orderId, order.id))
+    .where(inArray(orderItems.orderId, [...plans.keys()]))
     // A mesma ordem do recibo (pelo código da variação): estável entre a
     // tela e a impressão, e igual ao papel que a cliente já viu.
-    .orderBy(orderItems.skuSnapshot, orderItems.id);
+    .orderBy(orderItems.orderId, orderItems.skuSnapshot, orderItems.id);
 
-  const settingsMap = await getSettingsMap(db, ["edition_name"]);
-  const editionRaw = settingsMap["edition_name"];
-  const editionName = typeof editionRaw === "string" && editionRaw.trim() !== "" ? editionRaw.trim() : null;
+  const editionName = await editionNameSetting(db);
   const now = Date.now();
   const printedAddress = printedSiteAddress();
-
   const seen = new Set<string>();
-  const cards: EditionCardPlan[] = [];
-  const skipped: EditionCardSkip[] = [];
   for (const row of rows) {
-    if (seen.has(row.productId)) continue;
-    seen.add(row.productId);
+    const key = `${row.orderId}:${row.productId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const plan = plans.get(row.orderId);
+    if (!plan) continue;
     const texts = editionTexts({
       productName: row.name,
       categoryName: row.categoryName,
@@ -138,21 +151,23 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
       careNotes: row.careNotes,
     });
     if (!texts) {
-      skipped.push({ productId: row.productId, name: row.name, reason: "nao_roupa" });
+      plan.skipped.push({ productId: row.productId, name: row.name, reason: "nao_roupa" });
       continue;
     }
-    const publicPage =
-      row.status === "active" &&
-      row.deletedAt === null &&
-      (row.visibleFrom === null || row.visibleFrom.getTime() <= now);
-    cards.push({
+    const isGift = giftByOrder.get(row.orderId) ?? false;
+    const scheduled = row.visibleFrom !== null && row.visibleFrom.getTime() > now;
+    const publicPage: EditionPublicPage =
+      row.status !== "active" || row.deletedAt !== null ? "fora_do_ar" : scheduled ? "agendada" : "ok";
+    plan.cards.push({
       productId: row.productId,
       slug: row.slug,
       name: row.name,
       curatorTruncated: texts.curatorTruncated,
+      wearTruncated: texts.wearTruncated,
       careTruncated: texts.careTruncated,
+      careSymbolsDropped: texts.careSymbolsDropped,
       publicPage,
-      changedAt: new Date(Math.max(row.updatedAt.getTime(), row.curatorNoteUpdatedAt?.getTime() ?? 0)),
+      visibleFrom: scheduled ? row.visibleFrom : null,
       data: {
         editionName,
         productName: row.name,
@@ -161,18 +176,68 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
         wearSource: texts.wearSource,
         careNote: texts.careNote,
         // Presente vai "sem preço na embalagem": o QR leva à home, não à peça.
-        qrUrl: order.isGift ? siteUrl() : `${siteUrl()}/produto/${row.slug}`,
+        qrUrl: isGift ? siteUrl() : `${siteUrl()}/produto/${row.slug}`,
+        qrTarget: isGift ? "home" : "peca",
         printedAddress,
       },
     });
   }
+  return plans;
+}
+
+/** Os cartões gerados ficaram velhos? (algum diria outra coisa hoje, ou falta um). */
+export function editionCardsStale(basis: {
+  editionCardsFingerprint: EditionFingerprints | null;
+  cards: EditionCardPlan[];
+}): boolean {
+  return basis.cards.some((card) => isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data));
+}
+
+/**
+ * Para vários pedidos de uma vez (a mesa de embalagem): quais têm cartões
+ * velhos. Pedido ainda sem cartões nunca está velho.
+ */
+export async function editionCardsStaleByOrder(
+  db: DbOrTx,
+  targets: { id: string; isGift: boolean; editionCardsAt: Date | null; editionCardsFingerprint: unknown }[],
+): Promise<Map<string, boolean>> {
+  const generated = targets.filter((target) => target.editionCardsAt !== null);
+  const plans = await planEditionCardsByOrder(db, generated);
+  const stale = new Map<string, boolean>();
+  for (const target of targets) {
+    const plan = plans.get(target.id);
+    stale.set(
+      target.id,
+      plan ? editionCardsStale({ editionCardsFingerprint: parseEditionFingerprints(target.editionCardsFingerprint), cards: plan.cards }) : false,
+    );
+  }
+  return stale;
+}
+
+/** O pedido e o plano dos cartões dele. */
+export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promise<EditionCardsBasis> {
+  const id = z.uuid().parse(orderId);
+  const [order] = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      editionCardsAt: orders.editionCardsAt,
+      editionCardsFingerprint: orders.editionCardsFingerprint,
+      isGift: orders.isGift,
+    })
+    .from(orders)
+    .where(eq(orders.id, id))
+    .limit(1);
+  if (!order) throw new ServiceError("pedido_nao_encontrado", "Pedido não encontrado.");
+  const plan = (await planEditionCardsByOrder(db, [order])).get(order.id) ?? { cards: [], skipped: [] };
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
     editionCardsAt: order.editionCardsAt,
+    editionCardsFingerprint: order.editionCardsAt ? parseEditionFingerprints(order.editionCardsFingerprint) : null,
     isGift: order.isGift,
-    cards,
-    skipped,
+    cards: plan.cards,
+    skipped: plan.skipped,
   };
 }
 
@@ -197,6 +262,7 @@ export async function publishEditionCards(
   input: { orderId: string },
 ): Promise<{ at: Date; cards: PublishedEditionCard[]; skipped: EditionCardSkip[] }> {
   const { orderId } = orderIdSchema.parse(input);
+  const at = new Date();
   const basis = await buildEditionCardsBasis(db, orderId);
   if (basis.cards.length === 0) {
     throw new ServiceError(
@@ -219,7 +285,6 @@ export async function publishEditionCards(
       );
     }
   }
-  const at = new Date();
   const published: PublishedEditionCard[] = [];
   for (const { card, jpeg } of drawn) {
     const path = editionCardStoragePath(basis.orderId, card.productId);
@@ -232,7 +297,10 @@ export async function publishEditionCards(
       url: editionCardUrl(storage, path, at),
     });
   }
-  await db.update(orders).set({ editionCardsAt: at, updatedAt: at }).where(eq(orders.id, basis.orderId));
+  await db
+    .update(orders)
+    .set({ editionCardsAt: at, editionCardsFingerprint: editionFingerprintsOf(basis.cards), updatedAt: at })
+    .where(eq(orders.id, basis.orderId));
   return { at, cards: published, skipped: basis.skipped };
 }
 
@@ -243,10 +311,12 @@ export type EditionCardView = {
   /** Tem frase da curadora no cartão (a tela avisa quando não tem). */
   hasCuratorNote: boolean;
   curatorTruncated: boolean;
+  wearTruncated: boolean;
   careTruncated: boolean;
-  /** A página da peça está no ar: o QR funciona. */
-  publicPage: boolean;
-  /** A ficha ou a nota mudou depois de o cartão ser gerado. */
+  careSymbolsDropped: number;
+  publicPage: EditionPublicPage;
+  visibleFrom: Date | null;
+  /** O cartão diria outra coisa hoje (ficha, nota, nome da edição, presente): gere de novo. */
   stale: boolean;
   /** Imagem publicada; null enquanto os cartões não foram gerados. */
   url: string | null;
@@ -272,9 +342,12 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
     name: card.name,
     hasCuratorNote: card.data.curatorNote !== null,
     curatorTruncated: card.curatorTruncated,
+    wearTruncated: card.wearTruncated,
     careTruncated: card.careTruncated,
+    careSymbolsDropped: card.careSymbolsDropped,
     publicPage: card.publicPage,
-    stale: at !== null && card.changedAt.getTime() > at.getTime(),
+    visibleFrom: card.visibleFrom,
+    stale: isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data),
     url: at ? editionCardUrl(storage, editionCardStoragePath(basis.orderId, card.productId), at) : null,
   }));
   return {
