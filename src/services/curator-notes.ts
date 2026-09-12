@@ -52,6 +52,8 @@ const recordSchema = z.object({
   audio: z.object({
     data: z.instanceof(Buffer),
     contentType: z.string().min(1),
+    /** O que o navegador disse antes de a action resolver o formato (só para o audit). */
+    originalContentType: z.string().optional(),
     seconds: z.number().int().min(1).max(600).optional(),
   }),
 });
@@ -154,12 +156,14 @@ export async function recordCuratorNote(
       await tx
         .update(products)
         .set({
-          curatorNote: note,
           curatorAudioPath: path,
           curatorAudioMime: format.mime,
           curatorAudioSeconds: parsed.audio.seconds ?? null,
-          curatorNoteUpdatedAt: now,
           updatedAt: now,
+          // O texto (e o seu carimbo) só mudam quando a transcrição rendeu
+          // texto: a tela remonta o campo pelo carimbo, e um rascunho digitado
+          // não pode sumir por causa de um áudio que não transcreveu.
+          ...(transcribed ? { curatorNote: note, curatorNoteUpdatedAt: now } : {}),
         })
         .where(eq(products.id, parsed.productId));
       await tx.insert(auditLog).values({
@@ -175,7 +179,7 @@ export async function recordCuratorNote(
           note,
           audioPath: path,
           mime: format.mime,
-          originalMime: parsed.audio.contentType,
+          originalMime: parsed.audio.originalContentType ?? parsed.audio.contentType,
           seconds: parsed.audio.seconds ?? null,
           transcribed,
           truncated,
@@ -193,7 +197,11 @@ export async function recordCuratorNote(
 
     return { note, audioPath: path, transcribed, truncated, reason, staleNote: !transcribed && note !== null };
   } catch (error) {
-    // Nada foi gravado no banco: o arquivo que subiu não pode ficar órfão e público.
+    // Nada foi gravado no banco: o arquivo que subiu não pode ficar órfão e
+    // público. Erro inesperado (bug, banco) fica no log do servidor.
+    if (!(error instanceof ServiceError)) {
+      console.error(`[curator-note] ${parsed.productId} falha depois do upload (${path})`, error);
+    }
     await removeAudioBestEffort(storage, path, "falha depois do upload");
     throw error;
   }
@@ -213,6 +221,13 @@ export async function updateCuratorNote(
   const parsed = updateSchema.parse(input);
   const product = await requireProductRow(db, parsed.productId);
   const fitted = fitCuratorNote(parsed.note);
+  if (fitted.text === null && parsed.note.trim() !== "") {
+    // Só símbolos ou emoji: não é uma nota, mas também não é "apagar".
+    throw new ServiceError(
+      "nota_sem_texto",
+      "Escreva ao menos uma palavra na nota — ou deixe o campo vazio para apagá-la.",
+    );
+  }
   if (fitted.truncated) {
     // A tela já limita; aqui é a rede final — cortar em silêncio o que a
     // dona escreveu seria pior do que recusar.
@@ -260,7 +275,6 @@ export async function removeCuratorAudio(
         curatorAudioPath: null,
         curatorAudioMime: null,
         curatorAudioSeconds: null,
-        curatorNoteUpdatedAt: now,
         updatedAt: now,
       })
       .where(eq(products.id, productId));

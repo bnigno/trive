@@ -60,7 +60,7 @@ export const products = pgTable(
     curatorAudioPath: text("curator_audio_path"),
     curatorAudioMime: text("curator_audio_mime"),
     curatorAudioSeconds: integer("curator_audio_seconds"),
-    /** Carimbo da última gravação/edição: fura o cache do player. */
+    /** Carimbo da última mudança do TEXTO da nota (a tela remonta o campo por ele). */
     curatorNoteUpdatedAt: timestamp("curator_note_updated_at", { withTimezone: true }),
     /** Post 4:5 mais recente no Storage: é a prévia do link da peça. */
     postCardPath: text("post_card_path"),

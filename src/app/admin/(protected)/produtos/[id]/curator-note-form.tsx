@@ -39,7 +39,7 @@ export function CuratorNoteForm({
   productId: string;
   note: string;
   /** Muda quando o texto salvo muda: remonta o campo para mostrar a transcrição nova. */
-  noteVersion: number;
+  noteVersion: string;
   /** URL pública do áudio já gravado (o caminho muda a cada gravação). */
   audioUrl: string | null;
   audioMime: string | null;
@@ -49,11 +49,21 @@ export function CuratorNoteForm({
 }) {
   const [pending, setPending] = useState<PendingAudio | null>(null);
   const [recordState, recordAction, recording] = useActionState(
-    async (prev: CuratorNoteFormState, formData: FormData) => {
-      const result = await recordCuratorNoteAction(prev, formData);
-      // Deu certo e o texto veio: a gravação pendente já cumpriu o papel. Se
-      // não veio (vendor fora, silêncio), fica para a dona reenviar sem regravar.
-      if (result.transcribed) setPending(null);
+    async (prev: CuratorNoteFormState, formData: FormData): Promise<CuratorNoteFormState> => {
+      let result: CuratorNoteFormState;
+      try {
+        result = await recordCuratorNoteAction(prev, formData);
+      } catch {
+        // Rede que caiu no meio do envio: a gravação continua aqui, não some.
+        return {
+          error: "Não consegui enviar a gravação (sem conexão?). Ela continua aqui embaixo: toque em Enviar de novo.",
+          retryable: true,
+        };
+      }
+      // A gravação pendente só fica quando reenviar o mesmo áudio pode ajudar
+      // (serviço instável, cota). Sem chave, recusado ou sem fala, reenviar
+      // não muda nada — a tela já disse o que fazer.
+      if (!result.error && !result.retryable) setPending(null);
       return result;
     },
     INITIAL,
@@ -71,9 +81,6 @@ export function CuratorNoteForm({
     [pendingUrl],
   );
 
-  // O webm do Android não toca no Safari (e vice-versa às vezes): quando o
-  // player não consegue abrir o arquivo, a tela diz que o texto continua.
-  const [savedPlayable, setSavedPlayable] = useState(true);
 
   return (
     <div className="flex flex-col gap-5">
@@ -91,20 +98,7 @@ export function CuratorNoteForm({
 
       {audioUrl ? (
         <div className="flex flex-col gap-2">
-          <audio
-            key={audioUrl}
-            controls
-            className="w-full"
-            preload="metadata"
-            src={audioUrl}
-            onError={() => setSavedPlayable(false)}
-          />
-          {!savedPlayable ? (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Este aparelho não toca esse formato de áudio
-              {audioMime ? ` (${audioMime})` : ""}; o texto continua abaixo.
-            </p>
-          ) : null}
+          <SavedAudioPlayer key={audioUrl} url={audioUrl} mime={audioMime} />
           <div className="flex flex-wrap items-center gap-3">
             {audioSeconds ? (
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -151,6 +145,11 @@ export function CuratorNoteForm({
         {/* O arquivo entra no envio pelo estado do gravador. */}
         <AudioField file={pending?.file ?? null} />
         <FormError message={recordState.error} />
+        {recordState.warning ? (
+          <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+            {recordState.warning}
+          </p>
+        ) : null}
         <FormSuccess message={recordState.success} />
       </form>
 
@@ -171,6 +170,25 @@ export function CuratorNoteForm({
         <FormSuccess message={textState.success} />
       </form>
     </div>
+  );
+}
+
+/**
+ * O player do áudio salvo. O webm do Android não toca no Safari (e o ogg
+ * tampouco): quando o navegador não abre o arquivo, a tela diz que o texto
+ * continua. Montado com key pela URL: cada áudio novo nasce "tocável".
+ */
+function SavedAudioPlayer({ url, mime }: { url: string; mime: string | null }) {
+  const [playable, setPlayable] = useState(true);
+  return (
+    <>
+      <audio controls className="w-full" preload="metadata" src={url} onError={() => setPlayable(false)} />
+      {!playable ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Este aparelho não toca esse formato de áudio{mime ? ` (${mime})` : ""}; o texto continua abaixo.
+        </p>
+      ) : null}
+    </>
   );
 }
 

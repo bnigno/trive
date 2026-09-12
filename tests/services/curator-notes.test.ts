@@ -69,7 +69,10 @@ async function audits(productId: string) {
     .orderBy(desc(schema.auditLog.createdAt));
 }
 
-const record = (productId: string, audio = AUDIO as { data: Buffer; contentType: string; seconds?: number }) =>
+const record = (
+  productId: string,
+  audio = AUDIO as { data: Buffer; contentType: string; originalContentType?: string; seconds?: number },
+) =>
   recordCuratorNote(sdb, storage, transcriber, { productId, userId: FIXED_USER_ID, audio });
 
 describe("recordCuratorNote", () => {
@@ -205,22 +208,50 @@ describe("recordCuratorNote", () => {
     expect(transcriber.calls).toHaveLength(0);
   });
 
-  it("falha depois do upload (banco) não deixa o áudio órfão no bucket", async () => {
+  it("falha depois do upload (banco ou bug do transcritor) não deixa o áudio órfão no bucket e vai para o log", async () => {
     const productId = await product();
     transcriber.enqueueText("nota");
-    const broken = {
-      ...sdb,
-      transaction: async () => {
-        throw new Error("banco caiu");
-      },
-    } as unknown as DbOrTx;
-    // requireProductRow lê pelo select do db real; a transação quebra.
-    const dbSpy = Object.assign(Object.create(Object.getPrototypeOf(sdb)), sdb, { transaction: broken.transaction });
-    await expect(recordCuratorNote(dbSpy, storage, transcriber, { productId, userId: FIXED_USER_ID, audio: AUDIO })).rejects.toThrow(
-      /banco caiu/,
-    );
+    const spy = vi.spyOn(db, "transaction").mockRejectedValueOnce(new Error("banco caiu"));
+    await expect(record(productId)).rejects.toThrow(/banco caiu/);
+    spy.mockRestore();
     expect(storage.list()).toEqual([]);
     expect((await row(productId)).path).toBeNull();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("falha depois do upload"), expect.anything());
+
+    // Erro que não é "vendor fora do ar" (bug) propaga do mesmo jeito, sem órfão.
+    transcriber.transcribe = async () => {
+      throw new TypeError("boom");
+    };
+    await expect(record(productId)).rejects.toBeInstanceOf(TypeError);
+    expect(storage.list()).toEqual([]);
+    expect((await row(productId)).path).toBeNull();
+  });
+
+  it("o carimbo do texto só muda quando o texto muda: gravar sem transcrever e remover áudio não mexem nele", async () => {
+    const productId = await product();
+    transcriber.enqueueText("Linho puro");
+    await record(productId);
+    const stamped = (await row(productId)).updatedAt!.getTime();
+
+    transcriber.failNext("fora do ar", "unavailable");
+    await record(productId);
+    expect((await row(productId)).updatedAt!.getTime()).toBe(stamped);
+    expect((await row(productId)).note).toBe("Linho puro");
+
+    await removeCuratorAudio(sdb, storage, { productId, userId: FIXED_USER_ID });
+    expect((await row(productId)).updatedAt!.getTime()).toBe(stamped);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await updateCuratorNote(sdb, { productId, userId: FIXED_USER_ID, note: "Linho puro, caimento leve" });
+    expect((await row(productId)).updatedAt!.getTime()).toBeGreaterThan(stamped);
+  });
+
+  it("o audit guarda o mime cru do navegador ao lado do canônico", async () => {
+    const productId = await product();
+    transcriber.enqueueText("nota");
+    await record(productId, { ...AUDIO, originalContentType: "" });
+    const [audit] = await audits(productId);
+    expect(audit.after).toMatchObject({ mime: "audio/webm", originalMime: "" });
   });
 
   it("recusa formato que não é áudio, arquivo grande e gravação longa — sem subir nada", async () => {
@@ -276,6 +307,11 @@ describe("updateCuratorNote / removeCuratorAudio", () => {
     await expect(
       updateCuratorNote(sdb, { productId, userId: FIXED_USER_ID, note: "x ".repeat(CURATOR_NOTE_MAX_CHARS) }),
     ).rejects.toMatchObject({ code: "nota_longa" });
+    // Só símbolos não é nota nem é "apagar": recusa dizendo o quê.
+    await expect(updateCuratorNote(sdb, { productId, userId: FIXED_USER_ID, note: "… !!" })).rejects.toMatchObject({
+      code: "nota_sem_texto",
+    });
+    expect((await row(productId)).note).toBe("Texto corrigido pela dona.");
 
     await updateCuratorNote(sdb, { productId, userId: FIXED_USER_ID, note: "   " });
     expect((await row(productId)).note).toBeNull();

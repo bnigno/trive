@@ -354,7 +354,9 @@ export default async function ProdutoDetalhePage({
           <CuratorNoteForm
             productId={detail.id}
             note={detail.curatorNote ?? ""}
-            noteVersion={detail.curatorNoteUpdatedAt?.getTime() ?? 0}
+            // Remonta o campo só quando o texto salvo mudou de fato (regravação
+            // que transcreveu, edição salva) — nunca por mexer só no áudio.
+            noteVersion={`${detail.curatorNoteUpdatedAt?.getTime() ?? 0}:${detail.curatorNote ?? ""}`}
             // O caminho já tem um token por gravação: a URL muda quando o
             // áudio muda, e só então (salvar o texto não reinicia o player).
             audioUrl={detail.curatorAudioPath ? storage.publicUrl(detail.curatorAudioPath) : null}

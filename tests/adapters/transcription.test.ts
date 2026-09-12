@@ -75,6 +75,22 @@ describe("OpenAiTranscriber (client real com fetch fake)", () => {
         .catch((e: unknown) => (e as TranscriptionUnavailableError).reason);
     expect(await reasonOf(400)).toBe("rejected");
     expect(await reasonOf(503)).toBe("unavailable");
+    // Chave inválida ou revogada é configuração, não o áudio da dona.
+    expect(await reasonOf(401)).toBe("no_key");
+    expect(await reasonOf(403)).toBe("no_key");
+    vi.stubEnv("OPENAI_API_KEY", "   ");
+    const semChave = await new OpenAiTranscriber(createFakeFetch({}).fetchFn)
+      .transcribe({ data: Buffer.alloc(1), mimeType: "audio/ogg" })
+      .catch((e: unknown) => (e as TranscriptionUnavailableError).reason);
+    expect(semChave).toBe("no_key");
+    vi.stubEnv("OPENAI_API_KEY", "sk-teste");
+    // Corpo que não é JSON (página de erro do provedor) é "fora do ar", sem vazar o corpo.
+    const html = await new OpenAiTranscriber(async () => new Response("<html>erro</html>", { status: 200 }))
+      .transcribe({ data: Buffer.alloc(1), mimeType: "audio/ogg" })
+      .then(() => null)
+      .catch((e: unknown) => e as TranscriptionUnavailableError);
+    expect(html?.reason).toBe("unavailable");
+    expect(html?.message).not.toContain("<html>");
     expect((error as Error).message).toContain("429");
     expect((error as Error).message).not.toContain("segredo");
 

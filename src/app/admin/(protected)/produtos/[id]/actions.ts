@@ -386,6 +386,10 @@ export async function setProductMeasurementsAction(
 export type CuratorNoteFormState = FormState & {
   /** A transcrição preencheu o texto; a gravação pendente pode ser descartada. */
   transcribed?: boolean;
+  /** Reenviar o mesmo áudio pode dar certo (serviço instável ou cota): a gravação fica na tela. */
+  retryable?: boolean;
+  /** O áudio ficou salvo, mas sem texto: é um aviso, não um sucesso. */
+  warning?: string;
 };
 
 export async function recordCuratorNoteAction(
@@ -413,13 +417,18 @@ export async function recordCuratorNoteAction(
       audio: {
         data: Buffer.from(await file.arrayBuffer()),
         contentType: format.mime,
+        originalContentType: file.type || `(sem mime; nome ${file.name})`,
         ...(Number.isFinite(secondsRaw) && secondsRaw > 0
           ? { seconds: Math.round(secondsRaw) }
           : {}),
       },
     });
     revalidateProduct(productId);
-    return { success: curatorNoteMessage(result), transcribed: result.transcribed };
+    const message = curatorNoteMessage(result);
+    const retryable = result.reason === "unavailable" || result.reason === "rate_limited";
+    return result.transcribed
+      ? { success: message, transcribed: true, retryable: false }
+      : { warning: message, transcribed: false, retryable };
   } catch (error) {
     return toErrorState(error);
   }
