@@ -10,7 +10,7 @@
 import { z } from "zod";
 
 import { formatCentsBRL } from "@/lib/money";
-import { bridgeContextLine, bridgeStateSchema } from "@/core/bot/site-bridge";
+import { bridgeContextLine, bridgeStateSchema, type BridgeState } from "@/core/bot/site-bridge";
 
 export const NOTE_MAX_CHARS = 140;
 export const NOTES_MAX = 10;
@@ -96,6 +96,34 @@ export const botStateSchema = z
 
 export type BotState = z.infer<typeof botStateSchema>;
 export type BotCartItem = z.infer<typeof cartItemSchema>;
+
+/**
+ * A ponte entra no caderninho: a peça vira "peça em vista"; a sacola do
+ * site é FUNDIDA na sacola da conversa (uma conversa antiga com sacola não
+ * perde o que já tinha; SKU repetido soma quantidade).
+ */
+export function mergeBridgeIntoState(state: BotState, bridge: BridgeState): BotState {
+  let cart = state.cart;
+  if (bridge.source === "cart") {
+    for (const item of bridge.items ?? []) {
+      cart = cartAdd(cart, {
+        sku: item.sku,
+        quantidade: item.quantity,
+        nome: item.name,
+        variacao: item.variation,
+        precoCents: item.priceCents,
+      });
+    }
+  }
+  return {
+    ...state,
+    bridge,
+    ...(cart ? { cart } : {}),
+    ...(bridge.source !== "cart" && bridge.productSlug && bridge.productName
+      ? { focus: { slug: bridge.productSlug, nome: bridge.productName, cor: null } }
+      : {}),
+  };
+}
 
 /** Tolerante: um bot_state antigo ou torto vira {} em vez de derrubar o turno. */
 export function parseBotState(raw: unknown): BotState {

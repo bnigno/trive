@@ -23,6 +23,7 @@ import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
+import { originLabel } from "@/core/bot/site-bridge";
 
 // "Não vista" = inbound criada depois da última leitura do dono; conversa
 // nunca aberta (owner_last_seen_at NULL) conta tudo desde a época.
@@ -268,6 +269,8 @@ export interface WaConversationContext {
   cart: BotCartItem[];
   lastOrderNumber: number | null;
   handoff: { motivo: string; resumo: string | null; at: Date } | null;
+  /** A ponte do site: de onde a cliente veio e o que estava vendendo. */
+  bridge: { source: string; label: string; productLabel: string | null; at: Date } | null;
   recentOrders: {
     id: string;
     orderNumber: number;
@@ -351,6 +354,19 @@ async function loadConversationContext(
           motivo: state.handoff.motivo,
           resumo: state.handoff.resumo ?? null,
           at: new Date(state.handoff.at),
+        }
+      : null,
+    bridge: state.bridge
+      ? {
+          source: state.bridge.source,
+          label: state.bridge.sourceLabel ?? originLabel(state.bridge.source),
+          productLabel:
+            state.bridge.items && state.bridge.items.length > 0 && state.bridge.source === "cart"
+              ? state.bridge.items.map((item) => `${item.quantity}× ${item.name}${item.variation ? ` (${item.variation})` : ""}`).join(", ")
+              : state.bridge.productName
+                ? `${state.bridge.productName}${state.bridge.variation ? ` (${state.bridge.variation})` : ""}`
+                : null,
+          at: new Date(state.bridge.at),
         }
       : null,
     recentOrders,

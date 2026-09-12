@@ -109,6 +109,19 @@ export function ContextPanel({
         )}
       </div>
 
+      {context?.bridge ? (
+        <Section title="Veio do site">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
+            <p className="font-medium">
+              {context.bridge.productLabel ?? "Tocou em “Falar com a Lia”"}
+            </p>
+            <p className="mt-1 text-[11px] opacity-80">
+              pela {context.bridge.label} · às {formatTimeSP(context.bridge.at)}
+            </p>
+          </div>
+        </Section>
+      ) : null}
+
       {context?.handoff ? (
         <Section title={`Resumo da ${sellerName}`}>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-200">

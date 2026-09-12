@@ -61,6 +61,15 @@ const chatContextSchema = z.object({
       at: z.string(),
     })
     .nullable(),
+  bridge: z
+    .object({
+      source: z.string(),
+      label: z.string(),
+      productLabel: z.string().nullable(),
+      at: z.string(),
+    })
+    .nullable()
+    .default(null),
   style: z.string().nullable().default(null),
   hold: z.string().nullable().default(null),
   alerts: z.array(z.string()).default([]),

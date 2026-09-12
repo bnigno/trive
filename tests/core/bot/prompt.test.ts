@@ -42,6 +42,17 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("adicionar_a_sacola");
   });
 
+  it("ponte do site: com 'Veio do site' no caderninho, vai direto à peça, usa só o estoque informado e nunca repete o código", () => {
+    const prompt = buildBotSystemPrompt(OPCOES);
+    const section = prompt.slice(prompt.indexOf("PONTE DO SITE:"), prompt.indexOf("FOTOS E ÁUDIOS DA CLIENTE:"));
+    expect(section).toContain("Veio do site");
+    expect(section).toContain("NÃO pergunte");
+    expect(section).toContain("Estoque agora das peças da ponte");
+    expect(section).toContain("reservar_peca");
+    expect(section).toContain("avisar_quando_voltar");
+    expect(section).toContain("nunca o repita");
+  });
+
   it("nome vazio cai no padrão; planta da loja e política de troca entram quando existem", () => {
     const prompt = buildBotSystemPrompt({
       ...OPCOES,

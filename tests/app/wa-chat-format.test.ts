@@ -2,6 +2,7 @@
 // não), prefixo da prévia, rótulo da conversa, telefone e "respondendo…".
 import { describe, expect, it } from "vitest";
 
+import { BOT_TOOL_NAMES } from "@/core/bot/tools";
 import {
   attendantBadge,
   conversationLabel,
@@ -10,6 +11,7 @@ import {
   isSellerTyping,
   maskPhone,
   originPrefix,
+  TOOL_LABELS,
 } from "@/app/admin/(protected)/whatsapp/conversas/format";
 
 const LIA = { botEnabled: true, sellerName: "Lia" };
@@ -77,6 +79,13 @@ describe("rótulos", () => {
     );
     expect(describeTools([])).toBeNull();
     expect(describeTools(["ferramenta_nova"])).toBe("ferramenta_nova");
+  });
+
+  it("toda ferramenta da Lia tem rótulo em português (ferramenta nova sem rótulo quebra aqui)", () => {
+    for (const tool of BOT_TOOL_NAMES) {
+      expect(TOOL_LABELS[tool], tool).toBeTruthy();
+      expect(describeTools([tool])).not.toBe(tool);
+    }
   });
 
   it("formata o telefone só para o painel da cliente", () => {

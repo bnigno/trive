@@ -701,6 +701,49 @@ describe("wa-conversations (onda 3)", () => {
     ]);
   });
 
+  it("cauda com ponte do site: o painel vê de onde ela veio, a peça (ou a sacola) e a hora", async () => {
+    const at = "2026-09-12T15:00:00.000Z";
+    const [pdp] = await db
+      .insert(schema.waConversations)
+      .values({
+        phoneE164: "+5511999990000",
+        botState: {
+          bridge: { siteCartId: "s1", code: "K7F2", source: "pdp", sourceLabel: "página da peça", at, productSlug: "longo-dunas", productName: "Longo Dunas", variation: "Areia · M" },
+        },
+      })
+      .returning({ id: schema.waConversations.id });
+    const pdpTail = await getWaThreadTail(sdb, { conversationId: pdp.id });
+    expect(pdpTail?.context.bridge).toEqual({ source: "pdp", label: "página da peça", productLabel: "Longo Dunas (Areia · M)", at: new Date(at) });
+
+    const [cart] = await db
+      .insert(schema.waConversations)
+      .values({
+        phoneE164: "+5511999990001",
+        botState: {
+          bridge: {
+            siteCartId: "s2",
+            code: "M3PQ",
+            source: "cart",
+            at,
+            items: [
+              { sku: "A", name: "Longo Dunas", variation: "Areia · M", quantity: 1, priceCents: 28900 },
+              { sku: "B", name: "Bolsa Tote", variation: "", quantity: 2, priceCents: 12900 },
+            ],
+          },
+        },
+      })
+      .returning({ id: schema.waConversations.id });
+    const cartTail = await getWaThreadTail(sdb, { conversationId: cart.id });
+    expect(cartTail?.context.bridge).toEqual({ source: "cart", label: "sacola", productLabel: "1× Longo Dunas (Areia · M), 2× Bolsa Tote", at: new Date(at) });
+
+    const [footer] = await db
+      .insert(schema.waConversations)
+      .values({ phoneE164: "+5511999990002", botState: { bridge: { siteCartId: "s3", code: "AAAA", source: "footer", at } } })
+      .returning({ id: schema.waConversations.id });
+    const footerTail = await getWaThreadTail(sdb, { conversationId: footer.id });
+    expect(footerTail?.context.bridge).toEqual({ source: "footer", label: "rodapé do site", productLabel: null, at: new Date(at) });
+  });
+
   it("cauda de conversa sem cliente nem estado: contexto vazio e sem pedidos", async () => {
     const [conversation] = await db
       .insert(schema.waConversations)
@@ -715,6 +758,7 @@ describe("wa-conversations (onda 3)", () => {
       cart: [],
       lastOrderNumber: null,
       handoff: null,
+      bridge: null,
       style: null,
       hold: null,
       alerts: [],

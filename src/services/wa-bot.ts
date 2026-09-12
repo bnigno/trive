@@ -22,6 +22,7 @@ import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memo
 import { BOT_TOOL_INPUT_SCHEMAS, type BotToolInputs, type ToolExecutor } from "@/core/bot/tools";
 import { buildBotSystemPrompt, DEFAULT_SELLER_NAME, truncateForWhatsApp } from "@/core/bot/prompt";
 import { splitBotReply } from "@/core/bot/reply";
+import { isBridgeFresh } from "@/core/bot/site-bridge";
 import { renderStoreMap } from "@/core/bot/store-map";
 import {
   historyTextForInbound,
@@ -32,6 +33,7 @@ import { deriveWaMessageOrigin } from "@/core/whatsapp/origin";
 import { auditLog, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
+import { bridgeStockLine } from "@/services/site-carts";
 import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN } from "@/services/wa-media";
 import { getStoreMap } from "@/services/store-catalog";
 import {
@@ -79,6 +81,7 @@ import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
 // executores moram em src/services/bot/* por família.
 export { BOT_UNAVAILABLE_REPLY, CARD_TIMEOUT_MS, HANDOFF_COURTESY_REPLY } from "./bot/shared";
+
 export type {
   BotAttachment,
   BotCardDeps,
@@ -297,7 +300,7 @@ export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle>
 export function assembleHistory(
   state: BotState,
   messages: BotChatMessage[],
-  extras: { lines?: readonly string[] } = {},
+  extras: { lines?: readonly string[]; now?: Date } = {},
 ): BotChatMessage[] {
   const note = renderContextNote(state, extras);
   return note ? [{ role: "user", text: note }, ...messages] : messages;
@@ -414,15 +417,25 @@ export async function runBotTurn(
       };
     });
     const state = parseBotState(conversation.botState);
-    const [memoryLines, purchaseLine] = await Promise.all([
+    const [memoryLines, purchaseLine, bridgeLine] = await Promise.all([
       loadMemoryLines(tx, conversation.phoneE164),
       purchaseMemoryLineFor(tx, {
         customerId: conversation.customerId,
         phoneE164: conversation.phoneE164,
       }),
+      // Ponte do site recente: estoque ao vivo das peças que ela estava vendo,
+      // para a Lia não inventar disponibilidade nem precisar de uma ferramenta.
+      state.bridge && isBridgeFresh(state.bridge, now)
+        ? bridgeStockLine(tx, state.bridge)
+        : Promise.resolve(null),
     ]);
     const history = assembleHistory(state, messages, {
-      lines: [...memoryLines, ...(purchaseLine ? [purchaseLine] : [])],
+      lines: [
+        ...memoryLines,
+        ...(purchaseLine ? [purchaseLine] : []),
+        ...(bridgeLine ? [bridgeLine] : []),
+      ],
+      now,
     });
 
     const { system, model } = await buildBotPromptBundle(tx);

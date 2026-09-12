@@ -113,6 +113,9 @@ export default async function WaConversationsPage({
             handoff: tail.context.handoff
               ? { ...tail.context.handoff, at: tail.context.handoff.at.toISOString() }
               : null,
+            bridge: tail.context.bridge
+              ? { ...tail.context.bridge, at: tail.context.bridge.at.toISOString() }
+              : null,
             recentOrders: tail.context.recentOrders.map((order) => ({
               ...order,
               createdAt: order.createdAt.toISOString(),

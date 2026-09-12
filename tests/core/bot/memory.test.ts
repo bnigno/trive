@@ -9,6 +9,7 @@ import {
   cartSubtotalCents,
   formatCartLines,
   NOTES_MAX,
+  mergeBridgeIntoState,
   parseBotState,
   renderContextNote,
   type BotCartItem,
@@ -78,6 +79,49 @@ describe("sacola", () => {
       `• 1× Vestido Dunas (Preto · M) — ${formatCentsBRL(28900)}`,
       `Subtotal: ${formatCentsBRL(28900)} (frete à parte)`,
     ]);
+  });
+});
+
+describe("mergeBridgeIntoState", () => {
+  const AT = "2026-09-12T14:59:30Z";
+
+  it("página da peça: a peça vira 'em vista' e a sacola atual fica como está", () => {
+    const merged = mergeBridgeIntoState(
+      { cart: [VESTIDO], focus: { slug: "outra", nome: "Outra", cor: "Azul" } },
+      { siteCartId: "s1", code: "K7F2", source: "pdp", at: AT, productSlug: "longo-dunas", productName: "Longo Dunas", variation: "Areia · M" },
+    );
+    expect(merged.focus).toEqual({ slug: "longo-dunas", nome: "Longo Dunas", cor: null });
+    expect(merged.cart).toEqual([VESTIDO]);
+    expect(merged.bridge?.code).toBe("K7F2");
+  });
+
+  it("sacola do site: funde na sacola da conversa por SKU (soma quantidade, não duplica) e não mexe na peça em vista", () => {
+    const merged = mergeBridgeIntoState(
+      { cart: [VESTIDO], focus: { slug: "outra", nome: "Outra", cor: null } },
+      {
+        siteCartId: "s2",
+        code: "M3PQ",
+        source: "cart",
+        at: AT,
+        items: [
+          { sku: "VEST-DUNAS-PRET-M", name: "Vestido Dunas", variation: "Preto · M", quantity: 2, priceCents: 28900 },
+          { sku: "TOTE", name: "Bolsa Tote", variation: "", quantity: 1, priceCents: 12900 },
+        ],
+      },
+    );
+    expect(merged.cart).toEqual([
+      { ...VESTIDO, quantidade: 3 },
+      { sku: "TOTE", quantidade: 1, nome: "Bolsa Tote", variacao: "", precoCents: 12900 },
+    ]);
+    expect(merged.focus).toEqual({ slug: "outra", nome: "Outra", cor: null });
+  });
+
+  it("rodapé sem peça: só registra a ponte; segunda ponte substitui a primeira", () => {
+    const first = mergeBridgeIntoState({}, { siteCartId: "s3", code: "AAAA", source: "footer", at: AT });
+    expect(first).toEqual({ bridge: { siteCartId: "s3", code: "AAAA", source: "footer", at: AT } });
+    const second = mergeBridgeIntoState(first, { siteCartId: "s4", code: "BBBB", source: "campaign", sourceLabel: "story dunas", at: AT, productSlug: "longo-dunas", productName: "Longo Dunas" });
+    expect(second.bridge?.siteCartId).toBe("s4");
+    expect(second.focus?.slug).toBe("longo-dunas");
   });
 });
 
