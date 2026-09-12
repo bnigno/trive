@@ -12,11 +12,13 @@ const responseSchema = z.looseObject({ text: z.string() });
 /** Extensão do arquivo pelo mime — a API decide o decodificador pelo nome. */
 function fileNameFor(mimeType: string): string {
   const type = mimeType.toLowerCase();
+  // O contêiner decide o nome, antes do codec: o Chrome grava
+  // "audio/webm;codecs=opus" e isso é webm, não ogg.
+  if (type.includes("webm")) return "audio.webm";
   if (type.includes("ogg") || type.includes("opus")) return "audio.ogg";
   if (type.includes("mpeg") || type.includes("mp3")) return "audio.mp3";
   if (type.includes("mp4") || type.includes("m4a") || type.includes("aac")) return "audio.m4a";
   if (type.includes("wav")) return "audio.wav";
-  if (type.includes("webm")) return "audio.webm";
   return "audio.ogg";
 }
 
@@ -35,7 +37,7 @@ export class OpenAiTranscriber implements Transcriber {
   async transcribe(input: TranscribeInput): Promise<Transcription> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
-      throw new TranscriptionUnavailableError("OPENAI_API_KEY não configurada.");
+      throw new TranscriptionUnavailableError("OPENAI_API_KEY não configurada.", "no_key");
     }
 
     const form = new FormData();
@@ -62,8 +64,11 @@ export class OpenAiTranscriber implements Transcriber {
       );
     }
     if (response.status >= 400) {
-      // Nunca o corpo: pode ecoar o conteúdo do áudio.
-      throw new TranscriptionUnavailableError(`Transcrição respondeu HTTP ${response.status}.`);
+      // Nunca o corpo: pode ecoar o conteúdo do áudio. 4xx (menos cota) é o
+      // vendor recusando ESTE pedido — formato, chave inválida —, não uma queda.
+      const reason =
+        response.status === 429 ? "rate_limited" : response.status < 500 ? "rejected" : "unavailable";
+      throw new TranscriptionUnavailableError(`Transcrição respondeu HTTP ${response.status}.`, reason);
     }
 
     let raw: unknown;

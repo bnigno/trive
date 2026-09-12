@@ -1,4 +1,4 @@
-import type { TranscribeInput, Transcriber, Transcription } from "./index";
+import type { TranscribeInput, Transcriber, Transcription, TranscriptionFailureReason } from "./index";
 import { TranscriptionUnavailableError } from "./index";
 
 /**
@@ -14,8 +14,8 @@ export class FakeTranscriber implements Transcriber {
     this.queue.push(text);
   }
 
-  failNext(message = "vendor fora do ar (fake)"): void {
-    this.queue.push(new TranscriptionUnavailableError(message));
+  failNext(message = "vendor fora do ar (fake)", reason: TranscriptionFailureReason = "unavailable"): void {
+    this.queue.push(new TranscriptionUnavailableError(message, reason));
   }
 
   async transcribe(input: TranscribeInput): Promise<Transcription> {

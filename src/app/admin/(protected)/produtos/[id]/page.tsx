@@ -5,6 +5,7 @@ import { asc } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema";
 import { getFileStorage } from "@/adapters/storage";
+import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
@@ -15,7 +16,6 @@ import { findColorAxis } from "@/core/catalog/product-images";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Badge } from "@/components/ui/badge";
-import { publicImageUrl } from "@/services/store-catalog";
 import { Card } from "@/components/ui/card";
 import { CuratorNoteForm } from "./curator-note-form";
 import { ConfirmButton } from "@/components/ui/confirm-button";
@@ -35,6 +35,8 @@ import { MeasurementsForm } from "./measurements-form";
 import { readinessIssueHref } from "../readiness-badge";
 
 export const dynamic = "force-dynamic";
+/** A nota da curadora roda upload + transcrição (até 20 s) dentro da action desta página. */
+export const maxDuration = 60;
 
 export const metadata: Metadata = {
   title: "Produto",
@@ -347,6 +349,22 @@ export default async function ProdutoDetalhePage({
         </div>
       </Card>
 
+      <OwnerOnly>
+        <Card id="nota-da-curadora" title="Nota da curadora">
+          <CuratorNoteForm
+            productId={detail.id}
+            note={detail.curatorNote ?? ""}
+            noteVersion={detail.curatorNoteUpdatedAt?.getTime() ?? 0}
+            // O caminho já tem um token por gravação: a URL muda quando o
+            // áudio muda, e só então (salvar o texto não reinicia o player).
+            audioUrl={detail.curatorAudioPath ? storage.publicUrl(detail.curatorAudioPath) : null}
+            audioMime={detail.curatorAudioMime}
+            audioSeconds={detail.curatorAudioSeconds}
+            transcriptionEnabled={isTranscriptionConfigured()}
+          />
+        </Card>
+      </OwnerOnly>
+
       <Card id="variacoes" title="Variações">
         <div className="flex flex-col gap-5">
           {detail.variants.length === 0 ? (
@@ -471,21 +489,6 @@ export default async function ProdutoDetalhePage({
           </OwnerOnly>
         </div>
       </Card>
-
-      <OwnerOnly>
-        <Card id="nota-da-curadora" title="Nota da curadora">
-          <CuratorNoteForm
-            productId={detail.id}
-            note={detail.curatorNote ?? ""}
-            audioUrl={
-              detail.curatorAudioPath
-                ? `${publicImageUrl(detail.curatorAudioPath)}?v=${detail.curatorNoteUpdatedAt?.getTime() ?? 0}`
-                : null
-            }
-            audioSeconds={detail.curatorAudioSeconds}
-          />
-        </Card>
-      </OwnerOnly>
 
       <OwnerOnly>
         <Card id="fita-metrica" title="Fita métrica">

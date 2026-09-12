@@ -45,6 +45,14 @@ describe("OpenAiTranscriber (client real com fetch fake)", () => {
     const file = form.get("file") as File;
     expect(file.name).toBe("audio.ogg");
     expect(file.size).toBe(4);
+
+    // O webm/opus do Chrome (nota da curadora) vai como webm, não como ogg.
+    const webm = createFakeFetch({ text: "ok" });
+    await new OpenAiTranscriber(webm.fetchFn).transcribe({ data: Buffer.alloc(2), mimeType: "audio/webm;codecs=opus" });
+    expect(((webm.calls[0]?.init?.body as FormData).get("file") as File).name).toBe("audio.webm");
+    const m4a = createFakeFetch({ text: "ok" });
+    await new OpenAiTranscriber(m4a.fetchFn).transcribe({ data: Buffer.alloc(2), mimeType: "audio/mp4" });
+    expect(((m4a.calls[0]?.init?.body as FormData).get("file") as File).name).toBe("audio.m4a");
   });
 
   it("sem chave, HTTP ≥ 400 ou resposta sem texto → TranscriptionUnavailableError sem o corpo", async () => {
@@ -58,6 +66,15 @@ describe("OpenAiTranscriber (client real com fetch fake)", () => {
       .transcribe({ data: Buffer.alloc(1), mimeType: "audio/ogg" })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TranscriptionUnavailableError);
+    // O motivo distingue cota, recusa deste pedido e queda.
+    expect((error as TranscriptionUnavailableError).reason).toBe("rate_limited");
+    const reasonOf = async (status: number) =>
+      new OpenAiTranscriber(createFakeFetch({}, status).fetchFn)
+        .transcribe({ data: Buffer.alloc(1), mimeType: "audio/ogg" })
+        .then(() => "ok")
+        .catch((e: unknown) => (e as TranscriptionUnavailableError).reason);
+    expect(await reasonOf(400)).toBe("rejected");
+    expect(await reasonOf(503)).toBe("unavailable");
     expect((error as Error).message).toContain("429");
     expect((error as Error).message).not.toContain("segredo");
 
