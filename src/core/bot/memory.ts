@@ -87,7 +87,8 @@ export const botStateSchema = z
       })
       .optional(),
     /** A ponte do site: o que a cliente estava vendo quando tocou "Falar com a Lia". */
-    bridge: bridgeStateSchema.optional(),
+    // Ponte torta não derruba o caderninho inteiro (sacola, CEP, cupom): só ela some.
+  bridge: bridgeStateSchema.optional().catch(undefined),
   })
   .loose();
 

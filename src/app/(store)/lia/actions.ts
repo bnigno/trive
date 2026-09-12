@@ -6,14 +6,17 @@ import { z } from "zod";
 
 import { BRIDGE_SOURCES } from "@/core/bot/site-bridge";
 import { getDb } from "@/db/client";
-import { createSiteCart } from "@/services/site-carts";
+import { BRIDGE_MAX_LINES, BRIDGE_MAX_QTY, createSiteCart } from "@/services/site-carts";
 
 const schema = z.object({
   source: z.enum(BRIDGE_SOURCES),
   campaignSlug: z.string().trim().min(1).max(60).optional(),
   productSlug: z.string().trim().min(1).max(200).optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
-  items: z.array(z.object({ sku: z.string().trim().min(1).max(60), quantity: z.number().int().min(1).max(20) })).max(20).optional(),
+  items: z
+    .array(z.object({ variantId: z.uuid().optional(), sku: z.string().trim().min(1).max(60).optional(), quantity: z.number().int().min(1).max(BRIDGE_MAX_QTY) }))
+    .max(BRIDGE_MAX_LINES)
+    .optional(),
 });
 
 export type LiaBridgeResult = { ok: true; url: string } | { ok: false };

@@ -2,7 +2,7 @@
 // Fase 2: vitrine sem autenticação. Nada aqui muta estado — sem audit/outbox.
 // Regra central: só é visível o que está ativo E tem preço ativo (price_versions
 // status 'active'); preço exibido é sempre o do banco, nunca o do cliente.
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   compareSizeLabels,
@@ -612,8 +612,25 @@ export type SellableVariant = {
   availableQty: number;
 };
 
+/** Pelo SKU (comparação exata sem diferenciar maiúsculas — nunca ILIKE: "%" vindo da internet não é curinga). */
 export async function getSellableVariantBySku(db: ServiceDb, sku: string): Promise<SellableVariant | null> {
   const clean = z.string().trim().min(1).parse(sku);
+  return findSellableVariant(db, sql`lower(${productVariants.sku}) = lower(${clean})`);
+}
+
+/** Pelo id da variação (a sacola do site guarda o id; o SKU é rótulo editável). */
+export async function getSellableVariantById(db: ServiceDb, variantId: string): Promise<SellableVariant | null> {
+  const parsed = z.uuid().safeParse(variantId);
+  if (!parsed.success) return null;
+  return findSellableVariant(db, eq(productVariants.id, parsed.data));
+}
+
+/**
+ * Variação vendável AGORA para quem está no site: peça ativa e já visível
+ * (janela VIP respeitada — a ponte pública não pode revelar lançamento
+ * escondido), variação ativa, com preço ativo; estoque pode ser zero.
+ */
+async function findSellableVariant(db: ServiceDb, match: SQL): Promise<SellableVariant | null> {
   const [row] = await db
     .select({
       variantId: productVariants.id,
@@ -628,10 +645,13 @@ export async function getSellableVariantBySku(db: ServiceDb, sku: string): Promi
       available: sql<string>`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0)`,
     })
     .from(productVariants)
-    .innerJoin(products, and(eq(products.id, productVariants.productId), eq(products.status, "active"), isNull(products.deletedAt)))
+    .innerJoin(
+      products,
+      and(eq(products.id, productVariants.productId), eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible()),
+    )
     .innerJoin(priceVersions, activePriceJoin())
     .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
-    .where(and(ilike(productVariants.sku, clean), eq(productVariants.isActive, true), isNull(productVariants.deletedAt)))
+    .where(and(match, eq(productVariants.isActive, true), isNull(productVariants.deletedAt)))
     .limit(1);
   if (!row) return null;
   return {

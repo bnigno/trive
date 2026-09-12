@@ -465,7 +465,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                     source="cart"
                     sellerName={lia.sellerName}
                     fallbackUrl={lia.fallbackUrl}
-                    items={items.map((line) => ({ sku: line.sku, quantity: line.quantity }))}
+                    items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}
                     className="w-full"
                   />
                   <p className="font-store text-[13px] text-ink-500">Prefere fechar pelo WhatsApp? A {lia.sellerName} recebe a sua sacola como está.</p>

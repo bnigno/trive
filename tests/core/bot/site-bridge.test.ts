@@ -42,7 +42,22 @@ describe("extractBridgeCode", () => {
     expect(extractBridgeCode("#look do dia")).toBeNull();
     // Símbolos fora do alfabeto (0, O, I, L) não formam código.
     expect(extractBridgeCode("#K0F2")).toBeNull();
-    expect(extractBridgeCode("#ABCD e #EFGH")).toBe("ABCD");
+    // O site põe o código no FIM, entre parênteses: essa forma vence, e entre várias vale a última.
+    expect(extractBridgeCode("#ABCD e #EFGH")).toBe("EFGH");
+    expect(extractBridgeCode("#natal Oi Lia, vi o Longo Dunas (#K7F2)")).toBe("K7F2");
+    expect(extractBridgeCode("(#ABCD) e depois #EFGH")).toBe("ABCD");
+    // Hashtag maior que o código não é código ("#natal" começa com NATA).
+    expect(extractBridgeCode("#natal oi lia")).toBeNull();
+    expect(extractBridgeCode("#verão")).toBeNull();
+    expect(extractBridgeCode("#desconto")).toBeNull();
+  });
+
+  it("nunca deixa o código do site para trás, seja o que for que a cliente escreva antes (fast-check)", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 40 }), fc.stringMatching(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/), (prefix, code) => {
+        expect(extractBridgeCode(`${prefix} Oi Lia, vim pelo site (#${code})`)).toBe(code);
+      }),
+    );
   });
 });
 

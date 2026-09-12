@@ -17,6 +17,13 @@ export const metadata: Metadata = {
 
 export default async function CartPage() {
   // "Falar com a Lia" com a sacola: o telefone da loja e o nome da vendedora.
-  const bridge = await loadBridgeSettings(getDb());
-  return <CartView lia={{ sellerName: bridge.sellerName, fallbackUrl: plainBridgeUrl(bridge) }} />;
+  // Banco fora do ar não derruba a sacola por causa de um botão opcional.
+  let lia: { sellerName: string; fallbackUrl: string | null } | null = null;
+  try {
+    const bridge = await loadBridgeSettings(getDb());
+    lia = { sellerName: bridge.sellerName, fallbackUrl: plainBridgeUrl(bridge) };
+  } catch (error) {
+    console.error("[carrinho] settings da ponte indisponíveis", error);
+  }
+  return <CartView lia={lia} />;
 }

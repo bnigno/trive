@@ -133,6 +133,40 @@ describe("createSiteCart", () => {
     expect(third.id).not.toBe(first.id);
   });
 
+  it("sacola pelo id da variação: SKU renomeado depois da sacola não perde a linha; SKU só é reserva", async () => {
+    const { variantId } = await dunas();
+    await db.update(schema.productVariants).set({ sku: "LD-AREIA-M" }).where(eq(schema.productVariants.id, variantId));
+    const byId = await createSiteCart(sdb, { source: "cart", items: [{ variantId, sku: "DUNAS-AREIA-M", quantity: 2 }] });
+    expect((await getSiteCart(sdb, byId.id))!.items).toEqual([
+      { sku: "LD-AREIA-M", name: "Longo Dunas", variation: "Areia · M", quantity: 2, priceCents: 28900 },
+    ]);
+    // Só o SKU (sacolas antigas no celular): compara exato, sem curinga.
+    const bySku = await createSiteCart(sdb, { source: "cart", items: [{ sku: "ld-areia-m", quantity: 1 }] });
+    expect((await getSiteCart(sdb, bySku.id))!.items).toHaveLength(1);
+    const wildcard = await createSiteCart(sdb, { source: "cart", items: [{ sku: "%", quantity: 1 }] });
+    expect((await getSiteCart(sdb, wildcard.id))!.items).toEqual([]);
+    expect(wildcard.message).toBe(`Oi Lia, vim pelo site (#${wildcard.code})`);
+  });
+
+  it("peça de lançamento ainda escondida (janela VIP) não entra na ponte pública, nem por SKU nem por id", async () => {
+    const { productId, variantId } = await dunas();
+    await db.update(schema.products).set({ visibleFrom: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }).where(eq(schema.products.id, productId));
+    const link = await createSiteCart(sdb, { source: "cart", items: [{ variantId, quantity: 1 }, { sku: "DUNAS-AREIA-M", quantity: 1 }] });
+    expect((await getSiteCart(sdb, link.id))!.items).toEqual([]);
+    const pdp = await createSiteCart(sdb, { source: "pdp", productSlug: "longo-dunas", variantSku: "DUNAS-AREIA-M" });
+    expect(pdp.message).toBe(`Oi Lia, vim pelo site (#${pdp.code})`);
+    expect((await getSiteCart(sdb, pdp.id))!.productId).toBeNull();
+  });
+
+  it("sacola grande (mais de 20 linhas ou de 20 unidades) entra inteira: os tetos são os da sacola", async () => {
+    const { variantId } = await dunas();
+    const link = await createSiteCart(sdb, { source: "cart", items: [{ variantId, quantity: 24 }] });
+    expect((await getSiteCart(sdb, link.id))!.items).toEqual([expect.objectContaining({ quantity: 24 })]);
+    const lines = Array.from({ length: 30 }, () => ({ variantId, quantity: 1 }));
+    const many = await createSiteCart(sdb, { source: "cart", items: lines });
+    expect((await getSiteCart(sdb, many.id))!.items).toHaveLength(30);
+  });
+
   it("entrada inválida é recusada na fronteira", async () => {
     await expect(createSiteCart(sdb, { source: "pdp", items: [{ sku: "x", quantity: 0 }] })).rejects.toThrow();
     await expect(createSiteCart(sdb, { source: "loja" as never })).rejects.toThrow();

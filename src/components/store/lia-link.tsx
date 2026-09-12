@@ -22,11 +22,14 @@ export type LiaLinkProps = {
   productSlug?: string;
   variantSku?: string;
   campaignSlug?: string;
-  items?: readonly { sku: string; quantity: number }[];
+  items?: readonly { variantId: string; sku: string; quantity: number }[];
   /** "button" (marfim, contorno) ou "footer" (link claro sobre noir). */
   variant?: "button" | "footer";
   className?: string;
 };
+
+/** Teto para a action responder; depois disso a cliente vai pelo link sem código. */
+const ACTION_TIMEOUT_MS = 6000;
 
 const footerLink =
   "inline-flex min-h-11 items-center gap-2 text-sm text-ivory-200 transition-colors duration-300 hover:text-gold-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-200";
@@ -53,7 +56,11 @@ export function LiaLink({
     startTransition(async () => {
       let url = fallbackUrl as string;
       try {
-        const result = await startLiaBridgeAction({ source, productSlug, variantSku, campaignSlug, items: items ? [...items] : undefined });
+        // Rede engasgada não prende a cliente em "Abrindo…": passado o teto, o link simples segue.
+        const result = await Promise.race([
+          startLiaBridgeAction({ source, productSlug, variantSku, campaignSlug, items: items ? [...items] : undefined }),
+          new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), ACTION_TIMEOUT_MS)),
+        ]);
         if (result.ok) url = result.url;
       } catch {
         // O link simples segue.

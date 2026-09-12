@@ -23,15 +23,23 @@ export function generateBridgeCode(random: () => number = Math.random): string {
   return code;
 }
 
-const CODE_PATTERN = new RegExp(`#\\s?([${BRIDGE_CODE_ALPHABET}]{${BRIDGE_CODE_LENGTH}})(?![${BRIDGE_CODE_ALPHABET}])`, "i");
+// A forma que o site manda é "(#K7F2)"; ela ganha de qualquer "#XXXX" solto.
+const PAREN_CODE_PATTERN = new RegExp(`\\(#\\s?([${BRIDGE_CODE_ALPHABET}]{${BRIDGE_CODE_LENGTH}})\\)`, "gi");
+// "#XXXX" solto: só quando termina ali (uma hashtag maior, "#natal", não é código).
+const LOOSE_CODE_PATTERN = new RegExp(`#\\s?([${BRIDGE_CODE_ALPHABET}]{${BRIDGE_CODE_LENGTH}})(?![\\p{L}\\p{N}])`, "giu");
 
 /**
  * O código dentro de uma mensagem ("Oi Lia, vi o Longo Dunas (#K7F2)"):
- * maiúsculo, o primeiro que aparecer; null quando não há.
+ * maiúsculo; a forma "(#XXXX)" do site vence, e entre várias vale a última
+ * (o site põe o código no fim). Hashtag comum ("#natal") não é código. null
+ * quando não há.
  */
 export function extractBridgeCode(text: string): string | null {
-  const match = CODE_PATTERN.exec(text.toUpperCase());
-  return match ? match[1] : null;
+  const upper = text.toUpperCase();
+  const paren = [...upper.matchAll(PAREN_CODE_PATTERN)];
+  if (paren.length > 0) return paren[paren.length - 1]![1]!;
+  const loose = [...upper.matchAll(LOOSE_CODE_PATTERN)];
+  return loose.length > 0 ? loose[loose.length - 1]![1]! : null;
 }
 
 /** Retrato de uma peça na ponte (o que a cliente estava vendo). */
@@ -109,16 +117,25 @@ export type BridgeState = z.infer<typeof bridgeStateSchema>;
 
 /** A linha do caderninho: "Veio do site agora (página da peça): Longo Dunas (Areia · M)". */
 export function bridgeContextLine(bridge: BridgeState, now: Date): string {
-  const at = new Date(bridge.at);
-  const minutes = Math.max(0, Math.round((now.getTime() - at.getTime()) / 60_000));
-  const quando = minutes < 3 ? "agora" : minutes < 60 ? `há ${minutes} min` : minutes < 60 * 24 ? `há ${Math.round(minutes / 60)} h` : `há ${Math.round(minutes / (60 * 24))} dia(s)`;
+  const at = new Date(bridge.at).getTime();
+  const minutes = Number.isFinite(at) ? Math.max(0, Math.round((now.getTime() - at) / 60_000)) : null;
+  const quando =
+    minutes === null
+      ? ""
+      : minutes < 3
+        ? " agora"
+        : minutes < 60
+          ? ` há ${minutes} min`
+          : minutes < 60 * 24
+            ? ` há ${Math.round(minutes / 60)} h`
+            : ` há ${Math.round(minutes / (60 * 24))} dia(s)`;
   const onde = bridge.sourceLabel ?? originLabel(bridge.source);
   if (bridge.items && bridge.items.length > 0) {
     const lista = bridge.items.map((item) => `${item.quantity}× ${item.name}${item.variation ? ` (${item.variation})` : ""}`).join(", ");
-    return `Veio do site ${quando} (${onde}) com a sacola: ${lista}`;
+    return `Veio do site${quando} (${onde}) com a sacola: ${lista}`;
   }
   if (bridge.productName) {
-    return `Veio do site ${quando} (${onde}): ${bridge.productName}${bridge.variation ? ` (${bridge.variation})` : ""}`;
+    return `Veio do site${quando} (${onde}): ${bridge.productName}${bridge.variation ? ` (${bridge.variation})` : ""}`;
   }
-  return `Veio do site ${quando} (${onde})`;
+  return `Veio do site${quando} (${onde})`;
 }

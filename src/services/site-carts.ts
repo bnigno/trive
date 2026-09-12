@@ -19,7 +19,7 @@ import { siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
-import { getPublicProductBySlug, getSellableVariantBySku } from "@/services/store-catalog";
+import { getPublicProductBySlug, getSellableVariantById, getSellableVariantBySku } from "@/services/store-catalog";
 
 export class ServiceError extends Error {
   readonly code: string;
@@ -33,13 +33,32 @@ export class ServiceError extends Error {
 /** Colisão de código entre pontes abertas é rara (30^4); três tentativas bastam. */
 const CODE_ATTEMPTS = 3;
 
+/** Tetos da sacola na ponte — folgados: a sacola do site limita só pelo estoque. */
+export const BRIDGE_MAX_LINES = 100;
+export const BRIDGE_MAX_QTY = 999;
+
 const createSiteCartSchema = z.object({
   source: z.enum(BRIDGE_SOURCES),
   campaignSlug: z.string().trim().min(1).max(60).optional(),
   productSlug: z.string().trim().min(1).max(200).optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
-  /** A sacola (source = cart): SKUs e quantidades; o preço é lido na hora. */
-  items: z.array(z.object({ sku: z.string().trim().min(1).max(60), quantity: z.number().int().min(1).max(20) })).max(20).optional(),
+  /**
+   * A sacola (source = cart): variação (id, como a sacola guarda; SKU só como
+   * reserva) e quantidade; o preço é lido na hora. Tetos acima do que a
+   * sacola permite, para nenhuma sacola real cair no link sem código.
+   */
+  items: z
+    .array(
+      z
+        .object({
+          variantId: z.uuid().optional(),
+          sku: z.string().trim().min(1).max(60).optional(),
+          quantity: z.number().int().min(1).max(BRIDGE_MAX_QTY),
+        })
+        .refine((line) => line.variantId || line.sku, "Linha da sacola sem variação."),
+    )
+    .max(BRIDGE_MAX_LINES)
+    .optional(),
 });
 export type CreateSiteCartInput = z.input<typeof createSiteCartSchema>;
 
@@ -67,7 +86,9 @@ async function snapshotItems(db: DbOrTx, input: z.output<typeof createSiteCartSc
   if (input.source === "cart" && input.items && input.items.length > 0) {
     const items: BridgeItem[] = [];
     for (const line of input.items) {
-      const variant = await getSellableVariantBySku(db, line.sku);
+      const variant =
+        (line.variantId ? await getSellableVariantById(db, line.variantId) : null) ??
+        (line.sku ? await getSellableVariantBySku(db, line.sku) : null);
       if (!variant) continue; // Peça que saiu do ar entre a sacola e o toque: fica de fora, sem derrubar.
       items.push({
         sku: variant.sku,
