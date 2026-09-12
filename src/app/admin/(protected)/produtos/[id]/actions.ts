@@ -4,6 +4,14 @@ import { revalidatePath } from "next/cache";
 import { z, ZodError } from "zod";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
+import { getTranscriber } from "@/adapters/transcription";
+import {
+  recordCuratorNote,
+  removeCuratorAudio,
+  updateCuratorNote,
+  type CuratorNoteResult,
+} from "@/services/curator-notes";
+import { CURATOR_NOTE_MAX_CHARS, resolveCuratorAudioFormat } from "@/core/catalog/curator-note";
 import { requireOwner } from "@/services/auth";
 import {
   addProductImage,
@@ -368,4 +376,116 @@ export async function setProductMeasurementsAction(
         ? "Nada mudou na fita métrica."
         : `Fita métrica salva em ${result.updated} ${result.updated === 1 ? "variação" : "variações"}.`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// A nota da curadora: a voz da dona sobre a peça
+// ---------------------------------------------------------------------------
+
+/** O que a tela mostra depois de gravar: além de erro/sucesso, se o texto veio. */
+export type CuratorNoteFormState = FormState & {
+  /** A transcrição preencheu o texto; a gravação pendente pode ser descartada. */
+  transcribed?: boolean;
+  /** Reenviar o mesmo áudio pode dar certo (serviço instável ou cota): a gravação fica na tela. */
+  retryable?: boolean;
+  /** O áudio ficou salvo, mas sem texto: é um aviso, não um sucesso. */
+  warning?: string;
+};
+
+export async function recordCuratorNoteAction(
+  _prev: CuratorNoteFormState,
+  formData: FormData,
+): Promise<CuratorNoteFormState> {
+  const user = await requireOwner("produtos");
+  try {
+    const productId = String(formData.get("productId") ?? "");
+    const file = formData.get("audio");
+    if (!(file instanceof File) || file.size === 0) {
+      return { error: "Grave a nota ou escolha um arquivo de áudio." };
+    }
+    // O Android às vezes manda o m4a como application/octet-stream: vale o nome.
+    const format = resolveCuratorAudioFormat(file.type, file.name);
+    if (!format) {
+      return {
+        error: "Não reconheci esse formato de áudio. Grave pelo botão da tela ou envie um arquivo comum (m4a, mp3, ogg).",
+      };
+    }
+    const secondsRaw = Number(formData.get("seconds") ?? 0);
+    const result = await recordCuratorNote(getDb(), getFileStorage(), getTranscriber(), {
+      productId,
+      userId: user.id,
+      audio: {
+        data: Buffer.from(await file.arrayBuffer()),
+        contentType: format.mime,
+        originalContentType: file.type || `(sem mime; nome ${file.name})`,
+        ...(Number.isFinite(secondsRaw) && secondsRaw > 0
+          ? { seconds: Math.round(secondsRaw) }
+          : {}),
+      },
+    });
+    revalidateProduct(productId);
+    const message = curatorNoteMessage(result);
+    const retryable = result.reason === "unavailable" || result.reason === "rate_limited";
+    return result.transcribed
+      ? { success: message, transcribed: true, retryable: false }
+      : { warning: message, transcribed: false, retryable };
+  } catch (error) {
+    return toErrorState(error);
+  }
+}
+
+/** A frase certa para cada desfecho — a dona precisa saber o que fazer, não o que falhou. */
+function curatorNoteMessage(result: CuratorNoteResult): string {
+  const stale = result.staleNote ? " O texto abaixo é o da gravação anterior — confira." : "";
+  switch (result.reason) {
+    case "ok":
+      return result.truncated
+        ? `Transcrevi, mas a fala passou de ${CURATOR_NOTE_MAX_CHARS} caracteres e o final foi cortado — complete à mão.`
+        : "Nota gravada e transcrita — confira o texto e ajuste se precisar.";
+    case "empty":
+      return `Áudio guardado, mas não ouvi fala nele — ouça a gravação e grave de novo, mais perto do microfone.${stale}`;
+    case "no_key":
+      return `Áudio guardado. A transcrição automática está desligada (falta a chave da OpenAI na hospedagem): escreva a nota à mão.${stale}`;
+    case "rejected":
+      return `Áudio guardado, mas o transcritor recusou esse arquivo. Grave pelo botão da tela ou escreva à mão.${stale}`;
+    default:
+      return `Áudio guardado. Não consegui transcrever agora (o serviço está instável): toque em Enviar de novo daqui a pouco, ou escreva à mão.${stale}`;
+  }
+}
+
+export async function updateCuratorNoteAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  try {
+    const productId = String(formData.get("productId") ?? "");
+    await updateCuratorNote(getDb(), {
+      productId,
+      userId: user.id,
+      note: String(formData.get("note") ?? ""),
+    });
+    revalidateProduct(productId);
+    return { success: "Nota da curadora salva." };
+  } catch (error) {
+    return toErrorState(error);
+  }
+}
+
+export async function removeCuratorAudioAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  try {
+    const productId = String(formData.get("productId") ?? "");
+    const { removed } = await removeCuratorAudio(getDb(), getFileStorage(), {
+      productId,
+      userId: user.id,
+    });
+    revalidateProduct(productId);
+    return { success: removed ? "Áudio removido; o texto continua." : "Esta peça não tem áudio." };
+  } catch (error) {
+    return toErrorState(error);
+  }
 }

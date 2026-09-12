@@ -1153,15 +1153,17 @@ describe("ficha da peça e fita métrica", () => {
       composition: "Viscose",
       careNotes: "dry_clean",
       fitNotes: "Solta",
-      curatorNote: "Escolhi pelo caimento.",
     });
     let detail = await getProductDetail(db, product.id);
     expect(detail).toMatchObject({
       composition: "Viscose",
       careNotes: "dry_clean",
       fitNotes: "Solta",
-      curatorNote: "Escolhi pelo caimento.",
     });
+    // A nota da curadora não passa por aqui: tem serviço próprio (texto + áudio + carimbo).
+    await db.update(schema.products).set({ curatorNote: "Escolhi pelo caimento." }).where(eq(schema.products.id, product.id));
+    await updateProduct(db, { productId: product.id, userId: FIXED_USER_ID, brand: "TRIVÉ" });
+    expect((await getProductDetail(db, product.id)).curatorNote).toBe("Escolhi pelo caimento.");
     await updateProduct(db, { productId: product.id, userId: FIXED_USER_ID, composition: "", fitNotes: null });
     detail = await getProductDetail(db, product.id);
     expect(detail.composition).toBeNull();

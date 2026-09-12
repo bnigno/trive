@@ -5,6 +5,7 @@ import { asc } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { categories } from "@/db/schema";
 import { getFileStorage } from "@/adapters/storage";
+import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
@@ -16,6 +17,7 @@ import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { CuratorNoteForm } from "./curator-note-form";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/form";
@@ -33,6 +35,8 @@ import { MeasurementsForm } from "./measurements-form";
 import { readinessIssueHref } from "../readiness-badge";
 
 export const dynamic = "force-dynamic";
+/** A nota da curadora roda upload + transcrição (até 20 s) dentro da action desta página. */
+export const maxDuration = 60;
 
 export const metadata: Metadata = {
   title: "Produto",
@@ -344,6 +348,24 @@ export default async function ProdutoDetalhePage({
           </OwnerOnly>
         </div>
       </Card>
+
+      <OwnerOnly>
+        <Card id="nota-da-curadora" title="Nota da curadora">
+          <CuratorNoteForm
+            productId={detail.id}
+            note={detail.curatorNote ?? ""}
+            // Remonta o campo só quando o texto salvo mudou de fato (regravação
+            // que transcreveu, edição salva) — nunca por mexer só no áudio.
+            noteVersion={`${detail.curatorNoteUpdatedAt?.getTime() ?? 0}:${detail.curatorNote ?? ""}`}
+            // O caminho já tem um token por gravação: a URL muda quando o
+            // áudio muda, e só então (salvar o texto não reinicia o player).
+            audioUrl={detail.curatorAudioPath ? storage.publicUrl(detail.curatorAudioPath) : null}
+            audioMime={detail.curatorAudioMime}
+            audioSeconds={detail.curatorAudioSeconds}
+            transcriptionEnabled={isTranscriptionConfigured()}
+          />
+        </Card>
+      </OwnerOnly>
 
       <Card id="variacoes" title="Variações">
         <div className="flex flex-col gap-5">

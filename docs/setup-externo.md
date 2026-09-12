@@ -103,12 +103,25 @@ Divisão de papéis, para não confundir: **Hostinger = caixa humana** (você l�
 | Mercado Pago | % por venda | Taxa por transação, não mensalidade |
 | **Total** | **~R$ 210–260** | No lançamento (Fases 0–3 sem Z-API: ~R$ 110) |
 
-## Bucket `product-images` e o comprovante de pagamento
+## Bucket `product-images`, o comprovante e a nota da curadora
 
-Conferido em 2026-09-04: o bucket é público, aceita `image/webp`, `image/png`,
-`image/jpeg` e `image/avif`, com limite de 10 MB por arquivo. O comprovante de
-pagamento (`receipts/<orderId>/comprovante.jpg`, gerado pelo evento
-`order.receipt`) depende de `image/jpeg` estar nessa lista.
+Conferido em 2026-09-04: o bucket é público, com limite de 10 MB por arquivo.
+Desde a nota da curadora (2026-09-12) ele aceita imagens (`image/webp`,
+`image/png`, `image/jpeg`, `image/avif`) **e áudio** (`audio/webm`, `audio/ogg`,
+`audio/mp4`, `audio/mpeg` — a lista canônica vive em
+`src/core/catalog/curator-note.ts`). O comprovante de pagamento
+(`receipts/<orderId>/comprovante.jpg`, gerado pelo evento `order.receipt`)
+depende de `image/jpeg`; a nota da curadora depende dos áudios.
+
+`scripts/setup-storage.ts` é idempotente: cria o bucket se não existir e, se
+já existir, atualiza a lista de formatos. Rodar de novo a cada formato novo:
+
+```text
+npx tsx --env-file=.env.prod.local scripts/setup-storage.ts
+```
+
+O Supabase compara o mime por igualdade exata (sem `;codecs=`), por isso o
+serviço da nota canoniza o que o navegador manda antes de subir.
 
 ## 8. OpenAI — a vendedora ouve os áudios (Onda 4)
 
