@@ -3,7 +3,7 @@
 // Sem IA: template estável, do mesmo jeito toda vez (o post é dela, não do
 // modelo).
 
-import { findColorAxis, imagesForColor } from "@/core/catalog/product-images";
+import { fold, findColorAxis, imagesForColor } from "@/core/catalog/product-images";
 
 const MAX_CAPTION = 2200;
 
@@ -89,7 +89,11 @@ export function buildPostCaption(input: PostCaptionInput): string {
 export const POST_CAPTION_MAX = MAX_CAPTION;
 
 
-export type CarouselVariant = { attributes: Record<string, string> };
+export type CarouselVariant = {
+  attributes: Record<string, string>;
+  /** Variação desativada não vende: a cor dela não entra no carrossel. */
+  isActive?: boolean;
+};
 export type CarouselImage = { color: string | null; storagePath: string };
 export type CarouselEntry = { color: string; imagePath: string };
 
@@ -110,9 +114,11 @@ export function carouselColors(input: {
   const seen = new Set<string>();
   const out: CarouselEntry[] = [];
   for (const variant of input.variants) {
+    if (variant.isActive === false) continue;
     const color = (variant.attributes[axis] ?? "").trim();
     if (color === "") continue;
-    const key = color.toLowerCase();
+    // A mesma dobra do casamento cor→foto: "Verde" e "verde " são uma cor só.
+    const key = fold(color);
     if (seen.has(key)) continue;
     seen.add(key);
     const [image] = imagesForColor(input.images, color);

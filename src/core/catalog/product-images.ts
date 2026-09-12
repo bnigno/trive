@@ -13,7 +13,7 @@ export interface ColorTaggedImage {
  * comparação tolerante evita que "Verde " ou "COR" sumam da tela por um detalhe
  * de digitação vindo de um cadastro antigo.
  */
-function fold(value: string): string {
+export function fold(value: string): string {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

@@ -119,7 +119,10 @@ export async function drainOutbox(
       ).slice(0, MAX_ERROR_LENGTH);
       const attempts = row.attempts + 1;
 
-      if (classifyOutcome(attempts, row.max_attempts) === "dead") {
+      // O teto vem da política do evento (core/queue/retry-policy): a coluna
+      // max_attempts guarda o padrão antigo e valia para tudo.
+      const policy = getRetryPolicy(row.event_type);
+      if (classifyOutcome(attempts, policy.maxAttempts) === "dead") {
         await db.execute(sql`
           UPDATE outbox_events
           SET status = 'dead',
@@ -132,7 +135,7 @@ export async function drainOutbox(
         `);
         result.dead += 1;
       } else {
-        const delayMs = nextAttemptDelayMs(getRetryPolicy(row.event_type), attempts);
+        const delayMs = nextAttemptDelayMs(policy, attempts);
         const nextAttemptAt = new Date(now.getTime() + delayMs);
         await db.execute(sql`
           UPDATE outbox_events
