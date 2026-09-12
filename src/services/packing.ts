@@ -22,6 +22,7 @@ import {
 } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { getSettingsMap } from "@/services/settings";
 import {
@@ -193,6 +194,12 @@ export interface OrderAwaitingPacking {
   packagePhotoPath: string | null;
   /** Presente: sem preço no pacote, bilhete impresso dentro. */
   isGift: boolean;
+  /** Cartões da edição já gerados (o link diz "Imprimir" em vez de "Gerar"). */
+  editionCardsAt: Date | null;
+  /** O que sai no cartão mudou depois da geração: "Gerar de novo". */
+  editionCardsStale: boolean;
+  /** Quantas peças do pedido ganham cartão (0 = sem link de cartões). */
+  editionCards: number;
 }
 
 /** Pedidos pagos ou em separação ainda sem foto do pacote, os mais antigos primeiro. */
@@ -209,6 +216,8 @@ export async function listOrdersAwaitingPacking(
       customerName: customers.fullName,
       packagePhotoPath: orders.packagePhotoPath,
       isGift: orders.isGift,
+      editionCardsAt: orders.editionCardsAt,
+      editionCardsFingerprint: orders.editionCardsFingerprint,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -231,7 +240,16 @@ export async function listOrdersAwaitingPacking(
   for (const row of counts) {
     itemsByOrder.set(row.orderId, (itemsByOrder.get(row.orderId) ?? 0) + row.quantity);
   }
-  return rows.map((row) => ({ ...row, itemsCount: itemsByOrder.get(row.id) ?? 0 }));
+
+  // Cartões: quantos cada pedido tem e se os gerados ficaram velhos (a mesma régua da tela dos cartões).
+  const editionStatus = await editionCardsStatusByOrder(db, rows);
+
+  return rows.map(({ editionCardsFingerprint: _fingerprint, ...row }) => ({
+    ...row,
+    itemsCount: itemsByOrder.get(row.id) ?? 0,
+    editionCardsStale: editionStatus.get(row.id)?.stale ?? false,
+    editionCards: editionStatus.get(row.id)?.cards ?? 0,
+  }));
 }
 
 export async function countOrdersAwaitingPacking(db: DbOrTx): Promise<number> {

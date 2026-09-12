@@ -141,6 +141,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Worktrees de sessões de IA vivem dentro do repositório: cada um tem o
+    // seu próprio lint.
+    ".claude/worktrees/**",
   ]),
 ]);
 

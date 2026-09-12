@@ -43,3 +43,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Worktrees de sessões de IA (cada um é um checkout completo)
+.claude/worktrees/
