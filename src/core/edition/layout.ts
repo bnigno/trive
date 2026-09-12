@@ -26,8 +26,8 @@ export const EDITION_GEOMETRY = {
   band: { lockupHeight: 98, padding: 14 },
 } as const;
 
-/** Advance médio por unidade de largura, em "em", medido nas fontes embutidas. */
-const EM_PER_UNIT: Record<WidthFont, number> = { sans: 0.504, serif: 0.404 };
+/** Advance médio por unidade de largura, em "em", medido nas fontes embutidas (espaço a 0,6). */
+const EM_PER_UNIT: Record<WidthFont, number> = { sans: 0.485, serif: 0.389 };
 /** A quebra por palavra desperdiça o fim de cada linha: contamos com 90% da largura. */
 const WRAP_SLACK = 0.9;
 

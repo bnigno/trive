@@ -158,7 +158,7 @@ describe("updateSetting / getSettingsMap", () => {
     await expect(
       updateSetting(db, {
         key: "debut_letter_text",
-        value: Array.from({ length: 12 }, () => "PALAVRA COMPRIDA ".repeat(4).trim()).join("\n"),
+        value: Array.from({ length: 10 }, () => "PALAVRA COMPRIDA ".repeat(5).trim()).join("\n"),
         userId: FIXED_USER_ID,
       }),
     ).rejects.toThrow(/não cabe no papel/);

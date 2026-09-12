@@ -71,7 +71,9 @@ export default async function PedidoDetalhePage({
     letter: false,
     stale: false,
   };
-  const boxOpen = (status === "paid" || status === "preparing") && !order.packagePhotoPath;
+  // Dinheiro na entrega: a caixa é preparada com o pedido ainda pendente.
+  const cashPending = status === "pending_payment" && order.paymentMethod === "cash";
+  const boxOpen = (status === "paid" || status === "preparing" || cashPending) && !order.packagePhotoPath;
   const editionCardsStale = boxOpen && editionStatus.stale;
   // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
   // também barra pelo servidor — isto aqui é só para não mostrar botão morto.
@@ -411,6 +413,20 @@ export default async function PedidoDetalhePage({
                   />
                 ) : null}
               </div>
+            </Card>
+          ) : cashPending && (editionStatus.cards > 0 || editionStatus.letter) ? (
+            <Card title="Caixa">
+              <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+                Dinheiro na entrega: prepare a caixa agora e marque como pago só com o dinheiro na mão.
+              </p>
+              <EditionCardsLink
+                orderId={order.id}
+                generatedAt={order.editionCardsAt}
+                stale={editionCardsStale}
+                firstPurchase={editionStatus.isFirstPurchase}
+                letter={editionStatus.letter}
+                cards={editionStatus.cards}
+              />
             </Card>
           ) : order.packagePhotoPath && order.packedAt ? (
             <Card title="Embalagem">

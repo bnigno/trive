@@ -219,11 +219,30 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // no WhatsApp) evita duplicar o que já saiu. O payload é validado com Zod
   // dentro de sendOrderEmail.
   "order.store_created": async (event) => {
+    const orderId = String(event.payload.orderId);
+    // Dinheiro na entrega: a caixa é preparada ANTES de o pedido virar pago
+    // (a dona marca pago com o dinheiro na mão), então os cartões e a carta
+    // de estreia nascem já na criação. O dedupe_key é o mesmo do order.paid:
+    // uma geração por pedido, a que vier primeiro.
+    const [order] = await getDb()
+      .select({ paymentMethod: orders.paymentMethod })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+    if (order?.paymentMethod === "cash") {
+      await enqueueOutboxEvent(getDb(), {
+        eventType: "order.edition_cards",
+        dedupeKey: `order.edition_cards:${orderId}`,
+        aggregateType: "order",
+        aggregateId: orderId,
+        payload: { orderId },
+      });
+    }
     await sendOrderEmail(getDb(), getEmailProvider(), {
-      orderId: String(event.payload.orderId),
+      orderId,
       kind: "confirmed",
     });
-    await sendOrderWa(String(event.payload.orderId), "store_created");
+    await sendOrderWa(orderId, "store_created");
   },
   "order.paid": async (event) => {
     const orderId = String(event.payload.orderId);

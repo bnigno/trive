@@ -111,8 +111,8 @@ describe("debutLetterLayout / debutLetterFontSize", () => {
   });
 
   it("uma carta que não cabe nem no menor corpo é recusada com a razão; caixa alta conta mais", () => {
-    // 12 linhas e < 900 caracteres, mas em caixa alta: cada linha quebra em duas no papel.
-    const enorme = Array.from({ length: 12 }, () => "PALAVRA COMPRIDA ".repeat(4).trim()).join("\n");
+    // 10 linhas e < 900 caracteres, mas em caixa alta: cada linha quebra em duas no papel.
+    const enorme = Array.from({ length: 10 }, () => "PALAVRA COMPRIDA ".repeat(5).trim()).join("\n");
     expect(enorme.length).toBeLessThan(DEBUT_LETTER_MAX);
     expect(debutLetterLayout(enorme).fits).toBe(false);
     expect(debutLetterProblem(enorme)).toMatch(/não cabe no papel/);
