@@ -11,7 +11,7 @@ import { requireUser } from "@/services/auth";
 import { giftNoteUrl } from "@/services/gifts";
 import { getOrderDetail } from "@/services/orders";
 
-import { PrintButton } from "./print-button";
+import { PrintButton } from "@/components/admin/print-button";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +49,7 @@ export default async function GiftNotePrintPage({
             sem preço.
           </p>
         </div>
-        <PrintButton />
+        <PrintButton label="Imprimir bilhete" />
       </div>
 
       {imageUrl ? (

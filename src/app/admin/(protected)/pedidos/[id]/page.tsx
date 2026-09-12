@@ -379,15 +379,18 @@ export default async function PedidoDetalhePage({
 
           {status === "paid" || status === "preparing" ? (
             <Card title="Embalagem">
-              <PackForm
-                orderId={order.id}
-                photoUrl={
-                  order.packagePhotoPath && order.packedAt
-                    ? packagePhotoUrl(getFileStorage(), order.packagePhotoPath, order.packedAt)
-                    : null
-                }
-                packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
-              />
+              <div className="flex flex-col gap-4">
+                <PackForm
+                  orderId={order.id}
+                  photoUrl={
+                    order.packagePhotoPath && order.packedAt
+                      ? packagePhotoUrl(getFileStorage(), order.packagePhotoPath, order.packedAt)
+                      : null
+                  }
+                  packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
+                />
+                <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} />
+              </div>
             </Card>
           ) : order.packagePhotoPath && order.packedAt ? (
             <Card title="Embalagem">
@@ -399,6 +402,11 @@ export default async function PedidoDetalhePage({
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
                 Embalado em {formatDateTimeSP(order.packedAt)}.
               </p>
+              {order.editionCardsAt ? (
+                <div className="mt-3">
+                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} />
+                </div>
+              ) : null}
             </Card>
           ) : null}
 
@@ -414,5 +422,24 @@ export default async function PedidoDetalhePage({
         </div>
       </div>
     </div>
+  );
+}
+
+/** O cartão de bolso que vai na caixa: "Gerar" antes, "Imprimir" depois. */
+function EditionCardsLink({ orderId, generatedAt }: { orderId: string; generatedAt: Date | null }) {
+  return (
+    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      <Link
+        href={`/admin/pedidos/${orderId}/cartoes`}
+        className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+      >
+        {generatedAt ? "Imprimir cartões da edição" : "Gerar cartões da edição"}
+      </Link>
+      {generatedAt ? (
+        <span className="text-xs text-zinc-500 dark:text-zinc-400"> · gerados em {formatDateTimeSP(generatedAt)}</span>
+      ) : (
+        <span className="text-xs text-zinc-500 dark:text-zinc-400"> · um cartão de bolso por peça, com a frase da curadora e o QR</span>
+      )}
+    </p>
   );
 }

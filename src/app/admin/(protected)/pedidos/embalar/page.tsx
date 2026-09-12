@@ -88,6 +88,12 @@ export default async function EmbalarPage() {
                 </div>
               </div>
               <PackForm orderId={order.id} photoUrl={null} packedAtLabel={null} compact />
+              <Link
+                href={`/admin/pedidos/${order.id}/cartoes`}
+                className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                {order.editionCardsAt ? "Imprimir cartões da edição" : "Gerar cartões da edição"}
+              </Link>
             </li>
           ))}
         </ul>

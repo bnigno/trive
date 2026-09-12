@@ -89,6 +89,10 @@ export const orders = pgTable(
     giftMessage: text("gift_message"),
     giftDeliverBy: date("gift_deliver_by"),
     giftNotePath: text("gift_note_path"),
+    // Cartões da edição (Onda 5): um por peça do pedido, publicados em
+    // editions/<id>/<slug>.jpg quando a dona gera; o carimbo é o cache-busting
+    // do "Imprimir" e diz ao painel que já existem.
+    editionCardsAt: timestamp("edition_cards_at", { withTimezone: true }),
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
