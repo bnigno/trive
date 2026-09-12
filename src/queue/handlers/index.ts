@@ -7,8 +7,12 @@ import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
-import { prerenderProductPosts } from "@/services/product-posts";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
+import {
+  enqueueProductPublished,
+  productCardEventPayloadSchema,
+} from "@/services/product-cards-queue";
+import { prerenderProductPosts } from "@/services/product-posts";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -176,6 +180,42 @@ export type OutboxEvent = {
 
 export type OutboxHandler = (event: OutboxEvent) => Promise<void>;
 
+async function prerenderProductCards(event: OutboxEvent): Promise<void> {
+  const payload = productCardEventPayloadSchema.parse(event.payload);
+  const assets = await loadReceiptAssets();
+  const result = await prerenderProductPosts(
+    getDb(),
+    getFileStorage(),
+    (data) => renderCardPng(data, assets),
+    { productId: payload.productId },
+  );
+  if (result.skipped !== null) {
+    console.info(`[${event.eventType}] ${payload.productId} → skipped: ${result.skipped}`);
+    // Estreia marcada: o desenho fica agendado para a hora em que a peça
+    // aparece na loja (dedupe pela data: mudar a data agenda outro).
+    if (result.skipped === "peca_agendada" && result.visibleFrom) {
+      await enqueueProductPublished(getDb(), {
+        productId: payload.productId,
+        dedupeSuffix: `visible:${result.visibleFrom.getTime()}`,
+        nextAttemptAt: result.visibleFrom,
+      });
+    }
+    return;
+  }
+  console.info(`[${event.eventType}] ${payload.productId} → ${JSON.stringify(result)}`);
+  // A vitrine tem ISR de 5 min: a prévia do link troca na hora. Fora do
+  // Next (worker standalone, testes) revalidatePath pode lançar: só avisa.
+  try {
+    const { revalidatePath } = await import("next/cache");
+    revalidatePath(`/produto/${result.slug}`);
+  } catch (error) {
+    console.warn(
+      `[outbox] ${event.eventType} (event ${event.id}): revalidatePath indisponível neste contexto.`,
+      error,
+    );
+  }
+}
+
 export const outboxHandlers: Record<string, OutboxHandler> = {
   "system.ping": async (event) => {
     console.log(`[outbox] system.ping received (event ${event.id})`);
@@ -241,20 +281,14 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
     );
   },
+  // Peça entrou na vitrine (ou mudou o que está no cartão): o post, o story
+  // e o carrossel ficam prontos antes de a dona abrir a tela. Falha aqui nunca
+  // mexe no status da peça. Sem foto/preço, rascunho ou peça sumida são
+  // "nada a desenhar" — concluído, não retry (senão vira "Fila com problemas").
+  "product.published": prerenderProductCards,
+  "product.card_refresh": prerenderProductCards,
   // Cartão editorial fora do cache: desenha, publica e manda logo depois do
   // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).
-  // Peça entrou na vitrine: o post, o story e o carrossel dela ficam prontos
-  // antes de a dona abrir a tela. Falha aqui nunca mexe no status da peça.
-  "product.published": async (event) => {
-    const payload = z.object({ productId: z.uuid() }).parse(event.payload);
-    const assets = await loadReceiptAssets();
-    await prerenderProductPosts(
-      getDb(),
-      getFileStorage(),
-      (data) => renderCardPng(data, assets),
-      { productId: payload.productId },
-    );
-  },
   "wa.card_render": async (event) => {
     const result = await renderAndSendBotCard(
       getDb(),

@@ -1286,33 +1286,118 @@ describe("createProduct com medidas por tamanho", () => {
   });
 });
 
-describe("product.published", () => {
-  it("ativar a peça enfileira o evento uma vez; reativar ou voltar a rascunho não enfileira", async () => {
+describe("product.published e product.card_refresh", () => {
+  const cardEvents = async (productId: string) =>
+    (
+      await db
+        .select({
+          eventType: schema.outboxEvents.eventType,
+          dedupeKey: schema.outboxEvents.dedupeKey,
+          aggregateType: schema.outboxEvents.aggregateType,
+          aggregateId: schema.outboxEvents.aggregateId,
+          payload: schema.outboxEvents.payload,
+          maxAttempts: schema.outboxEvents.maxAttempts,
+          nextAttemptAt: schema.outboxEvents.nextAttemptAt,
+          createdAt: schema.outboxEvents.createdAt,
+        })
+        .from(schema.outboxEvents)
+        .where(inArray(schema.outboxEvents.eventType, ["product.published", "product.card_refresh"]))
+        .orderBy(schema.outboxEvents.createdAt)
+    ).filter((row) => row.aggregateId === productId);
+
+  it("ativar enfileira uma vez com o contrato do handler; mexer noutro campo ou reativar não enfileira; publicar de novo enfileira de novo", async () => {
     const created = await createProduct(db, {
       name: "Peça que vai para a vitrine",
       variants: [{ sku: "VITRINE-1", initialQuantity: 1 }],
       userId: FIXED_USER_ID,
     });
-    const eventos = async () =>
-      (
-        await db
-          .select({ dedupeKey: schema.outboxEvents.dedupeKey })
-          .from(schema.outboxEvents)
-          .where(eq(schema.outboxEvents.eventType, "product.published"))
-      ).length;
+    const id = created.product.id;
 
-    expect(await eventos()).toBe(0);
-    await updateProduct(db, { productId: created.product.id, status: "active", userId: FIXED_USER_ID });
-    expect(await eventos()).toBe(1);
+    expect(await cardEvents(id)).toEqual([]);
+    const activated = await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const [first] = await cardEvents(id);
+    // O que o handler vai ler: payload com o id, agregado "product", teto da política.
+    expect(first).toMatchObject({
+      eventType: "product.published",
+      dedupeKey: `product.published:${id}:${activated.updatedAt.getTime()}`,
+      aggregateType: "product",
+      aggregateId: id,
+      payload: { productId: id },
+      maxAttempts: 2,
+    });
 
-    // Já ativa: mexer noutro campo não pede post de novo.
-    await updateProduct(db, { productId: created.product.id, brand: "TRIVÉ", userId: FIXED_USER_ID });
-    expect(await eventos()).toBe(1);
+    // Já ativa: mexer noutro campo não pede post de novo; "ativar" de novo tampouco.
+    await updateProduct(db, { productId: id, brand: "TRIVÉ", userId: FIXED_USER_ID });
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toHaveLength(1);
 
     // Voltar para rascunho e publicar de novo: um evento novo (a arte pode ter mudado).
-    await updateProduct(db, { productId: created.product.id, status: "draft", userId: FIXED_USER_ID });
-    expect(await eventos()).toBe(1);
-    await updateProduct(db, { productId: created.product.id, status: "active", userId: FIXED_USER_ID });
-    expect(await eventos()).toBe(2);
+    await updateProduct(db, { productId: id, status: "draft", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toHaveLength(1);
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    expect((await cardEvents(id)).map((row) => row.eventType)).toEqual(["product.published", "product.published"]);
+  });
+
+  it("renomear a peça ativa pede a atualização do cartão (com atraso); em rascunho, não", async () => {
+    const created = await createProduct(db, {
+      name: "Nome antigo",
+      variants: [{ sku: "NOME-1", initialQuantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+    await updateProduct(db, { productId: id, name: "Ainda rascunho", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toEqual([]);
+
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const before = Date.now();
+    await updateProduct(db, { productId: id, name: "Nome novo", userId: FIXED_USER_ID });
+    const events = await cardEvents(id);
+    expect(events.map((row) => row.eventType)).toEqual(["product.published", "product.card_refresh"]);
+    const refresh = events[1];
+    expect(refresh.payload).toEqual({ productId: id });
+    expect(refresh.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 30_000);
+    // Mesmo nome de novo: nada mudou, nada enfileira.
+    await updateProduct(db, { productId: id, name: "Nome novo", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toHaveLength(2);
+  });
+
+  it("subir, recolorir e remover foto de peça ativa pedem a atualização do cartão; em rascunho, não", async () => {
+    const storage = new FakeFileStorage();
+    const created = await createProduct(db, {
+      name: "Peça com fotos",
+      attributesSchema: ["cor"],
+      variants: [{ sku: "FOTO-1", attributes: { cor: "Areia" }, initialQuantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+    const draftImage = await addProductImage(db, storage, {
+      productId: id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    expect(await cardEvents(id)).toEqual([]);
+
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const image = await addProductImage(db, storage, {
+      productId: id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    await setProductImageColor(db, { imageId: image.id, color: "Areia", userId: FIXED_USER_ID });
+    await removeProductImage(db, storage, { imageId: draftImage.id, userId: FIXED_USER_ID });
+    const events = await cardEvents(id);
+    expect(events.map((row) => row.eventType)).toEqual([
+      "product.published",
+      "product.card_refresh",
+      "product.card_refresh",
+      "product.card_refresh",
+    ]);
+    expect(events.slice(1).map((row) => row.dedupeKey?.split(":")[2])).toEqual([
+      "image",
+      "image-color",
+      "image-removed",
+    ]);
   });
 });

@@ -34,20 +34,28 @@ export const outboxSweep = inngest.createFunction(
       done: 0,
       failed: 0,
       dead: 0,
+      released: 0,
       budgetExceeded: false,
     };
     for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch++) {
-      if (Date.now() - startedAt > SWEEP_BUDGET_MS) {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > SWEEP_BUDGET_MS) {
         totals.budgetExceeded = true;
         break;
       }
-      const result = await drainOutbox(db, { limit: SWEEP_BATCH_LIMIT });
+      // O lote também respeita o que sobrou do orçamento: um evento demorado
+      // (pré-desenho de uma peça com muitas cores) não arrasta os irmãos.
+      const result = await drainOutbox(db, {
+        limit: SWEEP_BATCH_LIMIT,
+        budgetMs: SWEEP_BUDGET_MS - elapsed,
+      });
       totals.recovered += result.recovered;
       totals.claimed += result.claimed;
       totals.done += result.done;
       totals.failed += result.failed;
       totals.dead += result.dead;
-      if (result.claimed === 0) break;
+      totals.released += result.released;
+      if (result.claimed === 0 || result.released > 0) break;
     }
     return totals;
   },
@@ -56,7 +64,7 @@ export const outboxSweep = inngest.createFunction(
 export const outboxKick = inngest.createFunction(
   { id: "outbox-kick", triggers: [{ event: "outbox/event.enqueued" }] },
   async () => {
-    return drainOutbox(getDb(), { limit: 10 });
+    return drainOutbox(getDb(), { limit: 10, budgetMs: SWEEP_BUDGET_MS });
   },
 );
 

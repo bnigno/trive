@@ -379,6 +379,17 @@ describe("getPublicProductBySlug", () => {
     });
   });
 
+  it("expõe o cartão do post para a prévia do link (null enquanto não desenhado)", async () => {
+    const { productId } = await createPublicProduct({
+      name: "Longo Dunas",
+      slug: "longo-dunas",
+      variants: [{ sku: "LD-M", priceCents: 28900 }],
+    });
+    expect((await getPublicProductBySlug(db, "longo-dunas"))?.postCardPath).toBeNull();
+    await db.update(schema.products).set({ postCardPath: "cards/ab/abc.jpg" }).where(eq(schema.products.id, productId));
+    expect((await getPublicProductBySlug(db, "longo-dunas"))?.postCardPath).toBe("cards/ab/abc.jpg");
+  });
+
   it("devolve a cor de cada foto (null = foto do produto inteiro) sem filtrar nada", async () => {
     const { productId } = await createPublicProduct({
       name: "Polo Cores",

@@ -11,7 +11,12 @@ import { requireUser } from "@/services/auth";
 import { publishProductPost } from "@/services/product-posts";
 import { ServiceError } from "@/services/settings";
 
-export type PostFormState = { error?: string; success?: string };
+export type PostFormState = {
+  error?: string;
+  success?: string;
+  /** Deu certo, mas alguma cor ficou sem cartão: a tela avisa qual e por quê. */
+  warning?: string;
+};
 
 /**
  * Desenha o post e o story da peça (ou devolve os do cache). Roda na action
@@ -25,16 +30,25 @@ export async function generateProductPostAction(
   try {
     const id = z.uuid().parse(productId);
     const assets = await loadReceiptAssets();
-    await publishProductPost(
+    const result = await publishProductPost(
       getDb(),
       getFileStorage(),
       (data) => renderCardPng(data, assets),
       { productId: id, userId: user.id },
     );
     revalidatePath(`/admin/produtos/${id}/post`);
-    // A prévia do link da peça passa a ser o cartão recém-desenhado.
-    revalidatePath("/produto/[slug]", "page");
-    return { success: "Post e story prontos." };
+    // A prévia do link da peça passa a ser o cartão recém-desenhado (o
+    // caminho literal, porque a tag "/produto/[slug]" leva o grupo de rota).
+    revalidatePath(`/produto/${result.slug}`);
+    const problems = result.carousel.filter((entry) => entry.problem !== null);
+    const ready = result.carousel.length - problems.length;
+    return {
+      success:
+        result.carousel.length > 0
+          ? `Post, story e carrossel prontos (${ready} de ${result.carousel.length} cores).`
+          : "Post e story prontos.",
+      ...(problems.length > 0 ? { warning: problems.map((entry) => entry.problem).join(" ") } : {}),
+    };
   } catch (error) {
     if (error instanceof ServiceError) return { error: error.message };
     if (error instanceof ZodError) return { error: "Peça inválida." };

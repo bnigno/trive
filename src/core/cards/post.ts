@@ -93,43 +93,85 @@ export type CarouselVariant = {
   attributes: Record<string, string>;
   /** Variação desativada não vende: a cor dela não entra no carrossel. */
   isActive?: boolean;
+  /**
+   * Preço ativo da variação em centavos; null = sem preço (a vitrine não
+   * vende, o carrossel não anuncia). Ausente = quem chamou não informou.
+   */
+  activePriceCents?: number | null;
 };
 export type CarouselImage = { color: string | null; storagePath: string };
-export type CarouselEntry = { color: string; imagePath: string };
+export type CarouselEntry = {
+  color: string;
+  imagePath: string;
+  /** Preços ativos das variações desta cor (vazio = não informados). */
+  priceCents: number[];
+};
+export type CarouselPlan = {
+  entries: CarouselEntry[];
+  /** Cores que caberiam no carrossel mas passaram do teto do Instagram. */
+  omitted: string[];
+};
+
+/** Abaixo disto não é carrossel: o post da peça já mostra a única cor. */
+export const CAROUSEL_MIN = 2;
 
 /**
  * Uma imagem por COR da peça, na ordem das variações: é o carrossel que a
- * dona posta. Peça sem eixo de cor não tem carrossel (o post já mostra a
- * peça); cor sem foto própria usa a foto do produto inteiro, e cor sem foto
- * nenhuma fica de fora — carrossel não inventa imagem.
+ * dona posta. Só entra cor com foto própria (etiquetada com a cor) e com
+ * preço — carrossel não inventa imagem nem anuncia o que a vitrine não vende;
+ * sem duas cores assim, não há carrossel (o post já mostra a peça).
  */
 export function carouselColors(input: {
   attributesSchema: unknown;
   variants: readonly CarouselVariant[];
   images: readonly CarouselImage[];
-}): CarouselEntry[] {
+}): CarouselPlan {
   const axis = findColorAxis(input.attributesSchema);
-  if (!axis) return [];
+  if (!axis) return { entries: [], omitted: [] };
 
-  const seen = new Set<string>();
-  const out: CarouselEntry[] = [];
+  const byColor = new Map<string, CarouselEntry>();
   for (const variant of input.variants) {
     if (variant.isActive === false) continue;
+    if (variant.activePriceCents === null) continue;
     const color = (variant.attributes[axis] ?? "").trim();
     if (color === "") continue;
     // A mesma dobra do casamento cor→foto: "Verde" e "verde " são uma cor só.
     const key = fold(color);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const [image] = imagesForColor(input.images, color);
+    const existing = byColor.get(key);
+    if (existing) {
+      if (typeof variant.activePriceCents === "number") existing.priceCents.push(variant.activePriceCents);
+      continue;
+    }
+    // Só a foto etiquetada com a cor: a foto geral repetida em cada slide
+    // seria o mesmo carrossel com rótulos diferentes.
+    const image = imagesForColor(input.images, color).find(
+      (candidate) => candidate.color !== null && fold(candidate.color) === key,
+    );
     if (!image) continue;
-    out.push({ color, imagePath: image.storagePath });
-    if (out.length >= CAROUSEL_MAX) break;
+    byColor.set(key, {
+      color,
+      imagePath: image.storagePath,
+      priceCents: typeof variant.activePriceCents === "number" ? [variant.activePriceCents] : [],
+    });
   }
-  return out;
+
+  const all = [...byColor.values()];
+  if (all.length < CAROUSEL_MIN) return { entries: [], omitted: [] };
+  return {
+    entries: all.slice(0, CAROUSEL_MAX),
+    omitted: all.slice(CAROUSEL_MAX).map((entry) => entry.color),
+  };
 }
 
-/** "EDIÇÃO CÍRIO · TERRACOTA" — a faixa do cartão daquela cor. */
+const EYEBROW_MAX = 60;
+
+/**
+ * "EDIÇÃO CÍRIO · TERRACOTA" — a faixa do cartão daquela cor. Quando não cabe,
+ * quem encurta é a edição: a cor é o que distingue este slide dos outros.
+ */
 export function carouselEyebrow(editionName: string | null | undefined, color: string): string {
-  return `${postEyebrow(editionName)} · ${color.toUpperCase()}`.slice(0, 60);
+  const colorPart = color.trim().toUpperCase();
+  const room = Math.max(0, EYEBROW_MAX - colorPart.length - " · ".length);
+  const edition = postEyebrow(editionName).slice(0, room);
+  return `${edition} · ${colorPart}`.slice(0, EYEBROW_MAX);
 }

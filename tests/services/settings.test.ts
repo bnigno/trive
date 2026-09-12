@@ -137,6 +137,39 @@ describe("getDefaultPolicy / updateDefaultPolicy", () => {
 });
 
 describe("updateSetting / getSettingsMap", () => {
+  it("trocar a edição (ou o nome da loja) pede a atualização do cartão de cada peça ativa, escalonada", async () => {
+    const a = await createTestVariant(db, { sku: "ED-A" });
+    const b = await createTestVariant(db, { sku: "ED-B" });
+    const rascunho = await createTestVariant(db, { sku: "ED-C" });
+    await db.update(schema.products).set({ status: "draft" }).where(eq(schema.products.id, rascunho.productId));
+    const refreshes = async () =>
+      db
+        .select({ aggregateId: schema.outboxEvents.aggregateId, nextAttemptAt: schema.outboxEvents.nextAttemptAt })
+        .from(schema.outboxEvents)
+        .where(eq(schema.outboxEvents.eventType, "product.card_refresh"))
+        .orderBy(schema.outboxEvents.nextAttemptAt);
+
+    await updateSetting(db, { key: "edition_name", value: "Edição Círio", userId: FIXED_USER_ID });
+    const events = await refreshes();
+    const ids = events.map((row) => row.aggregateId);
+    // Uma vez por peça ativa (o banco deste arquivo é compartilhado: pode haver outras ativas).
+    expect(ids.filter((id) => id === a.productId)).toHaveLength(1);
+    expect(ids.filter((id) => id === b.productId)).toHaveLength(1);
+    expect(ids).not.toContain(rascunho.productId);
+    // Uma de cada vez: 20 s entre uma peça e a seguinte.
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].nextAttemptAt.getTime() - events[i - 1].nextAttemptAt.getTime()).toBe(20_000);
+    }
+
+    // Mesmo valor de novo: nada mudou no cartão, nada enfileira.
+    const before = events.length;
+    await updateSetting(db, { key: "edition_name", value: "Edição Círio", userId: FIXED_USER_ID });
+    expect(await refreshes()).toHaveLength(before);
+    // Outra configuração qualquer não mexe em cartão.
+    await updateSetting(db, { key: "first_price_requires_approval", value: false, userId: FIXED_USER_ID });
+    expect(await refreshes()).toHaveLength(before);
+  });
+
   it("rejeita key desconhecida com ServiceError", async () => {
     await expect(
       updateSetting(db, {

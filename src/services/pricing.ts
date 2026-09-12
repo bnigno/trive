@@ -33,6 +33,7 @@ import {
   variantCosts,
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { enqueueProductCardRefresh } from "@/services/product-cards-queue";
 import { variantLabel } from "@/core/catalog/attributes";
 import { getDefaultPolicy, getFeeRules } from "@/services/settings";
 import {
@@ -469,6 +470,20 @@ async function activateVersionTx(
     aggregateType: "price_version",
     aggregateId: versionId,
   });
+
+  // O preço está escrito no post da peça: o cartão e a prévia do link são
+  // redesenhados em segundo plano (só se a peça estiver ativa).
+  const [variant] = await tx
+    .select({ productId: productVariants.productId })
+    .from(productVariants)
+    .where(eq(productVariants.id, version.productVariantId))
+    .limit(1);
+  if (variant) {
+    await enqueueProductCardRefresh(asDbOrTx(tx), {
+      productIds: [variant.productId],
+      reason: `price:${versionId}`,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

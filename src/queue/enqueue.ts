@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { getRetryPolicy } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
 import { outboxEvents } from "@/db/schema";
 import { inngest } from "@/inngest/client";
@@ -35,6 +36,9 @@ export async function enqueueOutboxEvent(
     .values({
       eventType: parsed.eventType,
       payload: parsed.payload,
+      // Espelha a política do evento (o worker decide por ela; a coluna é o
+      // que /admin/fila mostra em "tentativas x/y").
+      maxAttempts: getRetryPolicy(parsed.eventType).maxAttempts,
       dedupeKey: parsed.dedupeKey ?? null,
       aggregateType: parsed.aggregateType ?? null,
       aggregateId: parsed.aggregateId ?? null,
