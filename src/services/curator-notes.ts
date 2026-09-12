@@ -10,22 +10,40 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
-import { TranscriptionUnavailableError, type Transcriber } from "@/adapters/transcription";
+import {
+  TranscriptionUnavailableError,
+  type Transcriber,
+  type TranscriptionFailureReason,
+} from "@/adapters/transcription";
 import {
   CURATOR_AUDIO_MAX_BYTES,
   CURATOR_AUDIO_MAX_SECONDS,
-  curatorAudioExtension,
+  CURATOR_NOTE_MAX_CHARS,
+  curatorAudioFormat,
   curatorAudioStoragePath,
-  normalizeCuratorNote,
+  fitCuratorNote,
 } from "@/core/catalog/curator-note";
 import { auditLog, products } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
-import { ServiceError } from "@/services/settings";
+// A mesma classe de erro do catálogo: é a que a tela da peça reconhece.
+import { ServiceError } from "@/services/catalog";
+
+/**
+ * Por que o texto (não) veio: "ok" transcreveu; "empty" o áudio não tinha
+ * fala; os demais são do vendor (sem chave, recusou este áudio, cota, fora
+ * do ar). A tela escolhe a frase por aqui.
+ */
+export type CuratorNoteOutcome = "ok" | "empty" | TranscriptionFailureReason;
 
 export type CuratorNoteResult = {
   note: string | null;
   audioPath: string;
   transcribed: boolean;
+  /** A fala passou do teto de caracteres e o fim foi cortado. */
+  truncated: boolean;
+  reason: CuratorNoteOutcome;
+  /** O texto devolvido é o de antes (a gravação nova não rendeu texto). */
+  staleNote: boolean;
 };
 
 const recordSchema = z.object({
@@ -52,6 +70,15 @@ async function requireProductRow(db: DbOrTx, productId: string) {
   return product;
 }
 
+/** Apaga um áudio do bucket sem deixar a operação principal falhar por isso. */
+async function removeAudioBestEffort(storage: FileStorage, path: string, why: string): Promise<void> {
+  try {
+    await storage.remove(path);
+  } catch (error) {
+    console.warn(`[curator-note] áudio não removido do storage (${why}): ${path}`, error);
+  }
+}
+
 /** Grava a nota falada: sobe o áudio, transcreve e guarda o texto para revisão. */
 export async function recordCuratorNote(
   db: DbOrTx,
@@ -60,8 +87,8 @@ export async function recordCuratorNote(
   input: z.input<typeof recordSchema>,
 ): Promise<CuratorNoteResult> {
   const parsed = recordSchema.parse(input);
-  const extension = curatorAudioExtension(parsed.audio.contentType);
-  if (!extension) {
+  const format = curatorAudioFormat(parsed.audio.contentType);
+  if (!format) {
     throw new ServiceError(
       "audio_invalido",
       "Não reconheci esse formato de áudio. Grave pelo botão da tela ou envie um arquivo comum (m4a, mp3, ogg).",
@@ -81,67 +108,95 @@ export async function recordCuratorNote(
   }
 
   const product = await requireProductRow(db, parsed.productId);
-  const path = curatorAudioStoragePath(parsed.productId, randomUUID(), extension);
-  await storage.upload({ path, data: parsed.audio.data, contentType: parsed.audio.contentType });
-
-  let note = product.curatorNote;
-  let transcribed = false;
-  let model: string | null = null;
+  const path = curatorAudioStoragePath(parsed.productId, randomUUID(), format.extension);
+  // O mime canônico, sem parâmetros: o bucket compara por igualdade e a
+  // coluna é o contrato de quem vai tocar o áudio depois (vitrine, Lia).
   try {
-    const transcription = await transcriber.transcribe({
-      data: parsed.audio.data,
-      mimeType: parsed.audio.contentType,
-      languageHint: "pt",
-    });
-    const text = normalizeCuratorNote(transcription.text);
-    if (text) {
-      note = text;
-      transcribed = true;
-      model = transcription.model;
-    }
+    await storage.upload({ path, data: parsed.audio.data, contentType: format.mime });
   } catch (error) {
-    // Vendor fora do ar não perde a gravação: o áudio já está salvo e a dona
-    // escreve a nota à mão.
-    if (!(error instanceof TranscriptionUnavailableError)) throw error;
+    console.error(`[curator-note] upload recusado (${format.mime}, ${path})`, error);
+    throw new ServiceError(
+      "audio_nao_guardado",
+      "Não consegui guardar o áudio agora. Se continuar, avise quem cuida do sistema: o repositório de arquivos pode não estar aceitando áudio.",
+    );
   }
 
-  const now = new Date();
-  await db.transaction(async (tx) => {
-    await tx
-      .update(products)
-      .set({
-        curatorNote: note,
-        curatorAudioPath: path,
-        curatorAudioMime: parsed.audio.contentType,
-        curatorAudioSeconds: parsed.audio.seconds ?? null,
-        curatorNoteUpdatedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(products.id, parsed.productId));
-    await tx.insert(auditLog).values({
-      actorType: "user",
-      actorId: parsed.userId,
-      action: "product.curator_note_recorded",
-      entityType: "product",
-      entityId: parsed.productId,
-      before: { audioPath: product.curatorAudioPath, chars: product.curatorNote?.length ?? 0 },
-      after: {
-        audioPath: path,
-        seconds: parsed.audio.seconds ?? null,
-        chars: note?.length ?? 0,
-        transcribed,
-        model,
-      },
+  try {
+    let note = product.curatorNote;
+    let transcribed = false;
+    let truncated = false;
+    let reason: CuratorNoteOutcome = "empty";
+    let model: string | null = null;
+    try {
+      const transcription = await transcriber.transcribe({
+        data: parsed.audio.data,
+        mimeType: format.mime,
+        languageHint: "pt",
+      });
+      model = transcription.model;
+      const fitted = fitCuratorNote(transcription.text);
+      if (fitted.text) {
+        note = fitted.text;
+        transcribed = true;
+        truncated = fitted.truncated;
+        reason = "ok";
+      }
+    } catch (error) {
+      // Vendor fora do ar não perde a gravação: o áudio já está salvo e a dona
+      // escreve a nota à mão (ou reenvia quando ele voltar).
+      if (!(error instanceof TranscriptionUnavailableError)) throw error;
+      reason = error.reason;
+      console.warn(`[curator-note] ${parsed.productId} sem transcrição (${error.reason}): ${error.message}`);
+    }
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(products)
+        .set({
+          curatorNote: note,
+          curatorAudioPath: path,
+          curatorAudioMime: format.mime,
+          curatorAudioSeconds: parsed.audio.seconds ?? null,
+          curatorNoteUpdatedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(products.id, parsed.productId));
+      await tx.insert(auditLog).values({
+        actorType: "user",
+        actorId: parsed.userId,
+        action: "product.curator_note_recorded",
+        entityType: "product",
+        entityId: parsed.productId,
+        // O texto inteiro (é curto): é daqui que se recupera uma nota
+        // corrigida à mão que a regravação sobrescreveu.
+        before: { note: product.curatorNote, audioPath: product.curatorAudioPath },
+        after: {
+          note,
+          audioPath: path,
+          mime: format.mime,
+          originalMime: parsed.audio.contentType,
+          seconds: parsed.audio.seconds ?? null,
+          transcribed,
+          truncated,
+          reason,
+          model,
+        },
+      });
     });
-  });
 
-  // O áudio anterior sai do bucket em melhor esforço: falhar aqui não desfaz
-  // a nota nova.
-  if (product.curatorAudioPath && product.curatorAudioPath !== path) {
-    await storage.remove(product.curatorAudioPath).catch(() => undefined);
+    // O áudio anterior sai do bucket em melhor esforço: falhar aqui não desfaz
+    // a nota nova.
+    if (product.curatorAudioPath && product.curatorAudioPath !== path) {
+      await removeAudioBestEffort(storage, product.curatorAudioPath, "áudio anterior");
+    }
+
+    return { note, audioPath: path, transcribed, truncated, reason, staleNote: !transcribed && note !== null };
+  } catch (error) {
+    // Nada foi gravado no banco: o arquivo que subiu não pode ficar órfão e público.
+    await removeAudioBestEffort(storage, path, "falha depois do upload");
+    throw error;
   }
-
-  return { note, audioPath: path, transcribed };
 }
 
 const updateSchema = z.object({
@@ -157,7 +212,16 @@ export async function updateCuratorNote(
 ): Promise<{ note: string | null }> {
   const parsed = updateSchema.parse(input);
   const product = await requireProductRow(db, parsed.productId);
-  const note = normalizeCuratorNote(parsed.note);
+  const fitted = fitCuratorNote(parsed.note);
+  if (fitted.truncated) {
+    // A tela já limita; aqui é a rede final — cortar em silêncio o que a
+    // dona escreveu seria pior do que recusar.
+    throw new ServiceError(
+      "nota_longa",
+      `A nota vai até ${CURATOR_NOTE_MAX_CHARS} caracteres. Encurte um pouco e salve de novo.`,
+    );
+  }
+  const note = fitted.text;
   const now = new Date();
   await db.transaction(async (tx) => {
     await tx
@@ -170,8 +234,8 @@ export async function updateCuratorNote(
       action: "product.curator_note_updated",
       entityType: "product",
       entityId: parsed.productId,
-      before: { chars: product.curatorNote?.length ?? 0 },
-      after: { chars: note?.length ?? 0 },
+      before: { note: product.curatorNote },
+      after: { note },
     });
   });
   return { note };
@@ -210,6 +274,6 @@ export async function removeCuratorAudio(
       after: { audioPath: null },
     });
   });
-  await storage.remove(product.curatorAudioPath).catch(() => undefined);
+  await removeAudioBestEffort(storage, product.curatorAudioPath, "remover áudio");
   return { removed: true };
 }

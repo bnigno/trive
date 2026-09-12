@@ -287,7 +287,6 @@ const fichaSchema = {
   composition: z.string().trim().max(200, "Composição: no máximo 200 caracteres."),
   careNotes: z.string().trim().max(1000, "Cuidados: no máximo 1000 caracteres."),
   fitNotes: z.string().trim().max(600, "Como veste: no máximo 600 caracteres."),
-  curatorNote: z.string().trim().max(240, "Nota da curadora: no máximo 240 caracteres."),
 };
 
 const createProductSchema = z.object({
@@ -491,7 +490,8 @@ const updateProductSchema = z.object({
   composition: fichaSchema.composition.nullable().optional(),
   careNotes: fichaSchema.careNotes.nullable().optional(),
   fitNotes: fichaSchema.fitNotes.nullable().optional(),
-  curatorNote: fichaSchema.curatorNote.nullable().optional(),
+  // A nota da curadora tem dono próprio (services/curator-notes.ts): texto,
+  // áudio e carimbo andam juntos e com uma regra só.
   brand: z.string().trim().min(1).nullable().optional(),
   categoryId: z.uuid().nullable().optional(),
   supplierId: z.uuid().nullable().optional(),
@@ -514,7 +514,6 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
     if (parsed.composition !== undefined) patch.composition = parsed.composition || null;
     if (parsed.careNotes !== undefined) patch.careNotes = parsed.careNotes || null;
     if (parsed.fitNotes !== undefined) patch.fitNotes = parsed.fitNotes || null;
-    if (parsed.curatorNote !== undefined) patch.curatorNote = parsed.curatorNote || null;
     if (parsed.brand !== undefined) patch.brand = parsed.brand;
     if (parsed.categoryId !== undefined) patch.categoryId = parsed.categoryId;
     if (parsed.supplierId !== undefined) patch.supplierId = parsed.supplierId;

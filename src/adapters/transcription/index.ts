@@ -21,11 +21,20 @@ export interface Transcriber {
   transcribe(input: TranscribeInput): Promise<Transcription>;
 }
 
+/**
+ * Por que não transcreveu — quem chama escolhe a mensagem: sem chave é
+ * configuração; recusado é o áudio; cota e fora do ar passam com o tempo.
+ */
+export type TranscriptionFailureReason = "no_key" | "rejected" | "rate_limited" | "unavailable";
+
 /** Vendor fora do ar, sem chave ou resposta inválida: quem chama decide o fallback. */
 export class TranscriptionUnavailableError extends Error {
-  constructor(message: string) {
+  readonly reason: TranscriptionFailureReason;
+
+  constructor(message: string, reason: TranscriptionFailureReason = "unavailable") {
     super(message);
     this.name = "TranscriptionUnavailableError";
+    this.reason = reason;
   }
 }
 

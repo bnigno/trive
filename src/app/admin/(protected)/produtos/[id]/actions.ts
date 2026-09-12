@@ -9,7 +9,9 @@ import {
   recordCuratorNote,
   removeCuratorAudio,
   updateCuratorNote,
+  type CuratorNoteResult,
 } from "@/services/curator-notes";
+import { CURATOR_NOTE_MAX_CHARS, resolveCuratorAudioFormat } from "@/core/catalog/curator-note";
 import { requireOwner } from "@/services/auth";
 import {
   addProductImage,
@@ -380,10 +382,16 @@ export async function setProductMeasurementsAction(
 // A nota da curadora: a voz da dona sobre a peça
 // ---------------------------------------------------------------------------
 
+/** O que a tela mostra depois de gravar: além de erro/sucesso, se o texto veio. */
+export type CuratorNoteFormState = FormState & {
+  /** A transcrição preencheu o texto; a gravação pendente pode ser descartada. */
+  transcribed?: boolean;
+};
+
 export async function recordCuratorNoteAction(
-  _prev: FormState,
+  _prev: CuratorNoteFormState,
   formData: FormData,
-): Promise<FormState> {
+): Promise<CuratorNoteFormState> {
   const user = await requireOwner("produtos");
   try {
     const productId = String(formData.get("productId") ?? "");
@@ -391,26 +399,48 @@ export async function recordCuratorNoteAction(
     if (!(file instanceof File) || file.size === 0) {
       return { error: "Grave a nota ou escolha um arquivo de áudio." };
     }
+    // O Android às vezes manda o m4a como application/octet-stream: vale o nome.
+    const format = resolveCuratorAudioFormat(file.type, file.name);
+    if (!format) {
+      return {
+        error: "Não reconheci esse formato de áudio. Grave pelo botão da tela ou envie um arquivo comum (m4a, mp3, ogg).",
+      };
+    }
     const secondsRaw = Number(formData.get("seconds") ?? 0);
     const result = await recordCuratorNote(getDb(), getFileStorage(), getTranscriber(), {
       productId,
       userId: user.id,
       audio: {
         data: Buffer.from(await file.arrayBuffer()),
-        contentType: file.type || "audio/webm",
+        contentType: format.mime,
         ...(Number.isFinite(secondsRaw) && secondsRaw > 0
           ? { seconds: Math.round(secondsRaw) }
           : {}),
       },
     });
     revalidateProduct(productId);
-    return {
-      success: result.transcribed
-        ? "Nota gravada e transcrita — confira o texto e ajuste se precisar."
-        : "Áudio guardado. Não consegui transcrever agora: escreva a nota à mão.",
-    };
+    return { success: curatorNoteMessage(result), transcribed: result.transcribed };
   } catch (error) {
     return toErrorState(error);
+  }
+}
+
+/** A frase certa para cada desfecho — a dona precisa saber o que fazer, não o que falhou. */
+function curatorNoteMessage(result: CuratorNoteResult): string {
+  const stale = result.staleNote ? " O texto abaixo é o da gravação anterior — confira." : "";
+  switch (result.reason) {
+    case "ok":
+      return result.truncated
+        ? `Transcrevi, mas a fala passou de ${CURATOR_NOTE_MAX_CHARS} caracteres e o final foi cortado — complete à mão.`
+        : "Nota gravada e transcrita — confira o texto e ajuste se precisar.";
+    case "empty":
+      return `Áudio guardado, mas não ouvi fala nele — ouça a gravação e grave de novo, mais perto do microfone.${stale}`;
+    case "no_key":
+      return `Áudio guardado. A transcrição automática está desligada (falta a chave da OpenAI na hospedagem): escreva a nota à mão.${stale}`;
+    case "rejected":
+      return `Áudio guardado, mas o transcritor recusou esse arquivo. Grave pelo botão da tela ou escreva à mão.${stale}`;
+    default:
+      return `Áudio guardado. Não consegui transcrever agora (o serviço está instável): toque em Enviar de novo daqui a pouco, ou escreva à mão.${stale}`;
   }
 }
 
