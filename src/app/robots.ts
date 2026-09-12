@@ -9,7 +9,8 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/admin", "/api", "/carrinho", "/checkout", "/pedido", "/lancamento"],
+        // /ig são as cortinas dos links de story: passagem para o WhatsApp, não página.
+        disallow: ["/admin", "/api", "/carrinho", "/checkout", "/pedido", "/lancamento", "/ig"],
       },
     ],
     sitemap: `${siteUrl()}/sitemap.xml`,

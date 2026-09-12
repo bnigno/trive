@@ -9,19 +9,18 @@ import { useState, useTransition } from "react";
 import { IconWhatsApp } from "@/components/store/icons";
 import { btnOutline } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
-import type { BridgeSource } from "@/core/bot/site-bridge";
 
 import { startLiaBridgeAction } from "@/app/(store)/lia/actions";
 
 export type LiaLinkProps = {
-  source: BridgeSource;
+  /** O story ("campaign") tem a própria página (/ig/[slug]); aqui só o site. */
+  source: "pdp" | "cart" | "footer";
   /** Nome da vendedora (setting bot_seller_name), para o rótulo. */
   sellerName: string;
   /** Link wa.me sem código, para quando a action falhar; null = loja sem WhatsApp (o botão some). */
   fallbackUrl: string | null;
   productSlug?: string;
   variantSku?: string;
-  campaignSlug?: string;
   items?: readonly { variantId: string; sku: string; quantity: number }[];
   /** "button" (marfim, contorno) ou "footer" (link claro sobre noir). */
   variant?: "button" | "footer";
@@ -40,7 +39,6 @@ export function LiaLink({
   fallbackUrl,
   productSlug,
   variantSku,
-  campaignSlug,
   items,
   variant = "button",
   className,
@@ -58,7 +56,7 @@ export function LiaLink({
       try {
         // Rede engasgada não prende a cliente em "Abrindo…": passado o teto, o link simples segue.
         const result = await Promise.race([
-          startLiaBridgeAction({ source, productSlug, variantSku, campaignSlug, items: items ? [...items] : undefined }),
+          startLiaBridgeAction({ source, productSlug, variantSku, items: items ? [...items] : undefined }),
           new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), ACTION_TIMEOUT_MS)),
         ]);
         if (result.ok) url = result.url;

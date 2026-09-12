@@ -20,7 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
-import { products, siteCarts } from "@/db/schema";
+import { campaignLinks, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -208,13 +208,17 @@ export async function consumeSiteCartByCode(
   const [product] = row.productId
     ? await db.select({ slug: products.slug, name: products.name }).from(products).where(eq(products.id, row.productId)).limit(1)
     : [];
+  // No story, a origem é o rótulo do link ("Dunas no story"); apagado, fica o slug.
+  const [campaign] = row.campaignSlug
+    ? await db.select({ label: campaignLinks.label }).from(campaignLinks).where(eq(campaignLinks.slug, row.campaignSlug)).limit(1)
+    : [];
   const source = row.source as BridgeSource;
   const first = list[0];
   return {
     siteCartId: row.id,
     code,
     source,
-    sourceLabel: originLabel(source, row.campaignSlug),
+    sourceLabel: originLabel(source, campaign?.label ?? row.campaignSlug),
     // "Veio do site agora" conta da chegada da mensagem: quem tocou ontem e
     // escreveu hoje também merece a linha de estoque no primeiro turno.
     at: input.now.toISOString(),

@@ -16,6 +16,7 @@ import { formatDateTimeSP } from "@/emails/templates";
 import { formatCentsBRL } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
+import { listCampaignLinks, type CampaignLink } from "@/services/campaign-links";
 import { getLastDigest } from "@/services/daily-digest";
 import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
 import {
@@ -78,6 +79,8 @@ interface PageData {
   mediaEnabled: boolean;
   cardsEnabled: boolean;
   lastDigest: { date: string; url: string; at: Date } | null;
+  /** Resumo dos links de story (a lista completa fica em /whatsapp/links). */
+  campaignLinks: { total: number; taps: number; conversations: number; orders: number };
 }
 
 async function loadPageData(): Promise<PageData | null> {
@@ -89,8 +92,9 @@ async function loadPageData(): Promise<PageData | null> {
   let activity: BotActivityEvent[];
   let awaitingOwner: number;
   let lastDigestRow: Awaited<ReturnType<typeof getLastDigest>>;
+  let campaignLinks: CampaignLink[];
   try {
-    [settingsMap, templates, summary, activity, awaitingOwner, lastDigestRow] = await Promise.all([
+    [settingsMap, templates, summary, activity, awaitingOwner, lastDigestRow, campaignLinks] = await Promise.all([
       getSettingsMap(db, [
         "wa_enabled",
         "owner_whatsapp_phone",
@@ -113,6 +117,7 @@ async function loadPageData(): Promise<PageData | null> {
       listRecentBotActivity(db, { limit: 8 }),
       countConversationsAwaitingOwner(db),
       getLastDigest(db),
+      listCampaignLinks(db),
     ]);
   } catch {
     return null;
@@ -158,6 +163,12 @@ async function loadPageData(): Promise<PageData | null> {
     digestEnabled: settingsMap["owner_digest_enabled"] !== false,
     mediaEnabled: settingsMap["bot_media_enabled"] !== false,
     cardsEnabled: settingsMap["bot_cards_enabled"] !== false,
+    campaignLinks: {
+      total: campaignLinks.length,
+      taps: campaignLinks.reduce((sum, link) => sum + link.taps, 0),
+      conversations: campaignLinks.reduce((sum, link) => sum + link.conversations, 0),
+      orders: campaignLinks.reduce((sum, link) => sum + link.orders, 0),
+    },
     lastDigest: lastDigestRow
       ? {
           date: lastDigestRow.date,
@@ -472,6 +483,23 @@ export default async function WhatsappPage() {
           </Card>
         </div>
       </div>
+
+      {/* Links de story */}
+      <Card title="Links de story">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            {data.campaignLinks.total === 0
+              ? `Crie um link curto (ex.: /ig/dunas) para o sticker do story: quem toca cai no WhatsApp da ${sellerName} já falando da peça.`
+              : `${data.campaignLinks.total} ${data.campaignLinks.total === 1 ? "link" : "links"} · ${data.campaignLinks.taps} ${data.campaignLinks.taps === 1 ? "toque" : "toques"} → ${data.campaignLinks.conversations} ${data.campaignLinks.conversations === 1 ? "conversa" : "conversas"} → ${data.campaignLinks.orders} ${data.campaignLinks.orders === 1 ? "pedido" : "pedidos"}`}
+          </p>
+          <Link
+            href="/admin/whatsapp/links"
+            className="inline-flex shrink-0 items-center justify-center rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {data.campaignLinks.total === 0 ? "Criar o primeiro link" : "Gerenciar links"}
+          </Link>
+        </div>
+      </Card>
 
       {/* Conexão */}
       <Card title="Conexão com o WhatsApp da loja">

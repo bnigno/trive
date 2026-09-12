@@ -37,6 +37,7 @@ import {
 import { suggestMarginForPrice } from "@/core/pricing";
 import { applyMovement } from "@/core/stock/ledger";
 import type { FileStorage } from "@/adapters/storage";
+import { slugify as slugifyText } from "@/lib/slug";
 
 /**
  * Base estrutural comum a Db (postgres.js), transações e o TestDb (PGlite).
@@ -129,13 +130,7 @@ async function writeAudit(db: ServiceDb, entry: AuditEntry): Promise<void> {
 }
 
 function slugify(input: string): string {
-  const slug = input
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "item";
+  return slugifyText(input) || "item";
 }
 
 function pickUniqueSlug(taken: ReadonlySet<string>, base: string): string {

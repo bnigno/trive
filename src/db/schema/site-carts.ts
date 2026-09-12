@@ -36,6 +36,8 @@ export const siteCarts = pgTable(
     index("site_carts_source_created_at_idx").on(table.source, table.createdAt),
     // Painel da conversa e funil ligam ponte → conversa.
     index("site_carts_conversation_id_idx").on(table.conversationId),
+    // Funil por link de story (toques, conversas, pedidos por campanha e período).
+    index("site_carts_campaign_slug_created_at_idx").on(table.campaignSlug, table.createdAt),
     check("site_carts_source_check", sql`${table.source} IN ('pdp', 'cart', 'footer', 'campaign')`),
   ],
 );

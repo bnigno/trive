@@ -25,3 +25,4 @@ export { financialEntries } from "./financial";
 export { shippingRates } from "./shipping";
 export { botCards, waConversations, waMessages, waTemplates } from "./whatsapp";
 export { siteCarts } from "./site-carts";
+export { campaignLinks } from "./campaign-links";

@@ -197,6 +197,13 @@
       "when": 1789240364866,
       "tag": "0027_typical_hiroim",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1789242401337,
+      "tag": "0028_hard_manta",
+      "breakpoints": true
     }
   ]
 }
