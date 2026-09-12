@@ -38,3 +38,15 @@ export interface EditionCardData {
   printedAddress: string;
   layout: EditionCardLayout;
 }
+
+/** A carta de estreia (15 × 10 cm) que vai na caixa da primeira compra. */
+export interface DebutLetterData {
+  /** Primeiro nome da cliente, para "PARA ANA". */
+  recipientName: string;
+  /** O texto que a dona escreveu, já limpo (≤ 12 linhas). */
+  text: string;
+  /** "Marina, curadora da TRIVÉ" — como a dona assina. */
+  signature: string;
+  storeName: string;
+  editionName: string | null;
+}

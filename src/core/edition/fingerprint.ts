@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 
-import type { EditionCardData } from "@/core/edition/types";
+import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
 import { sha256Hex } from "@/lib/hash";
 
 /** O hash de um cartão: tudo o que entra no desenho, em ordem fixa. */
@@ -25,7 +25,15 @@ export function editionCardFingerprint(data: EditionCardData): string {
   );
 }
 
-/** productId → hash, como fica guardado no pedido. */
+/** O hash da carta de estreia: o que entra no desenho dela, em ordem fixa. */
+export function debutLetterFingerprint(data: DebutLetterData): string {
+  return sha256Hex(JSON.stringify([data.recipientName, data.text, data.signature, data.storeName, data.editionName]));
+}
+
+/** A chave da carta no mapa guardado (nunca colide com um productId, que é uuid). */
+export const LETTER_FINGERPRINT_KEY = "carta";
+
+/** productId → hash (e "carta" → hash da carta), como fica guardado no pedido. */
 export type EditionFingerprints = Record<string, string>;
 
 const fingerprintsSchema = z.record(z.string(), z.string());
@@ -37,8 +45,22 @@ export function parseEditionFingerprints(stored: unknown): EditionFingerprints |
 }
 
 /** Os hashes de hoje, para guardar ao gerar. */
-export function editionFingerprintsOf(cards: { productId: string; data: EditionCardData }[]): EditionFingerprints {
-  return Object.fromEntries(cards.map((card) => [card.productId, editionCardFingerprint(card.data)]));
+export function editionFingerprintsOf(
+  cards: { productId: string; data: EditionCardData }[],
+  letter: DebutLetterData | null = null,
+): EditionFingerprints {
+  const entries = cards.map((card): [string, string] => [card.productId, editionCardFingerprint(card.data)]);
+  if (letter) entries.push([LETTER_FINGERPRINT_KEY, debutLetterFingerprint(letter)]);
+  return Object.fromEntries(entries);
+}
+
+/**
+ * A carta ficou velha? Só depois de gerados e só quando há carta hoje: o
+ * texto mudou, ou a carta foi escrita depois da geração (não existe imagem).
+ */
+export function isDebutLetterStale(stored: EditionFingerprints | null, letter: DebutLetterData | null): boolean {
+  if (stored === null || letter === null) return false;
+  return stored[LETTER_FINGERPRINT_KEY] !== debutLetterFingerprint(letter);
 }
 
 /**

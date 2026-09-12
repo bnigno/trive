@@ -22,6 +22,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { getSiteUrl } from "@/services/store-payments";
 import {
   ApprovalRulesForm,
+  DebutLetterForm,
   FeeRuleForm,
   MercadoPagoForm,
   PolicyForm,
@@ -76,6 +77,10 @@ type SettingsData = {
     manifesto: string;
     editionName: string;
   };
+  debutLetter: {
+    text: string;
+    signature: string;
+  };
   mpEnabled: boolean;
 };
 
@@ -103,6 +108,8 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_tagline",
         "store_manifesto",
         "edition_name",
+        "debut_letter_text",
+        "debut_letter_signature",
         "mp_enabled",
       ]),
     ]);
@@ -122,6 +129,10 @@ async function loadSettings(): Promise<SettingsData | null> {
         tagline: asString(map.store_tagline),
         manifesto: asString(map.store_manifesto),
         editionName: asString(map.edition_name),
+      },
+      debutLetter: {
+        text: asString(map.debut_letter_text),
+        signature: asString(map.debut_letter_signature),
       },
       settings: {
         changeThresholdRate:
@@ -219,6 +230,17 @@ export default async function ConfiguracoesPage() {
               editionName: data.storefront.editionName,
             }}
           />
+        </div>
+      </Card>
+
+      <Card title="Carta de estreia">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Na primeira compra de uma cliente, esta carta sai impressa (15 × 10 cm)
+            junto dos cartões da edição, com “PARA {"{"}nome{"}"}” e a sua assinatura.
+            Em branco, nenhuma carta sai.
+          </p>
+          <DebutLetterForm defaults={{ text: data.debutLetter.text, signature: data.debutLetter.signature }} />
         </div>
       </Card>
 

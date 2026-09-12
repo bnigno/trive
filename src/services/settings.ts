@@ -544,6 +544,16 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .string()
     .trim()
     .max(40, "O nome da edição deve ter no máximo 40 caracteres."),
+  /** A carta de estreia (primeira compra): vazio = a carta não sai. */
+  debut_letter_text: z
+    .string()
+    .trim()
+    .max(900, "A carta de estreia vai até 900 caracteres."),
+  /** Como a dona assina a carta; vazio = "A curadora". */
+  debut_letter_signature: z
+    .string()
+    .trim()
+    .max(60, "A assinatura vai até 60 caracteres."),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

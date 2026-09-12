@@ -19,6 +19,7 @@ import {
   updateStockSettingsAction,
   updateStoreDataAction,
   updateStorefrontAction,
+  updateDebutLetterAction,
   type FormState,
 } from "./actions";
 
@@ -567,6 +568,41 @@ export function StorefrontForm({
 
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar textos da vitrine</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Carta de estreia — a primeira compra ganha uma carta assinada pela dona
+// ---------------------------------------------------------------------------
+
+export function DebutLetterForm({ defaults }: { defaults: { text: string; signature: string } }) {
+  const [state, formAction] = useActionState(updateDebutLetterAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <Field
+        label="Texto da carta"
+        hint="Até 900 caracteres e 12 linhas. Fale como falaria pessoalmente; o nome da cliente já vai no alto (“PARA ANA”). Emoji não entra na impressão."
+      >
+        <TextArea
+          name="debutLetterText"
+          rows={7}
+          maxLength={900}
+          defaultValue={defaults.text}
+          placeholder={"Que bom ter você por aqui.\n\nEsta é a sua primeira peça com a TRIVÉ, escolhida pensando no calor de Belém e no seu jeito de se vestir de si.\n\nVista, viva, e me conte como foi."}
+        />
+      </Field>
+      <Field label="Assinatura" hint="Como você assina. Vazio = “A curadora”.">
+        <Input name="debutLetterSignature" maxLength={60} defaultValue={defaults.signature} placeholder="Marina, curadora da TRIVÉ" />
+      </Field>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar carta de estreia</SubmitButton>
       </div>
     </form>
   );
