@@ -86,15 +86,15 @@ async function product(
   return p.id;
 }
 
-/** Chaves dos eventos de pré-desenho enfileirados (na ordem de criação). */
+/** Eventos de pré-desenho enfileirados (na ordem de criação): chave e quando vencem. */
 async function publishedEvents() {
   return (
     await db
-      .select({ dedupeKey: schema.outboxEvents.dedupeKey })
+      .select({ dedupeKey: schema.outboxEvents.dedupeKey, nextAttemptAt: schema.outboxEvents.nextAttemptAt })
       .from(schema.outboxEvents)
       .where(eq(schema.outboxEvents.eventType, "product.published"))
       .orderBy(schema.outboxEvents.createdAt)
-  ).map((row) => row.dedupeKey);
+  ).map((row) => ({ key: row.dedupeKey, at: row.nextAttemptAt.getTime() }));
 }
 
 async function customer(name: string, phone: string, optIn = true) {
@@ -167,14 +167,16 @@ describe("agendar e visibilidade", () => {
     await db.insert(schema.productImages).values({ productId, storagePath: "sem-foto/1-full.webp", sortOrder: 0 });
     await scheduleDrop(sdb, { dropId, userId, now: NOW });
     await expect(setDropProducts(sdb, { dropId, productIds: [productId], userId })).rejects.toThrow(/Cancele/);
-    // Agendar esconde a peça: nada de pré-desenho ainda (ele sairia como "agendada").
-    expect(await publishedEvents()).toEqual([]);
+    // Agendar já marca o desenho do post para a hora da estreia.
+    expect(await publishedEvents()).toEqual([
+      { key: `product.published:${productId}:visible:${PUBLISH_AT.getTime()}`, at: PUBLISH_AT.getTime() },
+    ]);
     await cancelDrop(sdb, { dropId, userId });
     const [row] = await db.select().from(schema.products).where(eq(schema.products.id, productId));
     expect(row.visibleFrom).toBeNull();
     expect((await getDrop(sdb, dropId, NOW))?.phase).toBe("canceled");
     // Cancelar libera a peça na loja agora: o post nasce pronto (uma vez).
-    expect(await publishedEvents()).toEqual([`product.published:${productId}:drop-cancel:${dropId}`]);
+    expect((await publishedEvents()).map((e) => e.key)).toContain(`product.published:${productId}:drop-cancel:${dropId}`);
   });
 });
 
@@ -215,13 +217,17 @@ describe("janela VIP, convite e publicação", () => {
     expect(afterSend.sentAt).not.toBeNull();
 
     // Na hora marcada: publica e a peça aparece para todo mundo — e o post,
-    // o story e o carrossel dela entram na fila (uma vez por lançamento).
-    expect(await publishedEvents()).toEqual([]);
+    // o story e o carrossel dela entram na fila (o agendamento já tinha
+    // marcado um para a estreia; publicar garante outro, uma vez por lançamento).
+    expect((await publishedEvents()).map((e) => e.key)).toEqual([
+      `product.published:${productId}:visible:${PUBLISH_AT.getTime()}`,
+    ]);
     expect(await dispatchDueDrops(sdb, { now: PUBLISH_AT })).toEqual({ vipQueued: 0, published: 1 });
     expect((await getDrop(sdb, dropId, PUBLISH_AT))?.status).toBe("published");
-    expect(await publishedEvents()).toEqual([`product.published:${productId}:drop:${dropId}`]);
+    expect((await publishedEvents()).map((e) => e.key)).toContain(`product.published:${productId}:drop:${dropId}`);
+    expect(await publishedEvents()).toHaveLength(2);
     expect(await dispatchDueDrops(sdb, { now: PUBLISH_AT })).toEqual({ vipQueued: 0, published: 0 });
-    expect(await publishedEvents()).toHaveLength(1);
+    expect(await publishedEvents()).toHaveLength(2);
     vi.useFakeTimers({ now: PUBLISH_AT, toFake: ["Date"] });
     try {
       expect((await listPublicProducts(sdb, { limit: 10 })).map((p) => p.slug)).toEqual(["vestido-aurora"]);

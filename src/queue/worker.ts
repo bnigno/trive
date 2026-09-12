@@ -76,6 +76,8 @@ export async function drainOutbox(
 
   // Lease vencido é uma tentativa que falhou: sem contar, um handler que
   // sempre estoura o tempo rodaria para sempre, fora da política do evento.
+  // Cada UPDATE repete a condição do lease: se outro worker reclamou a linha
+  // entre o SELECT e aqui, ela não é mais nossa.
   const expiredRows = rowsOf<{ id: string; event_type: string; attempts: number }>(await db.execute(sql`
     SELECT id, event_type, attempts
     FROM outbox_events
@@ -96,6 +98,8 @@ export async function drainOutbox(
             locked_by = NULL
         WHERE id = ${row.id}
           AND status = 'processing'
+          AND locked_at < now() - interval '5 minutes'
+          AND attempts = ${row.attempts}
       `);
     } else {
       const nextAttemptAt = new Date(now.getTime() + nextAttemptDelayMs(policy, attempts));
@@ -109,6 +113,8 @@ export async function drainOutbox(
             locked_by = NULL
         WHERE id = ${row.id}
           AND status = 'processing'
+          AND locked_at < now() - interval '5 minutes'
+          AND attempts = ${row.attempts}
       `);
     }
   }

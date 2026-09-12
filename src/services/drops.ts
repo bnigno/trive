@@ -455,6 +455,15 @@ export async function scheduleDrop(
       .update(products)
       .set({ status: "active", visibleFrom: view.publishAt, updatedAt: now })
       .where(and(inArray(products.id, ids), inArray(products.status, ["draft", "active"])));
+    // O desenho do post fica marcado para a hora da estreia (mesma chave que
+    // o handler usa ao reagendar: os dois caminhos se deduplicam).
+    for (const productId of ids) {
+      await enqueueProductPublished(tx, {
+        productId,
+        dedupeSuffix: `visible:${view.publishAt.getTime()}`,
+        nextAttemptAt: view.publishAt,
+      });
+    }
     await tx.delete(dropInvites).where(eq(dropInvites.dropId, input.dropId));
     if (ranked.length > 0) {
       await tx.insert(dropInvites).values(

@@ -13,11 +13,13 @@ import {
   postEyebrow,
   type CarouselEntry,
 } from "@/core/cards/post";
+import { fold } from "@/core/catalog/product-images";
 import { categories, products } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import {
   findCachedBotCard,
+  PhotoUnavailableError,
   publishBotCard,
   type CardRenderer,
   type PublishBotCardInput,
@@ -64,15 +66,9 @@ function priceLabelOf(prices: readonly number[]): string {
   return min === max ? formatCentsBRL(min) : `a partir de ${formatCentsBRL(min)}`;
 }
 
-/**
- * Arquivo que sumiu do Storage, formato que o recorte não abre ou imagem
- * corrompida: para a dona é tudo "a foto não serve".
- */
+/** Só a foto que não serve é problema da dona; falha do desenho segue para o retry. */
 function isPhotoError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    /storage|download|foto|image|unsupported|buffer|sharp|input/i.test(error.message)
-  );
+  return error instanceof PhotoUnavailableError;
 }
 
 function photoProblem(name: string, color: string | null): ServiceError {
@@ -293,27 +289,41 @@ export async function getProductPostPreview(
   };
 }
 
+/** "longo-dunas-terracota.jpg": nome do arquivo baixado, só ASCII. */
+function downloadFilename(slug: string, suffix: string): string {
+  const clean = (value: string) =>
+    fold(value)
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  return `${clean(slug)}-${clean(suffix)}.jpg`;
+}
+
 /** O JPEG do cache, servido pela própria origem (sem CORS do Storage). */
 export async function getProductPostFile(
   db: DbOrTx,
   storage: FileStorage,
   input: { productId: string; format: "post" | "story" | `carousel-${number}` },
-): Promise<{ data: Buffer; contentType: string } | null> {
+): Promise<{ data: Buffer; contentType: string; filename: string } | null> {
   const basis = await loadBasis(db, z.uuid().parse(input.productId));
   const carouselIndex = input.format.startsWith("carousel-")
     ? Number(input.format.slice("carousel-".length))
     : null;
+  const entry = carouselIndex === null ? null : basis.colors[carouselIndex];
   const request =
     carouselIndex === null
       ? basis.input(input.format as "post" | "story")
-      : basis.colors[carouselIndex]
-        ? basis.colorInput(basis.colors[carouselIndex])
+      : entry
+        ? basis.colorInput(entry)
         : null;
   if (!request) return null;
   const card = await findCachedBotCard(db, storage, request);
   if (!card) return null;
   const file = await storage.download(card.path);
-  return { data: file.data, contentType: file.contentType ?? "image/jpeg" };
+  return {
+    data: file.data,
+    contentType: file.contentType ?? "image/jpeg",
+    filename: downloadFilename(basis.slug, entry ? entry.color : input.format),
+  };
 }
 
 /**

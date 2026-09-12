@@ -177,8 +177,12 @@ describe("carouselColors", () => {
   it("a faixa do cartão diz a edição e a cor; quando não cabe, encurta a edição e nunca a cor", () => {
     expect(carouselEyebrow("Edição Círio", "Terracota")).toBe("EDIÇÃO CÍRIO · TERRACOTA");
     expect(carouselEyebrow("", "Areia")).toBe("NOITE DE ESTREIA · AREIA");
-    const longa = carouselEyebrow("Edição Círio de Nazaré Noite de Estreia", "Terracota Queimada");
-    expect(longa.length).toBeLessThanOrEqual(60);
-    expect(longa.endsWith(" · TERRACOTA QUEIMADA")).toBe(true);
+    // Edição de 40 (o teto de postEyebrow) + cor de 25: não cabe em 60 — a edição encurta.
+    const edicao = "Edição Círio de Nazaré Noite de Estreia!"; // 40 caracteres
+    const cor = "Terracota Queimada Escura"; // 25 caracteres
+    const longa = carouselEyebrow(edicao, cor);
+    expect(longa).toBe(`${edicao.toUpperCase().slice(0, 60 - 25 - 3)} · ${cor.toUpperCase()}`);
+    expect(longa).toHaveLength(60);
+    expect(longa.endsWith(" · TERRACOTA QUEIMADA ESCURA")).toBe(true);
   });
 });

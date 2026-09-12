@@ -620,6 +620,11 @@ export async function addVariant(db: ServiceDb, input: AddVariantInput) {
         entityId: variant.id,
         after: { productId: parsed.productId, sku: variant.sku, attributes: parsed.attributes },
       });
+      // Cor nova pode entrar no carrossel (quando tiver foto e preço).
+      await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+        productIds: [parsed.productId],
+        reason: `variant:${variant.id}`,
+      });
       return variant;
     });
   } catch (error) {
@@ -795,6 +800,15 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
         before,
         after,
       });
+
+      // Variação que liga/desliga ou muda de cor mexe no "a partir de" e nos
+      // slides do carrossel.
+      if (patch.isActive !== undefined || patch.attributes !== undefined) {
+        await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+          productIds: [current.productId],
+          reason: `variant:${updated.id}`,
+        });
+      }
 
       return updated;
     });
@@ -1008,9 +1022,10 @@ export async function getProductDetail(db: ServiceDb, productId: string) {
         isNull(productVariants.deletedAt),
       ),
     )
-    // Desempate pelo id: variações criadas no mesmo instante (importação,
-    // grade cor × tamanho) precisam de ordem estável — o carrossel é indexado.
-    .orderBy(productVariants.createdAt, productVariants.id);
+    // Variações criadas no mesmo instante (grade cor × tamanho numa só
+    // transação) saem pelo código, depois pelo id: ordem estável e legível —
+    // o carrossel é indexado por ela.
+    .orderBy(productVariants.createdAt, productVariants.sku, productVariants.id);
 
   const images = await db
     // Projeção explícita: a tela de produto do painel depende deste formato,

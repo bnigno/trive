@@ -457,15 +457,21 @@ describe("carrossel das cores e pré-desenho", () => {
     expect(await postCardPathOf(semFoto)).toBeNull();
 
     const semPreco = await setupProduct2("DUNAS-SP-M", "Sem Preço", "sem-preco", { price: false });
+    await db.update(schema.products).set({ postCardPath: "cards/ve/velho.jpg" }).where(eq(schema.products.id, semPreco));
     expect(await prerenderProductPosts(sdb, storage, render, { productId: semPreco })).toMatchObject({
       skipped: "sem_preco",
     });
+    expect(await postCardPathOf(semPreco)).toBeNull();
 
     const rascunho = await setupProduct2("DUNAS-RA-M", "Rascunho", "rascunho");
-    await db.update(schema.products).set({ status: "draft" }).where(eq(schema.products.id, rascunho));
+    await db
+      .update(schema.products)
+      .set({ status: "draft", postCardPath: "cards/ve/velho.jpg" })
+      .where(eq(schema.products.id, rascunho));
     expect(await prerenderProductPosts(sdb, storage, render, { productId: rascunho })).toMatchObject({
       skipped: "peca_nao_publicada",
     });
+    expect(await postCardPathOf(rascunho)).toBeNull();
 
     expect(
       await prerenderProductPosts(sdb, storage, render, { productId: "00000000-0000-4000-8000-0000000000ff" }),
@@ -473,14 +479,36 @@ describe("carrossel das cores e pré-desenho", () => {
     expect(render).not.toHaveBeenCalled();
   });
 
-  it("peça com estreia marcada: pula agora e devolve a data, para o handler agendar", async () => {
+  it("peça com estreia marcada: pula agora, devolve a data para o handler agendar e mantém a prévia que já tinha", async () => {
     const productId = await setupProduct();
     const estreia = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
-    await db.update(schema.products).set({ visibleFrom: estreia }).where(eq(schema.products.id, productId));
+    await db
+      .update(schema.products)
+      .set({ visibleFrom: estreia, postCardPath: "cards/ve/velho.jpg" })
+      .where(eq(schema.products.id, productId));
     const result = await prerenderProductPosts(sdb, storage, render, { productId });
     if (result.skipped !== "peca_agendada") throw new Error(`esperava pular como agendada: ${JSON.stringify(result)}`);
     expect(result.visibleFrom?.getTime()).toBe(estreia.getTime());
     expect(render).not.toHaveBeenCalled();
+    expect(await postCardPathOf(productId)).toBe("cards/ve/velho.jpg");
+  });
+
+  it("falha do próprio desenho não é 'foto indisponível': propaga para o retry da fila", async () => {
+    const productId = await setupProduct();
+    await comCores(productId);
+    render.mockImplementationOnce(async () => {
+      throw new Error("Satori: image decode failed");
+    });
+    await expect(publishProductPost(sdb, storage, render, { productId, userId: FIXED_USER_ID })).rejects.toThrow(
+      /Satori/,
+    );
+    // No carrossel, idem: a cor não é marcada como "foto que não abre".
+    render.mockImplementation(async (data: CardData) => {
+      if (data.kind === "post" && data.eyebrow.includes("TERRACOTA")) throw new Error("Satori: font missing");
+      const { width, height } = data.kind === "story" ? { width: 108, height: 192 } : { width: 108, height: 135 };
+      return sharp({ create: { width, height, channels: 3, background: "#faf7f0" } }).png().toBuffer();
+    });
+    await expect(prerenderProductPosts(sdb, storage, render, { productId })).rejects.toThrow(/font missing/);
   });
 
   it("peça desenhada antes de existir a prévia do link: abrir a tela cura o caminho", async () => {

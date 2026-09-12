@@ -8,11 +8,7 @@ import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
-import {
-  enqueueProductPublished,
-  productCardEventPayloadSchema,
-} from "@/services/product-cards-queue";
-import { prerenderProductPosts } from "@/services/product-posts";
+import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -181,39 +177,19 @@ export type OutboxEvent = {
 export type OutboxHandler = (event: OutboxEvent) => Promise<void>;
 
 async function prerenderProductCards(event: OutboxEvent): Promise<void> {
-  const payload = productCardEventPayloadSchema.parse(event.payload);
   const assets = await loadReceiptAssets();
-  const result = await prerenderProductPosts(
-    getDb(),
-    getFileStorage(),
-    (data) => renderCardPng(data, assets),
-    { productId: payload.productId },
+  await runProductCardsPrerender(
+    {
+      db: getDb(),
+      storage: getFileStorage(),
+      render: (data) => renderCardPng(data, assets),
+      revalidate: async (path) => {
+        const { revalidatePath } = await import("next/cache");
+        revalidatePath(path);
+      },
+    },
+    event,
   );
-  if (result.skipped !== null) {
-    console.info(`[${event.eventType}] ${payload.productId} → skipped: ${result.skipped}`);
-    // Estreia marcada: o desenho fica agendado para a hora em que a peça
-    // aparece na loja (dedupe pela data: mudar a data agenda outro).
-    if (result.skipped === "peca_agendada" && result.visibleFrom) {
-      await enqueueProductPublished(getDb(), {
-        productId: payload.productId,
-        dedupeSuffix: `visible:${result.visibleFrom.getTime()}`,
-        nextAttemptAt: result.visibleFrom,
-      });
-    }
-    return;
-  }
-  console.info(`[${event.eventType}] ${payload.productId} → ${JSON.stringify(result)}`);
-  // A vitrine tem ISR de 5 min: a prévia do link troca na hora. Fora do
-  // Next (worker standalone, testes) revalidatePath pode lançar: só avisa.
-  try {
-    const { revalidatePath } = await import("next/cache");
-    revalidatePath(`/produto/${result.slug}`);
-  } catch (error) {
-    console.warn(
-      `[outbox] ${event.eventType} (event ${event.id}): revalidatePath indisponível neste contexto.`,
-      error,
-    );
-  }
 }
 
 export const outboxHandlers: Record<string, OutboxHandler> = {

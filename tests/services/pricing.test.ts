@@ -122,6 +122,16 @@ describe("createPriceVersion", () => {
     expect(event.payload).toEqual({ productId });
     expect(event.dedupeKey).toContain(`:${productId}:price:${v1.id}:`);
 
+    // Segunda variação da mesma peça aprovada em seguida (lote): o refresh já
+    // marcado cobre — um evento por peça, não por variação.
+    const [second] = await db
+      .insert(schema.productVariants)
+      .values({ productId, sku: "LOTE-2", attributes: { tamanho: "G" }, costCents: 1000 })
+      .returning({ id: schema.productVariants.id });
+    const v1b = await createPriceVersion(db, { variantId: second.id, userId: FIXED_USER_ID, origin: "initial" });
+    await approvePriceVersion(db, { versionId: v1b.id, userId: FIXED_USER_ID });
+    expect(await refreshes()).toHaveLength(1);
+
     // Peça em rascunho: o preço muda, mas não há cartão para atualizar.
     await db.update(schema.products).set({ status: "draft" }).where(eq(schema.products.id, productId));
     const v2 = await createPriceVersion(db, { variantId, userId: FIXED_USER_ID, origin: "manual", overrides: { targetMarginRate: 0.35 } });

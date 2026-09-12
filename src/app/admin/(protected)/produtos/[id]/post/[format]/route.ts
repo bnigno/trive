@@ -45,9 +45,9 @@ export async function GET(
       // A URL é fixa por peça e formato, mas o desenho muda quando o preço ou
       // a foto mudam: guardar 60 s devolveria a arte velha no "Atualizar".
       "Cache-Control": "private, no-store",
-      ...(download
-        ? { "Content-Disposition": `attachment; filename="${String(parsed.data)}.jpg"` }
-        : {}),
+      // Nome com a peça e a cor: no iPhone o arquivo vai para Arquivos, e a
+      // dona precisa reconhecê-lo depois.
+      ...(download ? { "Content-Disposition": `attachment; filename="${file.filename}"` } : {}),
     },
   });
 }

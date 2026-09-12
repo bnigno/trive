@@ -50,6 +50,11 @@ export async function enqueueOutboxEvent(
   const id = inserted[0]?.id ?? null;
   if (id === null) return null;
 
+  // Evento marcado para depois não precisa de kick (o varredor de 1 min o
+  // entrega na hora certa); poupa uma chamada HTTP por linha dentro da
+  // transação de quem enfileira em lote.
+  if (parsed.nextAttemptAt && parsed.nextAttemptAt.getTime() > Date.now() + 1_000) return id;
+
   try {
     await inngest.send({
       name: "outbox/event.enqueued",

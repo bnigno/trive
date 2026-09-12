@@ -1361,6 +1361,56 @@ describe("product.published e product.card_refresh", () => {
     expect(await cardEvents(id)).toHaveLength(2);
   });
 
+  it("ligar/desligar variação, trocar a cor dela ou criar uma cor nova pedem a atualização do cartão", async () => {
+    const created = await createProduct(db, {
+      name: "Peça com variações",
+      attributesSchema: ["cor"],
+      variants: [
+        { sku: "VAR-AREIA", attributes: { cor: "Areia" }, initialQuantity: 1 },
+        { sku: "VAR-TERRA", attributes: { cor: "Terracota" }, initialQuantity: 1 },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+    const terra = created.variants.find((variant) => variant.sku === "VAR-TERRA")!;
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const drain = async () =>
+      db.update(schema.outboxEvents).set({ status: "done" }).where(eq(schema.outboxEvents.eventType, "product.card_refresh"));
+    const refreshCount = async () => (await cardEvents(id)).filter((row) => row.eventType === "product.card_refresh").length;
+
+    await updateVariant(db, { variantId: terra.id, isActive: false, userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(1);
+    await drain();
+    // Mexer em algo que não está no cartão (código de barras) não pede nada.
+    await updateVariant(db, { variantId: terra.id, barcodeEan: "7891234567895", userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(1);
+    await updateVariant(db, { variantId: terra.id, attributes: { cor: "Vinho" }, userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(2);
+    await drain();
+    await addVariant(db, { productId: id, sku: "VAR-VERDE", attributes: { cor: "Verde" }, userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(3);
+  });
+
+  it("variações criadas no mesmo instante saem em ordem estável: created_at, código, id", async () => {
+    const created = await createProduct(db, {
+      name: "Grade de uma vez",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "GRD-TERRA-M", attributes: { cor: "Terracota", tamanho: "M" }, initialQuantity: 1 },
+        { sku: "GRD-AREIA-M", attributes: { cor: "Areia", tamanho: "M" }, initialQuantity: 1 },
+        { sku: "GRD-AREIA-P", attributes: { cor: "Areia", tamanho: "P" }, initialQuantity: 1 },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const sameInstant = new Date("2026-09-12T12:00:00Z");
+    await db
+      .update(schema.productVariants)
+      .set({ createdAt: sameInstant })
+      .where(eq(schema.productVariants.productId, created.product.id));
+    const detail = await getProductDetail(db, created.product.id);
+    expect(detail.variants.map((variant) => variant.sku)).toEqual(["GRD-AREIA-M", "GRD-AREIA-P", "GRD-TERRA-M"]);
+  });
+
   it("subir, recolorir e remover foto de peça ativa pedem a atualização do cartão; em rascunho, não", async () => {
     const storage = new FakeFileStorage();
     const created = await createProduct(db, {
@@ -1385,7 +1435,11 @@ describe("product.published e product.card_refresh", () => {
       contentType: "image/png",
       userId: FIXED_USER_ID,
     });
+    const drain = async () =>
+      db.update(schema.outboxEvents).set({ status: "done" }).where(eq(schema.outboxEvents.eventType, "product.card_refresh"));
+    await drain();
     await setProductImageColor(db, { imageId: image.id, color: "Areia", userId: FIXED_USER_ID });
+    await drain();
     await removeProductImage(db, storage, { imageId: draftImage.id, userId: FIXED_USER_ID });
     const events = await cardEvents(id);
     expect(events.map((row) => row.eventType)).toEqual([
