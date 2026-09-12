@@ -137,6 +137,23 @@ describe("getDefaultPolicy / updateDefaultPolicy", () => {
 });
 
 describe("updateSetting / getSettingsMap", () => {
+  it("a carta de estreia aceita até 900 caracteres e a assinatura até 60; vazio desliga", async () => {
+    await updateSetting(db, { key: "debut_letter_text", value: "Bem-vinda à maison.", userId: FIXED_USER_ID });
+    await updateSetting(db, { key: "debut_letter_signature", value: "Marina", userId: FIXED_USER_ID });
+    expect(await getSettingsMap(db, ["debut_letter_text", "debut_letter_signature"])).toEqual({
+      debut_letter_text: "Bem-vinda à maison.",
+      debut_letter_signature: "Marina",
+    });
+    await expect(
+      updateSetting(db, { key: "debut_letter_text", value: "x".repeat(901), userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/900/);
+    await expect(
+      updateSetting(db, { key: "debut_letter_signature", value: "x".repeat(61), userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/60/);
+    await updateSetting(db, { key: "debut_letter_text", value: "   ", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["debut_letter_text"])).debut_letter_text).toBe("");
+  });
+
   it("trocar a edição (ou o nome da loja) pede a atualização do cartão de cada peça ativa, escalonada", async () => {
     const a = await createTestVariant(db, { sku: "ED-A" });
     const b = await createTestVariant(db, { sku: "ED-B" });

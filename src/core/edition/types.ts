@@ -21,3 +21,15 @@ export interface EditionCardData {
   /** O que sai escrito sob o QR: só o domínio ("trivemaison.com.br"). */
   printedAddress: string;
 }
+
+/** A carta de estreia (15 × 10 cm) que vai na caixa da primeira compra. */
+export interface DebutLetterData {
+  /** Primeiro nome da cliente, para "PARA ANA". */
+  recipientName: string;
+  /** O texto que a dona escreveu, já limpo (≤ 12 linhas). */
+  text: string;
+  /** "Marina, curadora da TRIVÉ" — como a dona assina. */
+  signature: string;
+  storeName: string;
+  editionName: string | null;
+}

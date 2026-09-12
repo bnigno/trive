@@ -85,6 +85,7 @@ export default async function EmbalarPage() {
                     {order.status === "preparing" ? "Em separação" : "Pago"}
                   </Badge>
                   {order.isGift ? <Badge tone="warning">🎁 Presente · sem preço</Badge> : null}
+                  {order.isFirstPurchase ? <Badge tone="warning">1ª compra · carta de estreia</Badge> : null}
                 </div>
               </div>
               {/* Cartão → caixa → foto: o link vem antes do "Embalei", que tira o pedido da mesa. */}
