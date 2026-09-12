@@ -5,6 +5,7 @@ import { buildProductJsonLd, serializeJsonLd } from "@/core/seo/json-ld";
 import { siteUrl } from "@/lib/site-url";
 import { parseCareNotes } from "@/core/catalog/care";
 import { buildSizeChart, isSizeChartEmpty } from "@/core/catalog/measurements";
+import { CuratorNote, hasCuratorNote } from "@/components/store/curator-note";
 import { hasMuseumPlaque, MuseumPlaque } from "@/components/store/museum-plaque";
 import { SizeChartTable } from "@/components/store/size-chart";
 import type { Metadata } from "next";
@@ -18,6 +19,7 @@ import { getDb } from "@/db/client";
 import {
   getPublicProductBySlug,
   listRelatedPublicProducts,
+  publicFileUrl,
   publicImageUrl,
   publicMdUrl,
   publicThumbUrl,
@@ -98,6 +100,12 @@ export default async function ProdutoPage({ params }: Props) {
     fitNotes: product.fitNotes,
   };
   const sizeChart = buildSizeChart(product.variants, product.attributesSchema);
+  // A nota da curadora: o texto e, se ela gravou, o áudio na voz dela.
+  const curatorNote = {
+    note: product.curatorNote,
+    audioUrl: product.curatorAudioPath ? publicFileUrl(product.curatorAudioPath) : null,
+    audioMime: product.curatorAudioMime,
+  };
 
   const related = await listRelatedPublicProducts(db, {
     productId: product.id,
@@ -174,6 +182,7 @@ export default async function ProdutoPage({ params }: Props) {
           </div>
         }
       >
+        {hasCuratorNote(curatorNote) ? <CuratorNote data={curatorNote} /> : null}
         <div className="mt-4 border-b border-ivory-300">
           {product.description ? (
             <DetailsSheet title="Descrição" open>

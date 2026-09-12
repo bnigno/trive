@@ -55,6 +55,13 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("Política de troca: Troca em até 7 dias com etiqueta.");
   });
 
+  it("sobre tecido e caimento, a nota da curadora é a palavra dela — cita; sem nada, confere com a equipe", () => {
+    const prompt = buildBotSystemPrompt(OPCOES);
+    expect(prompt).toContain("a nota da curadora dizem");
+    expect(prompt).toContain('cite-a ("a curadora diz que…")');
+    expect(prompt).toContain("diga que confere com a equipe (nunca invente)");
+  });
+
   it("sem política cadastrada, orienta a transferir em vez de inventar", () => {
     const prompt = buildBotSystemPrompt(OPCOES);
     expect(prompt).toContain("Política de troca: ainda não cadastrada");

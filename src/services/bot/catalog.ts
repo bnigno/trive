@@ -19,6 +19,7 @@ import {
   lookCardTitle,
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
+import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
   buildSizeChart,
@@ -483,6 +484,8 @@ export async function execDetalharProduto(
       "[Sem descrição cadastrada: não afirme tecido nem caimento — diga que confere com a equipe se a cliente perguntar.]",
     );
   }
+  // A nota da curadora: o que ela diria de tecido, caimento e calor — a Lia cita.
+  lines.push(...curatorNoteLines({ note: detail.curatorNote, hasAudio: detail.curatorAudioPath !== null }));
   // Ficha da peça: o que a placa de museu mostra, a Lia também sabe.
   if (detail.composition?.trim()) lines.push(`Composição: ${detail.composition.trim()}`);
   const careLabels = careNotesToLabels(parseCareNotes(detail.careNotes));
