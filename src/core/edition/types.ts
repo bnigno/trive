@@ -47,6 +47,5 @@ export interface DebutLetterData {
   text: string;
   /** "Marina, curadora da TRIVÉ" — como a dona assina. */
   signature: string;
-  storeName: string;
   editionName: string | null;
 }

@@ -10,7 +10,6 @@ import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
-import { isFirstPurchase } from "@/core/edition/debut";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { renderTemplate } from "@/core/whatsapp/render";
 import {
@@ -23,7 +22,7 @@ import {
 } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
-import { countPriorCountedOrders, editionCardsStatusByOrder } from "@/services/edition-cards";
+import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { getSettingsMap } from "@/services/settings";
 import {
@@ -201,8 +200,10 @@ export interface OrderAwaitingPacking {
   editionCardsStale: boolean;
   /** Quantas peças do pedido ganham cartão (0 = sem link de cartões). */
   editionCards: number;
-  /** Primeira compra desta cliente: a carta de estreia vai na caixa. */
+  /** Primeira compra desta cliente (selo). */
   isFirstPurchase: boolean;
+  /** A carta de estreia sai neste pedido (primeira compra E carta escrita em Configurações). */
+  debutLetter: boolean;
 }
 
 /** Pedidos pagos ou em separação ainda sem foto do pacote, os mais antigos primeiro. */
@@ -222,7 +223,6 @@ export async function listOrdersAwaitingPacking(
       editionCardsAt: orders.editionCardsAt,
       editionCardsFingerprint: orders.editionCardsFingerprint,
       customerId: orders.customerId,
-      createdAt: orders.createdAt,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -232,13 +232,6 @@ export async function listOrdersAwaitingPacking(
     .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
   if (rows.length === 0) return [];
 
-  // Primeira compra: nenhum outro pedido pago da mesma cliente antes deste
-  // (a regra mora em core/edition/debut; aqui só a contagem, uma por pedido).
-  const firstPurchase = new Map<string, boolean>();
-  for (const row of rows) {
-    const prior = await countPriorCountedOrders(db, { customerId: row.customerId, orderId: row.id, createdAt: row.createdAt });
-    firstPurchase.set(row.id, isFirstPurchase({ priorCountedOrders: prior }));
-  }
 
   const counts = await db
     .select({ orderId: orderItems.orderId, quantity: orderItems.quantity })
@@ -257,12 +250,13 @@ export async function listOrdersAwaitingPacking(
   // Cartões: quantos cada pedido tem e se os gerados ficaram velhos (a mesma régua da tela dos cartões).
   const editionStatus = await editionCardsStatusByOrder(db, rows);
 
-  return rows.map(({ editionCardsFingerprint: _fingerprint, customerId: _customerId, createdAt: _createdAt, ...row }) => ({
+  return rows.map(({ editionCardsFingerprint: _fingerprint, customerId: _customerId, ...row }) => ({
     ...row,
     itemsCount: itemsByOrder.get(row.id) ?? 0,
     editionCardsStale: editionStatus.get(row.id)?.stale ?? false,
     editionCards: editionStatus.get(row.id)?.cards ?? 0,
-    isFirstPurchase: firstPurchase.get(row.id) ?? false,
+    isFirstPurchase: editionStatus.get(row.id)?.isFirstPurchase ?? false,
+    debutLetter: editionStatus.get(row.id)?.letter ?? false,
   }));
 }
 

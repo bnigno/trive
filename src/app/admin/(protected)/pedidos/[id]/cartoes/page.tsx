@@ -50,6 +50,8 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
   const owner = await isOwner();
   const generated = cards.at !== null;
   const hasCards = cards.cards.length > 0;
+  // Há o que gerar/imprimir: cartões, ou só a carta (primeira compra de uma caneca).
+  const hasPieces = hasCards || cards.letter !== null;
   const warnings: { key: string; text: string }[] = [];
   if (generated && cards.stale) {
     warnings.push({
@@ -130,14 +132,14 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
               Primeira compra desta cliente.
               {cards.letter
                 ? ` A carta sai para ${cards.letter.recipientName}.`
-                : " A carta de estreia ainda não foi escrita — em Configurações › Carta de estreia; depois, “Gerar de novo”."}
+                : ` A carta de estreia ainda não foi escrita — em Configurações › Carta de estreia; depois, ${generated ? "“Gerar de novo”" : "“Gerar cartões”"}.`}
             </p>
           ) : null}
         </div>
-        {hasCards ? (
+        {hasPieces ? (
           <div className="flex items-center gap-3">
             <CardsForm orderId={id} generated={generated} stale={cards.stale} />
-            {generated ? <PrintButton label="Imprimir cartões" /> : null}
+            {generated ? <PrintButton label={hasCards ? "Imprimir cartões" : "Imprimir carta"} /> : null}
           </div>
         ) : null}
       </div>
@@ -150,7 +152,7 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
         </ul>
       ) : null}
 
-      {cards.cards.length === 0 ? (
+      {!hasPieces ? (
         <p className="text-sm text-zinc-500 print:hidden dark:text-zinc-400">
           {cards.skipped.length > 0 ? "Este pedido só tem itens que não são roupa: não há cartão." : "Este pedido não tem peças."}
         </p>

@@ -584,12 +584,12 @@ export function DebutLetterForm({ defaults }: { defaults: { text: string; signat
     <form action={formAction} className="flex flex-col gap-4">
       <Field
         label="Texto da carta"
-        hint="Até 900 caracteres e 12 linhas. Fale como falaria pessoalmente; o nome da cliente já vai no alto (“PARA ANA”). Emoji não entra na impressão."
+        hint="Cabe num papel de 15 × 10 cm: até 12 linhas curtas ou uns 900 caracteres — se não couber, a tela avisa ao salvar. Fale como falaria pessoalmente; o nome da cliente já vai no alto (“PARA ANA”). Emoji não entra na impressão."
       >
         <TextArea
           name="debutLetterText"
           rows={7}
-          maxLength={900}
+          maxLength={1200}
           defaultValue={defaults.text}
           placeholder={"Que bom ter você por aqui.\n\nEsta é a sua primeira peça com a TRIVÉ, escolhida pensando no calor de Belém e no seu jeito de se vestir de si.\n\nVista, viva, e me conte como foi."}
         />

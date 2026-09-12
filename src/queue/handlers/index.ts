@@ -227,6 +227,17 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "order.paid": async (event) => {
     const orderId = String(event.payload.orderId);
+    // Os cartões da edição (e a carta de estreia) ficam prontos antes de a
+    // dona chegar à mesa de embalagem. Evento próprio, uma vez por pedido —
+    // enfileirado ANTES dos avisos, para não ficar refém de uma sessão da
+    // Z-API caída (o dedupe_key torna a repetição inofensiva).
+    await enqueueOutboxEvent(getDb(), {
+      eventType: "order.edition_cards",
+      dedupeKey: `order.edition_cards:${orderId}`,
+      aggregateType: "order",
+      aggregateId: orderId,
+      payload: { orderId },
+    });
     await sendOrderEmail(getDb(), getEmailProvider(), {
       orderId,
       kind: "paid",
@@ -238,15 +249,6 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     await enqueueOutboxEvent(getDb(), {
       eventType: "order.receipt",
       dedupeKey: `order.receipt:${orderId}`,
-      aggregateType: "order",
-      aggregateId: orderId,
-      payload: { orderId },
-    });
-    // Os cartões da edição (e a carta de estreia) ficam prontos antes de a
-    // dona chegar à mesa de embalagem. Evento próprio, uma vez por pedido.
-    await enqueueOutboxEvent(getDb(), {
-      eventType: "order.edition_cards",
-      dedupeKey: `order.edition_cards:${orderId}`,
       aggregateType: "order",
       aggregateId: orderId,
       payload: { orderId },

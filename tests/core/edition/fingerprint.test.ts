@@ -4,12 +4,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  debutLetterFingerprint,
   editionCardFingerprint,
   editionFingerprintsOf,
+  isDebutLetterStale,
   isEditionCardStale,
+  LETTER_FINGERPRINT_KEY,
   parseEditionFingerprints,
 } from "@/core/edition/fingerprint";
-import type { EditionCardData } from "@/core/edition/types";
+import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
 
 const base: EditionCardData = {
   editionName: "Edição Círio",
@@ -63,5 +66,32 @@ describe("isEditionCardStale / parseEditionFingerprints", () => {
     expect(parseEditionFingerprints("abc")).toBeNull();
     expect(parseEditionFingerprints({ p1: 1 })).toBeNull();
     expect(parseEditionFingerprints({ p1: "a" })).toEqual({ p1: "a" });
+  });
+});
+
+describe("carta de estreia na impressão digital", () => {
+  const letter: DebutLetterData = { recipientName: "Ana", text: "Bem-vinda.", signature: "Marina", editionName: "Edição Círio" };
+
+  it("a carta entra no mapa sob a chave 'carta' e muda com cada campo desenhado", () => {
+    const stored = editionFingerprintsOf([{ productId: "p1", data: base }], letter);
+    expect(Object.keys(stored).sort()).toEqual([LETTER_FINGERPRINT_KEY, "p1"]);
+    expect(stored[LETTER_FINGERPRINT_KEY]).toBe(debutLetterFingerprint(letter));
+    const seen = new Set([debutLetterFingerprint(letter)]);
+    for (const change of [{ recipientName: "Bia" }, { text: "Outra." }, { signature: "Lia" }, { editionName: null }] as Partial<DebutLetterData>[]) {
+      const hash = debutLetterFingerprint({ ...letter, ...change });
+      expect(seen.has(hash)).toBe(false);
+      seen.add(hash);
+    }
+    // Sem carta, o mapa não tem a chave.
+    expect(editionFingerprintsOf([{ productId: "p1", data: base }], null)).not.toHaveProperty(LETTER_FINGERPRINT_KEY);
+  });
+
+  it("a carta fica velha quando o texto muda ou quando foi escrita depois da geração; sem carta hoje, nunca", () => {
+    const stored = editionFingerprintsOf([{ productId: "p1", data: base }], letter);
+    expect(isDebutLetterStale(stored, letter)).toBe(false);
+    expect(isDebutLetterStale(stored, { ...letter, text: "Mudou." })).toBe(true);
+    expect(isDebutLetterStale(editionFingerprintsOf([{ productId: "p1", data: base }], null), letter)).toBe(true);
+    expect(isDebutLetterStale(stored, null)).toBe(false);
+    expect(isDebutLetterStale(null, letter)).toBe(false);
   });
 });

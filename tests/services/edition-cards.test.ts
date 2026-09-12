@@ -387,9 +387,9 @@ describe("carta de estreia", () => {
     expect(basis.isFirstPurchase).toBe(true);
     expect(basis.letter).toEqual({
       recipientName: "Juliana",
-      text: "Que bom ter você por aqui .\n\nVista, viva, e me conte como foi.",
+      // O emoji sai sem deixar espaço antes do ponto.
+      text: "Que bom ter você por aqui.\n\nVista, viva, e me conte como foi.",
       signature: "Marina, curadora",
-      storeName: "TRIVÉ",
       editionName: null,
     });
     expect(await isFirstPurchaseOrder(sdb, orderId)).toBe(true);
@@ -413,10 +413,10 @@ describe("carta de estreia", () => {
     expect(stale.stale).toBe(true);
     expect(stale.cards.every((card) => !card.stale)).toBe(true);
     await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
-    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: true, isFirstPurchase: true });
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: true, isFirstPurchase: true, debutLetter: true });
   });
 
-  it("carta em branco = desligada: primeira compra sem carta, e a tela sabe que é a primeira; escrita depois, pede gerar de novo", async () => {
+  it("carta em branco = desligada: primeira compra sem carta (selo sem 'carta'); escrita depois, pede gerar de novo", async () => {
     const { orderId } = await createOrder();
     const basis = await buildEditionCardsBasis(sdb, orderId);
     expect(basis.isFirstPurchase).toBe(true);
@@ -425,6 +425,8 @@ describe("carta de estreia", () => {
     expect(result.letterPath).toBeNull();
     expect(renderLetter).not.toHaveBeenCalled();
     expect(storage.list()).toHaveLength(2);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ isFirstPurchase: true, debutLetter: false, editionCardsStale: false });
 
     // A carta escrita depois da geração: não existe imagem dela ainda — velha, sem url.
     await writeLetter();
@@ -436,32 +438,90 @@ describe("carta de estreia", () => {
     expect((await getEditionCards(sdb, storage, orderId)).stale).toBe(false);
   });
 
-  it("segunda compra da mesma cliente não é estreia: nem carta, nem selo; pedido cancelado ou mais novo não conta", async () => {
+  it("a estreia é pela ordem de pagamento: um pedido antigo pago depois não rouba a carta de quem já pagou; cancelado não conta, reembolsado conta", async () => {
     await writeLetter();
     const first = await createOrder();
-    // Pedido pago da mesma cliente, criado antes → o próximo não é estreia.
-    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, first.orderId));
     const [row] = await db.select({ customerId: schema.orders.customerId }).from(schema.orders).where(eq(schema.orders.id, first.orderId));
-    const [second] = await db
+    // Um pedido MAIS ANTIGO (criado antes), ainda pendente.
+    const [older] = await db
       .insert(schema.orders)
-      .values({ customerId: row.customerId, status: "paid", channel: "manual", subtotalCents: 1000, totalCents: 1000, paidAt: new Date() })
+      .values({
+        customerId: row.customerId,
+        status: "pending_payment",
+        channel: "manual",
+        subtotalCents: 1000,
+        totalCents: 1000,
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      })
       .returning({ id: schema.orders.id });
-    expect(await isFirstPurchaseOrder(sdb, second.id)).toBe(false);
-
-    // O primeiro continua sendo a estreia (o segundo é mais novo).
+    // Ambos pendentes: os dois são "primeira compra" por enquanto (nada pago ainda).
     expect(await isFirstPurchaseOrder(sdb, first.orderId)).toBe(true);
-    // Cancelado antes não conta como compra.
-    await db.update(schema.orders).set({ status: "canceled" }).where(eq(schema.orders.id, first.orderId));
-    expect(await isFirstPurchaseOrder(sdb, second.id)).toBe(true);
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
 
-    // A mesa de embalagem marca o selo só na estreia.
+    // O mais novo paga primeiro: ele é a estreia; o antigo, pago depois, não é.
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date(Date.now() - 1000) }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, older.id));
+    expect(await isFirstPurchaseOrder(sdb, first.orderId)).toBe(true);
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
+
+    // Cancelado antes não conta como compra; reembolsado (já recebeu a caixa) conta.
+    await db.update(schema.orders).set({ status: "canceled" }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
+    await db.update(schema.orders).set({ status: "refunded" }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
+
+    // A mesa de embalagem marca o selo só na estreia — numa consulta só para todos.
     await db.update(schema.orders).set({ status: "paid" }).where(eq(schema.orders.id, first.orderId));
     const mesa = await listOrdersAwaitingPacking(sdb);
     expect(mesa.map((o) => [o.id, o.isFirstPurchase])).toEqual(
       expect.arrayContaining([
         [first.orderId, true],
-        [second.id, false],
+        [older.id, false],
       ]),
     );
+  });
+
+  it("presente não é estreia (a caixa vai para outra pessoa) e não conta como compra dela: a próxima compra para si ganha a carta", async () => {
+    await writeLetter();
+    const gift = await createOrder({ gift: true });
+    expect((await buildEditionCardsBasis(sdb, gift.orderId)).letter).toBeNull();
+    expect(await isFirstPurchaseOrder(sdb, gift.orderId)).toBe(false);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, gift.orderId));
+
+    // A mesma cliente (mesmo CPF) compra para si: aí sim é a estreia.
+    const saia = await createTestVariant(db, { sku: "SAIA-LUA", costCents: 5000, onHand: 3, name: "Saia Lua" });
+    await priced(saia.variantId, 15900);
+    const [rate] = await db.insert(schema.shippingRates).values({ name: "PAC 2", priceCents: 1990 }).returning({ id: schema.shippingRates.id });
+    const own = await createStoreOrder(sdb, {
+      customer: { fullName: "Juliana Ramos", document: VALID_CPF, phone: "(11) 99999-8888", marketingOptIn: true },
+      address: { postalCode: "01310-100", street: "Avenida Paulista", number: "1000", district: "Bela Vista", city: "São Paulo", state: "SP" },
+      items: [{ variantId: saia.variantId, quantity: 1, expectedUnitPriceCents: 15900 }],
+      shippingRateId: rate.id,
+      expectedShippingCents: 1990,
+    });
+    expect(await isFirstPurchaseOrder(sdb, own.orderId)).toBe(true);
+    expect((await buildEditionCardsBasis(sdb, own.orderId)).letter?.recipientName).toBe("Juliana");
+  });
+
+  it("primeira compra só de item que não é roupa: a carta sai sozinha (sem cartões), e a mesa sabe", async () => {
+    await writeLetter();
+    const extra = await createTestVariant(db, { sku: "ZZ-CANECA", costCents: 1000, onHand: 5, name: "Caneca de Cerâmica" });
+    await priced(extra.variantId, 3900);
+    const [rate] = await db.insert(schema.shippingRates).values({ name: "PAC", priceCents: 1990 }).returning({ id: schema.shippingRates.id });
+    const created = await createStoreOrder(sdb, {
+      customer: { fullName: "Juliana Ramos", document: VALID_CPF, phone: "(11) 99999-8888", marketingOptIn: true },
+      address: { postalCode: "01310-100", street: "Avenida Paulista", number: "1000", district: "Bela Vista", city: "São Paulo", state: "SP" },
+      items: [{ variantId: extra.variantId, quantity: 1, expectedUnitPriceCents: 3900 }],
+      shippingRateId: rate.id,
+      expectedShippingCents: 1990,
+    });
+    const result = await publishEditionCards(sdb, storage, renderers, { orderId: created.orderId });
+    expect(result.cards).toEqual([]);
+    expect(result.letterPath).toBe(debutLetterStoragePath(created.orderId));
+    expect(render).not.toHaveBeenCalled();
+    expect(renderLetter).toHaveBeenCalledTimes(1);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, created.orderId));
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCards: 0, debutLetter: true, isFirstPurchase: true });
   });
 });

@@ -327,7 +327,8 @@ export async function updateDebutLetterAction(
 ): Promise<FormState> {
   const user = await requireOwner("configuracoes");
   try {
-    const text = String(formData.get("debutLetterText") ?? "").trim();
+    // O navegador manda CRLF no textarea: normaliza antes de contar e de salvar.
+    const text = String(formData.get("debutLetterText") ?? "").replace(/\r\n?/g, "\n").trim();
     const signature = String(formData.get("debutLetterSignature") ?? "").trim();
     const db = getDb();
     // Vazio = a carta não sai (o serviço aceita vazio).

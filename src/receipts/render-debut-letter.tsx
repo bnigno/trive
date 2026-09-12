@@ -6,12 +6,12 @@
 import { ImageResponse } from "next/og";
 
 import { postEyebrow } from "@/core/cards/post";
-import { debutLetterFontSize } from "@/core/edition/debut";
+import { DEBUT_LETTER_GEOMETRY as L, debutLetterLayout } from "@/core/edition/debut";
 import type { DebutLetterData } from "@/core/edition/types";
 import { normalizeReceiptText, type ReceiptAssets } from "@/core/receipts/types";
 
-export const DEBUT_LETTER_WIDTH = 1080;
-export const DEBUT_LETTER_HEIGHT = 720;
+export const DEBUT_LETTER_WIDTH = L.width;
+export const DEBUT_LETTER_HEIGHT = L.height;
 
 const C = {
   ivory50: "#fdfbf6",
@@ -28,7 +28,10 @@ const SANS = "Jost";
 
 function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }) {
   const lines = data.text.split("\n");
-  const fontSize = debutLetterFontSize(data.text);
+  // O corpo vem do orçamento do papel (core): a carta cabe por construção;
+  // se um texto antigo não couber nem no menor corpo, o bloco corta embaixo
+  // e a assinatura e a faixa noir ficam no lugar.
+  const { fontSize } = debutLetterLayout(data.text);
 
   return (
     <div
@@ -48,6 +51,8 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
+          flexShrink: 1,
+          minHeight: 0,
           border: `1px solid ${C.ivory300}`,
           padding: 6,
         }}
@@ -57,6 +62,8 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
             display: "flex",
             flexDirection: "column",
             flexGrow: 1,
+            flexShrink: 1,
+            minHeight: 0,
             border: `1px solid ${C.gold400}`,
             padding: "30px 64px 0",
           }}
@@ -70,23 +77,25 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
               gap: 8,
             }}
           >
-            <div style={{ display: "flex", fontSize: 15, letterSpacing: 5, color: C.gold800 }}>
+            <div style={{ display: "flex", fontSize: 15, lineHeight: 1.2, letterSpacing: 5, color: C.gold800, whiteSpace: "nowrap" }}>
               {normalizeReceiptText(postEyebrow(data.editionName))}
             </div>
             <div
               style={{
                 display: "flex",
                 fontSize: 20,
+                lineHeight: 1.2,
                 fontWeight: 500,
                 letterSpacing: 6,
                 color: C.gold800,
+                whiteSpace: "nowrap",
               }}
             >
               {`PARA ${normalizeReceiptText(data.recipientName).toUpperCase()}`}
             </div>
           </div>
 
-          {/* A carta */}
+          {/* A carta: no meio do que sobra; é o bloco que cede se algo não couber */}
           <div
             style={{
               display: "flex",
@@ -94,30 +103,37 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
               alignItems: "center",
               justifyContent: "center",
               flexGrow: 1,
-              gap: 2,
+              flexShrink: 1,
+              minHeight: 0,
+              overflow: "hidden",
               padding: "10px 0",
             }}
           >
-            {lines.map((line, index) => (
-              <div
-                key={index}
-                style={{
-                  display: "flex",
-                  fontFamily: SERIF,
-                  fontStyle: "italic",
-                  fontSize,
-                  lineHeight: 1.22,
-                  color: C.ink900,
-                  textAlign: "center",
-                  minHeight: fontSize * 0.55,
-                }}
-              >
-                {line === "" ? " " : normalizeReceiptText(line)}
-              </div>
-            ))}
+            {lines.map((line, index) =>
+              line === "" ? (
+                // Respiro entre parágrafos: menor que uma linha (o orçamento conta o mesmo).
+                <div key={index} style={{ display: "flex", flexShrink: 0, height: fontSize * L.lineHeight * L.blankLine }} />
+              ) : (
+                <div
+                  key={index}
+                  style={{
+                    display: "flex",
+                    flexShrink: 0,
+                    fontFamily: SERIF,
+                    fontStyle: "italic",
+                    fontSize,
+                    lineHeight: L.lineHeight,
+                    color: C.ink900,
+                    textAlign: "center",
+                  }}
+                >
+                  {normalizeReceiptText(line)}
+                </div>
+              ),
+            )}
           </div>
 
-          {/* Assinatura */}
+          {/* Assinatura: uma linha (o teto de largura do core garante) */}
           <div
             style={{
               display: "flex",
@@ -126,7 +142,10 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
               fontFamily: SERIF,
               fontWeight: 600,
               fontSize: 28,
+              lineHeight: 1.2,
               color: C.ink700,
+              whiteSpace: "nowrap",
+              flexShrink: 0,
             }}
           >
             {normalizeReceiptText(data.signature)}
@@ -141,6 +160,7 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
               margin: "0 -64px",
               backgroundColor: C.noir950,
               padding: "14px 0",
+              flexShrink: 0,
             }}
           >
             <img src={lockup} width={150} height={67} alt="" />

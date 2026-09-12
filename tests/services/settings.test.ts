@@ -145,8 +145,23 @@ describe("updateSetting / getSettingsMap", () => {
       debut_letter_signature: "Marina",
     });
     await expect(
-      updateSetting(db, { key: "debut_letter_text", value: "x".repeat(901), userId: FIXED_USER_ID }),
+      updateSetting(db, { key: "debut_letter_text", value: "palavra ".repeat(120), userId: FIXED_USER_ID }),
     ).rejects.toThrow(/900/);
+    // Quebras do navegador (CRLF) não contam duas vezes: 12 linhas curtas com \r\n passam e ficam com \n.
+    const crlf = Array.from({ length: 12 }, (_, i) => `Linha ${i + 1} da carta, curta.`).join("\r\n");
+    await updateSetting(db, { key: "debut_letter_text", value: crlf, userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["debut_letter_text"])).debut_letter_text).toBe(crlf.replace(/\r\n/g, "\n"));
+    // Mais de 12 linhas, ou um texto que não cabe no papel nem na letra menor, é recusado com a razão — nunca cortado em silêncio.
+    await expect(
+      updateSetting(db, { key: "debut_letter_text", value: Array.from({ length: 13 }, () => "linha").join("\n"), userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/13 linhas/);
+    await expect(
+      updateSetting(db, {
+        key: "debut_letter_text",
+        value: Array.from({ length: 12 }, () => "PALAVRA COMPRIDA ".repeat(4).trim()).join("\n"),
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(/não cabe no papel/);
     await expect(
       updateSetting(db, { key: "debut_letter_signature", value: "x".repeat(61), userId: FIXED_USER_ID }),
     ).rejects.toThrow(/60/);

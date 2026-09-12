@@ -27,7 +27,7 @@ export function editionCardFingerprint(data: EditionCardData): string {
 
 /** O hash da carta de estreia: o que entra no desenho dela, em ordem fixa. */
 export function debutLetterFingerprint(data: DebutLetterData): string {
-  return sha256Hex(JSON.stringify([data.recipientName, data.text, data.signature, data.storeName, data.editionName]));
+  return sha256Hex(JSON.stringify([data.recipientName, data.text, data.signature, data.editionName]));
 }
 
 /** A chave da carta no mapa guardado (nunca colide com um productId, que é uuid). */

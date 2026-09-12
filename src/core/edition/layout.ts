@@ -32,7 +32,7 @@ const EM_PER_UNIT: Record<WidthFont, number> = { sans: 0.504, serif: 0.404 };
 const WRAP_SLACK = 0.9;
 
 /** Linhas estimadas de um texto numa largura, num corpo e numa fonte. */
-export function estimateLines(text: string, font: WidthFont, fontSize: number, width = EDITION_GEOMETRY.contentWidth): number {
+export function estimateLines(text: string, font: WidthFont, fontSize: number, width: number = EDITION_GEOMETRY.contentWidth): number {
   const unitsPerLine = (width * WRAP_SLACK) / (EM_PER_UNIT[font] * fontSize);
   return Math.max(1, Math.ceil(textWidthUnits(text, font) / unitsPerLine));
 }

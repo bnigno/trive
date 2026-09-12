@@ -11,7 +11,6 @@ import { getFileStorage } from "@/adapters/storage";
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { isOwner, requireUser } from "@/services/auth";
-import { isFirstPurchaseOrder } from "@/services/edition-cards";
 import { getOrderDetail } from "@/services/orders";
 import { OrderTimeline } from "@/components/admin/order-timeline";
 import { orderPublicUrl } from "@/services/wa-messaging";
@@ -66,16 +65,17 @@ export default async function PedidoDetalhePage({
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
   // aberta: depois de embalado, o cartão que foi já foi.
-  const editionStatus =
-    (await editionCardsStatusByOrder(db, [{ ...order, customerName: order.customer.fullName }])).get(order.id) ?? { cards: 0, stale: false };
+  const editionStatus = (await editionCardsStatusByOrder(db, [{ ...order, customerName: order.customer.fullName }])).get(order.id) ?? {
+    cards: 0,
+    isFirstPurchase: false,
+    letter: false,
+    stale: false,
+  };
   const boxOpen = (status === "paid" || status === "preparing") && !order.packagePhotoPath;
   const editionCardsStale = boxOpen && editionStatus.stale;
   // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
   // também barra pelo servidor — isto aqui é só para não mostrar botão morto.
   const owner = await isOwner();
-  // Primeira compra da cliente: a carta de estreia vai na caixa (o selo
-  // aparece junto do link dos cartões; a regra mora em core/edition/debut).
-  const firstPurchase = await isFirstPurchaseOrder(db, id);
 
   return (
     <div className="flex flex-col gap-6">
@@ -400,8 +400,14 @@ export default async function PedidoDetalhePage({
                   }
                   packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
                 />
-                {editionStatus.cards > 0 ? (
-                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} firstPurchase={firstPurchase} />
+                {editionStatus.cards > 0 || editionStatus.letter ? (
+                  <EditionCardsLink
+                    orderId={order.id}
+                    generatedAt={order.editionCardsAt}
+                    stale={editionCardsStale}
+                    firstPurchase={editionStatus.isFirstPurchase}
+                    letter={editionStatus.letter}
+                  />
                 ) : null}
               </div>
             </Card>
@@ -417,7 +423,13 @@ export default async function PedidoDetalhePage({
               </p>
               {order.editionCardsAt ? (
                 <div className="mt-3">
-                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} firstPurchase={firstPurchase} />
+                  <EditionCardsLink
+                    orderId={order.id}
+                    generatedAt={order.editionCardsAt}
+                    stale={editionCardsStale}
+                    firstPurchase={editionStatus.isFirstPurchase}
+                    letter={editionStatus.letter}
+                  />
                 </div>
               ) : null}
             </Card>
@@ -444,17 +456,20 @@ function EditionCardsLink({
   generatedAt,
   stale,
   firstPurchase,
+  letter,
 }: {
   orderId: string;
   generatedAt: Date | null;
   stale: boolean;
   firstPurchase: boolean;
+  /** A carta sai neste pedido (primeira compra E carta escrita). */
+  letter: boolean;
 }) {
   return (
     <p className="text-sm text-zinc-600 dark:text-zinc-400">
       {firstPurchase ? (
         <span className="mr-2 inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-          1ª compra · carta de estreia
+          {letter ? "1ª compra · carta de estreia" : "1ª compra"}
         </span>
       ) : null}
       <Link
