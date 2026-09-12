@@ -484,20 +484,28 @@ export default async function WhatsappPage() {
         </div>
       </div>
 
-      {/* Links de story */}
-      <Card title="Links de story">
+      {/* Links de story e origens */}
+      <Card title="Do site e dos stories para a vendedora">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             {data.campaignLinks.total === 0
-              ? `Crie um link curto (ex.: /ig/dunas) para o sticker do story: quem toca cai no WhatsApp da ${sellerName} já falando da peça.`
-              : `${data.campaignLinks.total} ${data.campaignLinks.total === 1 ? "link" : "links"} · ${data.campaignLinks.taps} ${data.campaignLinks.taps === 1 ? "toque" : "toques"} → ${data.campaignLinks.conversations} ${data.campaignLinks.conversations === 1 ? "conversa" : "conversas"} → ${data.campaignLinks.orders} ${data.campaignLinks.orders === 1 ? "pedido" : "pedidos"}`}
+              ? `Crie um link curto (ex.: /ig/dunas) para o sticker do story: quem toca cai no WhatsApp da ${sellerName} já falando da peça. O botão "Falar com a ${sellerName}" do site já conta sozinho.`
+              : `${data.campaignLinks.total} ${data.campaignLinks.total === 1 ? "link de story" : "links de story"} · ${data.campaignLinks.taps} ${data.campaignLinks.taps === 1 ? "toque" : "toques"} → ${data.campaignLinks.conversations} ${data.campaignLinks.conversations === 1 ? "conversa" : "conversas"} → ${data.campaignLinks.orders} ${data.campaignLinks.orders === 1 ? "pedido" : "pedidos"}`}
           </p>
-          <Link
-            href="/admin/whatsapp/links"
-            className="inline-flex shrink-0 items-center justify-center rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            {data.campaignLinks.total === 0 ? "Criar o primeiro link" : "Gerenciar links"}
-          </Link>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Link
+              href="/admin/whatsapp/origens"
+              className="inline-flex items-center justify-center rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              De onde vieram
+            </Link>
+            <Link
+              href="/admin/whatsapp/links"
+              className="inline-flex items-center justify-center rounded-md bg-ink-900 px-3 py-1.5 text-xs font-medium text-ivory-50 transition-colors hover:bg-ink-800 dark:bg-ivory-100 dark:text-ink-900 dark:hover:bg-ivory-200"
+            >
+              {data.campaignLinks.total === 0 ? "Criar o primeiro link" : "Links de story"}
+            </Link>
+          </div>
         </div>
       </Card>
 

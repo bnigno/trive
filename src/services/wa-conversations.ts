@@ -59,6 +59,8 @@ export interface WaConversationListItem {
    * como avisos, em vez de mostrá-la como uma cliente.
    */
   isOwnerNotices: boolean;
+  /** De onde a cliente veio (ponte do site): "página da peça", "story «Dunas»"…; null sem ponte. */
+  originLabel: string | null;
 }
 
 export async function listWaConversations(
@@ -152,6 +154,7 @@ export async function listWaConversations(
       lastMessagePreview: last?.body ?? null,
       unreadCount: unreadByConversation.get(row.id) ?? 0,
       isOwnerNotices: ownerPhone !== "" && row.phoneE164 === ownerPhone,
+      originLabel: state.bridge ? (state.bridge.sourceLabel ?? originLabel(state.bridge.source)) : null,
     };
   });
 }

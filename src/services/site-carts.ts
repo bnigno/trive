@@ -3,7 +3,7 @@
 // o link do WhatsApp com a mensagem pronta. A Lia consome a ponte quando a
 // primeira mensagem chega (wa-inbound) e liga ao pedido ao fechar.
 
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
@@ -20,7 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
-import { campaignLinks, products, siteCarts } from "@/db/schema";
+import { campaignLinks, orders, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -274,6 +274,76 @@ export async function bridgeStockLine(db: DbOrTx, bridge: BridgeState): Promise<
     parts.push(`${label}: ${qty === 0 ? "esgotada" : qty === 1 ? "1 disponível" : `${qty} disponíveis`}, SKU ${variant.sku}`);
   }
   return `Estoque agora das peças da ponte: ${parts.join("; ")}`;
+}
+
+export type BridgeFunnelRow = {
+  source: BridgeSource;
+  campaignSlug: string | null;
+  /** "página da peça", "sacola", "rodapé do site", "story «Dunas no story»". */
+  label: string;
+  /** Toques = pontes criadas; conversas = consumidas; pedidos = com pedido; pagos = pedido pago (e a soma). */
+  taps: number;
+  conversations: number;
+  orders: number;
+  paidOrders: number;
+  paidCents: number;
+};
+
+export type BridgeFunnel = {
+  rows: BridgeFunnelRow[];
+  totals: Omit<BridgeFunnelRow, "source" | "campaignSlug" | "label">;
+};
+
+/**
+ * "De onde vieram": por origem (e por link de story), no período [from, to):
+ * quantas tocaram, quantas chegaram à conversa, quantas fecharam pedido e
+ * quantas pagaram. Conta PONTES, não clientes distintas (uma cliente pode
+ * tocar duas vezes). Pedido cancelado continua em "pedidos"; "pagos" é a
+ * coluna que importa. Ordenado por toques.
+ */
+export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date }): Promise<BridgeFunnel> {
+  const rows = await db
+    .select({
+      source: siteCarts.source,
+      campaignSlug: siteCarts.campaignSlug,
+      campaignLabel: campaignLinks.label,
+      taps: sql<number>`count(*)::int`,
+      conversations: sql<number>`count(${siteCarts.consumedAt})::int`,
+      orders: sql<number>`count(${siteCarts.orderId})::int`,
+      paidOrders: sql<number>`count(${orders.paidAt})::int`,
+      paidCents: sql<number>`coalesce(sum(case when ${orders.paidAt} is not null then ${orders.totalCents} else 0 end), 0)::int`,
+    })
+    .from(siteCarts)
+    .leftJoin(campaignLinks, and(eq(siteCarts.source, "campaign"), eq(campaignLinks.slug, siteCarts.campaignSlug)))
+    .leftJoin(orders, eq(orders.id, siteCarts.orderId))
+    .where(and(gte(siteCarts.createdAt, input.from), lt(siteCarts.createdAt, input.to)))
+    .groupBy(siteCarts.source, siteCarts.campaignSlug, campaignLinks.label);
+  const list: BridgeFunnelRow[] = rows
+    .map((row) => {
+      const source = row.source as BridgeSource;
+      return {
+        source,
+        campaignSlug: source === "campaign" ? row.campaignSlug : null,
+        label: originLabel(source, row.campaignLabel ?? row.campaignSlug),
+        taps: Number(row.taps),
+        conversations: Number(row.conversations),
+        orders: Number(row.orders),
+        paidOrders: Number(row.paidOrders),
+        paidCents: Number(row.paidCents),
+      };
+    })
+    .sort((a, b) => b.taps - a.taps || a.label.localeCompare(b.label, "pt-BR"));
+  const totals = list.reduce(
+    (sum, row) => ({
+      taps: sum.taps + row.taps,
+      conversations: sum.conversations + row.conversations,
+      orders: sum.orders + row.orders,
+      paidOrders: sum.paidOrders + row.paidOrders,
+      paidCents: sum.paidCents + row.paidCents,
+    }),
+    { taps: 0, conversations: 0, orders: 0, paidOrders: 0, paidCents: 0 },
+  );
+  return { rows: list, totals };
 }
 
 /** Quantas pontes há por conversa (o funil e o painel). */

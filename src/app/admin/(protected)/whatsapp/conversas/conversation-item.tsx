@@ -46,6 +46,11 @@ function avatarClass(phoneE164: string): string {
   return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
 }
 
+/** O chip curto da origem: "story" para links de story, "site" para o resto. */
+function originChip(originLabel: string): string {
+  return originLabel.startsWith("story") ? "story" : "site";
+}
+
 export function ConversationItem({
   item,
   selected,
@@ -98,13 +103,23 @@ export function ConversationItem({
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline justify-between gap-2">
-            <span
-              className={cx(
-                "truncate text-sm text-ink-900 dark:text-ivory-100",
-                hasUnread ? "font-semibold" : "font-medium",
-              )}
-            >
-              {label}
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span
+                className={cx(
+                  "truncate text-sm text-ink-900 dark:text-ivory-100",
+                  hasUnread ? "font-semibold" : "font-medium",
+                )}
+              >
+                {label}
+              </span>
+              {item.originLabel ? (
+                <span
+                  title={`Veio do site: ${item.originLabel}`}
+                  className="shrink-0 rounded-full border border-gold-500/50 px-1.5 py-px text-[10px] font-medium text-gold-800 dark:border-gold-600/50 dark:text-gold-300"
+                >
+                  {originChip(item.originLabel)}
+                </span>
+              ) : null}
             </span>
             <span
               className={cx(

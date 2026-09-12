@@ -37,6 +37,7 @@ const chatConversationSchema = z.object({
   lastMessagePreview: z.string().nullable(),
   unreadCount: z.number(),
   isOwnerNotices: z.boolean(),
+  originLabel: z.string().nullable().default(null),
 });
 
 const chatContextSchema = z.object({
