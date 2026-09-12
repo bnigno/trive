@@ -67,7 +67,13 @@ export class OpenAiTranscriber implements Transcriber {
       // Nunca o corpo: pode ecoar o conteúdo do áudio. 4xx (menos cota) é o
       // vendor recusando ESTE pedido — formato, chave inválida —, não uma queda.
       const reason =
-        response.status === 429 ? "rate_limited" : response.status < 500 ? "rejected" : "unavailable";
+        response.status === 401 || response.status === 403
+          ? "no_key" // chave inválida ou revogada é configuração, não o áudio
+          : response.status === 429
+            ? "rate_limited"
+            : response.status < 500
+              ? "rejected"
+              : "unavailable";
       throw new TranscriptionUnavailableError(`Transcrição respondeu HTTP ${response.status}.`, reason);
     }
 

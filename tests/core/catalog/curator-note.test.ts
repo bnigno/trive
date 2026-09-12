@@ -99,8 +99,12 @@ describe("fitCuratorNote", () => {
     const longa = fitCuratorNote(Array.from({ length: 300 }, () => "linhos").join(" "));
     expect(longa.truncated).toBe(true);
     expect(longa.text!.endsWith("linhos…")).toBe(true);
-    const emoji = fitCuratorNote(`${"x".repeat(CURATOR_NOTE_MAX_CHARS - 2)} 😀 fim`);
+    // Emoji exatamente na fronteira do corte (sem espaço para voltar): não pode ficar pela metade.
+    const emoji = fitCuratorNote(`${"x".repeat(CURATOR_NOTE_MAX_CHARS - 2)}😀${"y".repeat(50)}`);
+    expect(emoji.truncated).toBe(true);
     expect(emoji.text!.isWellFormed()).toBe(true);
+    expect(Array.from(emoji.text!).length).toBeLessThanOrEqual(CURATOR_NOTE_MAX_CHARS);
+    expect(emoji.text!.endsWith("😀…")).toBe(true);
     expect(fitCuratorNote("...")).toEqual({ text: null, truncated: false });
   });
 });

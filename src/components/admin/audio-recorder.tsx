@@ -66,6 +66,7 @@ export function AudioRecorder({
   const streamRef = useRef<MediaStream | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startedAtRef = useRef(0);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     if (!recording) return;
@@ -83,20 +84,22 @@ export function AudioRecorder({
   }, []);
 
   // Sair da tela no meio da gravação não pode deixar o microfone aberto.
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       const recorder = recorderRef.current;
       recorderRef.current = null;
       if (recorder && recorder.state !== "inactive") recorder.stop();
       releaseMicrophone();
-    },
-    [releaseMicrophone],
-  );
+    };
+  }, [releaseMicrophone]);
 
   const stop = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = null;
-    recorderRef.current?.stop();
+    // Dois toques em "Parar" antes do onstop: parar um gravador parado lança.
+    if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
   }, []);
 
   async function start() {
@@ -113,8 +116,14 @@ export function AudioRecorder({
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (permissionError) {
+      if (!mountedRef.current) return;
       setStarting(false);
       setError(microphoneErrorMessage(permissionError));
+      return;
+    }
+    // A dona saiu da tela enquanto o navegador pedia permissão: fecha e para.
+    if (!mountedRef.current) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
     streamRef.current = stream;
@@ -192,13 +201,15 @@ export function AudioRecorder({
       return;
     }
     const duration = await measureDuration(file);
-    if (duration !== null && duration > CURATOR_AUDIO_MAX_SECONDS + 1) {
+    // Arredondado como o serviço confere: 60,4 s passa, 60,6 s não.
+    const seconds = duration === null ? 0 : Math.round(duration);
+    if (seconds > CURATOR_AUDIO_MAX_SECONDS) {
       setError(
-        `Esse áudio tem ${formatAudioSeconds(duration)}; a nota vai até ${formatAudioSeconds(CURATOR_AUDIO_MAX_SECONDS)}. Escolha um mais curto ou grave pelo botão.`,
+        `Esse áudio tem ${formatAudioSeconds(seconds)}; a nota vai até ${formatAudioSeconds(CURATOR_AUDIO_MAX_SECONDS)}. Escolha um mais curto ou grave pelo botão.`,
       );
       return;
     }
-    onReady({ file, seconds: duration === null ? 0 : Math.round(duration) });
+    onReady({ file, seconds });
   }
 
   const remaining = CURATOR_AUDIO_MAX_SECONDS - seconds;
@@ -231,7 +242,7 @@ export function AudioRecorder({
         <input
           type="file"
           accept="audio/*"
-          disabled={disabled || recording || starting}
+          disabled={disabled || recording}
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
