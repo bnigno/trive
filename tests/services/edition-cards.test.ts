@@ -9,13 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FakeFileStorage } from "@/adapters/storage/fake";
 import { DEFAULT_CARE, DEFAULT_WEAR } from "@/core/edition/text";
-import type { EditionCardData } from "@/core/edition/types";
+import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import {
   buildEditionCardsBasis,
+  debutLetterStoragePath,
   editionCardStoragePath,
   getEditionCards,
+  isFirstPurchaseOrder,
   publishEditionCards,
   ServiceError,
 } from "@/services/edition-cards";
@@ -34,12 +36,17 @@ let storage: FakeFileStorage;
 const render = vi.fn(async (_data: EditionCardData) =>
   sharp({ create: { width: 108, height: 144, channels: 3, background: "#fdfbf6" } }).png().toBuffer(),
 );
+const renderLetter = vi.fn(async (_data: DebutLetterData) =>
+  sharp({ create: { width: 108, height: 72, channels: 3, background: "#fdfbf6" } }).png().toBuffer(),
+);
+const renderers = { card: render, letter: renderLetter };
 
 beforeEach(async () => {
   ({ db, close } = await createTestDb());
   sdb = db as unknown as DbOrTx;
   storage = new FakeFileStorage();
   render.mockClear();
+  renderLetter.mockClear();
   vi.stubEnv("ADAPTER_MODE", "fake");
   vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://trivemaison.com.br");
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -211,7 +218,7 @@ describe("publishEditionCards / getEditionCards", () => {
     ]);
 
     vi.setSystemTime(new Date(t0.getTime() + 1000));
-    const result = await publishEditionCards(sdb, storage, render, { orderId });
+    const result = await publishEditionCards(sdb, storage, renderers, { orderId });
     expect(result.at.getTime()).toBe(t0.getTime() + 1000);
     expect(render).toHaveBeenCalledTimes(2);
     expect(render.mock.calls.map((call) => call[0].productName)).toEqual(["Longo Dunas", "Bolsa Tote de Algodão"]);
@@ -245,7 +252,7 @@ describe("publishEditionCards / getEditionCards", () => {
     // Gerar de novo: mesmos paths, carimbo novo, nada mais velho.
     vi.setSystemTime(new Date(t0.getTime() + 9000));
     render.mockClear();
-    const again = await publishEditionCards(sdb, storage, render, { orderId });
+    const again = await publishEditionCards(sdb, storage, renderers, { orderId });
     expect(render.mock.calls[1][0]).toMatchObject({ wearNote: "Alça longa, cabe um livro.", wearSource: "ficha" });
     expect(again.cards.map((card) => card.path)).toEqual(result.cards.map((card) => card.path));
     expect(storage.list()).toHaveLength(2);
@@ -268,7 +275,7 @@ describe("publishEditionCards / getEditionCards", () => {
     const t0 = new Date("2026-09-12T15:00:00Z");
     vi.setSystemTime(t0);
     const { orderId, dunasId, extraId } = await createOrder({ extra: { name: "Caneca de Cerâmica", sku: "ZZ-CANECA" } });
-    await publishEditionCards(sdb, storage, render, { orderId });
+    await publishEditionCards(sdb, storage, renderers, { orderId });
     await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
 
     vi.setSystemTime(new Date(t0.getTime() + 5000));
@@ -292,7 +299,7 @@ describe("publishEditionCards / getEditionCards", () => {
     render.mockImplementationOnce(async () => {
       throw new Error("Satori caiu");
     });
-    await expect(publishEditionCards(sdb, storage, render, { orderId })).rejects.toMatchObject({
+    await expect(publishEditionCards(sdb, storage, renderers, { orderId })).rejects.toMatchObject({
       name: "ServiceError",
       code: "cartao_falhou",
       message: expect.stringContaining("Bolsa Tote de Algodão"),
@@ -304,7 +311,7 @@ describe("publishEditionCards / getEditionCards", () => {
 
   it("o id do pedido em maiúsculas publica e lê nos mesmos paths (o id do banco manda)", async () => {
     const { orderId } = await createOrder();
-    const result = await publishEditionCards(sdb, storage, render, { orderId: orderId.toUpperCase() });
+    const result = await publishEditionCards(sdb, storage, renderers, { orderId: orderId.toUpperCase() });
     const view = await getEditionCards(sdb, storage, orderId.toUpperCase());
     for (const card of view.cards) {
       expect(storage.list()).toContain(card.url!.split("?")[0].replace("memory://", ""));
@@ -323,7 +330,7 @@ describe("publishEditionCards / getEditionCards", () => {
       shippingRateId: rate.id,
       expectedShippingCents: 1990,
     });
-    await expect(publishEditionCards(sdb, storage, render, { orderId: created.orderId })).rejects.toMatchObject({
+    await expect(publishEditionCards(sdb, storage, renderers, { orderId: created.orderId })).rejects.toMatchObject({
       code: "pedido_sem_pecas",
       message: expect.stringContaining("não são roupa"),
     });
@@ -333,7 +340,7 @@ describe("publishEditionCards / getEditionCards", () => {
     const { orderId } = await createOrder();
     await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
     expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsAt: null, editionCardsStale: false, editionCards: 2 });
-    await publishEditionCards(sdb, storage, render, { orderId });
+    await publishEditionCards(sdb, storage, renderers, { orderId });
     expect((await listOrdersAwaitingPacking(sdb))[0]?.editionCardsAt).toBeInstanceOf(Date);
   });
 
@@ -354,7 +361,7 @@ describe("publishEditionCards / getEditionCards", () => {
     // Um pedido normal gerado; depois a categoria de uma peça muda de "Casa" para "Vestidos"… aqui,
     // simulamos a peça entrando no plano: o mapa guardado não a conhece → sem url, velha.
     const { orderId, bolsaId } = await createOrder();
-    await publishEditionCards(sdb, storage, render, { orderId });
+    await publishEditionCards(sdb, storage, renderers, { orderId });
     await db
       .update(schema.orders)
       .set({ editionCardsFingerprint: {} })
@@ -362,5 +369,161 @@ describe("publishEditionCards / getEditionCards", () => {
     const view = await getEditionCards(sdb, storage, orderId);
     expect(view.cards.find((card) => card.productId === bolsaId)).toMatchObject({ url: null, stale: true });
     expect(view.stale).toBe(true);
+  });
+});
+
+describe("carta de estreia", () => {
+  async function writeLetter() {
+    await db.insert(schema.settings).values([
+      { key: "debut_letter_text", value: "Que bom ter você por aqui 🤎.\n\nVista, viva, e me conte como foi." },
+      { key: "debut_letter_signature", value: "Marina, curadora" },
+    ]);
+  }
+
+  it("na primeira compra com a carta escrita: a carta sai antes dos cartões, para o primeiro nome da cliente", async () => {
+    const { orderId } = await createOrder();
+    await writeLetter();
+    const basis = await buildEditionCardsBasis(sdb, orderId);
+    expect(basis.isFirstPurchase).toBe(true);
+    expect(basis.letter).toEqual({
+      recipientName: "Juliana",
+      // O emoji sai sem deixar espaço antes do ponto.
+      text: "Que bom ter você por aqui.\n\nVista, viva, e me conte como foi.",
+      signature: "Marina, curadora",
+      editionName: null,
+    });
+    expect(await isFirstPurchaseOrder(sdb, orderId)).toBe(true);
+
+    const view = await getEditionCards(sdb, storage, orderId);
+    expect(view.letter).toEqual({ recipientName: "Juliana", url: null, stale: false });
+
+    const result = await publishEditionCards(sdb, storage, renderers, { orderId });
+    expect(renderLetter).toHaveBeenCalledTimes(1);
+    expect(result.letterPath).toBe(debutLetterStoragePath(orderId));
+    expect(storage.get(result.letterPath!)?.contentType).toBe("image/jpeg");
+    const after = await getEditionCards(sdb, storage, orderId);
+    expect(after.letter?.url).toContain(`?v=${result.at.getTime()}`);
+    expect(after.stale).toBe(false);
+    expect((await listOrdersAwaitingPacking(sdb)).length).toBe(0);
+
+    // A dona mexeu no texto da carta depois: a carta (e o pedido) ficam velhos; os cartões não.
+    await db.update(schema.settings).set({ value: "Outra carta." }).where(eq(schema.settings.key, "debut_letter_text"));
+    const stale = await getEditionCards(sdb, storage, orderId);
+    expect(stale.letter).toMatchObject({ stale: true });
+    expect(stale.stale).toBe(true);
+    expect(stale.cards.every((card) => !card.stale)).toBe(true);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsStale: true, isFirstPurchase: true, debutLetter: true });
+  });
+
+  it("carta em branco = desligada: primeira compra sem carta (selo sem 'carta'); escrita depois, pede gerar de novo", async () => {
+    const { orderId } = await createOrder();
+    const basis = await buildEditionCardsBasis(sdb, orderId);
+    expect(basis.isFirstPurchase).toBe(true);
+    expect(basis.letter).toBeNull();
+    const result = await publishEditionCards(sdb, storage, renderers, { orderId });
+    expect(result.letterPath).toBeNull();
+    expect(renderLetter).not.toHaveBeenCalled();
+    expect(storage.list()).toHaveLength(2);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ isFirstPurchase: true, debutLetter: false, editionCardsStale: false });
+
+    // A carta escrita depois da geração: não existe imagem dela ainda — velha, sem url.
+    await writeLetter();
+    const view = await getEditionCards(sdb, storage, orderId);
+    expect(view.letter).toEqual({ recipientName: "Juliana", url: null, stale: true });
+    expect(view.stale).toBe(true);
+    const again = await publishEditionCards(sdb, storage, renderers, { orderId });
+    expect(again.letterPath).not.toBeNull();
+    expect((await getEditionCards(sdb, storage, orderId)).stale).toBe(false);
+  });
+
+  it("a estreia é pela ordem de pagamento: um pedido antigo pago depois não rouba a carta de quem já pagou; cancelado não conta, reembolsado conta", async () => {
+    await writeLetter();
+    const first = await createOrder();
+    const [row] = await db.select({ customerId: schema.orders.customerId }).from(schema.orders).where(eq(schema.orders.id, first.orderId));
+    // Um pedido MAIS ANTIGO (criado antes), ainda pendente.
+    const [older] = await db
+      .insert(schema.orders)
+      .values({
+        customerId: row.customerId,
+        status: "pending_payment",
+        channel: "manual",
+        subtotalCents: 1000,
+        totalCents: 1000,
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      })
+      .returning({ id: schema.orders.id });
+    // Ambos pendentes: os dois são "primeira compra" por enquanto (nada pago ainda).
+    expect(await isFirstPurchaseOrder(sdb, first.orderId)).toBe(true);
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
+
+    // O mais novo paga primeiro: ele é a estreia; o antigo, pago depois, não é.
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date(Date.now() - 1000) }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, older.id));
+    expect(await isFirstPurchaseOrder(sdb, first.orderId)).toBe(true);
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
+
+    // Cancelado antes não conta como compra; reembolsado antes de sair também não; reembolsado depois de enviado (já recebeu a caixa) conta.
+    await db.update(schema.orders).set({ status: "canceled" }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
+    await db.update(schema.orders).set({ status: "refunded", shippedAt: null }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
+    await db.update(schema.orders).set({ status: "refunded", shippedAt: new Date() }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
+
+    // A mesa de embalagem marca o selo só na estreia — numa consulta só para todos.
+    await db.update(schema.orders).set({ status: "paid" }).where(eq(schema.orders.id, first.orderId));
+    const mesa = await listOrdersAwaitingPacking(sdb);
+    expect(mesa.map((o) => [o.id, o.isFirstPurchase])).toEqual(
+      expect.arrayContaining([
+        [first.orderId, true],
+        [older.id, false],
+      ]),
+    );
+  });
+
+  it("presente não é estreia (a caixa vai para outra pessoa) e não conta como compra dela: a próxima compra para si ganha a carta", async () => {
+    await writeLetter();
+    const gift = await createOrder({ gift: true });
+    expect((await buildEditionCardsBasis(sdb, gift.orderId)).letter).toBeNull();
+    expect(await isFirstPurchaseOrder(sdb, gift.orderId)).toBe(false);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, gift.orderId));
+
+    // A mesma cliente (mesmo CPF) compra para si: aí sim é a estreia.
+    const saia = await createTestVariant(db, { sku: "SAIA-LUA", costCents: 5000, onHand: 3, name: "Saia Lua" });
+    await priced(saia.variantId, 15900);
+    const [rate] = await db.insert(schema.shippingRates).values({ name: "PAC 2", priceCents: 1990 }).returning({ id: schema.shippingRates.id });
+    const own = await createStoreOrder(sdb, {
+      customer: { fullName: "Juliana Ramos", document: VALID_CPF, phone: "(11) 99999-8888", marketingOptIn: true },
+      address: { postalCode: "01310-100", street: "Avenida Paulista", number: "1000", district: "Bela Vista", city: "São Paulo", state: "SP" },
+      items: [{ variantId: saia.variantId, quantity: 1, expectedUnitPriceCents: 15900 }],
+      shippingRateId: rate.id,
+      expectedShippingCents: 1990,
+    });
+    expect(await isFirstPurchaseOrder(sdb, own.orderId)).toBe(true);
+    expect((await buildEditionCardsBasis(sdb, own.orderId)).letter?.recipientName).toBe("Juliana");
+  });
+
+  it("primeira compra só de item que não é roupa: a carta sai sozinha (sem cartões), e a mesa sabe", async () => {
+    await writeLetter();
+    const extra = await createTestVariant(db, { sku: "ZZ-CANECA", costCents: 1000, onHand: 5, name: "Caneca de Cerâmica" });
+    await priced(extra.variantId, 3900);
+    const [rate] = await db.insert(schema.shippingRates).values({ name: "PAC", priceCents: 1990 }).returning({ id: schema.shippingRates.id });
+    const created = await createStoreOrder(sdb, {
+      customer: { fullName: "Juliana Ramos", document: VALID_CPF, phone: "(11) 99999-8888", marketingOptIn: true },
+      address: { postalCode: "01310-100", street: "Avenida Paulista", number: "1000", district: "Bela Vista", city: "São Paulo", state: "SP" },
+      items: [{ variantId: extra.variantId, quantity: 1, expectedUnitPriceCents: 3900 }],
+      shippingRateId: rate.id,
+      expectedShippingCents: 1990,
+    });
+    const result = await publishEditionCards(sdb, storage, renderers, { orderId: created.orderId });
+    expect(result.cards).toEqual([]);
+    expect(result.letterPath).toBe(debutLetterStoragePath(created.orderId));
+    expect(render).not.toHaveBeenCalled();
+    expect(renderLetter).toHaveBeenCalledTimes(1);
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, created.orderId));
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCards: 0, debutLetter: true, isFirstPurchase: true });
   });
 });

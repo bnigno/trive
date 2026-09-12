@@ -20,6 +20,12 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
     baseDelayMs: 10_000,
     maxDelayMs: 60_000,
   },
+  // Cartões da edição ao pagar: a dona refaz na tela se precisar.
+  "order.edition_cards": {
+    maxAttempts: 2,
+    baseDelayMs: 10_000,
+    maxDelayMs: 60_000,
+  },
   default: {
     maxAttempts: 8,
     baseDelayMs: 5_000,

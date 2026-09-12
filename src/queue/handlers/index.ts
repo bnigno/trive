@@ -9,6 +9,9 @@ import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
+import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
+import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
+import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -216,14 +219,44 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // no WhatsApp) evita duplicar o que já saiu. O payload é validado com Zod
   // dentro de sendOrderEmail.
   "order.store_created": async (event) => {
+    const orderId = String(event.payload.orderId);
+    // Dinheiro na entrega: a caixa é preparada ANTES de o pedido virar pago
+    // (a dona marca pago com o dinheiro na mão), então os cartões e a carta
+    // de estreia nascem já na criação. O dedupe_key é o mesmo do order.paid:
+    // uma geração por pedido, a que vier primeiro.
+    const [order] = await getDb()
+      .select({ paymentMethod: orders.paymentMethod })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+    if (order?.paymentMethod === "cash") {
+      await enqueueOutboxEvent(getDb(), {
+        eventType: "order.edition_cards",
+        dedupeKey: `order.edition_cards:${orderId}`,
+        aggregateType: "order",
+        aggregateId: orderId,
+        payload: { orderId },
+      });
+    }
     await sendOrderEmail(getDb(), getEmailProvider(), {
-      orderId: String(event.payload.orderId),
+      orderId,
       kind: "confirmed",
     });
-    await sendOrderWa(String(event.payload.orderId), "store_created");
+    await sendOrderWa(orderId, "store_created");
   },
   "order.paid": async (event) => {
     const orderId = String(event.payload.orderId);
+    // Os cartões da edição (e a carta de estreia) ficam prontos antes de a
+    // dona chegar à mesa de embalagem. Evento próprio, uma vez por pedido —
+    // enfileirado ANTES dos avisos, para não ficar refém de uma sessão da
+    // Z-API caída (o dedupe_key torna a repetição inofensiva).
+    await enqueueOutboxEvent(getDb(), {
+      eventType: "order.edition_cards",
+      dedupeKey: `order.edition_cards:${orderId}`,
+      aggregateType: "order",
+      aggregateId: orderId,
+      payload: { orderId },
+    });
     await sendOrderEmail(getDb(), getEmailProvider(), {
       orderId,
       kind: "paid",
@@ -239,6 +272,23 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       aggregateId: orderId,
       payload: { orderId },
     });
+  },
+  // Cartões da edição desenhados ao pagar. Pedido sumido ou sem peças é
+  // "nada a desenhar" (concluído); falha do desenho tem retry curto — a dona
+  // pode gerar de novo na tela.
+  "order.edition_cards": async (event) => {
+    const assets = await loadReceiptAssets();
+    await runOrderEditionCards(
+      {
+        db: getDb(),
+        storage: getFileStorage(),
+        render: {
+          card: (data) => renderEditionCardPng(data, assets),
+          letter: (data) => renderDebutLetterPng(data, assets),
+        },
+      },
+      event,
+    );
   },
   // Comprovante de pagamento pelo WhatsApp (imagem). Skips (desligado, sem
   // opt-in, já enviado…) não lançam; a duração fica no log para o dono

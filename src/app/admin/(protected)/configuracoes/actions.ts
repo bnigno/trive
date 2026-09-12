@@ -318,6 +318,35 @@ export async function updateStoreDataAction(
 }
 
 // ---------------------------------------------------------------------------
+// Carta de estreia — a primeira compra ganha uma carta assinada pela dona
+// ---------------------------------------------------------------------------
+
+export async function updateDebutLetterAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("configuracoes");
+  try {
+    // O navegador manda CRLF no textarea: normaliza antes de contar e de salvar.
+    const text = String(formData.get("debutLetterText") ?? "").replace(/\r\n?/g, "\n").trim();
+    const signature = String(formData.get("debutLetterSignature") ?? "").trim();
+    const db = getDb();
+    // Vazio = a carta não sai (o serviço aceita vazio).
+    await updateSetting(db, { key: "debut_letter_text", value: text, userId: user.id });
+    await updateSetting(db, { key: "debut_letter_signature", value: signature, userId: user.id });
+    revalidatePath("/admin/configuracoes");
+    return {
+      success:
+        text === ""
+          ? "Carta de estreia desligada: nenhuma carta sai na caixa."
+          : "Carta de estreia salva. Ela entra nos cartões dos próximos pedidos de primeira compra (nos já gerados, toque em “Gerar de novo”).",
+    };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Vitrine — textos da home (frase do hero e manifesto)
 // ---------------------------------------------------------------------------
 

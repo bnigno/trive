@@ -65,8 +65,15 @@ export default async function PedidoDetalhePage({
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
   // aberta: depois de embalado, o cartão que foi já foi.
-  const editionStatus = (await editionCardsStatusByOrder(db, [order])).get(order.id) ?? { cards: 0, stale: false };
-  const boxOpen = (status === "paid" || status === "preparing") && !order.packagePhotoPath;
+  const editionStatus = (await editionCardsStatusByOrder(db, [{ ...order, customerName: order.customer.fullName }])).get(order.id) ?? {
+    cards: 0,
+    isFirstPurchase: false,
+    letter: false,
+    stale: false,
+  };
+  // Dinheiro na entrega: a caixa é preparada com o pedido ainda pendente.
+  const cashPending = status === "pending_payment" && order.paymentMethod === "cash";
+  const boxOpen = (status === "paid" || status === "preparing" || cashPending) && !order.packagePhotoPath;
   const editionCardsStale = boxOpen && editionStatus.stale;
   // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
   // também barra pelo servidor — isto aqui é só para não mostrar botão morto.
@@ -395,10 +402,31 @@ export default async function PedidoDetalhePage({
                   }
                   packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
                 />
-                {editionStatus.cards > 0 ? (
-                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} />
+                {editionStatus.cards > 0 || editionStatus.letter ? (
+                  <EditionCardsLink
+                    orderId={order.id}
+                    generatedAt={order.editionCardsAt}
+                    stale={editionCardsStale}
+                    firstPurchase={editionStatus.isFirstPurchase}
+                    letter={editionStatus.letter}
+                    cards={editionStatus.cards}
+                  />
                 ) : null}
               </div>
+            </Card>
+          ) : cashPending && (editionStatus.cards > 0 || editionStatus.letter) ? (
+            <Card title="Caixa">
+              <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+                Dinheiro na entrega: prepare a caixa agora e marque como pago só com o dinheiro na mão.
+              </p>
+              <EditionCardsLink
+                orderId={order.id}
+                generatedAt={order.editionCardsAt}
+                stale={editionCardsStale}
+                firstPurchase={editionStatus.isFirstPurchase}
+                letter={editionStatus.letter}
+                cards={editionStatus.cards}
+              />
             </Card>
           ) : order.packagePhotoPath && order.packedAt ? (
             <Card title="Embalagem">
@@ -412,7 +440,14 @@ export default async function PedidoDetalhePage({
               </p>
               {order.editionCardsAt ? (
                 <div className="mt-3">
-                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} />
+                  <EditionCardsLink
+                    orderId={order.id}
+                    generatedAt={order.editionCardsAt}
+                    stale={editionCardsStale}
+                    firstPurchase={editionStatus.isFirstPurchase}
+                    letter={editionStatus.letter}
+                    cards={editionStatus.cards}
+                  />
                 </div>
               ) : null}
             </Card>
@@ -434,23 +469,49 @@ export default async function PedidoDetalhePage({
 }
 
 /** O cartão de bolso que vai na caixa: "Gerar" antes, "Imprimir" depois — e "gerar de novo" se ficou velho. */
-function EditionCardsLink({ orderId, generatedAt, stale }: { orderId: string; generatedAt: Date | null; stale: boolean }) {
+function EditionCardsLink({
+  orderId,
+  generatedAt,
+  stale,
+  firstPurchase,
+  letter,
+  cards,
+}: {
+  orderId: string;
+  generatedAt: Date | null;
+  stale: boolean;
+  firstPurchase: boolean;
+  /** A carta sai neste pedido (primeira compra E carta escrita). */
+  letter: boolean;
+  /** Quantas peças ganham cartão (0 = só a carta). */
+  cards: number;
+}) {
+  // O que vai na caixa, no nome certo: "cartões da edição", "carta de estreia" ou os dois.
+  const thing = cards > 0 ? (letter ? "a carta e os cartões da edição" : "os cartões da edição") : "a carta de estreia";
+  const verb = generatedAt ? (stale ? "Gerar de novo" : "Imprimir") : "Gerar";
   return (
     <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      {firstPurchase ? (
+        <span className="mr-2 inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+          {letter ? "1ª compra · carta de estreia" : "1ª compra"}
+        </span>
+      ) : null}
       <Link
         href={`/admin/pedidos/${orderId}/cartoes`}
         className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
       >
-        {generatedAt ? (stale ? "Gerar de novo os cartões da edição" : "Imprimir cartões da edição") : "Gerar cartões da edição"}
+        {`${verb} ${thing}`}
       </Link>
       {generatedAt ? (
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
           {" · gerados em "}
           {formatDateTimeSP(generatedAt)}
-          {stale ? " · o que sai no cartão mudou depois" : ""}
+          {stale ? " · o que sai na caixa mudou depois" : ""}
         </span>
       ) : (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400"> · um cartão de bolso por peça, com a frase da curadora e o QR</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {cards > 0 ? " · um cartão de bolso por peça, com a frase da curadora e o QR" : " · a carta assinada pela dona, para a primeira compra"}
+        </span>
       )}
     </p>
   );

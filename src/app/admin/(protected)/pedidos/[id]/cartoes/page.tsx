@@ -50,11 +50,15 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
   const owner = await isOwner();
   const generated = cards.at !== null;
   const hasCards = cards.cards.length > 0;
+  // Há o que gerar/imprimir: cartões, ou só a carta (primeira compra de uma caneca).
+  const hasPieces = hasCards || cards.letter !== null;
   const warnings: { key: string; text: string }[] = [];
   if (generated && cards.stale) {
     warnings.push({
       key: "stale",
-      text: "O que sai no cartão mudou depois da geração (ficha, nota, nome da edição ou presente) — gere de novo antes de imprimir.",
+      text: cards.letter?.stale && cards.cards.every((card) => !card.stale)
+        ? "A carta de estreia mudou (ou foi escrita) depois da geração — gere de novo antes de imprimir."
+        : "O que sai na caixa mudou depois da geração (ficha, nota, nome da edição, presente ou a carta) — gere de novo antes de imprimir.",
     });
   }
   if (cards.isGift && hasCards) {
@@ -121,14 +125,25 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
           </Link>
           <h1 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-100">Cartões da edição</h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Um cartão por peça, 9 × 12 cm. Imprima em papel de gramatura alta, corte pela linha marfim e coloque dentro da caixa.
+            {cards.letter ? "A carta de estreia (15 × 10 cm) e um cartão por peça (9 × 12 cm)." : "Um cartão por peça, 9 × 12 cm."}{" "}
+            Imprima em papel de gramatura alta, corte pela linha marfim e coloque dentro da caixa.
             {generated && cards.at ? ` Gerados em ${formatDateTimeSP(cards.at)}.` : ""}
           </p>
+          {cards.isFirstPurchase ? (
+            <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">
+              Primeira compra desta cliente.
+              {cards.letter
+                ? ` A carta sai para ${cards.letter.recipientName}.`
+                : owner
+                  ? ` A carta de estreia ainda não foi escrita — em Configurações › Carta de estreia; depois, ${generated ? "“Gerar de novo”" : "“Gerar cartões”"}.`
+                  : " A carta de estreia ainda não foi escrita — peça à dona (fica em Configurações)."}
+            </p>
+          ) : null}
         </div>
-        {hasCards ? (
+        {hasPieces ? (
           <div className="flex items-center gap-3">
             <CardsForm orderId={id} generated={generated} stale={cards.stale} />
-            {generated ? <PrintButton label="Imprimir cartões" /> : null}
+            {generated ? <PrintButton label={hasCards ? "Imprimir cartões" : "Imprimir carta"} /> : null}
           </div>
         ) : null}
       </div>
@@ -141,12 +156,36 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
         </ul>
       ) : null}
 
-      {cards.cards.length === 0 ? (
+      {!hasPieces ? (
         <p className="text-sm text-zinc-500 print:hidden dark:text-zinc-400">
           {cards.skipped.length > 0 ? "Este pedido só tem itens que não são roupa: não há cartão." : "Este pedido não tem peças."}
         </p>
       ) : (
         <ul className="edition-print flex flex-col gap-8">
+          {cards.letter ? (
+            <li className={cards.letter.url ? "edition-card flex flex-col items-center gap-2" : "flex flex-col items-center gap-2 print:hidden"}>
+              {cards.letter.url ? (
+                <img
+                  src={cards.letter.url}
+                  alt={`Carta de estreia para ${cards.letter.recipientName}`}
+                  className="block border border-zinc-200 bg-white print:border-0"
+                  style={{ width: "15cm", height: "10cm" }}
+                />
+              ) : (
+                <div
+                  className="flex flex-col items-center justify-center gap-2 border border-dashed border-zinc-300 bg-white p-6 text-center text-zinc-500 print:hidden dark:border-zinc-700 dark:bg-zinc-900"
+                  style={{ width: "15cm", height: "10cm" }}
+                >
+                  <span className="font-serif text-lg italic text-zinc-900 dark:text-zinc-100">Carta de estreia</span>
+                  <span className="text-xs">Toque em “Gerar cartões”.</span>
+                </div>
+              )}
+              <p className="text-xs text-zinc-500 print:hidden dark:text-zinc-400">
+                Carta de estreia · para {cards.letter.recipientName}
+                {cards.letter.stale ? " · ficou velha — gere de novo" : ""}
+              </p>
+            </li>
+          ) : null}
           {cards.cards.map((card) => (
             <li key={card.productId} className={card.url ? "edition-card flex flex-col items-center gap-2" : "flex flex-col items-center gap-2 print:hidden"}>
               {card.url ? (

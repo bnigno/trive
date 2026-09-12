@@ -85,19 +85,24 @@ export default async function EmbalarPage() {
                     {order.status === "preparing" ? "Em separação" : "Pago"}
                   </Badge>
                   {order.isGift ? <Badge tone="warning">🎁 Presente · sem preço</Badge> : null}
+                  {order.isFirstPurchase ? <Badge tone="warning">{order.debutLetter ? "1ª compra · carta de estreia" : "1ª compra"}</Badge> : null}
                 </div>
               </div>
               {/* Cartão → caixa → foto: o link vem antes do "Embalei", que tira o pedido da mesa. */}
-              {order.editionCards > 0 ? (
+              {order.editionCards > 0 || order.debutLetter ? (
                 <Link
                   href={`/admin/pedidos/${order.id}/cartoes`}
                   className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
                 >
                   {order.editionCardsAt
                     ? order.editionCardsStale
-                      ? "Cartões da edição ficaram velhos — gerar de novo"
-                      : "Imprimir cartões da edição"
-                    : "Gerar cartões da edição"}
+                      ? `${order.editionCards > 0 ? "Cartões da edição" : "Carta de estreia"} — mudou, gerar de novo`
+                      : order.editionCards > 0
+                        ? "Imprimir cartões da edição"
+                        : "Imprimir carta de estreia"
+                    : order.editionCards > 0
+                      ? "Gerar cartões da edição"
+                      : "Gerar carta de estreia"}
                 </Link>
               ) : (
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">Sem cartão da edição (não é roupa).</span>

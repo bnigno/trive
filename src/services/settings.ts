@@ -5,6 +5,7 @@ import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
+import { debutLetterProblem, debutSignatureProblem, normalizeDebutLetter } from "@/core/edition/debut";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/core/orders/payment-methods";
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
@@ -544,6 +545,28 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .string()
     .trim()
     .max(40, "O nome da edição deve ter no máximo 40 caracteres."),
+  /**
+   * A carta de estreia (primeira compra): vazio = a carta não sai. Quebras
+   * de linha do navegador (CRLF) viram LF antes de contar; o teto de
+   * verdade é o papel de 15 × 10 cm — a limpeza e o orçamento do core dizem
+   * se cabe, com a razão para a dona.
+   */
+  debut_letter_text: z
+    .string()
+    .transform((value) => value.replace(/\r\n?/g, "\n").trim())
+    .superRefine((value, ctx) => {
+      const problem = debutLetterProblem(normalizeDebutLetter(value));
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
+  /** Como a dona assina a carta; vazio = "A curadora". Cabe numa linha (largura, não caracteres). */
+  debut_letter_signature: z
+    .string()
+    .trim()
+    .max(60, "A assinatura vai até 60 caracteres.")
+    .superRefine((value, ctx) => {
+      const problem = debutSignatureProblem(value);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
 };
 
 export const ALLOWED_SETTING_KEYS = Object.keys(SETTING_VALUE_SCHEMAS);

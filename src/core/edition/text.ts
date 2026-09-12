@@ -12,7 +12,7 @@ import { normalizeReceiptText } from "@/core/receipts/types";
 /**
  * Os tetos são em UNIDADES DE LARGURA, não em caracteres: uma minúscula vale
  * 1, uma maiúscula 1,3 na Jost dos quadros e 1,45 na Cormorant itálica da
- * frase e do título (medido nas fontes embutidas), espaço e pontuação 0,45.
+ * frase e do título (medido nas fontes embutidas), espaço 0,6, pontuação 0,5.
  * Assim uma ficha em CAIXA ALTA é cortada antes de estourar as linhas — e o
  * orçamento de altura do cartão inteiro fecha em core/edition/layout.ts.
  */
@@ -29,7 +29,15 @@ function charUnits(char: string, font: WidthFont): number {
   if (/[\p{Lu}]/u.test(char)) return UPPER_UNITS[font];
   if (/[\p{Ll}]/u.test(char)) return 1;
   if (/[\p{N}]/u.test(char)) return 1.1;
-  return 0.45;
+  // Medido nas fontes embutidas (em unidades de minúscula): espaço 0,6;
+  // travessão e reticências ≈ 2; meia-risca 1,3; aspas 0,8; & e @ 1,9.
+  if (char === " ") return 0.6;
+  if (char === "—" || char === "…") return 2.2;
+  if (char === "–") return 1.3;
+  if (char === "&" || char === "@") return 1.9;
+  if (/["“”«»]/.test(char)) return 0.8;
+  if (/[?!]/.test(char)) return 0.75;
+  return 0.5;
 }
 
 /** Largura estimada do texto, na régua dos tetos acima. */
@@ -116,7 +124,8 @@ function fitText(text: string, maxUnits: number, font: WidthFont = "sans"): Fitt
   // que uma frase e meia com reticências.
   const sentenceEnd = lastSentenceEnd(room);
   if (sentenceEnd >= roomChars / 4) return { text: room.slice(0, sentenceEnd + 1), truncated: true };
-  const roomForEllipsis = room.slice(0, Math.max(0, roomChars - 1));
+  // As reticências também ocupam lugar: o corte deixa espaço para elas.
+  const roomForEllipsis = text.slice(0, charsWithinUnits(text, maxUnits - charUnits("…", font), font));
   const lastSpace = roomForEllipsis.lastIndexOf(" ");
   const cut = lastSpace > roomChars / 2 ? roomForEllipsis.slice(0, lastSpace) : roomForEllipsis;
   return { text: `${cut.replace(/[\p{P}\p{S}\s]+$/u, "")}…`, truncated: true };

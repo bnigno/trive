@@ -196,10 +196,14 @@ export interface OrderAwaitingPacking {
   isGift: boolean;
   /** Cartões da edição já gerados (o link diz "Imprimir" em vez de "Gerar"). */
   editionCardsAt: Date | null;
-  /** O que sai no cartão mudou depois da geração: "Gerar de novo". */
+  /** O que sai nos cartões (ou na carta) mudou depois da geração: "Gerar de novo". */
   editionCardsStale: boolean;
   /** Quantas peças do pedido ganham cartão (0 = sem link de cartões). */
   editionCards: number;
+  /** Primeira compra desta cliente (selo). */
+  isFirstPurchase: boolean;
+  /** A carta de estreia sai neste pedido (primeira compra E carta escrita em Configurações). */
+  debutLetter: boolean;
 }
 
 /** Pedidos pagos ou em separação ainda sem foto do pacote, os mais antigos primeiro. */
@@ -218,6 +222,7 @@ export async function listOrdersAwaitingPacking(
       isGift: orders.isGift,
       editionCardsAt: orders.editionCardsAt,
       editionCardsFingerprint: orders.editionCardsFingerprint,
+      customerId: orders.customerId,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -226,6 +231,7 @@ export async function listOrdersAwaitingPacking(
     )
     .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
   if (rows.length === 0) return [];
+
 
   const counts = await db
     .select({ orderId: orderItems.orderId, quantity: orderItems.quantity })
@@ -244,11 +250,13 @@ export async function listOrdersAwaitingPacking(
   // Cartões: quantos cada pedido tem e se os gerados ficaram velhos (a mesma régua da tela dos cartões).
   const editionStatus = await editionCardsStatusByOrder(db, rows);
 
-  return rows.map(({ editionCardsFingerprint: _fingerprint, ...row }) => ({
+  return rows.map(({ editionCardsFingerprint: _fingerprint, customerId: _customerId, ...row }) => ({
     ...row,
     itemsCount: itemsByOrder.get(row.id) ?? 0,
     editionCardsStale: editionStatus.get(row.id)?.stale ?? false,
     editionCards: editionStatus.get(row.id)?.cards ?? 0,
+    isFirstPurchase: editionStatus.get(row.id)?.isFirstPurchase ?? false,
+    debutLetter: editionStatus.get(row.id)?.letter ?? false,
   }));
 }
 

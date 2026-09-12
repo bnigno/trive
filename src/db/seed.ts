@@ -51,6 +51,9 @@ const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "drop_audience_limit", value: 60 },
   { key: "catalog_draft_enabled", value: true },
   { key: "edition_name", value: "" },
+  // A carta de estreia fica desligada até a dona escrevê-la em Configurações.
+  { key: "debut_letter_text", value: "" },
+  { key: "debut_letter_signature", value: "" },
 ];
 
 // Templates iniciais de WhatsApp (pt-BR). Editáveis em /admin; o seed nunca

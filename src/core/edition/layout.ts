@@ -26,13 +26,13 @@ export const EDITION_GEOMETRY = {
   band: { lockupHeight: 98, padding: 14 },
 } as const;
 
-/** Advance médio por unidade de largura, em "em", medido nas fontes embutidas. */
-const EM_PER_UNIT: Record<WidthFont, number> = { sans: 0.504, serif: 0.404 };
+/** Advance médio por unidade de largura, em "em", medido nas fontes embutidas (espaço a 0,6). */
+const EM_PER_UNIT: Record<WidthFont, number> = { sans: 0.485, serif: 0.389 };
 /** A quebra por palavra desperdiça o fim de cada linha: contamos com 90% da largura. */
 const WRAP_SLACK = 0.9;
 
 /** Linhas estimadas de um texto numa largura, num corpo e numa fonte. */
-export function estimateLines(text: string, font: WidthFont, fontSize: number, width = EDITION_GEOMETRY.contentWidth): number {
+export function estimateLines(text: string, font: WidthFont, fontSize: number, width: number = EDITION_GEOMETRY.contentWidth): number {
   const unitsPerLine = (width * WRAP_SLACK) / (EM_PER_UNIT[font] * fontSize);
   return Math.max(1, Math.ceil(textWidthUnits(text, font) / unitsPerLine));
 }

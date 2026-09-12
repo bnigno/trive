@@ -137,6 +137,42 @@ describe("getDefaultPolicy / updateDefaultPolicy", () => {
 });
 
 describe("updateSetting / getSettingsMap", () => {
+  it("a carta de estreia aceita até 900 caracteres e a assinatura até 60; vazio desliga", async () => {
+    await updateSetting(db, { key: "debut_letter_text", value: "Bem-vinda à maison.", userId: FIXED_USER_ID });
+    await updateSetting(db, { key: "debut_letter_signature", value: "Marina", userId: FIXED_USER_ID });
+    expect(await getSettingsMap(db, ["debut_letter_text", "debut_letter_signature"])).toEqual({
+      debut_letter_text: "Bem-vinda à maison.",
+      debut_letter_signature: "Marina",
+    });
+    await expect(
+      updateSetting(db, { key: "debut_letter_text", value: "palavra ".repeat(120), userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/900/);
+    // Quebras do navegador (CRLF) não contam duas vezes: 12 linhas curtas com \r\n passam e ficam com \n.
+    const crlf = Array.from({ length: 12 }, (_, i) => `Linha ${i + 1} da carta, curta.`).join("\r\n");
+    await updateSetting(db, { key: "debut_letter_text", value: crlf, userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["debut_letter_text"])).debut_letter_text).toBe(crlf.replace(/\r\n/g, "\n"));
+    // Mais de 12 linhas, ou um texto que não cabe no papel nem na letra menor, é recusado com a razão — nunca cortado em silêncio.
+    await expect(
+      updateSetting(db, { key: "debut_letter_text", value: Array.from({ length: 13 }, () => "linha").join("\n"), userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/13 linhas/);
+    await expect(
+      updateSetting(db, {
+        key: "debut_letter_text",
+        value: Array.from({ length: 10 }, () => "PALAVRA COMPRIDA ".repeat(5).trim()).join("\n"),
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow(/não cabe no papel/);
+    await expect(
+      updateSetting(db, { key: "debut_letter_signature", value: "x".repeat(61), userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/60/);
+    // 60 caracteres em caixa alta não cabem numa linha: recusa com a razão, em vez de imprimir cortado.
+    await expect(
+      updateSetting(db, { key: "debut_letter_signature", value: "MARINA DA SILVA, CURADORA DA TRIVÉ MAISON EM BELÉM DO PARÁ", userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/não cabe numa linha/);
+    await updateSetting(db, { key: "debut_letter_text", value: "   ", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["debut_letter_text"])).debut_letter_text).toBe("");
+  });
+
   it("trocar a edição (ou o nome da loja) pede a atualização do cartão de cada peça ativa, escalonada", async () => {
     const a = await createTestVariant(db, { sku: "ED-A" });
     const b = await createTestVariant(db, { sku: "ED-B" });

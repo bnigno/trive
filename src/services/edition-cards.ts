@@ -1,25 +1,37 @@
 // O cartão da edição na caixa: um por peça do pedido (não por unidade nem
 // por tamanho), com a frase da curadora, como vestir em Belém, cuidados na
-// umidade e o QR da peça. Gerado sob demanda pela tela do pedido — sem fila:
-// é a dona esperando, na mesa de embalagem — e publicado em
-// editions/<orderId>/<productId>.jpg (upsert: gerar de novo sobrescreve; o
-// id, e não o slug, para a imagem continuar achável se a peça for renomeada).
+// umidade e o QR da peça — e, na primeira compra da cliente, a carta de
+// estreia assinada pela dona, impressa antes dos cartões. Gerado pela fila
+// ao pagar (order.edition_cards) e sob demanda pela tela do pedido; publicado
+// em editions/<orderId>/<productId>.jpg e editions/<orderId>/carta-de-estreia.jpg
+// (upsert: gerar de novo sobrescreve; o id, e não o slug, para a imagem
+// continuar achável se a peça for renomeada).
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
 import {
+  COUNTED_STATUSES,
+  countsAsPurchase,
+  debutFirstName,
+  fitDebutLetterToPaper,
+  isFirstPurchase,
+  normalizeDebutLetter,
+  normalizeDebutSignature,
+} from "@/core/edition/debut";
+import {
   editionFingerprintsOf,
+  isDebutLetterStale,
   isEditionCardStale,
   parseEditionFingerprints,
   type EditionFingerprints,
 } from "@/core/edition/fingerprint";
 import { editionLayout } from "@/core/edition/layout";
 import { editionTexts } from "@/core/edition/text";
-import type { EditionCardData } from "@/core/edition/types";
-import { categories, orderItems, orders, products, productVariants, settings } from "@/db/schema";
+import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
+import { categories, customers, orderItems, orders, products, productVariants, settings } from "@/db/schema";
 import { siteUrl } from "@/lib/site-url";
 import type { DbOrTx } from "@/queue/enqueue";
 
@@ -33,12 +45,18 @@ export class ServiceError extends Error {
 }
 
 export type EditionCardRenderer = (data: EditionCardData) => Promise<Buffer>;
+export type DebutLetterRenderer = (data: DebutLetterData) => Promise<Buffer>;
+export type EditionRenderers = { card: EditionCardRenderer; letter: DebutLetterRenderer };
 export const EDITION_CARD_JPEG_QUALITY = 88;
 
 const orderIdSchema = z.object({ orderId: z.uuid() });
 
 export function editionCardStoragePath(orderId: string, productId: string): string {
   return `editions/${orderId}/${productId}.jpg`;
+}
+
+export function debutLetterStoragePath(orderId: string): string {
+  return `editions/${orderId}/carta-de-estreia.jpg`;
 }
 
 /** URL pública com cache-busting pela última geração dos cartões. */
@@ -84,14 +102,91 @@ export type EditionCardsBasis = {
   editionCardsFingerprint: EditionFingerprints | null;
   /** Presente: o QR vai para a home, não para a página com preço. */
   isGift: boolean;
+  /** Nenhum outro pedido pago desta cliente antes deste. */
+  isFirstPurchase: boolean;
+  /** A carta de estreia: só na primeira compra e só se a dona escreveu o texto. */
+  letter: DebutLetterData | null;
   cards: EditionCardPlan[];
   skipped: EditionCardSkip[];
 };
 
+/** Os textos das configurações que entram nos desenhos (vazio = ""). */
+async function editionSettings(db: DbOrTx): Promise<Record<string, string>> {
+  const keys = ["edition_name", "store_name", "debut_letter_text", "debut_letter_signature"];
+  const rows = await db.select({ key: settings.key, value: settings.value }).from(settings).where(inArray(settings.key, keys));
+  const map: Record<string, string> = {};
+  for (const row of rows) map[row.key] = typeof row.value === "string" ? row.value.trim() : "";
+  return map;
+}
+
 /** O nome da edição, como sai na faixa do cartão. */
 async function editionNameSetting(db: DbOrTx): Promise<string | null> {
-  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "edition_name")).limit(1);
-  return row && typeof row.value === "string" && row.value.trim() !== "" ? row.value.trim() : null;
+  const map = await editionSettings(db);
+  return map["edition_name"] ? map["edition_name"] : null;
+}
+
+/** O que a regra da estreia precisa saber de um pedido. */
+export type DebutTarget = { id: string; customerId: string; paidAt: Date | null; isGift: boolean; customerName: string | null };
+
+/**
+ * Quantos pedidos pagos (em diante) cada cliente tinha ANTES de cada um
+ * destes pedidos — pela ordem de PAGAMENTO (um pedido ainda não pago conta
+ * tudo o que já foi pago). Presente não conta como compra dela. Uma consulta
+ * para todos os pedidos (a mesa de embalagem chama com a lista inteira).
+ */
+export async function countPriorCountedOrdersByOrder(db: DbOrTx, targets: DebutTarget[]): Promise<Map<string, number>> {
+  const prior = new Map<string, number>();
+  if (targets.length === 0) return prior;
+  const customerIds = [...new Set(targets.map((target) => target.customerId))];
+  const rows = await db
+    .select({ id: orders.id, customerId: orders.customerId, paidAt: orders.paidAt, status: orders.status, shippedAt: orders.shippedAt })
+    .from(orders)
+    .where(and(inArray(orders.customerId, customerIds), inArray(orders.status, [...COUNTED_STATUSES]), eq(orders.isGift, false)));
+  // Reembolsado só conta se a caixa saiu (a regra mora em core/edition/debut).
+  const counted = rows.filter((row) => countsAsPurchase(row));
+  for (const target of targets) {
+    const cutoff = target.paidAt?.getTime() ?? Number.POSITIVE_INFINITY;
+    prior.set(
+      target.id,
+      counted.filter((row) => row.customerId === target.customerId && row.id !== target.id && (row.paidAt?.getTime() ?? 0) < cutoff).length,
+    );
+  }
+  return prior;
+}
+
+/** Este pedido é a primeira compra da cliente? (para o selo no painel) */
+export async function isFirstPurchaseOrder(db: DbOrTx, orderId: string): Promise<boolean> {
+  const id = z.uuid().parse(orderId);
+  const [order] = await db
+    .select({ id: orders.id, customerId: orders.customerId, paidAt: orders.paidAt, isGift: orders.isGift })
+    .from(orders)
+    .where(eq(orders.id, id))
+    .limit(1);
+  if (!order) throw new ServiceError("pedido_nao_encontrado", "Pedido não encontrado.");
+  const target = { ...order, customerName: null };
+  const prior = (await countPriorCountedOrdersByOrder(db, [target])).get(order.id) ?? 0;
+  return isFirstPurchase({ priorCountedOrders: prior, isGift: order.isGift });
+}
+
+/** A carta de estreia de um pedido, se for a primeira compra e a carta estiver escrita. */
+function debutLetterFor(
+  order: DebutTarget,
+  priorCountedOrders: number,
+  texts: Record<string, string>,
+): { isFirstPurchase: boolean; letter: DebutLetterData | null } {
+  const first = isFirstPurchase({ priorCountedOrders, isGift: order.isGift });
+  const letterText = normalizeDebutLetter(texts["debut_letter_text"]);
+  if (!first || !letterText) return { isFirstPurchase: first, letter: null };
+  return {
+    isFirstPurchase: true,
+    letter: {
+      recipientName: debutFirstName(order.customerName),
+      // Um texto salvo antes da régua do papel é encurtado ao que cabe (a tela recusa os novos).
+      text: fitDebutLetterToPaper(letterText).text,
+      signature: normalizeDebutSignature(texts["debut_letter_signature"]),
+      editionName: texts["edition_name"] ? texts["edition_name"] : null,
+    },
+  };
 }
 
 export type EditionCardsPlan = { cards: EditionCardPlan[]; skipped: EditionCardSkip[] };
@@ -207,18 +302,26 @@ export async function planEditionCardsByOrder(
   return plans;
 }
 
-/** Os cartões gerados ficaram velhos? (algum diria outra coisa hoje, ou falta um). */
+/** Os cartões (ou a carta) gerados ficaram velhos? (algum diria outra coisa hoje, ou falta um). */
 export function editionCardsStale(basis: {
   editionCardsFingerprint: EditionFingerprints | null;
   cards: EditionCardPlan[];
+  letter: DebutLetterData | null;
 }): boolean {
-  return basis.cards.some((card) => isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data));
+  return (
+    basis.cards.some((card) => isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data)) ||
+    isDebutLetterStale(basis.editionCardsFingerprint, basis.letter)
+  );
 }
 
 export type EditionCardsStatus = {
-  /** Quantas peças do pedido ganham cartão (0 = o link "cartões" não faz sentido). */
+  /** Quantas peças do pedido ganham cartão. */
   cards: number;
-  /** Os cartões gerados ficaram velhos. Pedido ainda sem cartões nunca está velho. */
+  /** Primeira compra desta cliente (o selo). */
+  isFirstPurchase: boolean;
+  /** A carta de estreia sai neste pedido (primeira compra E carta escrita). */
+  letter: boolean;
+  /** Os cartões (ou a carta) gerados ficaram velhos. Pedido ainda sem geração nunca está velho. */
   stale: boolean;
 };
 
@@ -228,22 +331,28 @@ export type EditionCardsStatus = {
  */
 export async function editionCardsStatusByOrder(
   db: DbOrTx,
-  targets: { id: string; isGift: boolean; editionCardsAt: Date | null; editionCardsFingerprint: unknown }[],
+  targets: (DebutTarget & { editionCardsAt: Date | null; editionCardsFingerprint: unknown })[],
 ): Promise<Map<string, EditionCardsStatus>> {
-  const plans = await planEditionCardsByOrder(db, targets);
   const status = new Map<string, EditionCardsStatus>();
+  if (targets.length === 0) return status;
+  const plans = await planEditionCardsByOrder(db, targets);
+  const prior = await countPriorCountedOrdersByOrder(db, targets);
+  const texts = await editionSettings(db);
   for (const target of targets) {
     const plan = plans.get(target.id) ?? { cards: [], skipped: [] };
+    const { isFirstPurchase: first, letter } = debutLetterFor(target, prior.get(target.id) ?? 0, texts);
     const stored = target.editionCardsAt ? parseEditionFingerprints(target.editionCardsFingerprint) : null;
     status.set(target.id, {
       cards: plan.cards.length,
-      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards }),
+      isFirstPurchase: first,
+      letter: letter !== null,
+      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards, letter }),
     });
   }
   return status;
 }
 
-/** O pedido e o plano dos cartões dele. */
+/** O pedido, o plano dos cartões dele e a carta (se couber). */
 export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promise<EditionCardsBasis> {
   const id = z.uuid().parse(orderId);
   const [order] = await db
@@ -253,18 +362,26 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
       editionCardsAt: orders.editionCardsAt,
       editionCardsFingerprint: orders.editionCardsFingerprint,
       isGift: orders.isGift,
+      customerId: orders.customerId,
+      paidAt: orders.paidAt,
+      customerName: customers.fullName,
     })
     .from(orders)
+    .innerJoin(customers, eq(customers.id, orders.customerId))
     .where(eq(orders.id, id))
     .limit(1);
   if (!order) throw new ServiceError("pedido_nao_encontrado", "Pedido não encontrado.");
   const plan = (await planEditionCardsByOrder(db, [order])).get(order.id) ?? { cards: [], skipped: [] };
+  const prior = (await countPriorCountedOrdersByOrder(db, [order])).get(order.id) ?? 0;
+  const { isFirstPurchase: first, letter } = debutLetterFor(order, prior, await editionSettings(db));
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
     editionCardsAt: order.editionCardsAt,
     editionCardsFingerprint: order.editionCardsAt ? parseEditionFingerprints(order.editionCardsFingerprint) : null,
     isGift: order.isGift,
+    isFirstPurchase: first,
+    letter,
     cards: plan.cards,
     skipped: plan.skipped,
   };
@@ -279,21 +396,24 @@ export type PublishedEditionCard = {
 };
 
 /**
- * Desenha TODOS os cartões, depois sobe todos (upsert nos mesmos paths) e só
- * então carimba o pedido: uma peça que falha no meio não deixa cartão novo
- * ao lado de cartão velho sob o mesmo carimbo. Gerar de novo sobrescreve —
- * é o jeito de refletir uma nota da curadora escrita depois.
+ * Desenha a carta (se houver) e TODOS os cartões, depois sobe tudo (upsert
+ * nos mesmos paths) e só então carimba o pedido: uma peça que falha no meio
+ * não deixa cartão novo ao lado de cartão velho sob o mesmo carimbo. Gerar
+ * de novo sobrescreve — é o jeito de refletir uma nota da curadora ou uma
+ * carta escrita depois.
  */
 export async function publishEditionCards(
   db: DbOrTx,
   storage: FileStorage,
-  render: EditionCardRenderer,
+  render: EditionRenderers,
   input: { orderId: string },
-): Promise<{ at: Date; cards: PublishedEditionCard[]; skipped: EditionCardSkip[] }> {
+): Promise<{ at: Date; letterPath: string | null; cards: PublishedEditionCard[]; skipped: EditionCardSkip[] }> {
   const { orderId } = orderIdSchema.parse(input);
   const at = new Date();
   const basis = await buildEditionCardsBasis(db, orderId);
-  if (basis.cards.length === 0) {
+  // Sem cartão e sem carta não há o que desenhar; só a carta (primeira compra
+  // de uma caneca, por exemplo) ainda sai.
+  if (basis.cards.length === 0 && !basis.letter) {
     throw new ServiceError(
       "pedido_sem_pecas",
       basis.skipped.length > 0
@@ -301,10 +421,23 @@ export async function publishEditionCards(
         : "Este pedido não tem peças para o cartão.",
     );
   }
+  let letterJpeg: Buffer | null = null;
+  if (basis.letter) {
+    try {
+      const png = await render.letter(basis.letter);
+      letterJpeg = await sharp(png).jpeg({ quality: EDITION_CARD_JPEG_QUALITY }).toBuffer();
+    } catch (error) {
+      console.error(`[edition-cards] carta de estreia do pedido ${basis.orderId} falhou`, error);
+      throw new ServiceError(
+        "cartao_falhou",
+        "Não consegui desenhar a carta de estreia. Tente de novo; se continuar, avise quem cuida do sistema.",
+      );
+    }
+  }
   const drawn: { card: EditionCardPlan; jpeg: Buffer }[] = [];
   for (const card of basis.cards) {
     try {
-      const png = await render(card.data);
+      const png = await render.card(card.data);
       drawn.push({ card, jpeg: await sharp(png).jpeg({ quality: EDITION_CARD_JPEG_QUALITY }).toBuffer() });
     } catch (error) {
       console.error(`[edition-cards] cartão de "${card.name}" (${card.productId}) falhou`, error);
@@ -313,6 +446,11 @@ export async function publishEditionCards(
         `Não consegui desenhar o cartão de “${card.name}”. Tente de novo; se continuar, avise quem cuida do sistema.`,
       );
     }
+  }
+  let letterPath: string | null = null;
+  if (letterJpeg) {
+    letterPath = debutLetterStoragePath(basis.orderId);
+    await storage.upload({ path: letterPath, data: letterJpeg, contentType: "image/jpeg" });
   }
   const published: PublishedEditionCard[] = [];
   for (const { card, jpeg } of drawn) {
@@ -328,9 +466,9 @@ export async function publishEditionCards(
   }
   await db
     .update(orders)
-    .set({ editionCardsAt: at, editionCardsFingerprint: editionFingerprintsOf(basis.cards), updatedAt: at })
+    .set({ editionCardsAt: at, editionCardsFingerprint: editionFingerprintsOf(basis.cards, basis.letter), updatedAt: at })
     .where(eq(orders.id, basis.orderId));
-  return { at, cards: published, skipped: basis.skipped };
+  return { at, letterPath, cards: published, skipped: basis.skipped };
 }
 
 export type EditionCardView = {
@@ -356,13 +494,16 @@ export type EditionCardsView = {
   orderNumber: number;
   at: Date | null;
   isGift: boolean;
-  /** Algum cartão ficou velho: a tela pede "Gerar de novo". */
+  isFirstPurchase: boolean;
+  /** null = não é primeira compra ou a carta ainda não foi escrita nas configurações. */
+  letter: { recipientName: string; url: string | null; stale: boolean } | null;
+  /** Algum cartão (ou a carta) ficou velho: a tela pede "Gerar de novo". */
   stale: boolean;
   cards: EditionCardView[];
   skipped: EditionCardSkip[];
 };
 
-/** O que a tela mostra: as peças do pedido e, se já gerados, os cartões. */
+/** O que a tela mostra: a carta (se couber), as peças do pedido e, se já gerados, as imagens. */
 export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId: string): Promise<EditionCardsView> {
   const basis = await buildEditionCardsBasis(db, orderId);
   const at = basis.editionCardsAt;
@@ -385,11 +526,21 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
         ? editionCardUrl(storage, editionCardStoragePath(basis.orderId, card.productId), at)
         : null,
   }));
+  const letterStale = isDebutLetterStale(basis.editionCardsFingerprint, basis.letter);
   return {
     orderNumber: basis.orderNumber,
     at,
     isGift: basis.isGift,
-    stale: cards.some((card) => card.stale),
+    isFirstPurchase: basis.isFirstPurchase,
+    letter: basis.letter
+      ? {
+          recipientName: basis.letter.recipientName,
+          // Carta escrita depois da geração: ainda não existe imagem dela — a tela pede "gerar de novo".
+          url: at && basis.editionCardsFingerprint?.carta ? editionCardUrl(storage, debutLetterStoragePath(basis.orderId), at) : null,
+          stale: letterStale,
+        }
+      : null,
+    stale: cards.some((card) => card.stale) || letterStale,
     cards,
     skipped: basis.skipped,
   };
