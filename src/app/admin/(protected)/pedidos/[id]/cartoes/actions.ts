@@ -35,7 +35,8 @@ export async function generateEditionCardsAction(
     revalidatePath(`/admin/pedidos/${parsed.data}`);
     revalidatePath("/admin/pedidos/embalar");
     const n = result.cards.length;
-    return { success: n === 1 ? "Cartão pronto para imprimir." : `${n} cartões prontos para imprimir.` };
+    const skipped = result.skipped.length > 0 ? ` Sem cartão (não é roupa): ${result.skipped.map((s) => s.name).join(", ")}.` : "";
+    return { success: (n === 1 ? "Cartão pronto para imprimir." : `${n} cartões prontos para imprimir.`) + skipped };
   } catch (error) {
     if (error instanceof ServiceError) return { error: error.message };
     console.error("[edition-cards] falha ao gerar", error);

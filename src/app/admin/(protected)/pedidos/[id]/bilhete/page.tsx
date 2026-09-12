@@ -3,6 +3,7 @@
 // com a tipografia do painel — melhor um bilhete simples do que nenhum.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { z } from "zod";
 
 import { getFileStorage } from "@/adapters/storage";
 import { giftSignature } from "@/core/gifts/text";
@@ -22,6 +23,7 @@ export default async function GiftNotePrintPage({
 }) {
   await requireUser();
   const { id } = await params;
+  if (!z.uuid().safeParse(id).success) notFound();
   const order = await getOrderDetail(getDb(), id);
   if (!order || !order.isGift) notFound();
 

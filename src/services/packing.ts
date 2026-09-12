@@ -17,6 +17,8 @@ import {
   customers,
   orderItems,
   orders,
+  products,
+  productVariants,
   waMessages,
   waTemplates,
 } from "@/db/schema";
@@ -195,6 +197,8 @@ export interface OrderAwaitingPacking {
   isGift: boolean;
   /** Cartões da edição já gerados (o link diz "Imprimir" em vez de "Gerar"). */
   editionCardsAt: Date | null;
+  /** A ficha ou a nota de alguma peça mudou depois dos cartões: "Gerar de novo". */
+  editionCardsStale: boolean;
 }
 
 /** Pedidos pagos ou em separação ainda sem foto do pacote, os mais antigos primeiro. */
@@ -234,7 +238,35 @@ export async function listOrdersAwaitingPacking(
   for (const row of counts) {
     itemsByOrder.set(row.orderId, (itemsByOrder.get(row.orderId) ?? 0) + row.quantity);
   }
-  return rows.map((row) => ({ ...row, itemsCount: itemsByOrder.get(row.id) ?? 0 }));
+
+  // Cartões velhos: alguma peça do pedido mudou (ficha ou nota) depois da geração.
+  const changed = await db
+    .select({
+      orderId: orderItems.orderId,
+      updatedAt: products.updatedAt,
+      curatorNoteUpdatedAt: products.curatorNoteUpdatedAt,
+    })
+    .from(orderItems)
+    .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
+    .innerJoin(products, eq(products.id, productVariants.productId))
+    .where(
+      inArray(
+        orderItems.orderId,
+        rows.filter((row) => row.editionCardsAt !== null).map((row) => row.id),
+      ),
+    );
+  const latestChange = new Map<string, number>();
+  for (const row of changed) {
+    const at = Math.max(row.updatedAt.getTime(), row.curatorNoteUpdatedAt?.getTime() ?? 0);
+    latestChange.set(row.orderId, Math.max(latestChange.get(row.orderId) ?? 0, at));
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    itemsCount: itemsByOrder.get(row.id) ?? 0,
+    editionCardsStale:
+      row.editionCardsAt !== null && (latestChange.get(row.id) ?? 0) > row.editionCardsAt.getTime(),
+  }));
 }
 
 export async function countOrdersAwaitingPacking(db: DbOrTx): Promise<number> {

@@ -45,8 +45,18 @@ export interface ReceiptAssets {
  * pela rede dentro da função — e o comprovante não pode depender de rede.
  */
 export function normalizeReceiptText(value: string): string {
-  return value
-    .replace(/[^\p{Script=Latin}\p{N}\p{P}\p{Zs}]/gu, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+  return (
+    value
+      // Acento composto (NFD) vira a letra pronta que a fonte tem.
+      .normalize("NFC")
+      // Traços e aspas tipográficos fora do subset das fontes viram os ASCII.
+      .replace(/[\u2010\u2011]/g, "-")
+      .replace(/\u2032/g, "'")
+      .replace(/\u2033/g, '"')
+      // Símbolos que uma ficha usa ("30°C", "R$", "2+1", "×", "%") ficam.
+      .replace(/[^\p{Script=Latin}\p{N}\p{P}\p{Zs}°$+×%]/gu, "")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s+([,.;:!?…])/g, "$1")
+      .trim()
+  );
 }

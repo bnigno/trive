@@ -4,6 +4,8 @@
 // de estilo, peça disponível SÓ em cores que a cliente evita fica de fora e
 // cor que ela ama ganha um empurrão. Puro.
 
+import { isNotClothing } from "@/core/catalog/family";
+
 export interface LookCandidate {
   id: string;
   slug: string;
@@ -45,12 +47,11 @@ const FAMILIES: Family[] = [
   { key: "acessorio", match: /acess|colar|brinco|cinto|len[cç]o|[oó]culos|chap[eé]u|bon[eé]|pulseira|anel|meia|echarpe|cachecol|gorro/i, complements: ["vestido", "top", "parte-de-baixo"] },
 ];
 
-/** O que nunca entra num look de moda (utilidades da categoria "Casa" etc.). */
-const NEVER_IN_LOOK = /caneca|garrafa|adesivo|copo|decora|casa\b|caderno|kit de adesivos|t[eé]rmic/i;
 
 export function lookFamilyOf(categoryName: string | null, name: string): string | null {
-  const text = `${categoryName ?? ""} ${name}`;
-  if (NEVER_IN_LOOK.test(text)) return null;
+  // O que nunca entra num look de moda (utilidades da sala "Casa" etc.): a
+  // mesma lista que o cartão da edição usa para não falar em "vestir".
+  if (isNotClothing(categoryName, name)) return null;
   // O nome da peça decide antes da categoria genérica ("Vestuário").
   for (const family of FAMILIES) if (family.match.test(name)) return family.key;
   for (const family of FAMILIES) if (family.match.test(categoryName ?? "")) return family.key;

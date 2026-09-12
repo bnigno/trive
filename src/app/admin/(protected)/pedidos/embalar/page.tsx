@@ -87,13 +87,18 @@ export default async function EmbalarPage() {
                   {order.isGift ? <Badge tone="warning">🎁 Presente · sem preço</Badge> : null}
                 </div>
               </div>
-              <PackForm orderId={order.id} photoUrl={null} packedAtLabel={null} compact />
+              {/* Cartão → caixa → foto: o link vem antes do "Embalei", que tira o pedido da mesa. */}
               <Link
                 href={`/admin/pedidos/${order.id}/cartoes`}
                 className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
               >
-                {order.editionCardsAt ? "Imprimir cartões da edição" : "Gerar cartões da edição"}
+                {order.editionCardsAt
+                  ? order.editionCardsStale
+                    ? "Cartões da edição ficaram velhos — gerar de novo"
+                    : "Imprimir cartões da edição"
+                  : "Gerar cartões da edição"}
               </Link>
+              <PackForm orderId={order.id} photoUrl={null} packedAtLabel={null} compact />
             </li>
           ))}
         </ul>
