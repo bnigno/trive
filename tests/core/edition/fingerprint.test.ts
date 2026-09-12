@@ -21,6 +21,7 @@ const base: EditionCardData = {
   qrUrl: "https://trivemaison.com.br/produto/longo-dunas",
   qrTarget: "peca",
   printedAddress: "trivemaison.com.br",
+  layout: { titleSize: 84, titleLines: 1, quoteSize: 44, quoteLines: 1, bodySize: 30, wearLines: 1, careLines: 1, qrSize: 220 },
 };
 
 describe("editionCardFingerprint", () => {
@@ -37,6 +38,8 @@ describe("editionCardFingerprint", () => {
       { qrTarget: "home" },
       { printedAddress: "loja.trive.com.br" },
     ];
+    // O layout é derivado dos textos: não entra no hash.
+    expect(editionCardFingerprint({ ...base, layout: { ...base.layout, bodySize: 26 } })).toBe(editionCardFingerprint(base));
     const seen = new Set([editionCardFingerprint(base)]);
     for (const change of changes) {
       const hash = editionCardFingerprint({ ...base, ...change });

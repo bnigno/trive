@@ -29,7 +29,7 @@ import { OrderMarginCard } from "./margin-card";
 import { OrderActions } from "./order-actions";
 import { PackForm } from "./pack-form";
 import { giftNoteUrl } from "@/services/gifts";
-import { editionCardsStaleByOrder } from "@/services/edition-cards";
+import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { packagePhotoUrl } from "@/services/packing";
 
 export const dynamic = "force-dynamic";
@@ -61,10 +61,13 @@ export default async function PedidoDetalhePage({
   const db = getDb();
   const order = await getOrderDetail(db, id);
   if (!order) notFound();
-  // Os cartões gerados ficaram velhos? (a mesma régua da tela dos cartões)
-  const editionCardsStale = (await editionCardsStaleByOrder(db, [order])).get(order.id) ?? false;
-
   const status = order.status as OrderStatus;
+  // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
+  // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
+  // aberta: depois de embalado, o cartão que foi já foi.
+  const editionStatus = (await editionCardsStatusByOrder(db, [order])).get(order.id) ?? { cards: 0, stale: false };
+  const boxOpen = (status === "paid" || status === "preparing") && !order.packagePhotoPath;
+  const editionCardsStale = boxOpen && editionStatus.stale;
   // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
   // também barra pelo servidor — isto aqui é só para não mostrar botão morto.
   const owner = await isOwner();
@@ -392,7 +395,9 @@ export default async function PedidoDetalhePage({
                   }
                   packedAtLabel={order.packedAt ? formatDateTimeSP(order.packedAt) : null}
                 />
-                <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} />
+                {editionStatus.cards > 0 ? (
+                  <EditionCardsLink orderId={order.id} generatedAt={order.editionCardsAt} stale={editionCardsStale} />
+                ) : null}
               </div>
             </Card>
           ) : order.packagePhotoPath && order.packedAt ? (
@@ -442,7 +447,7 @@ function EditionCardsLink({ orderId, generatedAt, stale }: { orderId: string; ge
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
           {" · gerados em "}
           {formatDateTimeSP(generatedAt)}
-          {stale ? " · a ficha ou a nota mudou depois" : ""}
+          {stale ? " · o que sai no cartão mudou depois" : ""}
         </span>
       ) : (
         <span className="text-xs text-zinc-500 dark:text-zinc-400"> · um cartão de bolso por peça, com a frase da curadora e o QR</span>

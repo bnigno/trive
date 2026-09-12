@@ -11,33 +11,40 @@ import { normalizeReceiptText } from "@/core/receipts/types";
 
 /**
  * Os tetos são em UNIDADES DE LARGURA, não em caracteres: uma minúscula vale
- * 1, uma maiúscula 1,3 (é mais larga na fonte), espaço e pontuação 0,45.
- * Assim uma ficha em CAIXA ALTA é cortada antes de estourar a altura do
- * cartão — o desenho tem lugar para ~5 linhas de frase e ~3 por quadro.
+ * 1, uma maiúscula 1,3 na Jost dos quadros e 1,45 na Cormorant itálica da
+ * frase e do título (medido nas fontes embutidas), espaço e pontuação 0,45.
+ * Assim uma ficha em CAIXA ALTA é cortada antes de estourar as linhas — e o
+ * orçamento de altura do cartão inteiro fecha em core/edition/layout.ts.
  */
 export const EDITION_CURATOR_MAX = 300;
-/** Cada quadro pequeno ("Como veste", "Cuidados"): três linhas de 30 px. */
+/** Cada quadro pequeno ("Como veste", "Cuidados"): três linhas. */
 export const EDITION_NOTE_MAX = 165;
 /** O nome da peça: duas linhas de título. */
 export const EDITION_TITLE_MAX = 60;
 
+export type WidthFont = "sans" | "serif";
+const UPPER_UNITS: Record<WidthFont, number> = { sans: 1.3, serif: 1.45 };
+
+function charUnits(char: string, font: WidthFont): number {
+  if (/[\p{Lu}]/u.test(char)) return UPPER_UNITS[font];
+  if (/[\p{Ll}]/u.test(char)) return 1;
+  if (/[\p{N}]/u.test(char)) return 1.1;
+  return 0.45;
+}
+
 /** Largura estimada do texto, na régua dos tetos acima. */
-export function textWidthUnits(text: string): number {
+export function textWidthUnits(text: string, font: WidthFont = "sans"): number {
   let units = 0;
-  for (const char of text) {
-    if (/[\p{Lu}]/u.test(char)) units += 1.3;
-    else if (/[\p{Ll}\p{N}]/u.test(char)) units += 1;
-    else units += 0.45;
-  }
+  for (const char of text) units += charUnits(char, font);
   return units;
 }
 
 /** Quantos caracteres cabem em `maxUnits`, do início do texto. */
-function charsWithinUnits(text: string, maxUnits: number): number {
+function charsWithinUnits(text: string, maxUnits: number, font: WidthFont): number {
   let units = 0;
   let index = 0;
   for (const char of text) {
-    const next = units + (/[\p{Lu}]/u.test(char) ? 1.3 : /[\p{Ll}\p{N}]/u.test(char) ? 1 : 0.45);
+    const next = units + charUnits(char, font);
     if (next > maxUnits) break;
     units = next;
     index += char.length;
@@ -48,8 +55,9 @@ function charsWithinUnits(text: string, maxUnits: number): number {
 function cleanLine(raw: string): string {
   // A mesma régua do desenho (normalizeReceiptText): NFC, traços e aspas
   // tipográficos, só o que as fontes embutidas têm — contada aqui para o
-  // teto valer sobre o texto que de fato sai.
-  return normalizeReceiptText(raw.replace(/[\t\f\v]+/g, " "));
+  // teto valer sobre o texto que de fato sai. Marcador de lista no começo
+  // da linha ("- ", "• ") não vai para o cartão.
+  return normalizeReceiptText(raw.replace(/[\t\f\v]+/g, " ").replace(/^\s*[-•*·–—]\s+/, ""));
 }
 
 /** As linhas limpas de um texto, sem as vazias. */
@@ -65,25 +73,48 @@ function hasWords(text: string): boolean {
   return /[\p{L}\p{N}]/u.test(text);
 }
 
-/** Tira aspas retas ou curvas nas pontas: o desenho já põe as dele. */
+const QUOTE = /["'“”‘’«»]/;
+
+/**
+ * Tira as aspas das pontas quando a linha INTEIRA está entre aspas — o
+ * desenho já põe as dele. Uma citação no meio ou no fim ("… chamou de
+ * "a peça do ano"") fica como está, com as duas aspas.
+ */
 function stripQuotes(text: string): string {
-  return text.replace(/^[\s"'“”‘’«»]+/, "").replace(/[\s"'“”‘’«»]+$/, "");
+  const trimmed = text.trim();
+  if (!QUOTE.test(trimmed.charAt(0)) || !QUOTE.test(trimmed.charAt(trimmed.length - 1))) return trimmed;
+  return trimmed.slice(1, -1).trim();
 }
 
 export type FittedNote = { text: string | null; truncated: boolean };
+
+/** "aprox.", "Obs.", "ref.", uma letra só: ponto que não fecha frase. */
+const ABBREVIATION_BEFORE_DOT = /(^|[\s(])(aprox|obs|ref|comp|larg|alt|med|min|max|cm|mm|kg|n[º°o]?|p|[a-z])$/i;
+
+/** O último ". ", "! " ou "? " que fecha uma frase de verdade (não abreviação, não antes de número). */
+function lastSentenceEnd(text: string): number {
+  for (let index = text.length - 2; index >= 0; index -= 1) {
+    const char = text.charAt(index);
+    if ((char !== "." && char !== "!" && char !== "?") || text.charAt(index + 1) !== " ") continue;
+    if (char === "." && ABBREVIATION_BEFORE_DOT.test(text.slice(0, index))) continue;
+    if (/[\d]/.test(text.charAt(index + 2))) continue;
+    return index;
+  }
+  return -1;
+}
 
 /**
  * Cabe no teto: inteiro quando cabe; senão, até o fim da última frase que
  * cabe (". ! ?"), sem reticências; se nenhuma frase cabe, na última palavra,
  * com reticências. Nunca termina em "·", "—" ou outra pontuação solta.
  */
-function fitText(text: string, maxUnits: number): FittedNote {
-  if (textWidthUnits(text) <= maxUnits) return { text, truncated: false };
-  const roomChars = charsWithinUnits(text, maxUnits);
+function fitText(text: string, maxUnits: number, font: WidthFont = "sans"): FittedNote {
+  if (textWidthUnits(text, font) <= maxUnits) return { text, truncated: false };
+  const roomChars = charsWithinUnits(text, maxUnits, font);
   const room = text.slice(0, roomChars);
   // Uma frase inteira que ocupe ao menos um quarto do quadro vale mais do
   // que uma frase e meia com reticências.
-  const sentenceEnd = Math.max(room.lastIndexOf(". "), room.lastIndexOf("! "), room.lastIndexOf("? "));
+  const sentenceEnd = lastSentenceEnd(room);
   if (sentenceEnd >= roomChars / 4) return { text: room.slice(0, sentenceEnd + 1), truncated: true };
   const roomForEllipsis = room.slice(0, Math.max(0, roomChars - 1));
   const lastSpace = roomForEllipsis.lastIndexOf(" ");
@@ -107,17 +138,19 @@ export function fitEditionNote(
       lines
         .map(stripQuotes)
         .filter((line) => line !== "")
-        .map((line) => (/[.!?…:;,—-]$/.test(line) ? line : `${line}.`))
+        .map((line) => (/[.!?…:;,—-]["'“”‘’«»]?$/.test(line) ? line : `${line}.`))
         .join(" ")
     : lines.join(" · ");
   if (joined === "" || !hasWords(joined)) return { text: null, truncated: false };
-  return fitText(joined, max);
+  // A frase da curadora sai na itálica serifada; os quadros, na sem-serifa.
+  return fitText(joined, max, options.quotes ? "serif" : "sans");
 }
 
-/** O nome da peça no título: até duas linhas; mais que isso corta na palavra. */
-export function fitEditionTitle(name: string): string {
+/** O nome da peça no título (serifa): até duas linhas; mais que isso corta na palavra, avisando. */
+export function fitEditionTitle(name: string): { text: string; truncated: boolean } {
   const clean = cleanLine(name);
-  return fitText(clean, EDITION_TITLE_MAX).text ?? clean;
+  const fitted = fitText(clean, EDITION_TITLE_MAX, "serif");
+  return { text: fitted.text ?? clean, truncated: fitted.truncated };
 }
 
 /** O convite ao lado do QR, conforme o destino dele. */
@@ -152,7 +185,7 @@ export type EditionFamily =
 const FAMILY_HINTS: [Exclude<EditionFamily, "geral" | "nenhuma">, RegExp][] = [
   [
     "acessorio",
-    /acessor|bijut|\bbolsas?\b|\btote\b|clutch|mochila|carteira|necessaire|\bbrincos?\b|\bcolar(es)?\b|pulseir|\banel\b|\blencos?\b|echarpe|cachecol|chapeu|\bbone\b|\bcintos?\b|oculos|\bmeias?\b|calcad|sandal|sapat|\btenis\b|rasteir|\bmule\b|\bbotas?\b|chinel|scarpin/,
+    /acessor|bijut|\bjoias?\b|semi-?joia|\bbolsas?\b|\btote\b|clutch|mochila|carteira|necessaire|\bbrincos?\b|\bcolar(es)?\b|pulseir|\banel\b|\baneis\b|argola|gargantilha|bracelete|tornozeleira|choker|tiara|presilha|turbante|\blencos?\b|echarpe|cachecol|chapeu|\bbone\b|\bcintos?\b|oculos|\bmeias?\b|calcad|sandal|sapat|\btenis\b|rasteir|papete|tamanco|anabela|mocassim|espadrille|alpargata|\bmule\b|\bbotas?\b|chinel|scarpin/,
   ],
   ["sobreposicao", /kimono|jaquet|casaco|blazer|cardig|colete|parka|trench|sobretudo/],
   ["conjunto", /conjunt|macac/],
@@ -176,13 +209,19 @@ function familyFrom(text: string): EditionFamily | null {
  * "Conjunto colar e brinco" é acessório, e isso a lista geral resolve.
  */
 const FIRST_WORD_HINTS: [Exclude<EditionFamily, "geral" | "nenhuma">, RegExp][] = [
+  // Radical só onde é seguro (vestido/vestidinho, blusa/blusinha); o resto é
+  // palavra inteira: "Botão de Rosa" não é bota, "Topázio" não é top,
+  // "Anelise" não é anel, "Calcinha" não é calça.
   ["vestido", /^vestid/],
-  ["blusa", /^(blus|camis(a|eta|ete)s?$|cropp|regat|top|body|tricot|moletom|sueter|t-shirt|baby)/],
-  ["saia", /^saia/],
-  ["calca", /^(calc|jeans|pantalon|short|bermud|legging)/],
+  ["blusa", /^(blus|camis(a|eta|ete)s?$|cropp|regat|tops?$|body$|bodies$|tricot$|moletom|sueter|t-shirts?$|baby$)/],
+  ["saia", /^saias?$/],
+  ["calca", /^(calcas?$|jeans$|pantalon|shorts?$|bermud|leggings?$)/],
   ["sobreposicao", /^(kimono|jaquet|casaco|blazer|cardig|colete|parka|trench|sobretudo)/],
   ["conjunto", /^macac/],
-  ["acessorio", /^(bolsa|tote|clutch|mochila|carteira|necessaire|brinc|colar|pulseir|anel|lenco|echarpe|cachecol|chapeu|bone|cinto|oculos|meia|sandal|sapat|tenis|rasteir|mule|bota|chinel|scarpin|bijut)/],
+  [
+    "acessorio",
+    /^(bolsas?$|tote$|clutch|mochila|carteira|necessaire|brinc|colar(es)?$|pulseir|anel$|aneis$|argola|gargantilha|bracelete|tornozeleira|choker|tiara|presilha|turbante|lencos?$|echarpe|cachecol|chapeu|bone$|cintos?$|oculos|meias?$|sandal|sapat|tenis$|rasteir|papete|tamanco|anabela|mocassim|espadrille|alpargata|mules?$|botas?$|chinel|scarpin|bijut)/,
+  ],
 ];
 
 function familyFromName(name: string): EditionFamily | null {
@@ -195,8 +234,11 @@ function familyFromName(name: string): EditionFamily | null {
 }
 
 export function editionFamily(categoryName: string | null | undefined, productName: string): EditionFamily {
+  // A categoria de roupa, quando diz a família, vence qualquer palavra do nome.
+  const fromCategory = familyFrom(fold(categoryName ?? ""));
+  if (fromCategory) return fromCategory;
   if (isNotClothing(categoryName, productName)) return "nenhuma";
-  return familyFrom(fold(categoryName ?? "")) ?? familyFromName(productName) ?? "geral";
+  return familyFromName(productName) ?? "geral";
 }
 
 /** "Como vestir em Belém" quando a ficha não diz: o clima da cidade fala. */
@@ -274,6 +316,9 @@ export type EditionTextsInput = {
 
 export type EditionTexts = {
   family: Exclude<EditionFamily, "nenhuma">;
+  /** O nome da peça como sai no título (até duas linhas). */
+  title: string;
+  titleTruncated: boolean;
   curatorNote: string | null;
   curatorTruncated: boolean;
   wearNote: string;
@@ -291,11 +336,14 @@ export type EditionTexts = {
 export function editionTexts(input: EditionTextsInput): EditionTexts | null {
   const family = editionFamily(input.categoryName, input.productName);
   if (family === "nenhuma") return null;
+  const title = fitEditionTitle(input.productName);
   const curator = fitEditionNote(input.curatorNote, EDITION_CURATOR_MAX, { quotes: true });
   const wear = wearNoteFor(input.fitNotes, family);
   const care = careNoteFor(input.careNotes, family);
   return {
     family,
+    title: title.text,
+    titleTruncated: title.truncated,
     curatorNote: curator.text,
     curatorTruncated: curator.truncated,
     wearNote: wear.text as string,

@@ -76,6 +76,12 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
         text: `A página de “${card.name}” está fora do ar (peça arquivada, excluída ou rascunho): o QR daria página não encontrada.`,
       });
     }
+    if (card.titleTruncated) {
+      warnings.push({
+        key: `${card.productId}:titulo`,
+        text: `O nome “${card.name}” não coube inteiro no título (cabem duas linhas): sai cortado com reticências.`,
+      });
+    }
     if (card.curatorTruncated) {
       warnings.push({
         key: `${card.productId}:curadora`,

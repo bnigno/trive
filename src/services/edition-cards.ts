@@ -16,6 +16,7 @@ import {
   parseEditionFingerprints,
   type EditionFingerprints,
 } from "@/core/edition/fingerprint";
+import { editionLayout } from "@/core/edition/layout";
 import { editionTexts } from "@/core/edition/text";
 import type { EditionCardData } from "@/core/edition/types";
 import { categories, orderItems, orders, products, productVariants, settings } from "@/db/schema";
@@ -60,6 +61,7 @@ export type EditionCardPlan = {
   name: string;
   data: EditionCardData;
   /** Os textos que não couberam inteiros no cartão. */
+  titleTruncated: boolean;
   curatorTruncated: boolean;
   wearTruncated: boolean;
   careTruncated: boolean;
@@ -158,11 +160,22 @@ export async function planEditionCardsByOrder(
     const scheduled = row.visibleFrom !== null && row.visibleFrom.getTime() > now;
     const publicPage: EditionPublicPage =
       row.status !== "active" || row.deletedAt !== null ? "fora_do_ar" : scheduled ? "agendada" : "ok";
+    // Presente vai "sem preço na embalagem": o QR leva à home, não à peça.
+    const qrUrl = isGift ? siteUrl() : `${siteUrl()}/produto/${row.slug}`;
+    // O orçamento de altura escolhe os corpos e, se preciso, encurta a frase.
+    const layout = editionLayout({
+      title: texts.title,
+      curatorNote: texts.curatorNote,
+      wearNote: texts.wearNote,
+      careNote: texts.careNote,
+      qrUrl,
+    });
     plan.cards.push({
       productId: row.productId,
       slug: row.slug,
       name: row.name,
-      curatorTruncated: texts.curatorTruncated,
+      titleTruncated: texts.titleTruncated,
+      curatorTruncated: texts.curatorTruncated || layout.curatorShortened,
       wearTruncated: texts.wearTruncated,
       careTruncated: texts.careTruncated,
       careSymbolsDropped: texts.careSymbolsDropped,
@@ -170,15 +183,24 @@ export async function planEditionCardsByOrder(
       visibleFrom: scheduled ? row.visibleFrom : null,
       data: {
         editionName,
-        productName: row.name,
-        curatorNote: texts.curatorNote,
+        productName: texts.title,
+        curatorNote: layout.curatorNote,
         wearNote: texts.wearNote,
         wearSource: texts.wearSource,
         careNote: texts.careNote,
-        // Presente vai "sem preço na embalagem": o QR leva à home, não à peça.
-        qrUrl: isGift ? siteUrl() : `${siteUrl()}/produto/${row.slug}`,
+        qrUrl,
         qrTarget: isGift ? "home" : "peca",
         printedAddress,
+        layout: {
+          titleSize: layout.titleSize,
+          titleLines: layout.titleLines,
+          quoteSize: layout.quoteSize,
+          quoteLines: layout.quoteLines,
+          bodySize: layout.bodySize,
+          wearLines: layout.wearLines,
+          careLines: layout.careLines,
+          qrSize: layout.qrSize,
+        },
       },
     });
   }
@@ -193,25 +215,32 @@ export function editionCardsStale(basis: {
   return basis.cards.some((card) => isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data));
 }
 
+export type EditionCardsStatus = {
+  /** Quantas peças do pedido ganham cartão (0 = o link "cartões" não faz sentido). */
+  cards: number;
+  /** Os cartões gerados ficaram velhos. Pedido ainda sem cartões nunca está velho. */
+  stale: boolean;
+};
+
 /**
- * Para vários pedidos de uma vez (a mesa de embalagem): quais têm cartões
- * velhos. Pedido ainda sem cartões nunca está velho.
+ * Para vários pedidos de uma vez (a mesa de embalagem, a tela do pedido):
+ * quantos cartões cada um tem e se os gerados ficaram velhos.
  */
-export async function editionCardsStaleByOrder(
+export async function editionCardsStatusByOrder(
   db: DbOrTx,
   targets: { id: string; isGift: boolean; editionCardsAt: Date | null; editionCardsFingerprint: unknown }[],
-): Promise<Map<string, boolean>> {
-  const generated = targets.filter((target) => target.editionCardsAt !== null);
-  const plans = await planEditionCardsByOrder(db, generated);
-  const stale = new Map<string, boolean>();
+): Promise<Map<string, EditionCardsStatus>> {
+  const plans = await planEditionCardsByOrder(db, targets);
+  const status = new Map<string, EditionCardsStatus>();
   for (const target of targets) {
-    const plan = plans.get(target.id);
-    stale.set(
-      target.id,
-      plan ? editionCardsStale({ editionCardsFingerprint: parseEditionFingerprints(target.editionCardsFingerprint), cards: plan.cards }) : false,
-    );
+    const plan = plans.get(target.id) ?? { cards: [], skipped: [] };
+    const stored = target.editionCardsAt ? parseEditionFingerprints(target.editionCardsFingerprint) : null;
+    status.set(target.id, {
+      cards: plan.cards.length,
+      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards }),
+    });
   }
-  return stale;
+  return status;
 }
 
 /** O pedido e o plano dos cartões dele. */
@@ -310,6 +339,7 @@ export type EditionCardView = {
   name: string;
   /** Tem frase da curadora no cartão (a tela avisa quando não tem). */
   hasCuratorNote: boolean;
+  titleTruncated: boolean;
   curatorTruncated: boolean;
   wearTruncated: boolean;
   careTruncated: boolean;
@@ -341,6 +371,7 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
     slug: card.slug,
     name: card.name,
     hasCuratorNote: card.data.curatorNote !== null,
+    titleTruncated: card.titleTruncated,
     curatorTruncated: card.curatorTruncated,
     wearTruncated: card.wearTruncated,
     careTruncated: card.careTruncated,
@@ -348,7 +379,11 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
     publicPage: card.publicPage,
     visibleFrom: card.visibleFrom,
     stale: isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data),
-    url: at ? editionCardUrl(storage, editionCardStoragePath(basis.orderId, card.productId), at) : null,
+    // Só existe imagem para o que entrou na última geração; peça nova no plano fica sem url (e velha).
+    url:
+      at && basis.editionCardsFingerprint?.[card.productId] !== undefined
+        ? editionCardUrl(storage, editionCardStoragePath(basis.orderId, card.productId), at)
+        : null,
   }));
   return {
     orderNumber: basis.orderNumber,

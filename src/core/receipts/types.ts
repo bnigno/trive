@@ -40,27 +40,49 @@ export interface ReceiptAssets {
 }
 
 /**
- * Texto que pode entrar na imagem: só letras latinas, números, pontuação e
- * espaços. Emoji ou símbolo fora disso faria o @vercel/og buscar fonte/twemoji
- * pela rede dentro da função — e o comprovante não pode depender de rede.
+ * O que as fontes embutidas de fato desenham (cmap do subset em
+ * brand-source/fonts/subset, interseção das quatro): ASCII, Latin-1 e
+ * Latin Extended-A (todo o português), traços, aspas curvas, "•", "…" e o
+ * sinal de menos. Fora disso o @vercel/og buscaria fonte ou twemoji pela
+ * rede dentro da função — e o comprovante não pode depender de rede.
+ */
+const IN_FONT = /^[\x20-\x7e\xa0-\xb4\xb6-\u017e\u2013\u2014\u2018-\u201a\u201c\u201d\u2022\u2026\u2212]$/u;
+
+/** Um caractere fora das fontes vira o mais parecido que elas têm, ou some. */
+function inFont(char: string): string {
+  if (IN_FONT.test(char)) return char;
+  // Compatibilidade (ﬁ → fi, "‼" → "!!", pontuação de largura inteira → ASCII).
+  const compat = char.normalize("NFKC");
+  if (compat !== char && [...compat].every((piece) => IN_FONT.test(piece))) return compat;
+  // Letra latina com acento que o subset não tem (ẽ, ș): fica a letra base.
+  const base = char.normalize("NFD").replace(/\p{M}/gu, "");
+  if (base !== "" && base !== char && [...base].every((piece) => IN_FONT.test(piece))) return base;
+  return "";
+}
+
+/**
+ * Texto que pode entrar na imagem: só o que as fontes embutidas têm. Emoji,
+ * símbolo ou letra fora do subset é trocado pelo equivalente latino ou some.
  */
 export function normalizeReceiptText(value: string): string {
-  return (
-    value
-      // Acento composto (NFD) vira a letra pronta que a fonte tem.
-      .normalize("NFC")
-      // Traços e aspas tipográficos fora do subset das fontes viram os ASCII.
-      .replace(/[\u2010\u2011]/g, "-")
-      .replace(/\u2032/g, "'")
-      .replace(/\u2033/g, '"')
-      .replace(/[\u201e\u201f]/g, '"')
-      .replace(/\u2039/g, "'")
-      .replace(/\u203a/g, "'")
-      .replace(/\u2030/g, "%")
-      // Símbolos que uma ficha usa ("30°C", "R$", "2+1", "×", "%") ficam.
-      .replace(/[^\p{Script=Latin}\p{N}\p{P}\p{Zs}°$+×%]/gu, "")
-      .replace(/\s{2,}/g, " ")
-      .replace(/\s+([,.;:!?…])/g, "$1")
-      .trim()
-  );
+  const mapped = value
+    // Acento composto (NFD) vira a letra pronta que a fonte tem.
+    .normalize("NFC")
+    // Traços, aspas e sinais tipográficos fora do subset viram os ASCII.
+    .replace(/[\u2010\u2011]/g, "-")
+    .replace(/\u2032/g, "'")
+    .replace(/\u2033/g, '"')
+    .replace(/[\u201e\u201f]/g, '"')
+    .replace(/[\u2039\u203a]/g, "'")
+    .replace(/\u2030/g, "%")
+    .replace(/\u203c/g, "!!")
+    .replace(/\u2049/g, "?!")
+    // Seletor de variação (o "️" invisível que o teclado põe depois de ‼): some.
+    .replace(/[\ufe00-\ufe0f]/g, "");
+  let out = "";
+  for (const char of mapped) out += inFont(char);
+  return out
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:!?…])/g, "$1")
+    .trim();
 }

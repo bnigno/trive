@@ -2,9 +2,25 @@
 // precisa saber, já em texto pronto: nome, a frase da curadora (se houver),
 // como vestir em Belém, cuidados na umidade e o endereço da peça (vira QR).
 
+/**
+ * Os corpos e as linhas escolhidos pelo orçamento de altura
+ * (core/edition/layout.ts): o desenho trava cada bloco nessas linhas.
+ */
+export interface EditionCardLayout {
+  titleSize: number;
+  titleLines: number;
+  quoteSize: number;
+  quoteLines: number;
+  bodySize: number;
+  wearLines: number;
+  careLines: number;
+  qrSize: number;
+}
+
 export interface EditionCardData {
   /** "EDIÇÃO CÍRIO" — a faixa pequena; null = "NOITE DE ESTREIA". */
   editionName: string | null;
+  /** O nome da peça como sai no título (já no teto de duas linhas). */
   productName: string;
   /** A frase da curadora, já limpa; null = o cartão não mostra a seção. */
   curatorNote: string | null;
@@ -20,4 +36,5 @@ export interface EditionCardData {
   qrTarget: "peca" | "home";
   /** O que sai escrito sob o QR: só o domínio ("trivemaison.com.br"). */
   printedAddress: string;
+  layout: EditionCardLayout;
 }

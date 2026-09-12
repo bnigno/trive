@@ -144,10 +144,13 @@ describe("buildEditionCardsBasis", () => {
       qrUrl: "https://trivemaison.com.br/produto/longo-dunas",
       qrTarget: "peca",
       printedAddress: "trivemaison.com.br",
+      // Texto curto: corpos máximos, uma linha de título e de frase, QR pequeno.
+      layout: { titleSize: 84, titleLines: 1, quoteSize: 44, quoteLines: 1, bodySize: 30, wearLines: 3, careLines: 1, qrSize: 220 },
     });
     expect(basis.cards[0]).toMatchObject({
       publicPage: "ok",
       visibleFrom: null,
+      titleTruncated: false,
       curatorTruncated: false,
       wearTruncated: false,
       careTruncated: false,
@@ -329,8 +332,35 @@ describe("publishEditionCards / getEditionCards", () => {
   it("a lista de embalagem sabe quais pedidos já têm cartões", async () => {
     const { orderId } = await createOrder();
     await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, orderId));
-    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsAt: null, editionCardsStale: false });
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCardsAt: null, editionCardsStale: false, editionCards: 2 });
     await publishEditionCards(sdb, storage, render, { orderId });
     expect((await listOrdersAwaitingPacking(sdb))[0]?.editionCardsAt).toBeInstanceOf(Date);
+  });
+
+  it("pedido só com não-roupa: a mesa sabe que não há cartão (sem link); peça que virou roupa depois da geração fica sem imagem, velha", async () => {
+    const extra = await createTestVariant(db, { sku: "ZZ-CANECA", costCents: 1000, onHand: 5, name: "Caneca de Cerâmica" });
+    await priced(extra.variantId, 3900);
+    const [rate] = await db.insert(schema.shippingRates).values({ name: "PAC", priceCents: 1990 }).returning({ id: schema.shippingRates.id });
+    const created = await createStoreOrder(sdb, {
+      customer: { fullName: "Juliana Ramos", document: VALID_CPF, phone: "(11) 99999-8888", marketingOptIn: true },
+      address: { postalCode: "01310-100", street: "Avenida Paulista", number: "1000", district: "Bela Vista", city: "São Paulo", state: "SP" },
+      items: [{ variantId: extra.variantId, quantity: 1, expectedUnitPriceCents: 3900 }],
+      shippingRateId: rate.id,
+      expectedShippingCents: 1990,
+    });
+    await db.update(schema.orders).set({ status: "paid", paidAt: new Date() }).where(eq(schema.orders.id, created.orderId));
+    expect((await listOrdersAwaitingPacking(sdb))[0]).toMatchObject({ editionCards: 0, editionCardsStale: false });
+
+    // Um pedido normal gerado; depois a categoria de uma peça muda de "Casa" para "Vestidos"… aqui,
+    // simulamos a peça entrando no plano: o mapa guardado não a conhece → sem url, velha.
+    const { orderId, bolsaId } = await createOrder();
+    await publishEditionCards(sdb, storage, render, { orderId });
+    await db
+      .update(schema.orders)
+      .set({ editionCardsFingerprint: {} })
+      .where(eq(schema.orders.id, orderId));
+    const view = await getEditionCards(sdb, storage, orderId);
+    expect(view.cards.find((card) => card.productId === bolsaId)).toMatchObject({ url: null, stale: true });
+    expect(view.stale).toBe(true);
   });
 });

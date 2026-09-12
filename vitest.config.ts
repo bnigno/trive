@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.{ts,tsx}"],
     environment: "node",
     // Testes de integração sobem instâncias PGlite (Postgres WASM): limitamos o
     // paralelismo e alargamos timeouts para não saturar a CPU em suíte cheia.

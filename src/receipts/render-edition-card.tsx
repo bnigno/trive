@@ -5,37 +5,40 @@
 // "Cuidados na umidade") e, embaixo, o QR para a página da peça ao lado da
 // faixa noir com o lockup. Apresentação pura: EditionCardData + assets → PNG.
 // Satori: só flexbox, todo <div> com mais de um filho declara display:flex,
-// sem rede. Os corpos são para 9 cm de largura: 1 px = 0,083 mm impresso,
-// então 26 px ≈ 6 pt — o mínimo que se lê a um palmo.
+// flexShrink é 0 por padrão, sem rede. A geometria e os corpos vêm do core
+// (core/edition/layout.ts fecha o orçamento de altura); aqui cada bloco de
+// texto ainda ganha uma trava na fronteira da última linha permitida — se a
+// estimativa errar por uma linha, some a linha inteira, nunca meia.
 import { ImageResponse } from "next/og";
 
 import { postEyebrow } from "@/core/cards/post";
-import { editionInvite, fitEditionTitle, textWidthUnits } from "@/core/edition/text";
+import { EDITION_GEOMETRY as G } from "@/core/edition/layout";
+import { editionInvite } from "@/core/edition/text";
 import type { EditionCardData } from "@/core/edition/types";
 import { normalizeReceiptText, type ReceiptAssets } from "@/core/receipts/types";
 
-import { qrPngDataUrl, qrVersion } from "./qr";
+import { qrPngDataUrl } from "./qr";
 
-export const EDITION_CARD_WIDTH = 1080;
-export const EDITION_CARD_HEIGHT = 1440;
+export const EDITION_CARD_WIDTH = G.width;
+export const EDITION_CARD_HEIGHT = G.height;
 
-/** Corpos em px na imagem (× 0,083 = mm no papel de 9 cm). */
+/** Corpos em px na imagem (× 0,083 = mm no papel de 9 cm); os elásticos vêm do layout. */
 export const EDITION_TYPE = {
-  eyebrow: 26,
-  label: 26,
-  body: 30,
-  bodyMin: 26,
-  quoteMin: 34,
-  quoteMax: 44,
-  byline: 24,
+  eyebrow: G.eyebrow.size,
+  /** Nome de edição longo: corpo e espaçamento menores para caber numa linha (24 px ≈ 5,7 pt). */
+  eyebrowTight: 24,
+  label: G.label.size,
+  body: G.body.sizes[0],
+  bodyMin: G.body.sizes[G.body.sizes.length - 1],
+  quoteMin: G.quote.sizes[G.quote.sizes.length - 1],
+  quoteMax: G.quote.sizes[0],
+  byline: G.byline.size,
   invite: 32,
   address: 30,
-  /** ~1,8 cm impresso: lê no celular sem aproximar demais. */
-  qr: 220,
-  /** Um endereço longo (slug grande) faz um QR mais denso: cresce para ler no celular. */
-  qrDense: 260,
+  qrMin: 220,
+  qrMax: 300,
   lockupWidth: 220,
-  lockupHeight: 98,
+  lockupHeight: G.band.lockupHeight,
 } as const;
 
 const C = {
@@ -52,44 +55,20 @@ const C = {
 const SERIF = "Cormorant Garamond";
 const SANS = "Jost";
 
-/** Nome longo desce de corpo para caber em duas linhas. */
-export function editionTitleFontSize(name: string): number {
-  if (name.length <= 18) return 84;
-  if (name.length <= 28) return 68;
-  if (name.length <= 40) return 56;
-  return 46;
+/** A faixa da edição numa linha só: acima de ~30 caracteres, corpo 24 e espaçamento 4. */
+export function eyebrowStyle(text: string): { fontSize: number; letterSpacing: number } {
+  return text.length > 30 ? { fontSize: EDITION_TYPE.eyebrowTight, letterSpacing: 4 } : { fontSize: EDITION_TYPE.eyebrow, letterSpacing: 7 };
 }
 
-/** A frase da curadora: quanto mais longa, menor. */
-export function editionQuoteFontSize(note: string): number {
-  const units = textWidthUnits(note);
-  if (units <= 70) return EDITION_TYPE.quoteMax;
-  if (units <= 130) return 38;
-  if (units <= 220) return 36;
-  return EDITION_TYPE.quoteMin;
-}
-
-/** Os quadros: um texto que enche as três linhas desce um pouco de corpo. */
-export function editionBodyFontSize(wearNote: string, careNote: string): number {
-  const units = Math.max(textWidthUnits(wearNote), textWidthUnits(careNote));
-  if (units <= 100) return EDITION_TYPE.body;
-  if (units <= 140) return 28;
-  return EDITION_TYPE.bodyMin;
-}
-
-/** O QR cresce quando o endereço pede uma versão densa (mais módulos). */
-export function editionQrSize(qrUrl: string): number {
-  return qrVersion(qrUrl) <= 5 ? EDITION_TYPE.qr : EDITION_TYPE.qrDense;
-}
-
-function Section({ label, text, fontSize }: { label: string; text: string; fontSize: number }) {
+function Section({ label, text, fontSize, lines }: { label: string; text: string; fontSize: number; lines: number }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: G.label.gap, flexShrink: 0 }}>
       <div
         style={{
           display: "flex",
           fontFamily: SANS,
-          fontSize: EDITION_TYPE.label,
+          fontSize: G.label.size,
+          lineHeight: G.label.lineHeight,
           fontWeight: 500,
           letterSpacing: 4,
           color: C.gold800,
@@ -102,10 +81,13 @@ function Section({ label, text, fontSize }: { label: string; text: string; fontS
           display: "flex",
           fontFamily: SANS,
           fontSize,
-          lineHeight: 1.4,
+          lineHeight: G.body.lineHeight,
           color: C.ink700,
           // Uma palavra sem espaço (arroba, hashtag) quebra em vez de atravessar a moldura.
           wordBreak: "break-word",
+          // A trava: as linhas que o orçamento assumiu, inteiras; a seguinte some por inteiro.
+          maxHeight: Math.round(lines * G.body.lineHeight * fontSize),
+          overflow: "hidden",
         }}
       >
         {normalizeReceiptText(text)}
@@ -114,17 +96,18 @@ function Section({ label, text, fontSize }: { label: string; text: string; fontS
   );
 }
 
-function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lockup: string; qr: string; qrSize: number }) {
-  const name = fitEditionTitle(data.productName);
+function EditionCard({ data, lockup, qr }: { data: EditionCardData; lockup: string; qr: string }) {
+  const name = normalizeReceiptText(data.productName);
   const quote = data.curatorNote ? normalizeReceiptText(data.curatorNote) : null;
   const wearLabel = data.wearSource === "ficha" ? "COMO VESTE" : "COMO VESTIR EM BELÉM";
-  const bodyFontSize = editionBodyFontSize(data.wearNote, data.careNote);
+  const eyebrow = normalizeReceiptText(postEyebrow(data.editionName));
+  const { titleSize, titleLines, quoteSize, quoteLines, bodySize, wearLines, careLines, qrSize } = data.layout;
 
   return (
     <div
       style={{
-        width: EDITION_CARD_WIDTH,
-        height: EDITION_CARD_HEIGHT,
+        width: G.width,
+        height: G.height,
         display: "flex",
         flexDirection: "column",
         backgroundColor: C.ivory50,
@@ -135,11 +118,7 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
         border: `1px solid ${C.ivory300}`,
       }}
     >
-      {/*
-        Moldura: hairline marfim com filete dourado por dentro. No Satori o
-        flexShrink padrão é 0: sem o 1 aqui, a moldura cresceria com o texto e
-        a faixa noir sairia do cartão.
-      */}
+      {/* Moldura: hairline marfim com filete dourado por dentro (flexShrink 1 para nunca crescer com o texto) */}
       <div
         style={{
           display: "flex",
@@ -162,52 +141,57 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
             padding: "40px 56px 0",
           }}
         >
-          {/* Faixa da edição */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              fontSize: EDITION_TYPE.eyebrow,
-              fontWeight: 500,
-              letterSpacing: 7,
-              color: C.gold800,
-            }}
-          >
-            {normalizeReceiptText(postEyebrow(data.editionName))}
-          </div>
-
-          {/* Nome da peça */}
+          {/* Faixa da edição: uma linha, centrada */}
           <div
             style={{
               display: "flex",
               justifyContent: "center",
               textAlign: "center",
-              marginTop: 22,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              lineHeight: G.eyebrow.lineHeight,
+              fontWeight: 500,
+              color: C.gold800,
+              ...eyebrowStyle(eyebrow),
+            }}
+          >
+            {eyebrow}
+          </div>
+
+          {/* Nome da peça: até duas linhas inteiras */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              textAlign: "center",
+              marginTop: G.title.marginTop,
               fontFamily: SERIF,
               fontStyle: "italic",
-              fontSize: editionTitleFontSize(name),
-              lineHeight: 1.08,
+              fontSize: titleSize,
+              lineHeight: G.title.lineHeight,
               color: C.ink900,
               wordBreak: "break-word",
+              maxHeight: Math.round(titleLines * G.title.lineHeight * titleSize),
+              overflow: "hidden",
             }}
           >
             {name}
           </div>
 
           {/* Filete curto */}
-          <div style={{ display: "flex", justifyContent: "center", marginTop: 22 }}>
-            <div style={{ display: "flex", width: 72, height: 2, backgroundColor: C.gold400 }} />
+          <div style={{ display: "flex", justifyContent: "center", marginTop: G.rule.marginTop }}>
+            <div style={{ display: "flex", width: 72, height: G.rule.height, backgroundColor: C.gold400 }} />
           </div>
 
-          {/* A frase da curadora (quando existe) */}
+          {/* A frase da curadora (quando existe): até cinco linhas inteiras */}
           {quote ? (
             <div
               style={{
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                marginTop: 26,
-                gap: 12,
+                marginTop: G.quote.marginTop,
+                gap: G.quote.gap,
               }}
             >
               <div
@@ -216,10 +200,12 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
                   textAlign: "center",
                   fontFamily: SERIF,
                   fontStyle: "italic",
-                  fontSize: editionQuoteFontSize(quote),
-                  lineHeight: 1.28,
+                  fontSize: quoteSize,
+                  lineHeight: G.quote.lineHeight,
                   color: C.ink900,
                   wordBreak: "break-word",
+                  maxHeight: Math.round(quoteLines * G.quote.lineHeight * quoteSize),
+                  overflow: "hidden",
                 }}
               >
                 {`“${quote}”`}
@@ -228,7 +214,8 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
                 style={{
                   display: "flex",
                   fontFamily: SANS,
-                  fontSize: EDITION_TYPE.byline,
+                  fontSize: G.byline.size,
+                  lineHeight: G.byline.lineHeight,
                   letterSpacing: 4,
                   color: C.ink500,
                 }}
@@ -240,16 +227,16 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
 
           {/*
             Os dois quadros: no meio do que sobra (os dois espaçadores dividem
-            a folga), para o cartão não ficar oco. Se um dia o texto passar do
-            teto, é este bloco que encolhe e corta embaixo — o QR e a faixa
-            noir nunca saem do cartão.
+            a folga), para o cartão não ficar oco. Se mesmo assim algo passar,
+            é este bloco que encolhe e corta embaixo — o QR e a faixa noir
+            nunca saem do cartão.
           */}
           <div
             style={{
               display: "flex",
               flexDirection: "column",
-              marginTop: quote ? 20 : 32,
-              paddingBottom: 20,
+              marginTop: quote ? G.boxes.marginTopWithQuote : G.boxes.marginTopAlone,
+              paddingBottom: G.boxes.paddingBottom,
               flexGrow: 1,
               flexShrink: 1,
               minHeight: 0,
@@ -260,14 +247,14 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 36,
+                gap: G.boxes.gap,
                 flexShrink: 1,
                 minHeight: 0,
                 overflow: "hidden",
               }}
             >
-              <Section label={wearLabel} text={data.wearNote} fontSize={bodyFontSize} />
-              <Section label="CUIDADOS NA UMIDADE" text={data.careNote} fontSize={bodyFontSize} />
+              <Section label={wearLabel} text={data.wearNote} fontSize={bodySize} lines={wearLines} />
+              <Section label="CUIDADOS NA UMIDADE" text={data.careNote} fontSize={bodySize} lines={careLines} />
             </div>
             <div style={{ display: "flex", flexGrow: 1, flexShrink: 1, minHeight: 0 }} />
           </div>
@@ -278,7 +265,7 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
               display: "flex",
               alignItems: "center",
               gap: 24,
-              paddingBottom: 24,
+              paddingBottom: G.footer.paddingBottom,
               flexShrink: 0,
             }}
           >
@@ -317,7 +304,7 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
               justifyContent: "center",
               margin: "0 -56px",
               backgroundColor: C.noir950,
-              padding: "16px 0",
+              padding: `${G.band.padding}px 0`,
               flexShrink: 0,
             }}
           >
@@ -332,11 +319,10 @@ function EditionCard({ data, lockup, qr, qrSize }: { data: EditionCardData; lock
 /** PNG 1080×1440 do cartão. Sem rede: fontes, lockup e QR vêm de dentro. */
 export async function renderEditionCardPng(data: EditionCardData, assets: ReceiptAssets): Promise<Buffer> {
   const lockup = `data:image/png;base64,${assets.lockupDarkPng.toString("base64")}`;
-  const qrSize = editionQrSize(data.qrUrl);
-  const qr = await qrPngDataUrl(data.qrUrl, qrSize);
-  const response = new ImageResponse(<EditionCard data={data} lockup={lockup} qr={qr} qrSize={qrSize} />, {
-    width: EDITION_CARD_WIDTH,
-    height: EDITION_CARD_HEIGHT,
+  const qr = await qrPngDataUrl(data.qrUrl, data.layout.qrSize);
+  const response = new ImageResponse(<EditionCard data={data} lockup={lockup} qr={qr} />, {
+    width: G.width,
+    height: G.height,
     fonts: assets.fonts.map((font) => ({
       name: font.name,
       data: font.data,

@@ -77,12 +77,43 @@ describe("fitEditionNote / normalizeEditionNote", () => {
     expect(caixaAlta.text!.length).toBeLessThan(cabe.text!.length);
   });
 
-  it("o título cabe em duas linhas; mais que isso corta na palavra", () => {
-    expect(fitEditionTitle("Longo Dunas")).toBe("Longo Dunas");
+  it("o título cabe em duas linhas; mais que isso corta na palavra, avisando", () => {
+    expect(fitEditionTitle("Longo Dunas")).toEqual({ text: "Longo Dunas", truncated: false });
     const enorme = fitEditionTitle("Vestido Longo de Linho Puro com Bordado Feito à Mão pelas Artesãs da Ilha do Marajó");
-    expect(enorme.endsWith("…")).toBe(true);
-    expect(textWidthUnits(enorme)).toBeLessThanOrEqual(EDITION_TITLE_MAX);
-    expect(enorme).not.toMatch(/\s…$/);
+    expect(enorme.truncated).toBe(true);
+    expect(enorme.text.endsWith("…")).toBe(true);
+    expect(textWidthUnits(enorme.text, "serif")).toBeLessThanOrEqual(EDITION_TITLE_MAX);
+    expect(enorme.text).not.toMatch(/\s…$/);
+  });
+
+  it("'aprox.' e 'Obs.' não fecham frase: o corte cai na palavra, com reticências", () => {
+    const ficha =
+      "Caimento solto no corpo, com comprimento na altura do joelho e mangas três quartos. A modelo veste M e tem aprox. 1,72 m de altura, busto 88 cm, cintura 68 cm e quadril 96 cm, e usa sandália baixa nas fotos.";
+    const cortado = fitEditionNote(ficha);
+    expect(cortado.truncated).toBe(true);
+    // A última frase de verdade que cabe é a primeira — não "…tem aprox.".
+    expect(cortado.text).toBe("Caimento solto no corpo, com comprimento na altura do joelho e mangas três quartos.");
+    const soAprox = fitEditionNote(`A modelo veste M e tem aprox. 1,72 m de altura e ${"usa sandália baixa nas fotos ".repeat(12)}`);
+    expect(soAprox.text).not.toMatch(/aprox\.$/);
+    expect(soAprox.text!.endsWith("…")).toBe(true);
+    const obs = fitEditionNote(`Tecido que acompanha o corpo sem marcar. Obs. a modelo tem 1,70 m e ${"veste M ".repeat(30)}`);
+    expect(obs.text).not.toMatch(/Obs\.$/);
+    // Um ponto antes de número também não: "veste do 36 ao 38. 40 e 42 sob encomenda".
+    const numeros = fitEditionNote(
+      `Peça de tecido leve e caimento solto, feita para o calor de Belém, veste do 36 ao 38. 40 e 42 sob encomenda, ${"com prazo de dez dias ".repeat(8)}`,
+    );
+    expect(numeros.text).not.toMatch(/38\.$/);
+    expect(numeros.text!.endsWith("…")).toBe(true);
+  });
+
+  it("aspas de citação no meio ou no fim da nota ficam as duas; marcadores de lista somem", () => {
+    expect(fitEditionNote('Minha cliente chamou de "a peça do ano"', EDITION_CURATOR_MAX, { quotes: true }).text).toBe(
+      'Minha cliente chamou de "a peça do ano".',
+    );
+    expect(fitEditionNote("Uma cliente disse “nunca vi um linho assim”.", EDITION_CURATOR_MAX, { quotes: true }).text).toBe(
+      "Uma cliente disse “nunca vi um linho assim”.",
+    );
+    expect(normalizeEditionNote("- Lavar à mão\n• Secar à sombra\n* Não torcer")).toBe("Lavar à mão · Secar à sombra · Não torcer");
   });
 
   it("o convite ao lado do QR muda com o destino", () => {
@@ -129,13 +160,41 @@ describe("editionFamily", () => {
     expect(editionFamily(null, "Pijama Camisola Noite")).not.toBe("blusa");
     expect(editionFamily(null, "Body Boneca")).toBe("blusa");
     expect(editionFamily(null, "Blusa térmica")).toBe("blusa");
+    // Na primeira palavra também: "Botão de Rosa" não é bota, "Topázio" não é top, "Calcinha" não é calça.
+    expect(editionFamily("Edição Círio", "Botão de Rosa Midi")).toBe("vestido");
+    expect(editionFamily(null, "Topázio Longo")).toBe("vestido");
+    expect(editionFamily(null, "Anelise")).not.toBe("acessorio");
+    expect(editionFamily(null, "Colarinho Alto")).not.toBe("acessorio");
+    expect(editionFamily(null, "Calcinha Praia")).not.toBe("calca");
+    expect(editionFamily(null, "Bota Cano Curto")).toBe("acessorio");
+    expect(editionFamily(null, "Top Cropped")).toBe("blusa");
   });
 
-  it("o que não é roupa não tem família — a mesma lista que a Lia usa", () => {
+  it("o que não é roupa não tem família — a mesma lista que a Lia usa; só a primeira palavra do nome veta", () => {
     expect(editionFamily("Casa", "Caneca Azul")).toBe("nenhuma");
     expect(editionFamily(null, "Garrafa Térmica 500ml")).toBe("nenhuma");
     expect(editionFamily(null, "Kit de Adesivos")).toBe("nenhuma");
+    expect(editionFamily("Casa e Decoração", "Vaso Azul")).toBe("nenhuma");
     expect(editionTexts({ productName: "Caneca", categoryName: "Casa", curatorNote: null, fitNotes: null, careNotes: null })).toBeNull();
+    // Flor, cor e estampa no nome não fazem a roupa virar utilidade; nem a categoria "Moda Casa".
+    expect(editionFamily("Vestidos", "Vestido Copo-de-Leite")).toBe("vestido");
+    expect(editionFamily(null, "Vestido Copo de Leite")).toBe("vestido");
+    expect(editionFamily(null, "Blusa Verde Garrafa")).toBe("blusa");
+    expect(editionFamily("Blazers", "Blazer Alfaiataria Verde Garrafa")).toBe("sobreposicao");
+    expect(editionFamily("Moda Casa", "Robe de Seda")).toBe("geral");
+    // A categoria de roupa vence qualquer palavra do nome.
+    expect(editionFamily("Vestidos", "Caneca")).toBe("vestido");
+  });
+
+  it("semijoias e calçados fora da lista curta são acessório (cuidado com pano seco, não sabão)", () => {
+    expect(editionFamily("Semijoias", "Argola Média Banho de Ouro")).toBe("acessorio");
+    expect(editionFamily("Joias", "Gargantilha Pérola")).toBe("acessorio");
+    expect(editionFamily(null, "Bracelete Dourado")).toBe("acessorio");
+    expect(editionFamily(null, "Papete Couro Caramelo")).toBe("acessorio");
+    expect(editionFamily(null, "Tamanco Madeira")).toBe("acessorio");
+    expect(editionTexts({ productName: "Argola Média", categoryName: "Semijoias", curatorNote: null, fitNotes: null, careNotes: null })!.careNote).toBe(
+      DEFAULT_CARE.acessorio,
+    );
   });
 });
 
@@ -192,6 +251,8 @@ describe("wearNoteFor / careNoteFor / editionTexts", () => {
     });
     expect(comNota).toEqual({
       family: "vestido",
+      title: "Longo Dunas",
+      titleTruncated: false,
       curatorNote: "Escolhi pelo caimento no calor.",
       curatorTruncated: false,
       wearNote: DEFAULT_WEAR.vestido,
@@ -209,7 +270,7 @@ describe("wearNoteFor / careNoteFor / editionTexts", () => {
       careNotes: null,
     })!;
     expect(longa.curatorTruncated).toBe(true);
-    expect(textWidthUnits(longa.curatorNote!)).toBeLessThanOrEqual(EDITION_CURATOR_MAX);
+    expect(textWidthUnits(longa.curatorNote!, "serif")).toBeLessThanOrEqual(EDITION_CURATOR_MAX);
     expect(longa.curatorNote!.endsWith(".")).toBe(true);
     expect(longa.wearSource).toBe("ficha");
     expect(longa.wearTruncated).toBe(false);

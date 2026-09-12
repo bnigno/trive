@@ -22,7 +22,7 @@ import {
 } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
-import { editionCardsStaleByOrder } from "@/services/edition-cards";
+import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { getSettingsMap } from "@/services/settings";
 import {
@@ -196,8 +196,10 @@ export interface OrderAwaitingPacking {
   isGift: boolean;
   /** Cartões da edição já gerados (o link diz "Imprimir" em vez de "Gerar"). */
   editionCardsAt: Date | null;
-  /** A ficha ou a nota de alguma peça mudou depois dos cartões: "Gerar de novo". */
+  /** O que sai no cartão mudou depois da geração: "Gerar de novo". */
   editionCardsStale: boolean;
+  /** Quantas peças do pedido ganham cartão (0 = sem link de cartões). */
+  editionCards: number;
 }
 
 /** Pedidos pagos ou em separação ainda sem foto do pacote, os mais antigos primeiro. */
@@ -239,13 +241,14 @@ export async function listOrdersAwaitingPacking(
     itemsByOrder.set(row.orderId, (itemsByOrder.get(row.orderId) ?? 0) + row.quantity);
   }
 
-  // Cartões velhos: a mesma régua da tela dos cartões (o que o cartão diria hoje).
-  const stale = await editionCardsStaleByOrder(db, rows);
+  // Cartões: quantos cada pedido tem e se os gerados ficaram velhos (a mesma régua da tela dos cartões).
+  const editionStatus = await editionCardsStatusByOrder(db, rows);
 
   return rows.map(({ editionCardsFingerprint: _fingerprint, ...row }) => ({
     ...row,
     itemsCount: itemsByOrder.get(row.id) ?? 0,
-    editionCardsStale: stale.get(row.id) ?? false,
+    editionCardsStale: editionStatus.get(row.id)?.stale ?? false,
+    editionCards: editionStatus.get(row.id)?.cards ?? 0,
   }));
 }
 
