@@ -10,6 +10,7 @@
 import { z } from "zod";
 
 import { formatCentsBRL } from "@/lib/money";
+import { bridgeContextLine, bridgeStateSchema } from "@/core/bot/site-bridge";
 
 export const NOTE_MAX_CHARS = 140;
 export const NOTES_MAX = 10;
@@ -85,6 +86,8 @@ export const botStateSchema = z
         at: z.string(),
       })
       .optional(),
+    /** A ponte do site: o que a cliente estava vendo quando tocou "Falar com a Lia". */
+    bridge: bridgeStateSchema.optional(),
   })
   .loose();
 
@@ -176,12 +179,16 @@ function formatDays(min: number, max: number): string {
  */
 export function renderContextNote(
   state: BotState,
-  extras: { lines?: readonly string[] } = {},
+  extras: { lines?: readonly string[]; now?: Date } = {},
 ): string | null {
   const linhas: string[] = [];
 
   if (state.displayName?.trim()) {
     linhas.push(`• Nome no WhatsApp: ${state.displayName.trim()}`);
+  }
+  // A ponte vem antes de tudo: é o motivo de a conversa existir.
+  if (state.bridge) {
+    linhas.push(`• ${bridgeContextLine(state.bridge, extras.now ?? new Date())}`);
   }
   if (state.notes && state.notes.length > 0) {
     linhas.push(`• Anotações: ${state.notes.join("; ")}`);

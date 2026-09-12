@@ -93,6 +93,12 @@ describe("waMeUrl", () => {
     expect(waMeUrl("+5511999998888")).toBe("https://wa.me/5511999998888");
   });
 
+  it("encodes '#' in the prefilled text as %23 (the bridge code survives the URL)", () => {
+    expect(waMeUrl("+5511999998888", "Oi Lia, vi o Longo Dunas (#K7F2)")).toBe(
+      "https://wa.me/5511999998888?text=Oi%20Lia%2C%20vi%20o%20Longo%20Dunas%20(%23K7F2)",
+    );
+  });
+
   it("encodes the prefilled text", () => {
     expect(waMeUrl("+5511999998888", "Olá! Vim pelo site da TRIVÉ")).toBe(
       "https://wa.me/5511999998888?text=Ol%C3%A1!%20Vim%20pelo%20site%20da%20TRIV%C3%89",

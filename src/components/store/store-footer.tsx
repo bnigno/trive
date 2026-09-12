@@ -7,7 +7,7 @@ import Link from "next/link";
 import { Monogram } from "@/components/store/brand/monogram";
 import { Tagline } from "@/components/store/brand/tagline";
 import { Wordmark } from "@/components/store/brand/wordmark";
-import { IconWhatsApp } from "@/components/store/icons";
+import { LiaLink } from "@/components/store/lia-link";
 import { NoirStage } from "@/components/store/noir-stage";
 import { eyebrowNoir, hairlineNoir } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
@@ -23,15 +23,19 @@ export function StoreFooter({
   address,
   email,
   whatsapp,
+  sellerName,
 }: {
   storeName: string;
   cnpj: string;
   address: string;
   email: string;
   whatsapp: string;
+  /** Nome da vendedora (setting bot_seller_name) para "Falar com a Lia". */
+  sellerName: string;
 }) {
   const hasStoreData = Boolean(cnpj || address || email || whatsapp);
-  const whatsappUrl = waMeUrl(whatsapp, `Olá! Vim pelo site da ${storeName}`);
+  // Sem código (a ponte grava o dela ao tocar): é o link de emergência do botão.
+  const whatsappUrl = waMeUrl(whatsapp, `Oi ${sellerName}, vim pelo site da ${storeName}`);
 
   return (
     <NoirStage
@@ -100,17 +104,7 @@ export function StoreFooter({
             <p className="min-h-11 py-2.5 text-sm text-ivory-300">
               Envio para todo o Brasil
             </p>
-            {whatsappUrl ? (
-              <a
-                href={whatsappUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={footerLink}
-              >
-                <IconWhatsApp className="h-5 w-5" />
-                Falar com a maison
-              </a>
-            ) : null}
+            {whatsappUrl ? <LiaLink source="footer" sellerName={sellerName} fallbackUrl={whatsappUrl} variant="footer" /> : null}
           </div>
         </div>
 

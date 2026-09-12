@@ -24,6 +24,7 @@ import {
   publicMdUrl,
   publicThumbUrl,
 } from "@/services/store-catalog";
+import { loadBridgeSettings, plainBridgeUrl } from "@/services/site-carts";
 
 import { ProductDetailClient } from "./product-detail-client";
 
@@ -100,6 +101,9 @@ export default async function ProdutoPage({ params }: Props) {
     fitNotes: product.fitNotes,
   };
   const sizeChart = buildSizeChart(product.variants, product.attributesSchema);
+  // "Falar com a Lia": o telefone da loja e o nome da vendedora (ISR de 5 min).
+  const bridge = await loadBridgeSettings(db);
+  const lia = { sellerName: bridge.sellerName, fallbackUrl: plainBridgeUrl(bridge) };
   // A nota da curadora: o texto e, se ela gravou, o áudio na voz dela.
   const curatorNote = {
     note: product.curatorNote,
@@ -169,6 +173,7 @@ export default async function ProdutoPage({ params }: Props) {
         axes={product.attributesSchema}
         variants={product.variants}
         images={galleryImages}
+        lia={lia}
         heading={
           <div>
             {product.brand ? (

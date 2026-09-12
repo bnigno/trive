@@ -34,6 +34,7 @@ import {
   linkGold,
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
+import { LiaLink } from "@/components/store/lia-link";
 import { formatCentsBRL } from "@/lib/money";
 import { formatCep } from "@/lib/cep";
 import type { ShippingQuote } from "@/services/store-catalog";
@@ -59,7 +60,7 @@ type CouponState =
 const smallLink =
   "inline-flex min-h-11 items-center font-store text-xs text-ink-500 underline underline-offset-4 transition-colors hover:text-gold-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600";
 
-export function CartView() {
+export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: string | null } | null }) {
   const { items, count, subtotalCents, setQuantity, removeItem } = useCart();
 
   // O carrinho hidrata em useEffect; até lá mostramos um esqueleto para não
@@ -458,6 +459,18 @@ export function CartView() {
                 totalCents={totalCents}
               />
               <CheckoutCta href={checkoutHref} className="mt-5" />
+              {lia?.fallbackUrl ? (
+                <div className="mt-4 flex flex-col gap-1">
+                  <LiaLink
+                    source="cart"
+                    sellerName={lia.sellerName}
+                    fallbackUrl={lia.fallbackUrl}
+                    items={items.map((line) => ({ sku: line.sku, quantity: line.quantity }))}
+                    className="w-full"
+                  />
+                  <p className="font-store text-[13px] text-ink-500">Prefere fechar pelo WhatsApp? A {lia.sellerName} recebe a sua sacola como está.</p>
+                </div>
+              ) : null}
             </SheetSection>
           </div>
         </Sheet>

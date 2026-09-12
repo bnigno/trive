@@ -593,6 +593,62 @@ export async function listPublicVariantFacts(
 }
 
 // ---------------------------------------------------------------------------
+// 4b. getSellableVariantBySku — uma variação vendável pelo código (a ponte
+// do site, a Lia e a sacola parada falam em SKU). Produto ativo e não
+// excluído, variação ativa com preço vigente; null quando não existe.
+// ---------------------------------------------------------------------------
+
+export type SellableVariant = {
+  variantId: string;
+  productId: string;
+  sku: string;
+  name: string;
+  slug: string;
+  attributes: Record<string, string>;
+  attributesSchema: string[];
+  weightGrams: number | null;
+  priceCents: number;
+  /** Disponível agora (on_hand − reserved), nunca negativo. */
+  availableQty: number;
+};
+
+export async function getSellableVariantBySku(db: ServiceDb, sku: string): Promise<SellableVariant | null> {
+  const clean = z.string().trim().min(1).parse(sku);
+  const [row] = await db
+    .select({
+      variantId: productVariants.id,
+      productId: products.id,
+      sku: productVariants.sku,
+      name: products.name,
+      slug: products.slug,
+      attributes: productVariants.attributes,
+      attributesSchema: products.attributesSchema,
+      weightGrams: productVariants.weightGrams,
+      priceCents: priceVersions.priceCents,
+      available: sql<string>`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0)`,
+    })
+    .from(productVariants)
+    .innerJoin(products, and(eq(products.id, productVariants.productId), eq(products.status, "active"), isNull(products.deletedAt)))
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
+    .where(and(ilike(productVariants.sku, clean), eq(productVariants.isActive, true), isNull(productVariants.deletedAt)))
+    .limit(1);
+  if (!row) return null;
+  return {
+    variantId: row.variantId,
+    productId: row.productId,
+    sku: row.sku,
+    name: row.name,
+    slug: row.slug,
+    attributes: (row.attributes ?? {}) as Record<string, string>,
+    attributesSchema: (row.attributesSchema ?? []) as string[],
+    weightGrams: row.weightGrams,
+    priceCents: Number(row.priceCents),
+    availableQty: Math.max(0, Number(row.available)),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 5. publicImageUrl — função PURA (roda em server component da vitrine).
 // Sem service key: bucket product-images é público no Supabase Storage.
 // ---------------------------------------------------------------------------
