@@ -35,7 +35,8 @@ function revalidateProduct(productId: string): void {
   // na hora (a home lista peças, a coleção e a página da peça mostram o Cód.).
   revalidatePath("/");
   revalidatePath("/produtos");
-  revalidatePath("/produto/[slug]", "page");
+  // A tag da página leva o grupo de rota: sem "(store)" nada é invalidado.
+  revalidatePath("/(store)/produto/[slug]", "page");
 }
 
 /** Reconstrói atributos a partir de inputs nomeados "attr:<eixo>". */

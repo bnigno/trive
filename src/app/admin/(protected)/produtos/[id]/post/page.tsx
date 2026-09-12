@@ -65,6 +65,8 @@ export default async function PostDaPecaPage({
           caption={preview!.caption}
           hasPost={preview!.post !== null}
           hasStory={preview!.story !== null}
+          carousel={preview!.carousel.map((entry) => ({ color: entry.color, hasCard: entry.card !== null }))}
+          omittedColors={preview!.omittedColors}
         />
       )}
     </div>

@@ -9,6 +9,8 @@ import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/core/orders/payment-m
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
 import { toE164BR } from "@/lib/phone";
+import type { DbOrTx } from "@/queue/enqueue";
+import { enqueueProductCardRefresh } from "@/services/product-cards-queue";
 
 /** Base estrutural comum ao Db de produção, transações e o TestDb (PGlite). */
 export type ServiceDb = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -613,7 +615,23 @@ export async function updateSetting(
       before: current ? { value: current.value } : null,
       after: { value },
     });
+
+    // A edição e o nome da loja estão na faixa de todos os cartões: cada peça
+    // ativa é redesenhada em segundo plano, uma de cada vez.
+    if (CARD_SETTING_KEYS.has(parsed.key) && (current?.value ?? null) !== value) {
+      const active = await tx
+        .select({ id: schema.products.id })
+        .from(schema.products)
+        .where(and(eq(schema.products.status, "active"), isNull(schema.products.deletedAt)));
+      await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+        productIds: active.map((row) => row.id),
+        reason: parsed.key,
+      });
+    }
   });
 
   return { key: parsed.key, value };
 }
+
+/** Configurações que aparecem escritas no post da peça. */
+const CARD_SETTING_KEYS = new Set(["edition_name", "store_name"]);

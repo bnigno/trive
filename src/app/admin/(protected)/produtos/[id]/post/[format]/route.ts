@@ -17,7 +17,9 @@ export async function GET(
 ): Promise<Response> {
   await requireUser();
   const { id, format } = await params;
-  const parsed = z.enum(["post", "story"]).safeParse(format);
+  const parsed = z
+    .union([z.enum(["post", "story"]), z.custom<`carousel-${number}`>((value) => /^carousel-\d{1,2}$/.test(String(value)))])
+    .safeParse(format);
   if (!parsed.success) return new Response("Formato inválido.", { status: 404 });
   if (!z.uuid().safeParse(id).success) return new Response("Peça não encontrada.", { status: 404 });
 
@@ -25,7 +27,7 @@ export async function GET(
   try {
     file = await getProductPostFile(getDb(), getFileStorage(), {
       productId: id,
-      format: parsed.data,
+      format: parsed.data as "post" | "story" | `carousel-${number}`,
     });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -43,9 +45,9 @@ export async function GET(
       // A URL é fixa por peça e formato, mas o desenho muda quando o preço ou
       // a foto mudam: guardar 60 s devolveria a arte velha no "Atualizar".
       "Cache-Control": "private, no-store",
-      ...(download
-        ? { "Content-Disposition": `attachment; filename="${parsed.data}.jpg"` }
-        : {}),
+      // Nome com a peça e a cor: no iPhone o arquivo vai para Arquivos, e a
+      // dona precisa reconhecê-lo depois.
+      ...(download ? { "Content-Disposition": `attachment; filename="${file.filename}"` } : {}),
     },
   });
 }

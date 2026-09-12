@@ -2,7 +2,7 @@
 // Referência das fixtures: custo 1000, taxa 4,98%, margem 30%, to_90 up
 // => preço 1690. Com taxa 20%: 1000 / (1 - 0.2 - 0.3) = 2000 -> to_90 up = 2090.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import * as schema from "@/db/schema";
 import {
@@ -137,6 +137,48 @@ describe("getDefaultPolicy / updateDefaultPolicy", () => {
 });
 
 describe("updateSetting / getSettingsMap", () => {
+  it("trocar a edição (ou o nome da loja) pede a atualização do cartão de cada peça ativa, escalonada", async () => {
+    const a = await createTestVariant(db, { sku: "ED-A" });
+    const b = await createTestVariant(db, { sku: "ED-B" });
+    const rascunho = await createTestVariant(db, { sku: "ED-C" });
+    await db.update(schema.products).set({ status: "draft" }).where(eq(schema.products.id, rascunho.productId));
+    const refreshes = async () =>
+      db
+        .select({ aggregateId: schema.outboxEvents.aggregateId, nextAttemptAt: schema.outboxEvents.nextAttemptAt })
+        .from(schema.outboxEvents)
+        .where(and(eq(schema.outboxEvents.eventType, "product.card_refresh"), eq(schema.outboxEvents.status, "pending")))
+        .orderBy(schema.outboxEvents.nextAttemptAt);
+
+    await updateSetting(db, { key: "edition_name", value: "Edição Círio", userId: FIXED_USER_ID });
+    const events = await refreshes();
+    const ids = events.map((row) => row.aggregateId);
+    // Uma vez por peça ativa (o banco deste arquivo é compartilhado: pode haver outras ativas).
+    expect(ids.filter((id) => id === a.productId)).toHaveLength(1);
+    expect(ids.filter((id) => id === b.productId)).toHaveLength(1);
+    expect(ids).not.toContain(rascunho.productId);
+    // Uma de cada vez: 20 s entre uma peça e a seguinte.
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].nextAttemptAt.getTime() - events[i - 1].nextAttemptAt.getTime()).toBe(20_000);
+    }
+
+    // Mesmo valor de novo: nada mudou no cartão, nada enfileira.
+    const before = events.length;
+    await updateSetting(db, { key: "edition_name", value: "Edição Círio", userId: FIXED_USER_ID });
+    expect(await refreshes()).toHaveLength(before);
+    // Outra configuração qualquer não mexe em cartão.
+    await updateSetting(db, { key: "first_price_requires_approval", value: false, userId: FIXED_USER_ID });
+    expect(await refreshes()).toHaveLength(before);
+    // O nome da loja também está na faixa — mas o refresh já marcado para cada
+    // peça (ainda longe de vencer) cobre a mudança: nada novo entra.
+    await updateSetting(db, { key: "store_name", value: "TRIVÉ Maison", userId: FIXED_USER_ID });
+    expect(await refreshes()).toHaveLength(before);
+    // Com a fila limpa, o nome da loja enfileira um por peça ativa.
+    await db.update(schema.outboxEvents).set({ status: "done" }).where(eq(schema.outboxEvents.eventType, "product.card_refresh"));
+    await updateSetting(db, { key: "store_name", value: "TRIVÉ Maison Belém", userId: FIXED_USER_ID });
+    const byStoreName = (await refreshes()).filter((row) => row.aggregateId === a.productId || row.aggregateId === b.productId);
+    expect(byStoreName).toHaveLength(2);
+  });
+
   it("rejeita key desconhecida com ServiceError", async () => {
     await expect(
       updateSetting(db, {

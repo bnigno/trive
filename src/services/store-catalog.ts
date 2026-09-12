@@ -329,6 +329,7 @@ export interface PublicProductImage {
   color: string | null;
 }
 
+/** Cartão editorial do post: vira a prévia do link em WhatsApp e Instagram. */
 export interface PublicProductDetail {
   id: string;
   name: string;
@@ -338,6 +339,8 @@ export interface PublicProductDetail {
   composition: string | null;
   careNotes: string | null;
   fitNotes: string | null;
+  /** Post 4:5 da peça, quando já desenhado: é a prévia do link. */
+  postCardPath: string | null;
   brand: string | null;
   categoryName: string | null;
   /** Slug da categoria (link "Coleção / Sala" e relacionados), ou null. */
@@ -421,6 +424,7 @@ export async function getPublicProductBySlug(
     careNotes: product.careNotes,
     fitNotes: product.fitNotes,
     brand: product.brand,
+    postCardPath: product.postCardPath,
     categoryName: row.categoryName,
     categorySlug: row.categorySlug,
     attributesSchema: (product.attributesSchema ?? []) as string[],

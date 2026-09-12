@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { getRetryPolicy } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
 import { outboxEvents } from "@/db/schema";
 import { inngest } from "@/inngest/client";
@@ -35,6 +36,9 @@ export async function enqueueOutboxEvent(
     .values({
       eventType: parsed.eventType,
       payload: parsed.payload,
+      // Espelha a política do evento (o worker decide por ela; a coluna é o
+      // que /admin/fila mostra em "tentativas x/y").
+      maxAttempts: getRetryPolicy(parsed.eventType).maxAttempts,
       dedupeKey: parsed.dedupeKey ?? null,
       aggregateType: parsed.aggregateType ?? null,
       aggregateId: parsed.aggregateId ?? null,
@@ -45,6 +49,11 @@ export async function enqueueOutboxEvent(
 
   const id = inserted[0]?.id ?? null;
   if (id === null) return null;
+
+  // Evento marcado para depois não precisa de kick (o varredor de 1 min o
+  // entrega na hora certa); poupa uma chamada HTTP por linha dentro da
+  // transação de quem enfileira em lote.
+  if (parsed.nextAttemptAt && parsed.nextAttemptAt.getTime() > Date.now() + 1_000) return id;
 
   try {
     await inngest.send({

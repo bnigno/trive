@@ -3,7 +3,12 @@
 // Sem IA: template estável, do mesmo jeito toda vez (o post é dela, não do
 // modelo).
 
+import { fold, findColorAxis, imagesForColor } from "@/core/catalog/product-images";
+
 const MAX_CAPTION = 2200;
+
+/** Teto de imagens do carrossel — o mesmo do Instagram. */
+export const CAROUSEL_MAX = 10;
 
 /** Hashtags fixas da praça — ordem estável, sem repetição. */
 export const BELEM_HASHTAGS = [
@@ -82,3 +87,91 @@ export function buildPostCaption(input: PostCaptionInput): string {
 }
 
 export const POST_CAPTION_MAX = MAX_CAPTION;
+
+
+export type CarouselVariant = {
+  attributes: Record<string, string>;
+  /** Variação desativada não vende: a cor dela não entra no carrossel. */
+  isActive?: boolean;
+  /**
+   * Preço ativo da variação em centavos; null = sem preço (a vitrine não
+   * vende, o carrossel não anuncia). Ausente = quem chamou não informou.
+   */
+  activePriceCents?: number | null;
+};
+export type CarouselImage = { color: string | null; storagePath: string };
+export type CarouselEntry = {
+  color: string;
+  imagePath: string;
+  /** Preços ativos das variações desta cor (vazio = não informados). */
+  priceCents: number[];
+};
+export type CarouselPlan = {
+  entries: CarouselEntry[];
+  /** Cores que caberiam no carrossel mas passaram do teto do Instagram. */
+  omitted: string[];
+};
+
+/** Abaixo disto não é carrossel: o post da peça já mostra a única cor. */
+export const CAROUSEL_MIN = 2;
+
+/**
+ * Uma imagem por COR da peça, na ordem das variações: é o carrossel que a
+ * dona posta. Só entra cor com foto própria (etiquetada com a cor) e com
+ * preço — carrossel não inventa imagem nem anuncia o que a vitrine não vende;
+ * sem duas cores assim, não há carrossel (o post já mostra a peça).
+ */
+export function carouselColors(input: {
+  attributesSchema: unknown;
+  variants: readonly CarouselVariant[];
+  images: readonly CarouselImage[];
+}): CarouselPlan {
+  const axis = findColorAxis(input.attributesSchema);
+  if (!axis) return { entries: [], omitted: [] };
+
+  const byColor = new Map<string, CarouselEntry>();
+  for (const variant of input.variants) {
+    if (variant.isActive === false) continue;
+    if (variant.activePriceCents === null) continue;
+    const color = (variant.attributes[axis] ?? "").trim();
+    if (color === "") continue;
+    // A mesma dobra do casamento cor→foto: "Verde" e "verde " são uma cor só.
+    const key = fold(color);
+    const existing = byColor.get(key);
+    if (existing) {
+      if (typeof variant.activePriceCents === "number") existing.priceCents.push(variant.activePriceCents);
+      continue;
+    }
+    // Só a foto etiquetada com a cor: a foto geral repetida em cada slide
+    // seria o mesmo carrossel com rótulos diferentes.
+    const image = imagesForColor(input.images, color).find(
+      (candidate) => candidate.color !== null && fold(candidate.color) === key,
+    );
+    if (!image) continue;
+    byColor.set(key, {
+      color,
+      imagePath: image.storagePath,
+      priceCents: typeof variant.activePriceCents === "number" ? [variant.activePriceCents] : [],
+    });
+  }
+
+  const all = [...byColor.values()];
+  if (all.length < CAROUSEL_MIN) return { entries: [], omitted: [] };
+  return {
+    entries: all.slice(0, CAROUSEL_MAX),
+    omitted: all.slice(CAROUSEL_MAX).map((entry) => entry.color),
+  };
+}
+
+const EYEBROW_MAX = 60;
+
+/**
+ * "EDIÇÃO CÍRIO · TERRACOTA" — a faixa do cartão daquela cor. Quando não cabe,
+ * quem encurta é a edição: a cor é o que distingue este slide dos outros.
+ */
+export function carouselEyebrow(editionName: string | null | undefined, color: string): string {
+  const colorPart = color.trim().toUpperCase();
+  const room = Math.max(0, EYEBROW_MAX - colorPart.length - " · ".length);
+  const edition = postEyebrow(editionName).slice(0, room);
+  return `${edition} · ${colorPart}`.slice(0, EYEBROW_MAX);
+}

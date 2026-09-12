@@ -46,6 +46,7 @@ import {
 import { siteUrl } from "@/lib/site-url";
 import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { enqueueProductPublished } from "@/services/product-cards-queue";
 import { getSettingsMap } from "@/services/settings";
 import {
   listPublicProducts,
@@ -312,6 +313,10 @@ export async function cancelDrop(db: DbOrTx, input: { dropId: string; userId: st
     const ids = (await tx.select({ id: dropProducts.productId }).from(dropProducts).where(eq(dropProducts.dropId, row.id))).map((p) => p.id);
     if (ids.length > 0) {
       await tx.update(products).set({ visibleFrom: null, updatedAt: now }).where(inArray(products.id, ids));
+      // Sem a data, a peça ativa aparece na loja agora: o post nasce pronto.
+      for (const productId of ids) {
+        await enqueueProductPublished(tx, { productId, dedupeSuffix: `drop-cancel:${row.id}` });
+      }
     }
     await tx.insert(auditLog).values({
       actorType: "user",
@@ -450,6 +455,15 @@ export async function scheduleDrop(
       .update(products)
       .set({ status: "active", visibleFrom: view.publishAt, updatedAt: now })
       .where(and(inArray(products.id, ids), inArray(products.status, ["draft", "active"])));
+    // O desenho do post fica marcado para a hora da estreia (mesma chave que
+    // o handler usa ao reagendar: os dois caminhos se deduplicam).
+    for (const productId of ids) {
+      await enqueueProductPublished(tx, {
+        productId,
+        dedupeSuffix: `visible:${view.publishAt.getTime()}`,
+        nextAttemptAt: view.publishAt,
+      });
+    }
     await tx.delete(dropInvites).where(eq(dropInvites.dropId, input.dropId));
     if (ranked.length > 0) {
       await tx.insert(dropInvites).values(
@@ -521,10 +535,20 @@ export async function dispatchDropVip(db: DbOrTx, input: { dropId: string; now?:
 
 export async function publishDrop(db: DbOrTx, input: { dropId: string; now?: Date }): Promise<void> {
   const now = input.now ?? new Date();
-  await db
-    .update(drops)
-    .set({ status: "published", publishedAt: now, updatedAt: now })
-    .where(and(eq(drops.id, input.dropId), inArray(drops.status, ["scheduled", "vip_sent"])));
+  await db.transaction(async (tx) => {
+    const published = await tx
+      .update(drops)
+      .set({ status: "published", publishedAt: now, updatedAt: now })
+      .where(and(eq(drops.id, input.dropId), inArray(drops.status, ["scheduled", "vip_sent"])))
+      .returning({ id: drops.id });
+    if (published.length === 0) return;
+    // As peças acabam de aparecer na loja: post, story e carrossel prontos
+    // para a estreia (uma vez por lançamento; retry nunca duplica).
+    const ids = (await tx.select({ id: dropProducts.productId }).from(dropProducts).where(eq(dropProducts.dropId, input.dropId))).map((p) => p.id);
+    for (const productId of ids) {
+      await enqueueProductPublished(tx, { productId, dedupeSuffix: `drop:${input.dropId}` });
+    }
+  });
 }
 
 export async function dispatchDueDrops(db: DbOrTx, input: { now?: Date } = {}): Promise<{ vipQueued: number; published: number }> {

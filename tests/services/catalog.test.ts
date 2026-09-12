@@ -1285,3 +1285,173 @@ describe("createProduct com medidas por tamanho", () => {
     ]);
   });
 });
+
+describe("product.published e product.card_refresh", () => {
+  const cardEvents = async (productId: string) =>
+    (
+      await db
+        .select({
+          eventType: schema.outboxEvents.eventType,
+          dedupeKey: schema.outboxEvents.dedupeKey,
+          aggregateType: schema.outboxEvents.aggregateType,
+          aggregateId: schema.outboxEvents.aggregateId,
+          payload: schema.outboxEvents.payload,
+          maxAttempts: schema.outboxEvents.maxAttempts,
+          nextAttemptAt: schema.outboxEvents.nextAttemptAt,
+          createdAt: schema.outboxEvents.createdAt,
+        })
+        .from(schema.outboxEvents)
+        .where(inArray(schema.outboxEvents.eventType, ["product.published", "product.card_refresh"]))
+        .orderBy(schema.outboxEvents.createdAt)
+    ).filter((row) => row.aggregateId === productId);
+
+  it("ativar enfileira uma vez com o contrato do handler; mexer noutro campo ou reativar não enfileira; publicar de novo enfileira de novo", async () => {
+    const created = await createProduct(db, {
+      name: "Peça que vai para a vitrine",
+      variants: [{ sku: "VITRINE-1", initialQuantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+
+    expect(await cardEvents(id)).toEqual([]);
+    const activated = await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const [first] = await cardEvents(id);
+    // O que o handler vai ler: payload com o id, agregado "product", teto da política.
+    expect(first).toMatchObject({
+      eventType: "product.published",
+      dedupeKey: `product.published:${id}:${activated.updatedAt.getTime()}`,
+      aggregateType: "product",
+      aggregateId: id,
+      payload: { productId: id },
+      maxAttempts: 2,
+    });
+
+    // Já ativa: mexer noutro campo não pede post de novo; "ativar" de novo tampouco.
+    await updateProduct(db, { productId: id, brand: "TRIVÉ", userId: FIXED_USER_ID });
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toHaveLength(1);
+
+    // Voltar para rascunho e publicar de novo: um evento novo (a arte pode ter mudado).
+    await updateProduct(db, { productId: id, status: "draft", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toHaveLength(1);
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    expect((await cardEvents(id)).map((row) => row.eventType)).toEqual(["product.published", "product.published"]);
+  });
+
+  it("renomear a peça ativa pede a atualização do cartão (com atraso); em rascunho, não", async () => {
+    const created = await createProduct(db, {
+      name: "Nome antigo",
+      variants: [{ sku: "NOME-1", initialQuantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+    await updateProduct(db, { productId: id, name: "Ainda rascunho", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toEqual([]);
+
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const before = Date.now();
+    await updateProduct(db, { productId: id, name: "Nome novo", userId: FIXED_USER_ID });
+    const events = await cardEvents(id);
+    expect(events.map((row) => row.eventType)).toEqual(["product.published", "product.card_refresh"]);
+    const refresh = events[1];
+    expect(refresh.payload).toEqual({ productId: id });
+    expect(refresh.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 30_000);
+    // Mesmo nome de novo: nada mudou, nada enfileira.
+    await updateProduct(db, { productId: id, name: "Nome novo", userId: FIXED_USER_ID });
+    expect(await cardEvents(id)).toHaveLength(2);
+  });
+
+  it("ligar/desligar variação, trocar a cor dela ou criar uma cor nova pedem a atualização do cartão", async () => {
+    const created = await createProduct(db, {
+      name: "Peça com variações",
+      attributesSchema: ["cor"],
+      variants: [
+        { sku: "VAR-AREIA", attributes: { cor: "Areia" }, initialQuantity: 1 },
+        { sku: "VAR-TERRA", attributes: { cor: "Terracota" }, initialQuantity: 1 },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+    const terra = created.variants.find((variant) => variant.sku === "VAR-TERRA")!;
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const drain = async () =>
+      db.update(schema.outboxEvents).set({ status: "done" }).where(eq(schema.outboxEvents.eventType, "product.card_refresh"));
+    const refreshCount = async () => (await cardEvents(id)).filter((row) => row.eventType === "product.card_refresh").length;
+
+    await updateVariant(db, { variantId: terra.id, isActive: false, userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(1);
+    await drain();
+    // Mexer em algo que não está no cartão (código de barras) não pede nada.
+    await updateVariant(db, { variantId: terra.id, barcodeEan: "7891234567895", userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(1);
+    await updateVariant(db, { variantId: terra.id, attributes: { cor: "Vinho" }, userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(2);
+    await drain();
+    await addVariant(db, { productId: id, sku: "VAR-VERDE", attributes: { cor: "Verde" }, userId: FIXED_USER_ID });
+    expect(await refreshCount()).toBe(3);
+  });
+
+  it("variações criadas no mesmo instante saem em ordem estável: created_at, código, id", async () => {
+    const created = await createProduct(db, {
+      name: "Grade de uma vez",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "GRD-TERRA-M", attributes: { cor: "Terracota", tamanho: "M" }, initialQuantity: 1 },
+        { sku: "GRD-AREIA-M", attributes: { cor: "Areia", tamanho: "M" }, initialQuantity: 1 },
+        { sku: "GRD-AREIA-P", attributes: { cor: "Areia", tamanho: "P" }, initialQuantity: 1 },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const sameInstant = new Date("2026-09-12T12:00:00Z");
+    await db
+      .update(schema.productVariants)
+      .set({ createdAt: sameInstant })
+      .where(eq(schema.productVariants.productId, created.product.id));
+    const detail = await getProductDetail(db, created.product.id);
+    expect(detail.variants.map((variant) => variant.sku)).toEqual(["GRD-AREIA-M", "GRD-AREIA-P", "GRD-TERRA-M"]);
+  });
+
+  it("subir, recolorir e remover foto de peça ativa pedem a atualização do cartão; em rascunho, não", async () => {
+    const storage = new FakeFileStorage();
+    const created = await createProduct(db, {
+      name: "Peça com fotos",
+      attributesSchema: ["cor"],
+      variants: [{ sku: "FOTO-1", attributes: { cor: "Areia" }, initialQuantity: 1 }],
+      userId: FIXED_USER_ID,
+    });
+    const id = created.product.id;
+    const draftImage = await addProductImage(db, storage, {
+      productId: id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    expect(await cardEvents(id)).toEqual([]);
+
+    await updateProduct(db, { productId: id, status: "active", userId: FIXED_USER_ID });
+    const image = await addProductImage(db, storage, {
+      productId: id,
+      data: await makePng(),
+      contentType: "image/png",
+      userId: FIXED_USER_ID,
+    });
+    const drain = async () =>
+      db.update(schema.outboxEvents).set({ status: "done" }).where(eq(schema.outboxEvents.eventType, "product.card_refresh"));
+    await drain();
+    await setProductImageColor(db, { imageId: image.id, color: "Areia", userId: FIXED_USER_ID });
+    await drain();
+    await removeProductImage(db, storage, { imageId: draftImage.id, userId: FIXED_USER_ID });
+    const events = await cardEvents(id);
+    expect(events.map((row) => row.eventType)).toEqual([
+      "product.published",
+      "product.card_refresh",
+      "product.card_refresh",
+      "product.card_refresh",
+    ]);
+    expect(events.slice(1).map((row) => row.dedupeKey?.split(":")[2])).toEqual([
+      "image",
+      "image-color",
+      "image-removed",
+    ]);
+  });
+});

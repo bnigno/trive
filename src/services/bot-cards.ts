@@ -90,28 +90,47 @@ function mdPath(path: string): string {
 }
 
 /** Baixa a foto (md, senão full), corta em 3:4 e embute como JPEG. */
+/**
+ * A foto da peça não serve: sumiu do Storage, formato que o recorte não abre
+ * ou arquivo corrompido. Quem chama distingue isto de falha do próprio
+ * desenho (que merece retry) sem depender do texto do vendor.
+ */
+export class PhotoUnavailableError extends Error {
+  readonly imagePath: string;
+
+  constructor(imagePath: string, cause: unknown) {
+    super(`Foto indisponível (${imagePath}): ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "PhotoUnavailableError";
+    this.imagePath = imagePath;
+  }
+}
+
 async function loadPhoto(
   storage: FileStorage,
   imagePath: string,
   frame: { width: number; height: number },
 ): Promise<string> {
-  let file: { data: Buffer };
   try {
-    file = await storage.download(mdPath(imagePath));
-  } catch {
-    file = await storage.download(imagePath);
+    let file: { data: Buffer };
+    try {
+      file = await storage.download(mdPath(imagePath));
+    } catch {
+      file = await storage.download(imagePath);
+    }
+    const jpeg = await sharp(file.data)
+      .rotate()
+      .resize({
+        width: frame.width * PHOTO_SCALE,
+        height: frame.height * PHOTO_SCALE,
+        fit: "cover",
+        position: "attention",
+      })
+      .jpeg({ quality: 82 })
+      .toBuffer();
+    return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  } catch (error) {
+    throw new PhotoUnavailableError(imagePath, error);
   }
-  const jpeg = await sharp(file.data)
-    .rotate()
-    .resize({
-      width: frame.width * PHOTO_SCALE,
-      height: frame.height * PHOTO_SCALE,
-      fit: "cover",
-      position: "attention",
-    })
-    .jpeg({ quality: 82 })
-    .toBuffer();
-  return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
 }
 
 function validate(input: PublishBotCardInput): void {

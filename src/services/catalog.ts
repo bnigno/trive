@@ -7,6 +7,12 @@ import { and, eq, ilike, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
+import type { DbOrTx } from "@/queue/enqueue";
+import {
+  enqueueProductCardRefresh,
+  enqueueProductPublished,
+} from "@/services/product-cards-queue";
+
 import * as schema from "@/db/schema";
 import {
   auditLog,
@@ -539,6 +545,23 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
       after,
     });
 
+    // A peça entrou na vitrine: o post e o story dela vão sendo desenhados em
+    // segundo plano (regra 5 — efeito externo sai na MESMA transação). O tipo
+    // do tx aqui é o PgTransaction genérico do ServiceDb; a fila declara o do
+    // driver de produção. É o mesmo objeto em runtime.
+    if (patch.status === "active" && current.status !== "active") {
+      await enqueueProductPublished(tx as unknown as DbOrTx, {
+        productId: updated.id,
+        dedupeSuffix: String(updated.updatedAt.getTime()),
+      });
+    } else if (patch.name !== undefined && updated.name !== current.name) {
+      // O nome está escrito no cartão: a prévia do link não pode ficar velha.
+      await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+        productIds: [updated.id],
+        reason: "name",
+      });
+    }
+
     return updated;
   });
 }
@@ -596,6 +619,11 @@ export async function addVariant(db: ServiceDb, input: AddVariantInput) {
         entityType: "product_variant",
         entityId: variant.id,
         after: { productId: parsed.productId, sku: variant.sku, attributes: parsed.attributes },
+      });
+      // Cor nova pode entrar no carrossel (quando tiver foto e preço).
+      await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+        productIds: [parsed.productId],
+        reason: `variant:${variant.id}`,
       });
       return variant;
     });
@@ -772,6 +800,15 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
         before,
         after,
       });
+
+      // Variação que liga/desliga ou muda de cor mexe no "a partir de" e nos
+      // slides do carrossel.
+      if (patch.isActive !== undefined || patch.attributes !== undefined) {
+        await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+          productIds: [current.productId],
+          reason: `variant:${updated.id}`,
+        });
+      }
 
       return updated;
     });
@@ -985,7 +1022,10 @@ export async function getProductDetail(db: ServiceDb, productId: string) {
         isNull(productVariants.deletedAt),
       ),
     )
-    .orderBy(productVariants.createdAt);
+    // Variações criadas no mesmo instante (grade cor × tamanho numa só
+    // transação) saem pelo código, depois pelo id: ordem estável e legível —
+    // o carrossel é indexado por ela.
+    .orderBy(productVariants.createdAt, productVariants.sku, productVariants.id);
 
   const images = await db
     // Projeção explícita: a tela de produto do painel depende deste formato,
@@ -1221,6 +1261,12 @@ export async function addProductImage(
       },
     });
 
+    // Foto nova pode virar a capa do post ou a foto de uma cor do carrossel.
+    await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+      productIds: [parsed.productId],
+      reason: `image:${row.id}`,
+    });
+
     return row;
   });
 
@@ -1281,6 +1327,12 @@ export async function setProductImageColor(
       after: { color: updated.color },
     });
 
+    // A cor da foto decide qual slide do carrossel ela ilustra.
+    await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+      productIds: [image.productId],
+      reason: `image-color:${updated.id}`,
+    });
+
     return updated;
   });
 }
@@ -1315,6 +1367,11 @@ export async function removeProductImage(
       entityType: "product_image",
       entityId: row.id,
       before: { productId: row.productId, storagePath: row.storagePath },
+    });
+    // Sem esta foto, o post pode precisar de outra capa (ou de nenhuma).
+    await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
+      productIds: [row.productId],
+      reason: `image-removed:${row.id}`,
     });
     return row;
   });

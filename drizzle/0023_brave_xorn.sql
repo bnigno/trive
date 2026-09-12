@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "post_card_path" text;

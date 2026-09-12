@@ -8,6 +8,7 @@ import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
+import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -175,6 +176,22 @@ export type OutboxEvent = {
 
 export type OutboxHandler = (event: OutboxEvent) => Promise<void>;
 
+async function prerenderProductCards(event: OutboxEvent): Promise<void> {
+  const assets = await loadReceiptAssets();
+  await runProductCardsPrerender(
+    {
+      db: getDb(),
+      storage: getFileStorage(),
+      render: (data) => renderCardPng(data, assets),
+      revalidate: async (path) => {
+        const { revalidatePath } = await import("next/cache");
+        revalidatePath(path);
+      },
+    },
+    event,
+  );
+}
+
 export const outboxHandlers: Record<string, OutboxHandler> = {
   "system.ping": async (event) => {
     console.log(`[outbox] system.ping received (event ${event.id})`);
@@ -240,6 +257,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       `[order.receipt] ${orderId} → ${JSON.stringify(result)} em ${Date.now() - startedAt} ms`,
     );
   },
+  // Peça entrou na vitrine (ou mudou o que está no cartão): o post, o story
+  // e o carrossel ficam prontos antes de a dona abrir a tela. Falha aqui nunca
+  // mexe no status da peça. Sem foto/preço, rascunho ou peça sumida são
+  // "nada a desenhar" — concluído, não retry (senão vira "Fila com problemas").
+  "product.published": prerenderProductCards,
+  "product.card_refresh": prerenderProductCards,
   // Cartão editorial fora do cache: desenha, publica e manda logo depois do
   // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).
   "wa.card_render": async (event) => {
