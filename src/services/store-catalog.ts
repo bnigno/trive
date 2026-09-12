@@ -341,6 +341,12 @@ export interface PublicProductDetail {
   fitNotes: string | null;
   /** Post 4:5 da peça, quando já desenhado: é a prévia do link. */
   postCardPath: string | null;
+  /** A nota da curadora: o texto (transcrito ou digitado) e o áudio na voz dela, quando gravado. */
+  curatorNote: string | null;
+  curatorAudioPath: string | null;
+  curatorAudioMime: string | null;
+  /** A página /produto/[slug] abre para qualquer pessoa agora (não é só da janela VIP). */
+  publicNow: boolean;
   brand: string | null;
   categoryName: string | null;
   /** Slug da categoria (link "Coleção / Sala" e relacionados), ou null. */
@@ -425,6 +431,10 @@ export async function getPublicProductBySlug(
     fitNotes: product.fitNotes,
     brand: product.brand,
     postCardPath: product.postCardPath,
+    curatorNote: product.curatorNote,
+    curatorAudioPath: product.curatorAudioPath,
+    curatorAudioMime: product.curatorAudioMime,
+    publicNow: product.visibleFrom === null || product.visibleFrom.getTime() <= Date.now(),
     categoryName: row.categoryName,
     categorySlug: row.categorySlug,
     attributesSchema: (product.attributesSchema ?? []) as string[],
@@ -593,6 +603,11 @@ export function publicImageUrl(path: string): string {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL não configurada.");
   }
   return `${base}/storage/v1/object/public/product-images/${path}`;
+}
+
+/** Qualquer arquivo público do bucket (o áudio da curadora mora ao lado das fotos). */
+export function publicFileUrl(path: string): string {
+  return publicImageUrl(path);
 }
 
 /** URL do thumbnail derivada por convenção (-full.webp -> -thumb.webp). */

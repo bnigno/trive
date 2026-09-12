@@ -733,7 +733,25 @@ describe("ficha da peça e medidas na vitrine", () => {
       variants: [{ sku: "MAR-U", onHand: 1, priceCents: 5900 }],
     });
     const detail = await getPublicProductBySlug(db, "lenço-mar");
-    expect(detail).toMatchObject({ composition: null, careNotes: null, fitNotes: null });
+    expect(detail).toMatchObject({ composition: null, careNotes: null, fitNotes: null, curatorNote: null, curatorAudioPath: null, curatorAudioMime: null });
     expect(detail!.variants[0].measurements).toBeNull();
+  });
+
+  it("getPublicProductBySlug expõe a nota da curadora e o áudio (caminho e mime) para a página e a Lia", async () => {
+    const { productId } = await createPublicProduct({
+      name: "Longo Dunas",
+      variants: [{ sku: "DUN-U", onHand: 1, priceCents: 28900 }],
+    });
+    await db
+      .update(schema.products)
+      .set({ curatorNote: "Escolhi pelo caimento no calor.", curatorAudioPath: `products/${productId}/nota-curadora-abc.webm`, curatorAudioMime: "audio/webm" })
+      .where(eq(schema.products.id, productId));
+    const detail = await getPublicProductBySlug(db, "longo-dunas");
+    expect(detail).toMatchObject({
+      curatorNote: "Escolhi pelo caimento no calor.",
+      curatorAudioPath: `products/${productId}/nota-curadora-abc.webm`,
+      curatorAudioMime: "audio/webm",
+      publicNow: true,
+    });
   });
 });

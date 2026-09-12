@@ -8,7 +8,8 @@ import { notFound, redirect } from "next/navigation";
 import { eyebrowTaupe } from "@/components/store/styles";
 import { getDb } from "@/db/client";
 import { formatDropMoment, getDropForToken } from "@/services/drops";
-import { getPublicProductBySlug, publicImageUrl, publicMdUrl, publicThumbUrl } from "@/services/store-catalog";
+import { CuratorNote, hasCuratorNote } from "@/components/store/curator-note";
+import { getPublicProductBySlug, publicFileUrl, publicImageUrl, publicMdUrl, publicThumbUrl } from "@/services/store-catalog";
 
 import { ProductDetailClient } from "../../../produto/[slug]/product-detail-client";
 
@@ -27,6 +28,12 @@ export default async function LancamentoPecaPage({ params }: { params: Promise<{
 
   const product = await getPublicProductBySlug(db, slug, { inviteToken: token });
   if (!product) notFound();
+  // A nota da curadora também na janela VIP: a Lia diz que ela está "na página da peça".
+  const curatorNote = {
+    note: product.curatorNote,
+    audioUrl: product.curatorAudioPath ? publicFileUrl(product.curatorAudioPath) : null,
+    audioMime: product.curatorAudioMime,
+  };
 
   const galleryImages = product.images.map((image) => ({
     full: publicImageUrl(image.path),
@@ -57,6 +64,7 @@ export default async function LancamentoPecaPage({ params }: { params: Promise<{
           </div>
         }
       >
+        {hasCuratorNote(curatorNote) ? <CuratorNote data={curatorNote} /> : null}
         <div className="mt-4 border-b border-ivory-300 pb-4 font-store text-[15px] leading-7 text-ink-700">
           {product.description ? <p className="whitespace-pre-line">{product.description}</p> : null}
         </div>

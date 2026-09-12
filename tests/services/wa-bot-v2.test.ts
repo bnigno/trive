@@ -1051,6 +1051,9 @@ describe("detalhar_produto 2.0", () => {
         composition: "100% linho",
         careNotes: "hand_wash\ndry_shade\nNão torcer",
         fitNotes: "Caimento fluido",
+        curatorNote: "Escolhi este linho pelo caimento no calor.",
+        curatorAudioPath: `products/${productId}/nota-curadora-abc.webm`,
+        curatorAudioMime: "audio/webm",
       })
       .where(eq(schema.products.id, productId));
     await db
@@ -1071,12 +1074,22 @@ describe("detalhar_produto 2.0", () => {
     expect(result.text).toContain("Composição: 100% linho");
     expect(result.text).toContain("Cuidados: Lavar à mão · Secar à sombra · Não torcer");
     expect(result.text).toContain("Como veste: Caimento fluido");
+    // A nota da curadora, para a Lia citar — e o aviso do áudio na página.
+    expect(result.text).toContain("Nota da curadora (cite com as palavras dela): «Escolhi este linho pelo caimento no calor.»");
+    expect(result.text).toMatch(/A nota também está em áudio, na voz da curadora, na página da peça \(https?:\/\/[^)]+\/produto\/[a-z0-9-]+\)\./);
+    expect(result.text.indexOf("Nota da curadora")).toBeLessThan(result.text.indexOf("Composição: 100% linho"));
     expect(result.text).toContain("Tabela de medidas da peça (cm, peça deitada):");
     expect(result.text).toContain("Único — busto 88, comprimento 110,5");
 
     await createSimpleProduct("SEM-DESC", "Peça Muda", 5000);
     const muda = await executor("detalhar_produto", { produto: "Peça Muda" });
-    expect(muda.text).toContain("[Sem descrição cadastrada");
+    expect(muda.text).toContain("[Sem descrição cadastrada: não afirme tecido nem caimento");
+    expect(muda.text).not.toContain("Nota da curadora");
+    // Sem descrição mas com nota: a instrução manda ficar na nota, não "não afirme".
+    await db.update(schema.products).set({ curatorNote: "Linho que respira." }).where(eq(schema.products.name, "Peça Muda"));
+    const comNota = await executor("detalhar_produto", { produto: "Peça Muda" });
+    expect(comNota.text).toContain("[Sem descrição cadastrada: sobre tecido e caimento, fique na nota da curadora e na ficha abaixo.]");
+    expect(comNota.text).toContain("«Linho que respira.»");
     expect(muda.text).toContain("[Sem tabela de medidas cadastrada");
   });
 });

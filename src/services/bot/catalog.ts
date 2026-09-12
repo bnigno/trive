@@ -19,6 +19,7 @@ import {
   lookCardTitle,
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
+import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
   buildSizeChart,
@@ -44,6 +45,7 @@ import {
   type PublicProductDetail,
   type PublicProductListItem,
 } from "@/services/store-catalog";
+import { siteBaseUrl } from "@/services/wa-messaging";
 
 import { DESCRIPTION_MAX_CHARS, PAGE_SIZE, formatPriceRange, readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ExecutorCtx, ToolResult } from "./shared";
@@ -478,11 +480,21 @@ export async function execDetalharProduto(
         ? `${description.slice(0, DESCRIPTION_MAX_CHARS).trimEnd()}…`
         : description,
     );
+  } else if (detail.curatorNote) {
+    lines.push("[Sem descrição cadastrada: sobre tecido e caimento, fique na nota da curadora e na ficha abaixo.]");
   } else {
     lines.push(
       "[Sem descrição cadastrada: não afirme tecido nem caimento — diga que confere com a equipe se a cliente perguntar.]",
     );
   }
+  // A nota da curadora: o que ela diria de tecido, caimento e calor — a Lia cita.
+  lines.push(
+    ...curatorNoteLines({
+      note: detail.curatorNote,
+      hasAudio: detail.curatorAudioPath !== null,
+      pageUrl: detail.publicNow ? `${siteBaseUrl()}/produto/${detail.slug}` : null,
+    }),
+  );
   // Ficha da peça: o que a placa de museu mostra, a Lia também sabe.
   if (detail.composition?.trim()) lines.push(`Composição: ${detail.composition.trim()}`);
   const careLabels = careNotesToLabels(parseCareNotes(detail.careNotes));
