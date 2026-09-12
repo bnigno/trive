@@ -751,6 +751,7 @@ describe("ficha da peça e medidas na vitrine", () => {
       curatorNote: "Escolhi pelo caimento no calor.",
       curatorAudioPath: `products/${productId}/nota-curadora-abc.webm`,
       curatorAudioMime: "audio/webm",
+      publicNow: true,
     });
   });
 });

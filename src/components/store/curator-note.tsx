@@ -2,6 +2,7 @@
 // uma carta, e o player nativo do áudio quando ela gravou. Server component;
 // some quando a peça não tem nota nem áudio. Só apresenta: texto e URL
 // chegam prontos da página.
+import { CuratorAudio } from "@/components/store/curator-audio";
 import { eyebrow } from "@/components/store/styles";
 
 export type CuratorNoteData = {
@@ -14,8 +15,15 @@ export function hasCuratorNote(data: CuratorNoteData): boolean {
   return Boolean(data.note?.trim() || data.audioUrl);
 }
 
+/** Tira as aspas das pontas quando a nota inteira veio entre aspas: o bloco já põe as dele. */
+function unquote(note: string): string {
+  const trimmed = note.trim();
+  const quote = /["'“”‘’«»]/;
+  return quote.test(trimmed.charAt(0)) && quote.test(trimmed.charAt(trimmed.length - 1)) ? trimmed.slice(1, -1).trim() : trimmed;
+}
+
 export function CuratorNote({ data }: { data: CuratorNoteData }) {
-  const paragraphs = (data.note ?? "")
+  const paragraphs = unquote(data.note ?? "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
@@ -37,12 +45,7 @@ export function CuratorNote({ data }: { data: CuratorNoteData }) {
       ) : null}
       {data.audioUrl ? (
         <div className="mt-4">
-          <p className="font-store text-[13px] text-ink-500">
-            {paragraphs.length > 0 ? "Ouça na voz dela." : "Na voz dela."}
-          </p>
-          <audio controls preload="none" className="mt-2 w-full max-w-md" aria-label="Nota da curadora em áudio">
-            <source src={data.audioUrl} {...(data.audioMime ? { type: data.audioMime } : {})} />
-          </audio>
+          <CuratorAudio url={data.audioUrl} mime={data.audioMime} hasText={paragraphs.length > 0} />
         </div>
       ) : null}
     </section>

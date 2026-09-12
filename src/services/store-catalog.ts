@@ -345,6 +345,8 @@ export interface PublicProductDetail {
   curatorNote: string | null;
   curatorAudioPath: string | null;
   curatorAudioMime: string | null;
+  /** A página /produto/[slug] abre para qualquer pessoa agora (não é só da janela VIP). */
+  publicNow: boolean;
   brand: string | null;
   categoryName: string | null;
   /** Slug da categoria (link "Coleção / Sala" e relacionados), ou null. */
@@ -432,6 +434,7 @@ export async function getPublicProductBySlug(
     curatorNote: product.curatorNote,
     curatorAudioPath: product.curatorAudioPath,
     curatorAudioMime: product.curatorAudioMime,
+    publicNow: product.visibleFrom === null || product.visibleFrom.getTime() <= Date.now(),
     categoryName: row.categoryName,
     categorySlug: row.categorySlug,
     attributesSchema: (product.attributesSchema ?? []) as string[],

@@ -86,8 +86,8 @@ export function CuratorNoteForm({
     <div className="flex flex-col gap-5">
       <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
         Fale sobre a peça como você falaria para uma cliente na loja: o tecido,
-        o caimento, para que ocasião ela pediu. O texto fica guardado na ficha
-        da peça; em breve aparece na página da peça e nas conversas da Lia.
+        o caimento, para que ocasião ela pediu. O texto e o áudio aparecem na
+        página da peça (“A nota da curadora”) e a Lia cita a nota no WhatsApp.
       </p>
       {!transcriptionEnabled ? (
         <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-100">

@@ -10,11 +10,11 @@ export const CURATOR_NOTE_BOT_MAX = 700;
 
 /**
  * Linhas para o texto da ferramenta: a nota entre aspas angulares (a Lia
- * cita, não reescreve) e, com áudio, o aviso de que a cliente pode ouvir a
- * curadora na página. Sem nota e sem áudio, nada — o prompt já diz o que
- * fazer quando a peça não tem ficha.
+ * cita, não reescreve) e, com áudio, onde ouvir a curadora — com o link da
+ * página quando ela está aberta ao público (na janela VIP, não). Sem nota e
+ * sem áudio, nada — o prompt já diz o que fazer quando a peça não tem ficha.
  */
-export function curatorNoteLines(input: { note: string | null | undefined; hasAudio: boolean }): string[] {
+export function curatorNoteLines(input: { note: string | null | undefined; hasAudio: boolean; pageUrl: string | null }): string[] {
   const note = normalizeCuratorNote(input.note);
   const lines: string[] = [];
   if (note) {
@@ -28,10 +28,13 @@ export function curatorNoteLines(input: { note: string | null | undefined; hasAu
     lines.push(`Nota da curadora (cite com as palavras dela): «${fitted}»`);
   }
   if (input.hasAudio) {
+    const where = input.pageUrl ? `na página da peça (${input.pageUrl})` : "na página da peça";
     lines.push(
       note
-        ? "A nota também está em áudio, na voz da curadora, na página da peça."
-        : "A curadora deixou uma nota em áudio na página da peça (sem transcrição): convide a cliente a ouvir pelo link.",
+        ? `A nota também está em áudio, na voz da curadora, ${where}.`
+        : input.pageUrl
+          ? `A curadora deixou uma nota em áudio ${where}, sem transcrição: convide a cliente a ouvir por esse link.`
+          : "A curadora deixou uma nota em áudio na página da peça, sem transcrição; a página ainda não está aberta ao público, então não prometa o link.",
     );
   }
   return lines;
