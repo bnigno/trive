@@ -14,7 +14,9 @@ import { z } from "zod";
 import type { FileStorage } from "@/adapters/storage";
 import {
   COUNTED_STATUSES,
+  countsAsPurchase,
   debutFirstName,
+  fitDebutLetterToPaper,
   isFirstPurchase,
   normalizeDebutLetter,
   normalizeDebutSignature,
@@ -137,14 +139,16 @@ export async function countPriorCountedOrdersByOrder(db: DbOrTx, targets: DebutT
   if (targets.length === 0) return prior;
   const customerIds = [...new Set(targets.map((target) => target.customerId))];
   const rows = await db
-    .select({ id: orders.id, customerId: orders.customerId, paidAt: orders.paidAt })
+    .select({ id: orders.id, customerId: orders.customerId, paidAt: orders.paidAt, status: orders.status, shippedAt: orders.shippedAt })
     .from(orders)
     .where(and(inArray(orders.customerId, customerIds), inArray(orders.status, [...COUNTED_STATUSES]), eq(orders.isGift, false)));
+  // Reembolsado só conta se a caixa saiu (a regra mora em core/edition/debut).
+  const counted = rows.filter((row) => countsAsPurchase(row));
   for (const target of targets) {
     const cutoff = target.paidAt?.getTime() ?? Number.POSITIVE_INFINITY;
     prior.set(
       target.id,
-      rows.filter((row) => row.customerId === target.customerId && row.id !== target.id && (row.paidAt?.getTime() ?? 0) < cutoff).length,
+      counted.filter((row) => row.customerId === target.customerId && row.id !== target.id && (row.paidAt?.getTime() ?? 0) < cutoff).length,
     );
   }
   return prior;
@@ -177,7 +181,8 @@ function debutLetterFor(
     isFirstPurchase: true,
     letter: {
       recipientName: debutFirstName(order.customerName),
-      text: letterText,
+      // Um texto salvo antes da régua do papel é encurtado ao que cabe (a tela recusa os novos).
+      text: fitDebutLetterToPaper(letterText).text,
       signature: normalizeDebutSignature(texts["debut_letter_signature"]),
       editionName: texts["edition_name"] ? texts["edition_name"] : null,
     },

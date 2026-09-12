@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   COUNTED_STATUSES,
+  countsAsPurchase,
   DEBUT_LETTER_GEOMETRY,
   DEBUT_LETTER_MAX,
   DEBUT_LETTER_MAX_LINES,
@@ -13,7 +14,9 @@ import {
   debutLetterFontSize,
   debutLetterLayout,
   debutLetterProblem,
+  debutSignatureProblem,
   editionPrintSet,
+  fitDebutLetterToPaper,
   isCountedStatus,
   isFirstPurchase,
   normalizeDebutLetter,
@@ -32,6 +35,11 @@ describe("isFirstPurchase / status que contam", () => {
     expect(isCountedStatus("refunded")).toBe(true);
     expect(isCountedStatus("pending_payment")).toBe(false);
     expect(isCountedStatus("canceled")).toBe(false);
+    // Reembolsado conta só se a caixa saiu; reembolso antes do envio é como não ter comprado.
+    expect(countsAsPurchase({ status: "refunded", shippedAt: new Date() })).toBe(true);
+    expect(countsAsPurchase({ status: "refunded", shippedAt: null })).toBe(false);
+    expect(countsAsPurchase({ status: "paid", shippedAt: null })).toBe(true);
+    expect(countsAsPurchase({ status: "canceled", shippedAt: new Date() })).toBe(false);
   });
 });
 
@@ -55,6 +63,8 @@ describe("normalizeDebutLetter / normalizeDebutSignature", () => {
     expect(debutLetterProblem(comprida)).toMatch(/caracteres/);
     expect(debutLetterProblem(null)).toBeNull();
     expect(debutLetterProblem("Bem-vinda.")).toBeNull();
+    // Linhas em branco entre parágrafos não contam no teto de linhas.
+    expect(debutLetterProblem(Array.from({ length: 8 }, (_, i) => `linha ${i + 1}`).join("\n\n"))).toBeNull();
     expect(DEBUT_LETTER_MAX_LINES).toBe(12);
   });
 
@@ -65,6 +75,10 @@ describe("normalizeDebutLetter / normalizeDebutSignature", () => {
     const longa = normalizeDebutSignature("MARINA DA SILVA, CURADORA DA TRIVÉ MAISON EM BELÉM DO PARÁ");
     expect(textWidthUnits(longa, "serif")).toBeLessThanOrEqual(DEBUT_SIGNATURE_MAX);
     expect(longa).not.toMatch(/[\s,]$/);
+    // O corte cai na palavra, e a tela recusa ao salvar o que não cabe numa linha.
+    expect(longa).toMatch(/^MARINA DA SILVA, CURADORA DA TRIVÉ MAISON( EM)?$/);
+    expect(debutSignatureProblem("MARINA DA SILVA, CURADORA DA TRIVÉ MAISON EM BELÉM DO PARÁ")).toMatch(/não cabe numa linha/);
+    expect(debutSignatureProblem("Marina, curadora da TRIVÉ")).toBeNull();
   });
 });
 
@@ -104,6 +118,16 @@ describe("debutLetterLayout / debutLetterFontSize", () => {
     expect(debutLetterProblem(enorme)).toMatch(/não cabe no papel/);
     const minusculas = enorme.toLowerCase();
     expect(debutLetterLayout(minusculas).lines).toBeLessThanOrEqual(debutLetterLayout(enorme).lines);
+  });
+
+  it("um texto que não cabe nem no menor corpo é encurtado ao que cabe, parágrafos inteiros, com reticências", () => {
+    const enorme = Array.from({ length: 12 }, () => "PALAVRA COMPRIDA ".repeat(7).trim()).join("\n");
+    const fitted = fitDebutLetterToPaper(enorme);
+    expect(fitted.truncated).toBe(true);
+    expect(fitted.text.endsWith("…")).toBe(true);
+    expect(fitted.text.split("\n").length).toBeLessThan(12);
+    expect(debutLetterLayout(fitted.text).fits).toBe(true);
+    expect(fitDebutLetterToPaper("Bem-vinda.")).toEqual({ text: "Bem-vinda.", truncated: false });
   });
 
   it("linhas em branco entre parágrafos custam pouco mais de meia linha", () => {

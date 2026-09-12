@@ -165,6 +165,10 @@ describe("updateSetting / getSettingsMap", () => {
     await expect(
       updateSetting(db, { key: "debut_letter_signature", value: "x".repeat(61), userId: FIXED_USER_ID }),
     ).rejects.toThrow(/60/);
+    // 60 caracteres em caixa alta não cabem numa linha: recusa com a razão, em vez de imprimir cortado.
+    await expect(
+      updateSetting(db, { key: "debut_letter_signature", value: "MARINA DA SILVA, CURADORA DA TRIVÉ MAISON EM BELÉM DO PARÁ", userId: FIXED_USER_ID }),
+    ).rejects.toThrow(/não cabe numa linha/);
     await updateSetting(db, { key: "debut_letter_text", value: "   ", userId: FIXED_USER_ID });
     expect((await getSettingsMap(db, ["debut_letter_text"])).debut_letter_text).toBe("");
   });

@@ -9,14 +9,22 @@ import { normalizeReceiptText } from "@/core/receipts/types";
 
 /**
  * Status que contam como compra de verdade: pedido pago em diante. Um
- * pedido reembolsado depois de entregue também conta — a cliente já abriu
- * uma caixa (e já recebeu a carta); a troca não é uma nova estreia.
+ * pedido reembolsado também conta — mas só se a caixa chegou a sair
+ * (shipped_at): a cliente já abriu uma caixa e já recebeu a carta; a troca
+ * não é uma nova estreia. Reembolso antes do envio é como se não tivesse
+ * comprado.
  */
 export const COUNTED_STATUSES = ["paid", "preparing", "shipped", "delivered", "refunded"] as const;
 export type CountedStatus = (typeof COUNTED_STATUSES)[number];
 
 export function isCountedStatus(status: string): status is CountedStatus {
   return (COUNTED_STATUSES as readonly string[]).includes(status);
+}
+
+/** Este pedido conta como uma compra feita (para a estreia da próxima)? */
+export function countsAsPurchase(order: { status: string; shippedAt: Date | null }): boolean {
+  if (!isCountedStatus(order.status)) return false;
+  return order.status !== "refunded" || order.shippedAt !== null;
 }
 
 /**
@@ -54,7 +62,7 @@ export function normalizeDebutLetter(value: string | null | undefined): string |
   return text !== "" && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
 
-/** Assinatura numa linha só, sem emoji, no teto de largura; vazio = "A curadora". */
+/** Assinatura numa linha só, sem emoji, no teto de largura (corte na palavra); vazio = "A curadora". */
 export function normalizeDebutSignature(value: string | null | undefined): string {
   const clean = normalizeReceiptText((value ?? "").replace(/\s+/g, " "));
   if (clean === "" || !/[\p{L}\p{N}]/u.test(clean)) return "A curadora";
@@ -64,7 +72,15 @@ export function normalizeDebutSignature(value: string | null | undefined): strin
     if (textWidthUnits(out + char, "serif") > DEBUT_SIGNATURE_MAX) break;
     out += char;
   }
-  return out.replace(/[\s,;:.!?…-]+$/u, "");
+  const lastSpace = out.lastIndexOf(" ");
+  return (lastSpace > out.length / 2 ? out.slice(0, lastSpace) : out).replace(/[\s,;:.!?…-]+$/u, "");
+}
+
+/** Por que a assinatura não cabe numa linha, para a tela ao salvar. Null quando cabe. */
+export function debutSignatureProblem(value: string): string | null {
+  const clean = normalizeReceiptText(value.replace(/\s+/g, " "));
+  if (textWidthUnits(clean, "serif") <= DEBUT_SIGNATURE_MAX) return null;
+  return "A assinatura não cabe numa linha da carta: encurte (maiúsculas ocupam mais).";
 }
 
 /** "Maria Eduarda" → "Maria"; "D'ÁVILA" → "D'Ávila"; "🌸 Ana" → "Ana"; sem nome, "você". */
@@ -131,12 +147,39 @@ export function debutLetterFontSize(text: string): number {
 }
 
 /**
+ * Um texto que não cabe nem no menor corpo (só um valor salvo antes da
+ * régua, ou colado por fora) é encurtado ao que cabe: parágrafos inteiros
+ * até a altura reservada, o último com reticências. Nunca desenha por cima
+ * do "PARA" nem da assinatura.
+ */
+export function fitDebutLetterToPaper(text: string): { text: string; truncated: boolean } {
+  const g = DEBUT_LETTER_GEOMETRY;
+  const layout = debutLetterLayout(text);
+  if (layout.fits) return { text, truncated: false };
+  const fontSize = g.sizes[g.sizes.length - 1];
+  const budget = g.linesHeight / (fontSize * g.lineHeight);
+  const kept: string[] = [];
+  let used = 0;
+  for (const paragraph of text.split("\n")) {
+    const lines = paragraphLines(paragraph, fontSize);
+    if (used + lines > budget) break;
+    used += lines;
+    kept.push(paragraph);
+  }
+  while (kept.length > 0 && kept[kept.length - 1] === "") kept.pop();
+  if (kept.length === 0) return { text: "…", truncated: true };
+  kept[kept.length - 1] = `${kept[kept.length - 1].replace(/[\s,;:.!?…-]+$/u, "")}…`;
+  return { text: kept.join("\n"), truncated: true };
+}
+
+/**
  * Por que a carta não cabe, para a tela: linhas, caracteres ou altura. Null
  * quando cabe.
  */
 export function debutLetterProblem(text: string | null): string | null {
   if (text === null) return null;
-  const lines = text.split("\n").length;
+  // Linhas em branco (respiro entre parágrafos) não contam no teto de linhas.
+  const lines = text.split("\n").filter((line) => line !== "").length;
   if (lines > DEBUT_LETTER_MAX_LINES) {
     return `A carta tem ${lines} linhas e o papel comporta ${DEBUT_LETTER_MAX_LINES}: junte ou tire ${lines - DEBUT_LETTER_MAX_LINES}.`;
   }

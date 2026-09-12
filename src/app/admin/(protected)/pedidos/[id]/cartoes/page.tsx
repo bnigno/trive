@@ -56,7 +56,9 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
   if (generated && cards.stale) {
     warnings.push({
       key: "stale",
-      text: "O que sai no cartão mudou depois da geração (ficha, nota, nome da edição ou presente) — gere de novo antes de imprimir.",
+      text: cards.letter?.stale && cards.cards.every((card) => !card.stale)
+        ? "A carta de estreia mudou (ou foi escrita) depois da geração — gere de novo antes de imprimir."
+        : "O que sai na caixa mudou depois da geração (ficha, nota, nome da edição, presente ou a carta) — gere de novo antes de imprimir.",
     });
   }
   if (cards.isGift && hasCards) {
@@ -132,7 +134,9 @@ export default async function EditionCardsPage({ params }: { params: Promise<{ i
               Primeira compra desta cliente.
               {cards.letter
                 ? ` A carta sai para ${cards.letter.recipientName}.`
-                : ` A carta de estreia ainda não foi escrita — em Configurações › Carta de estreia; depois, ${generated ? "“Gerar de novo”" : "“Gerar cartões”"}.`}
+                : owner
+                  ? ` A carta de estreia ainda não foi escrita — em Configurações › Carta de estreia; depois, ${generated ? "“Gerar de novo”" : "“Gerar cartões”"}.`
+                  : " A carta de estreia ainda não foi escrita — peça à dona (fica em Configurações)."}
             </p>
           ) : null}
         </div>

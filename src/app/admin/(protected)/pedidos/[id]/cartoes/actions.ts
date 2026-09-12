@@ -42,9 +42,12 @@ export async function generateEditionCardsAction(
     const n = result.cards.length;
     const skipped = result.skipped.length > 0 ? ` Sem cartão (não é roupa): ${result.skipped.map((s) => s.name).join(", ")}.` : "";
     const cards = n === 1 ? "Cartão pronto" : `${n} cartões prontos`;
-    return {
-      success: (result.letterPath ? `Carta de estreia e ${cards.toLowerCase()} para imprimir.` : `${cards} para imprimir.`) + skipped,
-    };
+    const ready = result.letterPath
+      ? n === 0
+        ? "Carta de estreia pronta para imprimir."
+        : `Carta de estreia e ${cards.toLowerCase()} para imprimir.`
+      : `${cards} para imprimir.`;
+    return { success: ready + skipped };
   } catch (error) {
     if (error instanceof ServiceError) return { error: error.message };
     console.error("[edition-cards] falha ao gerar", error);

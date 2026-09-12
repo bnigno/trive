@@ -407,6 +407,7 @@ export default async function PedidoDetalhePage({
                     stale={editionCardsStale}
                     firstPurchase={editionStatus.isFirstPurchase}
                     letter={editionStatus.letter}
+                    cards={editionStatus.cards}
                   />
                 ) : null}
               </div>
@@ -429,6 +430,7 @@ export default async function PedidoDetalhePage({
                     stale={editionCardsStale}
                     firstPurchase={editionStatus.isFirstPurchase}
                     letter={editionStatus.letter}
+                    cards={editionStatus.cards}
                   />
                 </div>
               ) : null}
@@ -457,6 +459,7 @@ function EditionCardsLink({
   stale,
   firstPurchase,
   letter,
+  cards,
 }: {
   orderId: string;
   generatedAt: Date | null;
@@ -464,7 +467,12 @@ function EditionCardsLink({
   firstPurchase: boolean;
   /** A carta sai neste pedido (primeira compra E carta escrita). */
   letter: boolean;
+  /** Quantas peças ganham cartão (0 = só a carta). */
+  cards: number;
 }) {
+  // O que vai na caixa, no nome certo: "cartões da edição", "carta de estreia" ou os dois.
+  const thing = cards > 0 ? (letter ? "a carta e os cartões da edição" : "os cartões da edição") : "a carta de estreia";
+  const verb = generatedAt ? (stale ? "Gerar de novo" : "Imprimir") : "Gerar";
   return (
     <p className="text-sm text-zinc-600 dark:text-zinc-400">
       {firstPurchase ? (
@@ -476,16 +484,18 @@ function EditionCardsLink({
         href={`/admin/pedidos/${orderId}/cartoes`}
         className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
       >
-        {generatedAt ? (stale ? "Gerar de novo os cartões da edição" : "Imprimir cartões da edição") : "Gerar cartões da edição"}
+        {`${verb} ${thing}`}
       </Link>
       {generatedAt ? (
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
           {" · gerados em "}
           {formatDateTimeSP(generatedAt)}
-          {stale ? " · o que sai no cartão mudou depois" : ""}
+          {stale ? " · o que sai na caixa mudou depois" : ""}
         </span>
       ) : (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400"> · um cartão de bolso por peça, com a frase da curadora e o QR</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {cards > 0 ? " · um cartão de bolso por peça, com a frase da curadora e o QR" : " · a carta assinada pela dona, para a primeira compra"}
+        </span>
       )}
     </p>
   );

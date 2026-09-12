@@ -465,10 +465,12 @@ describe("carta de estreia", () => {
     expect(await isFirstPurchaseOrder(sdb, first.orderId)).toBe(true);
     expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
 
-    // Cancelado antes não conta como compra; reembolsado (já recebeu a caixa) conta.
+    // Cancelado antes não conta como compra; reembolsado antes de sair também não; reembolsado depois de enviado (já recebeu a caixa) conta.
     await db.update(schema.orders).set({ status: "canceled" }).where(eq(schema.orders.id, first.orderId));
     expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
-    await db.update(schema.orders).set({ status: "refunded" }).where(eq(schema.orders.id, first.orderId));
+    await db.update(schema.orders).set({ status: "refunded", shippedAt: null }).where(eq(schema.orders.id, first.orderId));
+    expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(true);
+    await db.update(schema.orders).set({ status: "refunded", shippedAt: new Date() }).where(eq(schema.orders.id, first.orderId));
     expect(await isFirstPurchaseOrder(sdb, older.id)).toBe(false);
 
     // A mesa de embalagem marca o selo só na estreia — numa consulta só para todos.

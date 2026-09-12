@@ -29,6 +29,9 @@ function charUnits(char: string, font: WidthFont): number {
   if (/[\p{Lu}]/u.test(char)) return UPPER_UNITS[font];
   if (/[\p{Ll}]/u.test(char)) return 1;
   if (/[\p{N}]/u.test(char)) return 1.1;
+  // Travessão e reticências são largos (≈ 1 em); meia-risca, metade disso.
+  if (char === "—" || char === "…") return 2.2;
+  if (char === "–") return 1.2;
   return 0.45;
 }
 
@@ -116,7 +119,8 @@ function fitText(text: string, maxUnits: number, font: WidthFont = "sans"): Fitt
   // que uma frase e meia com reticências.
   const sentenceEnd = lastSentenceEnd(room);
   if (sentenceEnd >= roomChars / 4) return { text: room.slice(0, sentenceEnd + 1), truncated: true };
-  const roomForEllipsis = room.slice(0, Math.max(0, roomChars - 1));
+  // As reticências também ocupam lugar: o corte deixa espaço para elas.
+  const roomForEllipsis = text.slice(0, charsWithinUnits(text, maxUnits - charUnits("…", font), font));
   const lastSpace = roomForEllipsis.lastIndexOf(" ");
   const cut = lastSpace > roomChars / 2 ? roomForEllipsis.slice(0, lastSpace) : roomForEllipsis;
   return { text: `${cut.replace(/[\p{P}\p{S}\s]+$/u, "")}…`, truncated: true };

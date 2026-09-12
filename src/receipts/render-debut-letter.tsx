@@ -125,6 +125,8 @@ function DebutLetter({ data, lockup }: { data: DebutLetterData; lockup: string }
                     lineHeight: L.lineHeight,
                     color: C.ink900,
                     textAlign: "center",
+                    // Uma palavra maior que o papel quebra em vez de sair pelas laterais.
+                    wordBreak: "break-word",
                   }}
                 >
                   {normalizeReceiptText(line)}

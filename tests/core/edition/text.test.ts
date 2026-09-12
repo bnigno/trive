@@ -68,6 +68,10 @@ describe("fitEditionNote / normalizeEditionNote", () => {
   it("o teto é em largura: CAIXA ALTA conta mais e é cortada antes de estourar as linhas do cartão", () => {
     expect(textWidthUnits("ABC")).toBeGreaterThan(textWidthUnits("abc"));
     expect(textWidthUnits("a b")).toBeLessThan(textWidthUnits("abb"));
+    // Travessão e reticências são largos: contam como umas duas letras.
+    expect(textWidthUnits("—")).toBeGreaterThan(textWidthUnits("aa"));
+    expect(textWidthUnits("…")).toBeGreaterThan(textWidthUnits("aa"));
+    expect(textWidthUnits("–")).toBeGreaterThan(textWidthUnits("a"));
     const minusculas = "lave a mao com sabao neutro e seque a sombra sem torcer longe do sol e do calor ";
     const cabe = fitEditionNote(minusculas.repeat(2));
     const caixaAlta = fitEditionNote(minusculas.toUpperCase().repeat(2));

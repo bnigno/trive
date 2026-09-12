@@ -3,7 +3,7 @@
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEBUT_LETTER_MAX, DEBUT_LETTER_MAX_LINES, debutLetterLayout, debutLetterProblem, normalizeDebutLetter } from "@/core/edition/debut";
+import { DEBUT_LETTER_MAX, DEBUT_LETTER_MAX_LINES, debutLetterLayout, debutLetterProblem, fitDebutLetterToPaper, normalizeDebutLetter } from "@/core/edition/debut";
 import type { DebutLetterData } from "@/core/edition/types";
 import { loadReceiptAssets } from "@/receipts/assets";
 import { DEBUT_LETTER_HEIGHT, DEBUT_LETTER_WIDTH, renderDebutLetterPng } from "@/receipts/render-debut-letter";
@@ -82,10 +82,17 @@ describe("renderDebutLetterPng", () => {
     await check(await renderDebutLetterPng({ ...base, text: denso, signature: "MARINA DA SILVA, CURADORA DA MAISON" }, await loadReceiptAssets()));
   });
 
-  it("texto antigo que não cabe nem no menor corpo: a carta corta embaixo, a assinatura e a faixa ficam", async () => {
-    const enorme = Array.from({ length: 12 }, () => "PALAVRA COMPRIDA ".repeat(4).trim()).join("\n");
+  it("texto antigo que não cabe nem no menor corpo é encurtado pelo core antes do desenho: nada por cima do 'PARA' nem da assinatura", async () => {
+    const enorme = Array.from({ length: 12 }, () => "PALAVRA COMPRIDA ".repeat(7).trim()).join("\n");
     expect(debutLetterLayout(enorme).fits).toBe(false);
-    await check(await renderDebutLetterPng({ ...base, text: enorme }, await loadReceiptAssets()));
+    const fitted = fitDebutLetterToPaper(enorme);
+    const png = await renderDebutLetterPng({ ...base, text: fitted.text }, await loadReceiptAssets());
+    await check(png);
+    // A faixa do "PARA JULIANA" (y ≈ 90–125) tem tinta só no meio (o nome), não nas laterais: nada de texto por cima.
+    const raw = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
+    for (let y = 92; y < 124; y += 2) {
+      for (const x of [150, 250, 830, 930]) expect(raw.data[y * raw.info.width + x], `y=${y} x=${x}`).toBeGreaterThan(200);
+    }
   });
 
   it("emoji no nome ou na assinatura não derruba nem busca fonte", async () => {
