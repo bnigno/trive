@@ -12,6 +12,7 @@ import {
   publicImageUrl,
   publicMdUrl,
   publicThumbUrl,
+  quoteDeliveryOptions,
   quoteShipping,
   ServiceError,
 } from "@/services/store-catalog";
@@ -500,6 +501,8 @@ describe("quoteShipping", () => {
       priceCents: 1590,
       deliveryDaysMin: 4,
       deliveryDaysMax: 9,
+      kind: "correios",
+      deliveryWindows: [],
     });
 
     // Fora da faixa de CEP: a UI mostra "não entregamos para este CEP".
@@ -543,6 +546,69 @@ describe("quoteShipping", () => {
     await expect(
       quoteShipping(db, { cep: "abcdefgh", totalWeightGrams: 100 }),
     ).rejects.toThrow(ServiceError);
+  });
+});
+
+describe("quoteDeliveryOptions (motoboy com janelas)", () => {
+  const WINDOWS = [
+    { start: "16:00", end: "19:00", cutoff: "13:00" },
+    { start: "19:00", end: "21:00", cutoff: "13:00" },
+  ];
+
+  async function insertMotoboy(): Promise<void> {
+    await db.insert(schema.shippingRates).values({
+      name: "Motoboy Belém",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 1500,
+      deliveryDaysMin: 0,
+      deliveryDaysMax: 0,
+      kind: "motoboy",
+      deliveryWindows: WINDOWS,
+      isActive: true,
+      sortOrder: 0,
+    });
+  }
+
+  it("antes da hora-limite (relógio de SP): janelas de hoje na frente do Correios; depois: amanhã e o Correios sobe", async () => {
+    await insertMotoboy();
+    await insertRate({ name: "PAC Norte", cepStart: "66000000", cepEnd: "66999999", priceCents: 1990, deliveryDaysMin: 5, deliveryDaysMax: 9 });
+
+    // 10:30 em São Paulo (13:30Z), sexta 18/09/2026.
+    const before = await quoteDeliveryOptions(db, { cep: "66050-000", totalWeightGrams: 400, now: new Date("2026-09-18T13:30:00Z") });
+    expect(before.map((o) => (o.kind === "motoboy" ? `${o.optionKey.split(":").slice(1).join(":")} ${o.label}` : o.kind))).toEqual([
+      "2026-09-18:16:00 hoje, 16h–19h · pague até 13h",
+      "2026-09-18:19:00 hoje, 19h–21h · pague até 13h",
+      "correios",
+    ]);
+    expect(before[0]).toMatchObject({ kind: "motoboy", name: "Motoboy Belém", priceCents: 1500, when: "today", window: { dayKey: "2026-09-18", cutoff: "13:00" } });
+
+    // 13:00 em ponto já passou do limite → amanhã; ordem volta a ser pelo preço.
+    const after = await quoteDeliveryOptions(db, { cep: "66050-000", totalWeightGrams: 400, now: new Date("2026-09-18T16:00:00Z") });
+    expect(after.map((o) => (o.kind === "motoboy" ? `${o.window.dayKey} ${o.label}` : o.kind))).toEqual([
+      "2026-09-19 amanhã, 16h–19h",
+      "2026-09-19 amanhã, 19h–21h",
+      "correios",
+    ]);
+
+    // A cotação clássica continua uma linha por faixa (a Lia não muda antes do I4).
+    const classic = await quoteShipping(db, { cep: "66050-000", totalWeightGrams: 400 });
+    expect(classic.map((q) => [q.name, q.kind, q.deliveryWindows.length])).toEqual([
+      ["Motoboy Belém", "motoboy", 2],
+      ["PAC Norte", "correios", 0],
+    ]);
+  });
+
+  it("fora da faixa de CEP do motoboy não aparece janela; faixa Correios com janelas gravadas por engano é ignorada", async () => {
+    await insertMotoboy();
+    await insertRate({ name: "PAC SP", cepStart: "01000000", cepEnd: "05999999", priceCents: 1590 });
+    await db.update(schema.shippingRates).set({ deliveryWindows: WINDOWS }).where(eq(schema.shippingRates.name, "PAC SP"));
+
+    const sp = await quoteDeliveryOptions(db, { cep: "01310-100", totalWeightGrams: 400, now: new Date("2026-09-18T13:30:00Z") });
+    expect(sp.map((o) => o.kind)).toEqual(["correios"]);
+    expect(sp[0]).toMatchObject({ optionKey: expect.stringMatching(/^[0-9a-f-]{36}$/), deliveryDaysMin: 2, deliveryDaysMax: 7 });
   });
 });
 

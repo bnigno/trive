@@ -47,7 +47,8 @@ import { normalizeDocument } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
 import { readStoredStyle } from "@/lib/style-storage";
-import type { ShippingQuote } from "@/services/store-catalog";
+import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
 import { quoteCouponAction, quoteShippingAction } from "../carrinho/actions";
@@ -101,7 +102,7 @@ type QuoteState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "done"; quotes: ShippingQuote[]; whatsappUrl: string | null };
+  | { status: "done"; options: DeliveryOption[]; whatsappUrl: string | null };
 
 const PAYMENT_OPTIONS = [
   {
@@ -118,11 +119,12 @@ const PAYMENT_OPTIONS = [
 
 export function CheckoutClient({
   initialCepDigits,
-  initialRateId,
+  initialOptionKey,
   initialCouponCode,
 }: {
   initialCepDigits: string;
-  initialRateId: string;
+  /** ?frete= da sacola: optionKey (uuid da faixa, ou uuid:dia:HH:MM no motoboy). */
+  initialOptionKey: string;
   initialCouponCode: string;
 }) {
   const router = useRouter();
@@ -167,12 +169,17 @@ export function CheckoutClient({
     .map((line) => `${line.variantId}:${line.quantity}`)
     .join(",");
   const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
-  const [selectedRateId, setSelectedRateId] = useState(initialRateId || null);
+  const [selectedOptionKey, setSelectedOptionKey] = useState(initialOptionKey || null);
+  /** A janela escolhida na sacola sumiu da cotação (passou da hora-limite). */
+  const [windowGone, setWindowGone] = useState(false);
   const [shippingCentsOverride, setShippingCentsOverride] = useState<number | null>(
     null,
   );
   const [, startQuote] = useTransition();
   const lastQuoteKeyRef = useRef<string | null>(null);
+  // Sobe quando o servidor recusa a janela do motoboy (passou da hora-limite):
+  // a lista é cotada de novo e a escolha cai numa opção válida.
+  const [quoteNonce, setQuoteNonce] = useState(0);
 
   useEffect(() => {
     if (!mounted || items.length === 0) return;
@@ -183,7 +190,7 @@ export function CheckoutClient({
       setQuote({ status: "idle" });
       return;
     }
-    const key = `${cepDigits}|${itemsKey}`;
+    const key = `${cepDigits}|${itemsKey}|${quoteNonce}`;
     if (lastQuoteKeyRef.current === key) return;
     lastQuoteKeyRef.current = key;
     setQuote({ status: "loading" });
@@ -201,19 +208,21 @@ export function CheckoutClient({
       }
       setQuote({
         status: "done",
-        quotes: result.quotes,
+        options: result.options,
         whatsappUrl: result.whatsappUrl,
       });
       setShippingCentsOverride(null);
-      setSelectedRateId((current) => {
-        if (current && result.quotes.some((q) => q.rateId === current)) {
-          return current;
-        }
-        return result.quotes[0]?.rateId ?? null;
+      // A janela de hoje pode ter passado da hora-limite entre a sacola e o
+      // checkout: a chave some da lista, a escolha cai na primeira opção e a
+      // cliente é avisada (nunca troca de motoboy para Correios em silêncio).
+      setSelectedOptionKey((current) => {
+        const next = pickDefaultOptionKey(result.options, current);
+        setWindowGone(isWindowOptionKey(current) && next !== current);
+        return next;
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, cepDigits, itemsKey]);
+  }, [mounted, cepDigits, itemsKey, quoteNonce]);
 
   // ----- Cupom: re-cotado no servidor ao montar e quando a sacola muda -----
   const [couponCode, setCouponCode] = useState<string | null>(
@@ -272,9 +281,8 @@ export function CheckoutClient({
   // dobradas até "Ver as N peças".
   const [expanded, setExpanded] = useState(false);
 
-  const quotes = quote.status === "done" ? quote.quotes : [];
-  const selectedQuote =
-    quotes.find((q) => q.rateId === selectedRateId) ?? null;
+  const options = quote.status === "done" ? quote.options : [];
+  const selectedQuote = options.find((o) => o.optionKey === selectedOptionKey) ?? null;
   const shippingCents =
     shippingCentsOverride ?? selectedQuote?.priceCents ?? null;
   const discountCents = appliedCoupon?.discountCents ?? 0;
@@ -325,6 +333,9 @@ export function CheckoutClient({
           return;
         }
         setSubmitError({ code: result.code, message: result.message });
+        if (result.code === "DELIVERY_WINDOW_EXPIRED" || result.code === "DELIVERY_WINDOW_REQUIRED") {
+          setQuoteNonce((n) => n + 1);
+        }
       });
     },
     [clear, router, startSubmit],
@@ -388,6 +399,7 @@ export function CheckoutClient({
       })),
       shippingRateId: selectedQuote.rateId,
       expectedShippingCents: shippingCents,
+      ...(selectedQuote.kind === "motoboy" ? { deliveryWindow: selectedQuote.window } : {}),
       paymentMethod,
       ...(couponCode ? { couponCode } : {}),
       ...(readStoredStyle()?.token ? { styleToken: readStoredStyle()?.token } : {}),
@@ -697,7 +709,7 @@ export function CheckoutClient({
                     {quote.message}
                   </Notice>
                 ) : null}
-                {quote.status === "done" && quotes.length === 0 ? (
+                {quote.status === "done" && options.length === 0 ? (
                   <Notice tone="gold" role="alert">
                     Ainda não entregamos para este CEP —{" "}
                     {quote.whatsappUrl ? (
@@ -715,19 +727,25 @@ export function CheckoutClient({
                     .
                   </Notice>
                 ) : null}
-                {quotes.length > 0 ? (
+                {windowGone && options.length > 0 ? (
+                  <Notice tone="gold" role="alert">
+                    O horário de entrega que você escolheu na sacola já passou da hora-limite. Confira a opção marcada abaixo ou escolha outra.
+                  </Notice>
+                ) : null}
+                {options.length > 0 ? (
                   <fieldset>
                     <legend className={cx(eyebrow, "mb-2")}>Opções de entrega</legend>
                     <div className="space-y-2">
-                      {quotes.map((option) => (
+                      {options.map((option) => (
                         <OptionCard
-                          key={option.rateId}
+                          key={option.optionKey}
                           name="shippingOption"
-                          value={option.rateId}
-                          checked={selectedRateId === option.rateId}
+                          value={option.optionKey}
+                          checked={selectedOptionKey === option.optionKey}
                           onChange={() => {
-                            setSelectedRateId(option.rateId);
+                            setSelectedOptionKey(option.optionKey);
                             setShippingCentsOverride(null);
+                            setWindowGone(false);
                           }}
                           title={option.name}
                           detail={deliveryLabel(option)}

@@ -13,12 +13,8 @@ import {
   quoteCoupon,
   ServiceError as CouponServiceError,
 } from "@/services/coupons";
-import {
-  computeTotalWeightGrams,
-  quoteShipping,
-  ServiceError,
-  type ShippingQuote,
-} from "@/services/store-catalog";
+import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { computeTotalWeightGrams, quoteDeliveryOptions, ServiceError } from "@/services/store-catalog";
 import { getSettingsMap } from "@/services/settings";
 
 const quoteShippingActionSchema = z.object({
@@ -39,7 +35,8 @@ export type QuoteShippingActionInput = z.input<typeof quoteShippingActionSchema>
 export type QuoteShippingActionResult =
   | {
       ok: true;
-      quotes: ShippingQuote[];
+      /** Opções escolhíveis: Correios (1 por faixa) e motoboy (1 por janela, hoje/amanhã pelo relógio de SP). */
+      options: DeliveryOption[];
       /** Link wa.me quando store_whatsapp está configurado; null caso contrário. */
       whatsappUrl: string | null;
     }
@@ -68,7 +65,7 @@ export async function quoteShippingAction(
       })),
     );
 
-    const quotes = await quoteShipping(db, { cep: parsed.cep, totalWeightGrams });
+    const options = await quoteDeliveryOptions(db, { cep: parsed.cep, totalWeightGrams });
 
     // Só precisamos do WhatsApp quando não há opção de entrega, mas ler a
     // setting é barato e evita uma segunda action.
@@ -80,7 +77,7 @@ export async function quoteShippingAction(
       if (digits.length >= 10) whatsappUrl = `https://wa.me/${digits}`;
     }
 
-    return { ok: true, quotes, whatsappUrl };
+    return { ok: true, options, whatsappUrl };
   } catch (error) {
     if (error instanceof ServiceError) {
       return { ok: false, error: error.message };

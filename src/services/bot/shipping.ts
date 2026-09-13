@@ -1,4 +1,5 @@
 // Ferramenta de frete da vendedora (cotar_frete).
+import { withoutMotoboy } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -24,7 +25,7 @@ export async function execCotarFrete(
     ? DEFAULT_ITEM_WEIGHT_GRAMS
     : await cartWeightGrams(db, cart);
 
-  const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams });
+  const quotes = withoutMotoboy(await quoteShipping(db, { cep: input.cep, totalWeightGrams }));
   if (quotes.length === 0) {
     return {
       ok: false,

@@ -218,6 +218,13 @@
       "when": 1789276678791,
       "tag": "0030_windy_northstar",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1789282057115,
+      "tag": "0031_lumpy_juggernaut",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import * as schema from "@/db/schema";
 import { auditLog, shippingRates } from "@/db/schema";
+import { deliveryWindowsSchema, minutesOf, SHIPPING_KINDS, type DeliveryWindow, type ShippingKind } from "@/core/shipping/delivery-windows";
 
 /** Base estrutural comum ao Db de produção, transações e o TestDb (PGlite). */
 export type ServiceDb = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -71,6 +72,9 @@ export interface ShippingRate {
   priceCents: number;
   deliveryDaysMin: number;
   deliveryDaysMax: number;
+  /** 'correios' (prazo em dias) ou 'motoboy' (janelas do dia com hora-limite). */
+  kind: ShippingKind;
+  deliveryWindows: DeliveryWindow[];
   isActive: boolean;
   sortOrder: number;
   createdAt: Date;
@@ -89,11 +93,19 @@ function toShippingRate(row: typeof shippingRates.$inferSelect): ShippingRate {
     priceCents: Number(row.priceCents),
     deliveryDaysMin: row.deliveryDaysMin,
     deliveryDaysMax: row.deliveryDaysMax,
+    kind: row.kind as ShippingKind,
+    deliveryWindows: parseWindows(row.deliveryWindows),
     isActive: row.isActive,
     sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** Janelas gravadas em jsonb: tolerante (lixo vira lista vazia). */
+export function parseWindows(raw: unknown): DeliveryWindow[] {
+  const parsed = deliveryWindowsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +140,8 @@ const rateFieldsSchema = z.object({
     .number()
     .int("O prazo máximo deve ser um número inteiro de dias.")
     .min(0, "O prazo máximo não pode ser negativo."),
+  kind: z.enum(SHIPPING_KINDS).default("correios"),
+  deliveryWindows: deliveryWindowsSchema.default([]),
   userId: z.uuid(),
 });
 
@@ -157,8 +171,14 @@ function normalizeRateFields(parsed: RateFields): RateFields {
       "O prazo de entrega está invertido: o mínimo de dias deve ser menor ou igual ao máximo.",
     );
   }
+  // Motoboy vive das janelas (e entrega no dia: prazo 0); Correios não tem janela.
+  if (parsed.kind === "motoboy" && parsed.deliveryWindows.length === 0) {
+    throw new ServiceError("motoboy_sem_janela", "Cadastre ao menos uma janela de entrega para o motoboy (ex.: 19:00–21:00, pague até 13:00).");
+  }
+  const windows = parsed.kind === "motoboy" ? [...parsed.deliveryWindows].sort((a, b) => minutesOf(a.start) - minutesOf(b.start)) : [];
+  const days = parsed.kind === "motoboy" ? { deliveryDaysMin: 0, deliveryDaysMax: 0 } : {};
 
-  return { ...parsed, cepStart, cepEnd };
+  return { ...parsed, ...days, cepStart, cepEnd, deliveryWindows: windows };
 }
 
 function rateAuditSnapshot(rate: ShippingRate): Record<string, unknown> {
@@ -171,6 +191,8 @@ function rateAuditSnapshot(rate: ShippingRate): Record<string, unknown> {
     priceCents: rate.priceCents,
     deliveryDaysMin: rate.deliveryDaysMin,
     deliveryDaysMax: rate.deliveryDaysMax,
+    kind: rate.kind,
+    deliveryWindows: rate.deliveryWindows,
     isActive: rate.isActive,
   };
 }
@@ -217,6 +239,8 @@ export async function createShippingRate(
         priceCents: fields.priceCents,
         deliveryDaysMin: fields.deliveryDaysMin,
         deliveryDaysMax: fields.deliveryDaysMax,
+        kind: fields.kind,
+        deliveryWindows: fields.deliveryWindows,
       })
       .returning();
 
@@ -278,6 +302,8 @@ export async function updateShippingRate(
         priceCents: fields.priceCents,
         deliveryDaysMin: fields.deliveryDaysMin,
         deliveryDaysMax: fields.deliveryDaysMax,
+        kind: fields.kind,
+        deliveryWindows: fields.deliveryWindows,
         isActive: parsed.isActive,
         updatedAt: new Date(),
       })

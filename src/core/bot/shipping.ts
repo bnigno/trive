@@ -15,6 +15,15 @@ import { formatCep, type BotQuote } from "./memory";
 /** Depois disso a cotação é velha demais para fechar: cote de novo. */
 export const QUOTE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Até a vendedora saber apresentar janelas e guardar a escolha (Onda 5, I4),
+ * o motoboy fica fora da cotação dela: sem janela o pedido não fecha
+ * (DELIVERY_WINDOW_REQUIRED) e "0 dias úteis" seria mentira.
+ */
+export function withoutMotoboy<T extends { kind?: string }>(quotes: readonly T[]): T[] {
+  return quotes.filter((quote) => quote.kind !== "motoboy");
+}
+
 export type PickedQuote =
   | { kind: "picked"; quote: BotQuote }
   | { kind: "unrecognized"; term: string }

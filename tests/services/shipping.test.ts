@@ -191,3 +191,115 @@ describe("updateShippingRate", () => {
     ).rejects.toThrow(/não encontrada/i);
   });
 });
+
+describe("faixa por motoboy (janelas com hora-limite)", () => {
+  const WINDOWS = [
+    { start: "19:00", end: "21:00", cutoff: "13:00" },
+    { start: "09:00", end: "12:00", cutoff: "08:00" },
+  ];
+
+  it("cria a faixa com as janelas em ordem de horário e prazo zerado (entrega no dia)", async () => {
+    const created = await createShippingRate(db, {
+      name: "Motoboy Belém",
+      cepStart: "66000-000",
+      cepEnd: "66999-999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 1500,
+      deliveryDaysMin: 3,
+      deliveryDaysMax: 5,
+      kind: "motoboy",
+      deliveryWindows: WINDOWS,
+      userId: FIXED_USER_ID,
+    });
+
+    expect(created.kind).toBe("motoboy");
+    expect(created.deliveryWindows.map((w) => w.start)).toEqual(["09:00", "19:00"]);
+    expect(created.deliveryDaysMin).toBe(0);
+    expect(created.deliveryDaysMax).toBe(0);
+
+    const [row] = await db.select().from(schema.shippingRates).where(eq(schema.shippingRates.id, created.id));
+    expect(row.kind).toBe("motoboy");
+    expect(row.deliveryWindows).toEqual([
+      { start: "09:00", end: "12:00", cutoff: "08:00" },
+      { start: "19:00", end: "21:00", cutoff: "13:00" },
+    ]);
+  });
+
+  it("motoboy sem janela é rejeitado; janela inválida (fim antes do início, limite depois do início) também", async () => {
+    const base = {
+      name: "Motoboy",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 1500,
+      deliveryDaysMin: 0,
+      deliveryDaysMax: 0,
+      userId: FIXED_USER_ID,
+    };
+    await expect(createShippingRate(db, { ...base, kind: "motoboy", deliveryWindows: [] })).rejects.toMatchObject({
+      code: "motoboy_sem_janela",
+    });
+    await expect(
+      createShippingRate(db, { ...base, kind: "motoboy", deliveryWindows: [{ start: "21:00", end: "19:00", cutoff: "13:00" }] }),
+    ).rejects.toThrow(/terminar depois de começar/);
+    await expect(
+      createShippingRate(db, { ...base, kind: "motoboy", deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "19:30" }] }),
+    ).rejects.toThrow(/hora-limite/);
+  });
+
+  it("Correios (padrão) ignora janelas; trocar a faixa para Correios na edição limpa as janelas", async () => {
+    const created = await createShippingRate(db, {
+      name: "PAC Norte",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 2490,
+      deliveryDaysMin: 3,
+      deliveryDaysMax: 10,
+      deliveryWindows: WINDOWS,
+      userId: FIXED_USER_ID,
+    });
+    expect(created.kind).toBe("correios");
+    expect(created.deliveryWindows).toEqual([]);
+
+    const moto = await updateShippingRate(db, {
+      id: created.id,
+      name: "Motoboy Norte",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 1500,
+      deliveryDaysMin: 0,
+      deliveryDaysMax: 0,
+      kind: "motoboy",
+      deliveryWindows: WINDOWS,
+      isActive: true,
+      userId: FIXED_USER_ID,
+    });
+    expect(moto.kind).toBe("motoboy");
+    expect(moto.deliveryWindows).toHaveLength(2);
+
+    const back = await updateShippingRate(db, {
+      id: created.id,
+      name: "PAC Norte",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 2490,
+      deliveryDaysMin: 3,
+      deliveryDaysMax: 10,
+      kind: "correios",
+      deliveryWindows: WINDOWS,
+      isActive: true,
+      userId: FIXED_USER_ID,
+    });
+    expect(back.kind).toBe("correios");
+    expect(back.deliveryWindows).toEqual([]);
+    expect(back.deliveryDaysMax).toBe(10);
+  });
+});

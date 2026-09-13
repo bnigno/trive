@@ -11,7 +11,7 @@ import {
   summarizePurchaseHistory,
   type PurchaseOrderSummary,
 } from "@/core/bot/purchases";
-import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
+import { confirmQuoteUnchanged, resolveApprovedQuote, withoutMotoboy } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { auditLog, customers, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
@@ -156,10 +156,12 @@ export async function execCriarPedido(
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
-  const fresh = await quoteShipping(db, {
-    cep: identity.postalCode,
-    totalWeightGrams,
-  });
+  const fresh = withoutMotoboy(
+    await quoteShipping(db, {
+      cep: identity.postalCode,
+      totalWeightGrams,
+    }),
+  );
   const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
   if (!confirmed.ok) return confirmed;
   const chosen = confirmed.quote;

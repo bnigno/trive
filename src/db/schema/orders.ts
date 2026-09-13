@@ -71,6 +71,8 @@ export const orders = pgTable(
     // Snapshot do endereço no momento do pedido.
     shippingAddress: jsonb("shipping_address"),
     shippingTrackingCode: text("shipping_tracking_code"),
+    /** Entrega por motoboy: janela escolhida no fechamento (imutável): {dayKey,start,end,cutoff,rateName,label}. */
+    deliveryWindow: jsonb("delivery_window").$type<{ dayKey: string; start: string; end: string; cutoff: string; rateName: string; label: string }>(),
     note: text("note"),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     // Comprovante de pagamento em imagem (receipts/<id>/comprovante.jpg),
@@ -118,6 +120,10 @@ export const orders = pgTable(
     index("orders_customer_id_idx").on(table.customerId),
     index("orders_created_at_idx").on(table.createdAt),
     index("orders_payment_due_at_idx").on(table.paymentDueAt),
+    // Rota do dia: pedidos com entrega por motoboy num dia (SP).
+    index("orders_delivery_window_day_idx")
+      .on(sql`(${table.deliveryWindow}->>'dayKey')`)
+      .where(sql`${table.deliveryWindow} IS NOT NULL`),
     uniqueIndex("orders_mp_payment_id_unique_idx")
       .on(table.mpPaymentId)
       .where(sql`${table.mpPaymentId} IS NOT NULL`),

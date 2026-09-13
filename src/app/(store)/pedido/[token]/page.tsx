@@ -251,6 +251,11 @@ export default async function OrderPage({
               headingId="andamento-title"
               aria-labelledby="andamento-title"
             >
+              {order.deliveryWindowLabel ? (
+                <p className="mb-4 font-store text-sm text-ink-700">
+                  Entrega por motoboy: <span className="font-medium text-ink-900">{order.deliveryWindowLabel}</span>.
+                </p>
+              ) : null}
               {journey ? (
                 <OrderJourney
                   steps={journey}

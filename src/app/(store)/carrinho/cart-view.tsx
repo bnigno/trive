@@ -37,7 +37,8 @@ import { cx } from "@/components/ui/cx";
 import { LiaLink } from "@/components/store/lia-link";
 import { formatCentsBRL } from "@/lib/money";
 import { formatCep } from "@/lib/cep";
-import type { ShippingQuote } from "@/services/store-catalog";
+import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { pickDefaultOptionKey } from "@/lib/checkout-options";
 
 import { quoteCouponAction, quoteShippingAction } from "./actions";
 import { CartBar } from "./cart-bar";
@@ -48,7 +49,7 @@ type QuoteState =
   | {
       status: "done";
       cepDigits: string;
-      quotes: ShippingQuote[];
+      options: DeliveryOption[];
       whatsappUrl: string | null;
     };
 
@@ -71,7 +72,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
 
   const [cepInput, setCepInput] = useState("");
   const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
-  const [selectedRateId, setSelectedRateId] = useState<string | null>(null);
+  const [selectedOptionKey, setSelectedOptionKey] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   // ----- Cupom de desconto -------------------------------------------------
@@ -127,23 +128,18 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
         });
         if (!result.ok) {
           setQuote({ status: "error", message: result.error });
-          setSelectedRateId(null);
+          setSelectedOptionKey(null);
           return;
         }
         setQuote({
           status: "done",
           cepDigits,
-          quotes: result.quotes,
+          options: result.options,
           whatsappUrl: result.whatsappUrl,
         });
         // Mantém a escolha se ela continuar disponível; senão, pré-seleciona
-        // a opção mais barata (a lista já vem ordenada por preço).
-        setSelectedRateId((current) => {
-          if (current && result.quotes.some((q) => q.rateId === current)) {
-            return current;
-          }
-          return result.quotes[0]?.rateId ?? null;
-        });
+        // a primeira (motoboy de hoje, depois a mais barata).
+        setSelectedOptionKey((current) => pickDefaultOptionKey(result.options, current));
       });
     },
     [startTransition],
@@ -183,7 +179,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     if (items.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset da cotação quando a sacola esvazia (pós-hidratação)
       setQuote({ status: "idle" });
-      setSelectedRateId(null);
+      setSelectedOptionKey(null);
       return;
     }
     runQuote(quote.cepDigits, items);
@@ -234,7 +230,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
 
   const selectedQuote =
     quote.status === "done"
-      ? (quote.quotes.find((q) => q.rateId === selectedRateId) ?? null)
+      ? (quote.options.find((o) => o.optionKey === selectedOptionKey) ?? null)
       : null;
   const appliedCoupon = coupon.status === "applied" ? coupon : null;
   const discountCents = appliedCoupon?.discountCents ?? 0;
@@ -242,11 +238,11 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     subtotalCents - discountCents + (selectedQuote?.priceCents ?? 0);
   const checkoutHref =
     quote.status === "done" && selectedQuote
-      ? `/checkout?cep=${quote.cepDigits}&frete=${selectedQuote.rateId}${
+      ? `/checkout?cep=${quote.cepDigits}&frete=${encodeURIComponent(selectedQuote.optionKey)}${
           appliedCoupon ? `&cupom=${encodeURIComponent(appliedCoupon.code)}` : ""
         }`
       : null;
-  const noDelivery = quote.status === "done" && quote.quotes.length === 0;
+  const noDelivery = quote.status === "done" && quote.options.length === 0;
 
   if (!mounted) {
     return <CartSkeleton />;
@@ -371,17 +367,17 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                 </Notice>
               ) : null}
 
-              {quote.status === "done" && quote.quotes.length > 0 ? (
+              {quote.status === "done" && quote.options.length > 0 ? (
                 <fieldset className="mt-3">
                   <legend className="sr-only">Opções de entrega</legend>
                   <div className="space-y-2">
-                    {quote.quotes.map((option) => (
+                    {quote.options.map((option) => (
                       <OptionCard
-                        key={option.rateId}
+                        key={option.optionKey}
                         name="shippingRate"
-                        value={option.rateId}
-                        checked={selectedRateId === option.rateId}
-                        onChange={() => setSelectedRateId(option.rateId)}
+                        value={option.optionKey}
+                        checked={selectedOptionKey === option.optionKey}
+                        onChange={() => setSelectedOptionKey(option.optionKey)}
                         title={option.name}
                         detail={deliveryLabel(option)}
                         trailing={
