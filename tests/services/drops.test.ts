@@ -226,8 +226,13 @@ describe("janela VIP, convite e publicação", () => {
     expect((await getDrop(sdb, dropId, PUBLISH_AT))?.status).toBe("published");
     expect((await publishedEvents()).map((e) => e.key)).toContain(`product.published:${productId}:drop:${dropId}`);
     expect(await publishedEvents()).toHaveLength(2);
+    // E a cortina abriu para a lista de espera: drop.published UMA vez (retry nunca duplica).
+    const opened = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "drop.published"));
+    expect(opened).toHaveLength(1);
+    expect(opened[0].dedupeKey).toBe(`drop.published:${dropId}`);
     expect(await dispatchDueDrops(sdb, { now: PUBLISH_AT })).toEqual({ vipQueued: 0, published: 0 });
     expect(await publishedEvents()).toHaveLength(2);
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "drop.published"))).toHaveLength(1);
     vi.useFakeTimers({ now: PUBLISH_AT, toFake: ["Date"] });
     try {
       expect((await listPublicProducts(sdb, { limit: 10 })).map((p) => p.slug)).toEqual(["vestido-aurora"]);

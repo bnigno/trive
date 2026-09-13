@@ -17,6 +17,65 @@ export function vipStartsAt(publishAt: Date, vipWindowHours: number): Date {
   return new Date(publishAt.getTime() - vipWindowHours * 3_600_000);
 }
 
+/**
+ * O que /estreia mostra: 'hidden' (nada agendado, rascunho ou cancelado),
+ * 'teaser' (agendado: contagem + silhuetas), 'open' (a cortina abriu). Segue
+ * o relógio, não o cron: na hora marcada a página abre mesmo antes do publish.
+ */
+export type TeaserState = "hidden" | "teaser" | "open";
+
+export function teaserState(
+  drop: { status: string; publishAt: Date; vipWindowHours: number } | null | undefined,
+  now: Date,
+): TeaserState {
+  if (!drop) return "hidden";
+  const phase = dropPhase(drop, now);
+  if (phase === "draft" || phase === "canceled") return "hidden";
+  return phase === "published" ? "open" : "teaser";
+}
+
+/** Depois de aberta, a estreia fica em cartaz por um dia em /estreia. */
+export const TEASER_OPEN_GRACE_MS = 24 * 60 * 60 * 1000;
+
+const SP_TIME_ZONE = "America/Sao_Paulo";
+const weekdayFormatter = new Intl.DateTimeFormat("pt-BR", { weekday: "long", timeZone: SP_TIME_ZONE });
+const dayMonthFormatter = new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "long", timeZone: SP_TIME_ZONE });
+const hourFormatter = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: SP_TIME_ZONE });
+
+/**
+ * "sábado, 20h" (até 6 dias à frente), "20 de setembro, 20h" (mais longe),
+ * "hoje, 20h" / "amanhã, 20h30"; sempre no relógio de São Paulo.
+ */
+export function publicDropLabel(publishAt: Date, now: Date): string {
+  const [hh, mm] = hourFormatter.format(publishAt).split(":");
+  const hora = mm === "00" ? `${Number(hh)}h` : `${Number(hh)}h${mm}`;
+  const dayKey = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: SP_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  const today = dayKey(now);
+  const target = dayKey(publishAt);
+  if (target === today) return `hoje, ${hora}`;
+  if (target === dayKey(new Date(now.getTime() + 24 * 60 * 60 * 1000))) return `amanhã, ${hora}`;
+  const diffMs = publishAt.getTime() - now.getTime();
+  if (diffMs > 0 && diffMs < 6 * 24 * 60 * 60 * 1000) {
+    return `${weekdayFormatter.format(publishAt)}, ${hora}`;
+  }
+  return `${dayMonthFormatter.format(publishAt)}, ${hora}`;
+}
+
+export type CountdownParts = { days: number; hours: number; minutes: number; seconds: number; total: number };
+
+/** Partes da contagem regressiva (nunca negativas; total em ms). */
+export function countdownParts(publishAt: Date, now: Date): CountdownParts {
+  const total = Math.max(0, publishAt.getTime() - now.getTime());
+  const seconds = Math.floor(total / 1000);
+  return {
+    days: Math.floor(seconds / 86_400),
+    hours: Math.floor((seconds % 86_400) / 3_600),
+    minutes: Math.floor((seconds % 3_600) / 60),
+    seconds: seconds % 60,
+    total,
+  };
+}
+
 export function dropPhase(
   drop: { status: string; publishAt: Date; vipWindowHours: number },
   now: Date,

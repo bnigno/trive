@@ -6,13 +6,15 @@ import type { MetadataRoute } from "next";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { siteUrl } from "@/lib/site-url";
+import { getUpcomingDropTeaser } from "@/services/drops";
 import { listPublicCategories, listPublicProducts } from "@/services/store-catalog";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrl();
-  const [products, categories] = await Promise.all([
+  const [products, categories, teaser] = await Promise.all([
     tryOrBuildFallback([], () => listPublicProducts(getDb(), { limit: 200 })),
     tryOrBuildFallback([], () => listPublicCategories(getDb())),
+    tryOrBuildFallback(null, () => getUpcomingDropTeaser(getDb())),
   ]);
   const now = new Date();
 
@@ -33,6 +35,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "weekly" as const,
       priority: 0.7,
     })),
+    // /estreia só entra em cartaz (teaser ou aberta há menos de um dia).
+    ...(teaser ? [{ url: `${base}/estreia`, lastModified: now, changeFrequency: "hourly" as const, priority: 0.8 }] : []),
     { url: `${base}/estilo`, lastModified: now, changeFrequency: "monthly", priority: 0.5 },
     { url: `${base}/trocas-e-devolucoes`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
     { url: `${base}/termos`, lastModified: now, changeFrequency: "yearly", priority: 0.2 },

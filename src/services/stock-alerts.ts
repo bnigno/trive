@@ -9,14 +9,7 @@ import { z } from "zod";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { variantLabel } from "@/core/catalog/attributes";
 import { renderTemplate } from "@/core/whatsapp/render";
-import {
-  DEFAULT_BULK_INTERVAL_SECONDS,
-  DEFAULT_SEND_WINDOW,
-  isWithinSendWindow,
-  nextSendWindowStart,
-  staggerSchedule,
-  type SendWindow,
-} from "@/core/whatsapp/send-window";
+import { isWithinSendWindow, nextSendWindowStart, staggerSchedule } from "@/core/whatsapp/send-window";
 import {
   auditLog,
   customers,
@@ -30,7 +23,7 @@ import {
 import { siteUrl } from "@/lib/site-url";
 import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
-import { getSettingsMap } from "@/services/settings";
+import { loadSendPolicy } from "@/services/wa-send-policy";
 import { publicImageUrl } from "@/services/store-catalog";
 import {
   isWaEnabled,
@@ -227,20 +220,6 @@ export async function listAlertsByVariant(db: DbOrTx, variantId: string, limit =
 // ---------------------------------------------------------------------------
 // fanOutRestockAlerts — handler de stock.restocked
 // ---------------------------------------------------------------------------
-
-async function loadSendPolicy(db: DbOrTx): Promise<{ window: SendWindow; intervalSeconds: number }> {
-  const map = await getSettingsMap(db, ["wa_send_window_start", "wa_send_window_end", "wa_bulk_interval_seconds"]);
-  const start = Number(map["wa_send_window_start"]);
-  const end = Number(map["wa_send_window_end"]);
-  const interval = Number(map["wa_bulk_interval_seconds"]);
-  return {
-    window: {
-      startHour: Number.isFinite(start) ? start : DEFAULT_SEND_WINDOW.startHour,
-      endHour: Number.isFinite(end) ? end : DEFAULT_SEND_WINDOW.endHour,
-    },
-    intervalSeconds: Number.isFinite(interval) && interval > 0 ? interval : DEFAULT_BULK_INTERVAL_SECONDS,
-  };
-}
 
 /**
  * Um evento wa.restock_notify por aviso aberto, com next_attempt_at
