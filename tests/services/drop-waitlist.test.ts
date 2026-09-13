@@ -109,6 +109,19 @@ describe("publicar → fan-out → aviso", () => {
     expect(await openEvents()).toHaveLength(2);
   });
 
+  it("estreia às 20h59 com 3 na lista: 1 cabe hoje, as outras continuam amanhã às 9h no mesmo passo (sem rajada)", async () => {
+    const { dropId } = await scheduledDrop();
+    for (const phone of [ANA, "+5511999990002", "+5511999990003"]) await joinDropWaitlist(sdb, { dropId, phoneE164: phone }, NOW);
+    const late = new Date("2026-09-19T23:59:50Z"); // 20:59:50 SP
+    await publishDrop(sdb, { dropId, now: late });
+    await fanOutDropWaitlist(sdb, { dropId, now: late });
+    expect((await openEvents()).map((e) => e.nextAttemptAt.toISOString())).toEqual([
+      "2026-09-19T23:59:50.000Z",
+      "2026-09-20T12:00:00.000Z",
+      "2026-09-20T12:00:30.000Z",
+    ]);
+  });
+
   it("estreia de madrugada: o fan-out agenda para a abertura da janela (9h SP)", async () => {
     const { dropId } = await scheduledDrop();
     await joinDropWaitlist(sdb, { dropId, phoneE164: ANA }, NOW);
@@ -151,12 +164,43 @@ describe("publicar → fan-out → aviso", () => {
     expect(deferred[0].dedupeKey).toBe(`wa.drop_open_notify:${joined.waitlistId}:2026-09-19`);
     expect(deferred[0].nextAttemptAt.toISOString()).toBe("2026-09-20T12:00:00.000Z");
 
-    // SAIR registrado: cancela e não manda.
+    // SAIR registrado DEPOIS de pedir o aviso: cancela e não manda.
     const [customer] = await db.insert(schema.customers).values({ fullName: "Ana", phoneE164: ANA, marketingOptIn: false }).returning({ id: schema.customers.id });
-    await db.insert(schema.auditLog).values({ actorType: "customer", actorId: customer.id, action: "wa.opt_out", entityType: "customer", entityId: customer.id });
+    await db.insert(schema.auditLog).values({ actorType: "customer", actorId: customer.id, action: "wa.opt_out", entityType: "customer", entityId: customer.id, createdAt: new Date(NOW.getTime() + 3_600_000) });
     expect(await notifyDropOpen(sdb, provider, { waitlistId: joined.waitlistId!, now: AFTER })).toEqual({ skipped: "sem_opt_in" });
     expect(provider.sentMessages).toHaveLength(0);
     expect((await db.select().from(schema.dropWaitlist))[0].canceledAt).not.toBeNull();
+  });
+});
+
+describe("SAIR e consentimento", () => {
+  it("SAIR pelo WhatsApp SEM cadastro cancela a linha (a /estreia é sem login) e o aviso não sai", async () => {
+    const { dropId } = await scheduledDrop();
+    const joined = await joinDropWaitlist(sdb, { dropId, phoneE164: ANA }, NOW);
+    vi.stubEnv("ZAPI_WEBHOOK_SECRET", "segredo");
+    const { processZapiInbound } = await import("@/services/wa-inbound");
+    const result = await processZapiInbound(sdb, {
+      providedSecret: "segredo",
+      body: { type: "ReceivedCallback", instanceId: "i", messageId: "MSG-SAIR", phone: ANA.slice(1), fromMe: false, isGroup: false, senderName: "Ana", momment: Date.now(), status: "RECEIVED", text: { message: "SAIR" } },
+    });
+    expect(result.action).toBe("opt_out");
+    const [row] = await db.select().from(schema.dropWaitlist);
+    expect(row.canceledAt).not.toBeNull();
+    await publishDrop(sdb, { dropId, now: PUBLISH_AT });
+    expect(await fanOutDropWaitlist(sdb, { dropId, now: PUBLISH_AT })).toEqual({ queued: 0 });
+    expect(await notifyDropOpen(sdb, new FakeMessagingProvider(), { waitlistId: joined.waitlistId!, now: AFTER })).toEqual({ skipped: "ja_avisado" });
+  });
+
+  it("caixinha marcada DEPOIS de um SAIR antigo é consentimento novo: o aviso sai", async () => {
+    const { dropId } = await scheduledDrop();
+    const [customer] = await db.insert(schema.customers).values({ fullName: "Ana", phoneE164: ANA, marketingOptIn: false }).returning({ id: schema.customers.id });
+    await db.insert(schema.auditLog).values({ actorType: "customer", actorId: customer.id, action: "wa.opt_out", entityType: "customer", entityId: customer.id, createdAt: new Date(NOW.getTime() - 86_400_000) });
+    const joined = await joinDropWaitlist(sdb, { dropId, phoneE164: ANA }, NOW);
+    await publishDrop(sdb, { dropId, now: PUBLISH_AT });
+    const provider = new FakeMessagingProvider();
+    const result = await notifyDropOpen(sdb, provider, { waitlistId: joined.waitlistId!, now: AFTER });
+    expect("sent" in result).toBe(true);
+    expect(provider.sentMessages).toHaveLength(1);
   });
 });
 
@@ -173,5 +217,17 @@ describe("getUpcomingDropTeaser", () => {
     await publishDrop(sdb, { dropId, now: PUBLISH_AT });
     expect((await getUpcomingDropTeaser(sdb, new Date(PUBLISH_AT.getTime() + 23 * 3_600_000)))?.state).toBe("open");
     expect(await getUpcomingDropTeaser(sdb, new Date(PUBLISH_AT.getTime() + 25 * 3_600_000))).toBeNull();
+  });
+
+  it("com outra estreia já agendada, a que acabou de abrir tem prioridade por um dia (é para lá que o aviso manda)", async () => {
+    const { dropId } = await scheduledDrop();
+    const other = await createDrop(sdb, { name: "Edição Seguinte", publishAt: new Date(PUBLISH_AT.getTime() + 7 * 86_400_000), vipWindowHours: 24, audienceLimit: 10, userId });
+    await db.update(schema.drops).set({ status: "scheduled" }).where(eq(schema.drops.id, other.dropId));
+    expect((await getUpcomingDropTeaser(sdb, NOW))?.dropId).toBe(dropId);
+    await publishDrop(sdb, { dropId, now: PUBLISH_AT });
+    const opened = (await getUpcomingDropTeaser(sdb, AFTER))!;
+    expect(opened).toMatchObject({ dropId, state: "open" });
+    const nextDay = (await getUpcomingDropTeaser(sdb, new Date(PUBLISH_AT.getTime() + 25 * 3_600_000)))!;
+    expect(nextDay).toMatchObject({ dropId: other.dropId, state: "teaser" });
   });
 });

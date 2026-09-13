@@ -22,7 +22,9 @@ import { getUpcomingDropTeaser, type DropTeaser } from "@/services/drops";
 import { getSettingsMap } from "@/services/settings";
 import { listPublicProducts } from "@/services/store-catalog";
 
-export const revalidate = 60;
+// ISR curto: na hora marcada a página vira sozinha (o relógio decide a fase)
+// e a contagem insiste em recarregar até ver a cortina aberta.
+export const revalidate = 30;
 
 export const metadata: Metadata = {
   title: "Estreia",

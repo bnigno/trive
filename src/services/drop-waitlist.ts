@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
 import { dropPhase } from "@/core/drops";
-import { nextSendWindowStart, staggerSchedule } from "@/core/whatsapp/send-window";
+import { staggerWithinWindow } from "@/core/whatsapp/send-window";
 import { auditLog, customers, dropProducts, dropWaitlist, drops, products, waTemplates } from "@/db/schema";
 import { siteUrl } from "@/lib/site-url";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -105,7 +105,9 @@ export async function fanOutDropWaitlist(db: DbOrTx, input: { dropId: string; no
     .orderBy(dropWaitlist.createdAt);
   if (open.length === 0) return { queued: 0 };
   const policy = await loadSendPolicy(db);
-  const schedule = staggerSchedule(open.length, { from: nextSendWindowStart(now, policy.window), intervalSeconds: policy.intervalSeconds });
+  // A fila não atravessa o fim da janela: a cauda continua amanhã às 9h, no
+  // mesmo passo — nunca uma rajada na manhã seguinte.
+  const schedule = staggerWithinWindow(open.length, { from: now, intervalSeconds: policy.intervalSeconds, window: policy.window });
   let queued = 0;
   for (const [index, row] of open.entries()) {
     const id = await enqueueOutboxEvent(db, {
@@ -144,6 +146,7 @@ export async function notifyDropOpen(
       customerId: dropWaitlist.customerId,
       notifiedAt: dropWaitlist.notifiedAt,
       canceledAt: dropWaitlist.canceledAt,
+      consentAt: dropWaitlist.consentAt,
       dropName: drops.name,
       dropStatus: drops.status,
       publishAt: drops.publishAt,
@@ -179,11 +182,14 @@ export async function notifyDropOpen(
     .limit(1);
   if (customer && !customer.marketingOptIn) {
     const [optOut] = await db
-      .select({ id: auditLog.id })
+      .select({ createdAt: auditLog.createdAt })
       .from(auditLog)
       .where(and(eq(auditLog.action, "wa.opt_out"), eq(auditLog.entityId, customer.id)))
+      .orderBy(desc(auditLog.createdAt))
       .limit(1);
-    if (optOut) {
+    // SAIR depois de pedir o aviso cancela; a caixinha marcada DEPOIS de um
+    // SAIR antigo é consentimento novo e vale.
+    if (optOut && optOut.createdAt.getTime() >= row.consentAt.getTime()) {
       await db.update(dropWaitlist).set({ canceledAt: now }).where(eq(dropWaitlist.id, row.id));
       return { skipped: "sem_opt_in" };
     }
@@ -236,4 +242,17 @@ export async function listDropWaitlist(db: DbOrTx, dropId: string, limit = 20) {
     .where(eq(dropWaitlist.dropId, dropId))
     .orderBy(desc(dropWaitlist.createdAt))
     .limit(limit);
+}
+
+/**
+ * SAIR pelo WhatsApp: toda linha aberta desse telefone é cancelada — também
+ * de quem nunca teve cadastro (a /estreia é sem login). Devolve quantas.
+ */
+export async function cancelDropWaitlistByPhone(db: DbOrTx, phoneE164: string, now = new Date()): Promise<number> {
+  const rows = await db
+    .update(dropWaitlist)
+    .set({ canceledAt: now })
+    .where(and(eq(dropWaitlist.phoneE164, phoneE164), isNull(dropWaitlist.notifiedAt), isNull(dropWaitlist.canceledAt)))
+    .returning({ id: dropWaitlist.id });
+  return rows.length;
 }

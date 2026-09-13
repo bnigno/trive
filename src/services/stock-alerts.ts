@@ -187,6 +187,16 @@ export async function cancelStockAlert(
 // Consultas
 // ---------------------------------------------------------------------------
 
+/** SAIR pelo WhatsApp: cancela todo aviso aberto desse telefone (com ou sem cadastro). */
+export async function cancelStockAlertsByPhone(db: DbOrTx, phoneE164: string, now = new Date()): Promise<number> {
+  const rows = await db
+    .update(stockAlerts)
+    .set({ canceledAt: now })
+    .where(and(eq(stockAlerts.phoneE164, phoneE164), isNull(stockAlerts.notifiedAt), isNull(stockAlerts.canceledAt)))
+    .returning({ id: stockAlerts.id });
+  return rows.length;
+}
+
 export async function listOpenAlertsByPhone(db: DbOrTx, phoneE164: string): Promise<StockAlertView[]> {
   const rows = await alertsQuery(db)
     .where(and(eq(stockAlerts.phoneE164, phoneE164), openCondition))

@@ -228,26 +228,27 @@ export interface DropTeaser {
 }
 
 /**
- * O que /estreia mostra agora: a estreia agendada mais próxima (teaser) ou,
- * não havendo, a que abriu há menos de um dia (open). null = nada em cartaz.
+ * O que /estreia mostra agora: a estreia que abriu há menos de um dia (open)
+ * tem prioridade — é para lá que o aviso "a cortina abriu" manda; senão a
+ * agendada mais próxima (teaser). null = nada em cartaz.
  */
 export async function getUpcomingDropTeaser(db: DbOrTx, now = new Date()): Promise<DropTeaser | null> {
-  const [upcoming] = await db
+  const since = new Date(now.getTime() - TEASER_OPEN_GRACE_MS);
+  const [justOpened] = await db
     .select()
     .from(drops)
-    .where(and(inArray(drops.status, ["scheduled", "vip_sent"]), gt(drops.publishAt, now)))
-    .orderBy(asc(drops.publishAt))
+    .where(and(inArray(drops.status, ["scheduled", "vip_sent", "published"]), gt(drops.publishAt, since), lte(drops.publishAt, now)))
+    .orderBy(desc(drops.publishAt))
     .limit(1);
-  const since = new Date(now.getTime() - TEASER_OPEN_GRACE_MS);
-  const [justOpened] = upcoming
+  const [upcoming] = justOpened
     ? []
     : await db
         .select()
         .from(drops)
-        .where(and(inArray(drops.status, ["scheduled", "vip_sent", "published"]), gt(drops.publishAt, since), lte(drops.publishAt, now)))
-        .orderBy(desc(drops.publishAt))
+        .where(and(inArray(drops.status, ["scheduled", "vip_sent"]), gt(drops.publishAt, now)))
+        .orderBy(asc(drops.publishAt))
         .limit(1);
-  const row = upcoming ?? justOpened;
+  const row = justOpened ?? upcoming;
   if (!row) return null;
   const state = teaserState(row, now);
   if (state === "hidden") return null;

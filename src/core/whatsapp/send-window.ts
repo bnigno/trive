@@ -45,3 +45,24 @@ export function staggerSchedule(count: number, opts: { from: Date; intervalSecon
   const interval = Math.max(1, Math.floor(opts.intervalSeconds)) * 1000;
   return Array.from({ length: Math.max(0, count) }, (_, index) => new Date(opts.from.getTime() + index * interval));
 }
+
+/**
+ * Como staggerSchedule, mas a fila NUNCA atravessa o fim da janela: o que não
+ * cabe hoje continua amanhã a partir da abertura, no mesmo passo — sem
+ * rajada às 9h. `from` fora da janela começa na próxima abertura.
+ */
+export function staggerWithinWindow(
+  count: number,
+  opts: { from: Date; intervalSeconds: number; window?: SendWindow },
+): Date[] {
+  const window = opts.window ?? DEFAULT_SEND_WINDOW;
+  const interval = Math.max(1, Math.floor(opts.intervalSeconds)) * 1000;
+  const slots: Date[] = [];
+  let cursor = nextSendWindowStart(opts.from, window);
+  for (let index = 0; index < Math.max(0, count); index += 1) {
+    if (!isWithinSendWindow(cursor, window)) cursor = nextSendWindowStart(cursor, window);
+    slots.push(cursor);
+    cursor = new Date(cursor.getTime() + interval);
+  }
+  return slots;
+}
