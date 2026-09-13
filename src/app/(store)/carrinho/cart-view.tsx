@@ -37,6 +37,7 @@ import { cx } from "@/components/ui/cx";
 import { LiaLink } from "@/components/store/lia-link";
 import { formatCentsBRL } from "@/lib/money";
 import { formatCep } from "@/lib/cep";
+import { writeStoredCep } from "@/lib/cep-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
 import { pickDefaultOptionKey } from "@/lib/checkout-options";
 
@@ -137,6 +138,8 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           options: result.options,
           whatsappUrl: result.whatsappUrl,
         });
+        // A página da peça usa este CEP para prometer "chega hoje".
+        writeStoredCep(cepDigits);
         // Mantém a escolha se ela continuar disponível; senão, pré-seleciona
         // a primeira (motoboy de hoje, depois a mais barata).
         setSelectedOptionKey((current) => pickDefaultOptionKey(result.options, current));

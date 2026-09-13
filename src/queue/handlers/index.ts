@@ -100,10 +100,14 @@ async function sendOrderWa(
   const spec = ORDER_WA_MILESTONES[milestone];
   // Dinheiro na entrega: confirmação SEM link de pagamento nem prazo de
   // reserva (o template order_confirmed quebraria com {{prazo}} vazio).
+  // Motoboy: "enviado" não tem rastreio — é "saiu da maison, chega hoje
+  // entre 19h e 21h" (mesma chave de dedupe: um aviso por pedido enviado).
   const clientTemplate =
     milestone === "store_created" && ctx.paymentMethod === "cash"
       ? "order_confirmed_cash"
-      : spec.clientTemplate;
+      : milestone === "shipped" && ctx.hasDeliveryWindow
+        ? "order_out_for_delivery"
+        : spec.clientTemplate;
   // Cliente sem telefone não é erro: o e-mail (quando houver) já cobriu.
   if (ctx.customer.phoneE164) {
     await sendTemplateMessage(db, provider, {

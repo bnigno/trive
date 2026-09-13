@@ -4,6 +4,7 @@ import { useActionState } from "react";
 
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { ConfirmButton } from "@/components/ui/confirm-button";
+import { DispatchForm } from "../rota/forms";
 import {
   Field,
   FormError,
@@ -163,6 +164,7 @@ export function OrderActions({
   paymentMethod,
   trackingCode,
   canRefund,
+  motoboy,
 }: {
   orderId: string;
   status: OrderStatus;
@@ -170,6 +172,8 @@ export function OrderActions({
   trackingCode: string | null;
   /** Reembolso lança saída no financeiro: só o dono. A action confere de novo. */
   canRefund: boolean;
+  /** Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio. */
+  motoboy?: { customerName: string } | null;
 }) {
   if (status === "canceled" || status === "refunded") {
     return (
@@ -217,6 +221,15 @@ export function OrderActions({
         />
       ) : null}
 
+      {motoboy && (status === "paid" || status === "preparing") ? (
+        <div className="flex flex-col gap-1">
+          <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            A peça foi com o motoboy: a cliente recebe “Saiu da maison, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
+          </p>
+        </div>
+      ) : null}
+
       {status === "paid" ? (
         <>
           <AdvanceForm
@@ -236,7 +249,7 @@ export function OrderActions({
         </>
       ) : null}
 
-      {status === "preparing" ? (
+      {status === "preparing" && !motoboy ? (
         <ShipForm orderId={orderId} currentTrackingCode={trackingCode} />
       ) : null}
 

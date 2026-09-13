@@ -101,6 +101,17 @@ E-mail de **recuperação de senha** não passa pela outbox (o payload é uma
 credencial e o feedback precisa ser imediato): reprocessar não se aplica — ver
 **Perdi o acesso ao painel**, item 4.
 
+## Entrega por motoboy: rota do dia e "Saiu"
+
+**/admin/pedidos/rota** lista os pedidos pagos com janela de entrega (faixa
+Motoboy em **/admin/frete**), por horário, com endereço, telefone e o que
+receber em dinheiro. **Saiu** marca o pedido como enviado e a cliente recebe
+"Saiu da maison, chega hoje entre 19h e 21h" (template
+`order_out_for_delivery`). Pedido que **pagou depois da hora-limite** ou com
+janela de ontem aparece marcado com **Reagendar** — a nova janela não avisa a
+cliente sozinha: combine pelo link do WhatsApp do card. Template novo em
+produção entra com `scripts/sync-seed.ts --templates order_out_for_delivery`.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

@@ -15,8 +15,10 @@ import {
   initialAxisSelection,
 } from "@/core/catalog/variant-selection";
 import { LiaLink } from "@/components/store/lia-link";
+import { SameDayPromiseBadge } from "@/components/store/same-day-promise";
 import type { PublicVariant } from "@/services/store-catalog";
 
+import { sameDayPromiseAction } from "./actions";
 import { BuyBar } from "./buy-bar";
 import { ProductGallery, type GalleryImage } from "./gallery";
 import { VariantPicker } from "./variant-picker";
@@ -112,6 +114,7 @@ export function ProductDetailClient({
             setSelected((previous) => ({ ...previous, [axis]: value }))
           }
         />
+        <SameDayPromiseBadge weightGrams={matched?.weightGrams ?? null} quote={sameDayPromiseAction} />
         <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
         {lia?.fallbackUrl ? (
           <div className="flex flex-col gap-1">

@@ -21,7 +21,15 @@ import {
   shippingRates,
   stockLevels,
 } from "@/db/schema";
-import { expandDeliveryOptions, type DeliveryOption, type DeliveryWindow, type ShippingKind } from "@/core/shipping/delivery-windows";
+import {
+  expandDeliveryOptions,
+  sameDayPromise,
+  type DeliveryOption,
+  type DeliveryWindow,
+  type SameDayPromise,
+  type ShippingKind,
+} from "@/core/shipping/delivery-windows";
+import { cepDigits } from "@/lib/cep";
 import { parseWindows } from "@/services/shipping";
 
 /**
@@ -563,6 +571,21 @@ export async function quoteDeliveryOptions(
 ): Promise<DeliveryOption[]> {
   const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams: input.totalWeightGrams });
   return expandDeliveryOptions(quotes, input.now ?? new Date());
+}
+
+/**
+ * A promessa da página da peça para quem já deu o CEP: "Pague até 17h e
+ * chega hoje, 19h–21h" (ou "Chega amanhã, 9h–12h"). Null = sem motoboy para
+ * o CEP (os Correios não prometem). CEP inválido também vira null: é um
+ * selo, não um erro.
+ */
+export async function quoteSameDayPromise(
+  db: ServiceDb,
+  input: { cep: string; totalWeightGrams: number; now?: Date },
+): Promise<SameDayPromise | null> {
+  const cep = cepDigits(input.cep);
+  if (!cep) return null;
+  return sameDayPromise(await quoteDeliveryOptions(db, { cep, totalWeightGrams: input.totalWeightGrams, now: input.now }));
 }
 
 // ---------------------------------------------------------------------------

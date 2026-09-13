@@ -13,6 +13,8 @@ export interface OrderWaContext {
   orderId: string;
   /** 'cash' troca o template de confirmação (order_confirmed_cash). */
   paymentMethod: string | null;
+  /** Motoboy: o "enviado" vira "saiu da maison, chega hoje entre 19h e 21h". */
+  hasDeliveryWindow: boolean;
   customer: {
     id: string;
     fullName: string;
@@ -39,6 +41,7 @@ export async function loadOrderWaContext(
       paymentMethod: orders.paymentMethod,
       totalCents: orders.totalCents,
       isGift: orders.isGift,
+      deliveryWindow: orders.deliveryWindow,
       customerId: customers.id,
       customerName: customers.fullName,
       customerPhone: customers.phoneE164,
@@ -62,6 +65,7 @@ export async function loadOrderWaContext(
   return {
     orderId: row.id,
     paymentMethod: row.paymentMethod,
+    hasDeliveryWindow: row.deliveryWindow !== null,
     customer: {
       id: row.customerId,
       fullName: row.customerName,
@@ -77,6 +81,7 @@ export async function loadOrderWaContext(
       storeName,
       paymentMethod: row.paymentMethod,
       isGift: row.isGift,
+      deliveryWindow: row.deliveryWindow,
     }),
   };
 }

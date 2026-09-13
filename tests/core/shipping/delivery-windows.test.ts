@@ -11,6 +11,7 @@ import {
   formatWindowLabel,
   isWindowBookable,
   optionKeyFor,
+  sameDayPromise,
   windowBelongsToRate,
   windowDateLabel,
   type RateForOptions,
@@ -90,5 +91,29 @@ describe("isWindowBookable / windowBelongsToRate / describeWindow", () => {
     expect(formatWindowLabel({ start: "09:00", end: "12:30", cutoff: "08:00" }, "today")).toBe("hoje, 9h–12h30 · pague até 8h");
     expect(optionKeyFor("r", { dayKey: "2026-09-20", start: "09:00" })).toBe("r:2026-09-20:09:00");
     expect(windowDateLabel(choice)).toBe("domingo 20/09, 19h–21h");
+  });
+});
+
+describe("sameDayPromise (selo da página da peça)", () => {
+  it("hoje: a janela com a hora-limite mais tarde; depois do limite: a primeira de amanhã; sem motoboy: null", () => {
+    const rate: RateForOptions = {
+      ...MOTOBOY,
+      deliveryWindows: [
+        { start: "16:00", end: "19:00", cutoff: "13:00" },
+        { start: "19:00", end: "21:00", cutoff: "17:00" },
+      ],
+    };
+    const morning = expandDeliveryOptions([PAC, rate], new Date("2026-09-20T13:30:00Z")); // 10:30 SP
+    expect(sameDayPromise(morning)).toEqual({
+      kind: "today",
+      rateName: "Motoboy",
+      payUntil: "17h",
+      windowLabel: "19h–21h",
+      label: "Pague até 17h e chega hoje, 19h–21h",
+    });
+    const evening = expandDeliveryOptions([PAC, rate], new Date("2026-09-20T21:00:00Z")); // 18:00 SP
+    expect(sameDayPromise(evening)).toEqual({ kind: "tomorrow", rateName: "Motoboy", windowLabel: "16h–19h", label: "Chega amanhã, 16h–19h" });
+    expect(sameDayPromise(expandDeliveryOptions([PAC], new Date("2026-09-20T13:30:00Z")))).toBeNull();
+    expect(sameDayPromise([])).toBeNull();
   });
 });
