@@ -141,10 +141,10 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: C.noir950,
-          padding: "26px 72px 22px",
+          padding: "20px 72px 18px",
         }}
       >
-        <img src={lockup} width={270} height={120} alt="" />
+        <img src={lockup} width={250} height={111} alt="" />
         <div
           style={{
             marginTop: 14,
@@ -173,7 +173,7 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
-          padding: "26px 72px 24px",
+          padding: "20px 72px 18px",
         }}
       >
         <div
