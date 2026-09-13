@@ -1304,6 +1304,41 @@ describe("buildToolExecutor", () => {
     expect(state.lastQuotes![0].name).toBe("PAC");
   });
 
+  it("cotar_frete não oferece motoboy antes de a vendedora saber escolher janela (I4)", async () => {
+    await setupStore();
+    await db.insert(schema.shippingRates).values({
+      name: "Motoboy Belém",
+      cepStart: "00000000",
+      cepEnd: "99999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 900,
+      deliveryDaysMin: 0,
+      deliveryDaysMax: 0,
+      kind: "motoboy",
+      deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }],
+    });
+    const conversationId = await createConversation();
+    const executor = buildToolExecutor(sdb, {
+      conversationId,
+      phoneE164: PHONE,
+      customerId: null,
+      lastInboundId: DUMMY_INBOUND_ID,
+    });
+
+    const result = await executor("cotar_frete", { cep: "01310100" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("PAC");
+    expect(result.text).not.toContain("Motoboy");
+
+    const [conversation] = await db
+      .select()
+      .from(schema.waConversations)
+      .where(eq(schema.waConversations.id, conversationId));
+    const state = conversation.botState as { lastQuotes?: { name: string }[]; chosenRateId?: string };
+    expect(state.lastQuotes?.map((q) => q.name)).toEqual(["PAC"]);
+  });
+
   it("input inválido é recusado antes de qualquer efeito", async () => {
     const conversationId = await createConversation();
     const executor = buildToolExecutor(sdb, {

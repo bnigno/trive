@@ -158,8 +158,6 @@ const createStoreOrderSchema = z.object({
       cutoff: z.string(),
     })
     .optional(),
-  /** Relógio injetável (testes da hora-limite). */
-  now: z.date().optional(),
   /** Código de cupom digitado no checkout (opcional; normalizado no serviço). */
   couponCode: z.string().trim().optional(),
   /**
@@ -209,6 +207,8 @@ export interface CreateStoreOrderResult {
 export async function createStoreOrder(
   db: DbOrTx,
   input: CreateStoreOrderInput,
+  /** Relógio da hora-limite do motoboy — só o servidor (e os testes) injeta; nunca vem do payload. */
+  clock: { now?: Date } = {},
 ): Promise<CreateStoreOrderResult> {
   const parsed = createStoreOrderSchema.parse(input);
 
@@ -331,8 +331,9 @@ export async function createStoreOrder(
     }
 
     // (b1) Motoboy: a janela tem de existir na faixa e ainda valer AGORA no
-    // relógio de São Paulo (hoje só até a hora-limite). O retrato vai no pedido.
-    const now = parsed.now ?? new Date();
+    // relógio de São Paulo (hoje até a hora-limite, ou amanhã — os únicos
+    // dias que a sacola oferece). O retrato vai no pedido.
+    const now = clock.now ?? new Date();
     let deliveryWindowSnapshot: typeof orders.$inferInsert["deliveryWindow"] = null;
     if (chosenRate.kind === "motoboy") {
       const windows = parseWindows(chosenRate.deliveryWindows);

@@ -73,12 +73,15 @@ describe("expandDeliveryOptions", () => {
 });
 
 describe("isWindowBookable / windowBelongsToRate / describeWindow", () => {
-  it("hoje só até o limite; amanhã sempre; ontem nunca; janela precisa existir na faixa", () => {
+  it("hoje só até o limite; amanhã sempre; ontem, depois de amanhã e dia inexistente nunca; janela precisa existir na faixa", () => {
     const choice = { dayKey: "2026-09-20", start: "19:00", end: "21:00", cutoff: "13:00" };
     expect(isWindowBookable(choice, new Date("2026-09-20T15:59:00Z"))).toBe(true); // 12:59 SP
     expect(isWindowBookable(choice, new Date("2026-09-20T16:00:00Z"))).toBe(false); // 13:00 SP
     expect(isWindowBookable(choice, new Date("2026-09-19T20:00:00Z"))).toBe(true); // véspera
+    expect(isWindowBookable(choice, new Date("2026-09-18T20:00:00Z"))).toBe(false); // dois dias antes: a sacola nunca oferece
     expect(isWindowBookable(choice, new Date("2026-09-21T12:00:00Z"))).toBe(false); // dia seguinte
+    expect(isWindowBookable({ ...choice, dayKey: "2030-01-01" }, new Date("2026-09-20T12:00:00Z"))).toBe(false);
+    expect(isWindowBookable({ ...choice, dayKey: "2026-99-99" }, new Date("2026-09-20T12:00:00Z"))).toBe(false);
     expect(windowBelongsToRate(choice, WINDOWS)).toBe(true);
     expect(windowBelongsToRate({ ...choice, end: "22:00" }, WINDOWS)).toBe(false);
     expect(describeWindow(choice, new Date("2026-09-20T12:00:00Z"))).toBe("hoje, 19h–21h");

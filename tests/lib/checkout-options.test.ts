@@ -1,7 +1,7 @@
 // Blocos puros do checkout: escolha padrão da opção de entrega e o ?frete=.
 import { describe, expect, it } from "vitest";
 
-import { parseFreteParam, pickDefaultOptionKey } from "@/lib/checkout-options";
+import { isWindowOptionKey, parseFreteParam, pickDefaultOptionKey } from "@/lib/checkout-options";
 
 const OPTIONS = [{ optionKey: "m1:2026-09-18:19:00" }, { optionKey: "p1" }];
 
@@ -23,5 +23,13 @@ describe("parseFreteParam", () => {
     expect(parseFreteParam("PAC")).toBeNull();
     expect(parseFreteParam("")).toBeNull();
     expect(parseFreteParam(undefined)).toBeNull();
+  });
+});
+
+describe("isWindowOptionKey", () => {
+  it("janela do motoboy tem dia e hora na chave; faixa simples não", () => {
+    expect(isWindowOptionKey("m1:2026-09-18:19:00")).toBe(true);
+    expect(isWindowOptionKey("p1")).toBe(false);
+    expect(isWindowOptionKey(null)).toBe(false);
   });
 });

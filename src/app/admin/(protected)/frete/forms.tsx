@@ -157,13 +157,13 @@ function RateFields({ defaults }: { defaults: RateFormDefaults | null }) {
             {windows.map((window, index) => (
               <div key={index} className="grid grid-cols-3 gap-2">
                 <Field label={index === 0 ? "Das" : ""}>
-                  <Input name={`window_${index}_start`} type="time" step={900} defaultValue={window.start} placeholder="19:00" />
+                  <Input name={`window_${index}_start`} type="time" step={900} defaultValue={window.start} placeholder="19:00" aria-label={`Janela ${index + 1}: início`} />
                 </Field>
                 <Field label={index === 0 ? "Às" : ""}>
-                  <Input name={`window_${index}_end`} type="time" step={900} defaultValue={window.end} placeholder="21:00" />
+                  <Input name={`window_${index}_end`} type="time" step={900} defaultValue={window.end} placeholder="21:00" aria-label={`Janela ${index + 1}: fim`} />
                 </Field>
                 <Field label={index === 0 ? "Pague até" : ""}>
-                  <Input name={`window_${index}_cutoff`} type="time" step={900} defaultValue={window.cutoff} placeholder="13:00" />
+                  <Input name={`window_${index}_cutoff`} type="time" step={900} defaultValue={window.cutoff} placeholder="13:00" aria-label={`Janela ${index + 1}: pague até`} />
                 </Field>
               </div>
             ))}

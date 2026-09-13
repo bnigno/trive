@@ -48,7 +48,7 @@ import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
 import { readStoredStyle } from "@/lib/style-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
-import { pickDefaultOptionKey } from "@/lib/checkout-options";
+import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
 import { quoteCouponAction, quoteShippingAction } from "../carrinho/actions";
@@ -170,6 +170,8 @@ export function CheckoutClient({
     .join(",");
   const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
   const [selectedOptionKey, setSelectedOptionKey] = useState(initialOptionKey || null);
+  /** A janela escolhida na sacola sumiu da cotação (passou da hora-limite). */
+  const [windowGone, setWindowGone] = useState(false);
   const [shippingCentsOverride, setShippingCentsOverride] = useState<number | null>(
     null,
   );
@@ -211,8 +213,13 @@ export function CheckoutClient({
       });
       setShippingCentsOverride(null);
       // A janela de hoje pode ter passado da hora-limite entre a sacola e o
-      // checkout: a chave some da lista e a escolha cai na primeira opção.
-      setSelectedOptionKey((current) => pickDefaultOptionKey(result.options, current));
+      // checkout: a chave some da lista, a escolha cai na primeira opção e a
+      // cliente é avisada (nunca troca de motoboy para Correios em silêncio).
+      setSelectedOptionKey((current) => {
+        const next = pickDefaultOptionKey(result.options, current);
+        setWindowGone(isWindowOptionKey(current) && next !== current);
+        return next;
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, cepDigits, itemsKey, quoteNonce]);
@@ -720,6 +727,11 @@ export function CheckoutClient({
                     .
                   </Notice>
                 ) : null}
+                {windowGone && options.length > 0 ? (
+                  <Notice tone="gold" role="alert">
+                    O horário de entrega que você escolheu na sacola já passou da hora-limite. Confira a opção marcada abaixo ou escolha outra.
+                  </Notice>
+                ) : null}
                 {options.length > 0 ? (
                   <fieldset>
                     <legend className={cx(eyebrow, "mb-2")}>Opções de entrega</legend>
@@ -733,6 +745,7 @@ export function CheckoutClient({
                           onChange={() => {
                             setSelectedOptionKey(option.optionKey);
                             setShippingCentsOverride(null);
+                            setWindowGone(false);
                           }}
                           title={option.name}
                           detail={deliveryLabel(option)}

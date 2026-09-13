@@ -4,7 +4,7 @@
 // `now` injetado. Puro: expande as faixas cotadas em opções escolhíveis.
 import { z } from "zod";
 
-import { spDayKey, spMinutesOfDay, spNextDayKey } from "@/lib/sp-day";
+import { isSpDayKey, spDayKey, spMinutesOfDay, spNextDayKey } from "@/lib/sp-day";
 
 export const SHIPPING_KINDS = ["correios", "motoboy"] as const;
 export type ShippingKind = (typeof SHIPPING_KINDS)[number];
@@ -140,14 +140,15 @@ export function expandDeliveryOptions(rates: readonly RateForOptions[], now: Dat
 }
 
 /**
- * A janela escolhida ainda vale em `now`? Hoje só até a hora-limite; amanhã
- * (ou depois) sempre. Dia no passado nunca.
+ * A janela escolhida ainda vale em `now`? Só os dias que a sacola oferece:
+ * hoje (até a hora-limite) ou amanhã. Ontem, depois de amanhã ou um dia que
+ * não existe ("2026-99-99") nunca — o payload vem do navegador.
  */
 export function isWindowBookable(choice: DeliveryWindowChoice, now: Date): boolean {
+  if (!isSpDayKey(choice.dayKey)) return false;
   const today = spDayKey(now);
-  if (choice.dayKey < today) return false;
   if (choice.dayKey === today) return spMinutesOfDay(now) < minutesOf(choice.cutoff);
-  return true;
+  return choice.dayKey === spNextDayKey(today);
 }
 
 /** A janela escolhida existe na faixa? (comparação por horários) */

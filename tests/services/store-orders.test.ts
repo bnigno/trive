@@ -14,6 +14,7 @@ import {
   type CreateStoreOrderInput,
 } from "@/services/store-orders";
 import { transitionOrder } from "@/services/orders";
+import { spDayKey, spPreviousDayKey } from "@/lib/sp-day";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 
 let db: TestDb;
@@ -482,7 +483,8 @@ describe("createStoreOrder — motoboy com janela", () => {
     const { variantId, rate } = await setupMotoboy();
     const result = await createStoreOrder(
       sdb,
-      baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: CHOICE, now: MORNING }),
+      baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: CHOICE }),
+      { now: MORNING },
     );
 
     const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
@@ -498,12 +500,13 @@ describe("createStoreOrder — motoboy com janela", () => {
     const before = await countRows();
 
     await expect(
-      createStoreOrder(sdb, baseInput(variantId, rate.id, { expectedShippingCents: 1500, now: MORNING })),
+      createStoreOrder(sdb, baseInput(variantId, rate.id, { expectedShippingCents: 1500 }), { now: MORNING }),
     ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_REQUIRED" });
     await expect(
       createStoreOrder(
         sdb,
-        baseInput(variantId, rate.id, { expectedShippingCents: 1500, now: MORNING, deliveryWindow: { ...CHOICE, start: "20:00" } }),
+        baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, start: "20:00" } }),
+        { now: MORNING },
       ),
     ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_REQUIRED" });
 
@@ -516,20 +519,41 @@ describe("createStoreOrder — motoboy com janela", () => {
     const afternoon = new Date("2026-09-18T16:00:00Z"); // 13:00 SP em ponto: o limite já passou
 
     await expect(
-      createStoreOrder(sdb, baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: CHOICE, now: afternoon })),
+      createStoreOrder(sdb, baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: CHOICE }), { now: afternoon }),
     ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_EXPIRED" });
     await expect(
       createStoreOrder(
         sdb,
-        baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-17" }, now: afternoon }),
+        baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-17" } }),
+        { now: afternoon },
       ),
+    ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_EXPIRED" });
+
+    // Depois de amanhã (ou um ano à frente) a sacola nunca oferece: recusa.
+    await expect(
+      createStoreOrder(
+        sdb,
+        baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-20" } }),
+        { now: afternoon },
+      ),
+    ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_EXPIRED" });
+    // `now` no payload do navegador não é relógio: o Zod descarta e vale o do
+    // servidor. Janela de ONTEM com um "now" forjado de ontem de manhã: se o
+    // forjado valesse, o pedido passaria.
+    const yesterday = spPreviousDayKey(spDayKey(new Date()));
+    await expect(
+      createStoreOrder(sdb, {
+        ...baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: yesterday } }),
+        now: new Date(`${yesterday}T10:00:00-03:00`),
+      } as CreateStoreOrderInput),
     ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_EXPIRED" });
 
     // Meia-noite UTC (21h em SP): "amanhã" em SP continua sendo 19/09.
     const lateUtc = new Date("2026-09-19T00:00:00Z");
     const result = await createStoreOrder(
       sdb,
-      baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-19" }, now: lateUtc }),
+      baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-19" } }),
+      { now: lateUtc },
     );
     const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
     expect(order.deliveryWindow?.label).toBe("sábado 19/09, 19h–21h");
@@ -537,7 +561,7 @@ describe("createStoreOrder — motoboy com janela", () => {
 
   it("faixa Correios ignora a janela mandada por engano", async () => {
     const { variantId, rate } = await setupStore();
-    const result = await createStoreOrder(sdb, baseInput(variantId, rate.id, { deliveryWindow: CHOICE, now: MORNING }));
+    const result = await createStoreOrder(sdb, baseInput(variantId, rate.id, { deliveryWindow: CHOICE }), { now: MORNING });
     const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
     expect(order.deliveryWindow).toBeNull();
     expect((await getPublicOrder(sdb, result.publicToken))?.deliveryWindowLabel).toBeNull();

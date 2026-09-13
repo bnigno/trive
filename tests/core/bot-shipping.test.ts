@@ -9,6 +9,7 @@ import {
   pickChosenQuote,
   QUOTE_MAX_AGE_MS,
   resolveApprovedQuote,
+  withoutMotoboy,
 } from "@/core/bot/shipping";
 import { formatCentsBRL } from "@/lib/money";
 
@@ -147,5 +148,16 @@ describe("confirmQuoteUnchanged", () => {
   it("igual: devolve a cotação FRESCA (mesmo id e preço), mesmo com a ordem de hoje diferente", () => {
     const fresh = [{ ...SEDEX, deliveryDaysMax: 3 }, PAC];
     expect(confirmQuoteUnchanged(SEDEX, fresh, "01310100")).toEqual({ ok: true, quote: fresh[0] });
+  });
+});
+
+describe("withoutMotoboy (até a vendedora saber escolher janela — I4)", () => {
+  it("tira só as faixas de motoboy; faixa sem kind (cotação antiga no caderninho) fica", () => {
+    const quotes = [
+      { rateId: "m1", name: "Motoboy Belém", priceCents: 1500, deliveryDaysMin: 0, deliveryDaysMax: 0, kind: "motoboy" },
+      { rateId: "p1", name: "PAC", priceCents: 1990, deliveryDaysMin: 3, deliveryDaysMax: 5, kind: "correios" },
+      { rateId: "old", name: "Antiga", priceCents: 990, deliveryDaysMin: 1, deliveryDaysMax: 2 },
+    ];
+    expect(withoutMotoboy(quotes).map((q) => q.rateId)).toEqual(["p1", "old"]);
   });
 });

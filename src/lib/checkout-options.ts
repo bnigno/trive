@@ -12,3 +12,8 @@ export function parseFreteParam(raw: string | null | undefined): string | null {
   const value = raw.trim();
   return /^[0-9a-f-]{36}(:\d{4}-\d{2}-\d{2}:\d{2}:\d{2})?$/i.test(value) ? value : null;
 }
+
+/** A chave é de uma janela de motoboy (uuid:dia:HH:MM), não de uma faixa simples. */
+export function isWindowOptionKey(optionKey: string | null | undefined): boolean {
+  return !!optionKey && optionKey.includes(":");
+}
