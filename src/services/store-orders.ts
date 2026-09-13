@@ -369,19 +369,21 @@ export async function createStoreOrder(
     // vem do prazo máximo da faixa (Correios, dias úteis) ou da janela
     // (motoboy). Não recusa quando não dá tempo — a cliente já viu o aviso
     // no checkout; a dona vê o semáforo vermelho.
-    const neededBy = parsed.neededBy ?? parsed.gift?.deliverBy ?? null;
-    if (neededBy !== null && !isValidNeededBy(neededBy, spDayKey(now))) {
+    // A data explícita é recusada quando inválida; a do presente (a Lia
+    // manda sem saber o dia de hoje) fica só informativa quando não serve.
+    const todayKey = spDayKey(now);
+    if (parsed.neededBy !== undefined && !isValidNeededBy(parsed.neededBy, todayKey)) {
       throw new ServiceError("NEEDED_BY_INVALID", "A data marcada precisa ser hoje ou um dia que ainda vem.");
     }
+    const giftDate = parsed.gift?.deliverBy && isValidNeededBy(parsed.gift.deliverBy, todayKey) ? parsed.gift.deliverBy : null;
+    const neededBy = parsed.neededBy ?? giftDate;
+    // Motoboy com janela depois da data marcada: o limite é a própria data (o semáforo acusa).
     const shipBy =
       neededBy === null
         ? null
-        : shipByFor(
-            deliveryWindowSnapshot
-              ? { kind: "motoboy", dayKey: deliveryWindowSnapshot.dayKey }
-              : { kind: "correios", deliveryDaysMax: chosenRate.deliveryDaysMax },
-            neededBy,
-          );
+        : deliveryWindowSnapshot
+          ? (deliveryWindowSnapshot.dayKey < neededBy ? deliveryWindowSnapshot.dayKey : neededBy)
+          : shipByFor({ kind: "correios", deliveryDaysMax: chosenRate.deliveryDaysMax }, neededBy);
     const occasion = parsed.occasion?.trim() || null;
 
     const cep = parsed.address.postalCode;

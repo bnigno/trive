@@ -7,6 +7,7 @@ import {
   assessNeededBy,
   citySealFor,
   isValidNeededBy,
+  postingDayFor,
   shipByFor,
   shipByLabel,
   trafficLight,
@@ -57,6 +58,20 @@ describe("assessNeededBy / shipByFor", () => {
     expect(assessNeededBy({ kind: "motoboy", dayKey: "2026-10-06" }, "2026-10-05", now)).toMatchObject({ fits: false, daysLate: 1 });
   });
 
+  it("fim de semana e feriado: posta no próximo dia útil — o checkout e o ship_by concordam", () => {
+    expect(postingDayFor("2026-09-13")).toBe("2026-09-14"); // domingo → segunda
+    expect(postingDayFor("2026-09-07")).toBe("2026-09-08"); // feriado → terça
+    expect(postingDayFor("2026-09-15")).toBe("2026-09-15");
+    // Domingo 13/09, PAC 5 dias úteis, "até 18/09": posta seg 14 → 15,16,17,18,21 → chega 21/09: NÃO chega.
+    const sunday = new Date("2026-09-13T13:00:00Z");
+    expect(assessNeededBy({ kind: "correios", deliveryDaysMax: 5 }, "2026-09-18", sunday)).toMatchObject({ fits: false, arrivesBy: "2026-09-21", daysLate: 3 });
+    // E o ship_by desse pedido (11/09) é anterior ao dia de postagem (14/09): vermelho no painel — coerente com o ✕.
+    expect(shipByFor({ kind: "correios", deliveryDaysMax: 5 }, "2026-09-18") < postingDayFor("2026-09-13")).toBe(true);
+    // Prazo 1 dia, "até 15/09" num domingo: posta seg 14, chega ter 15 → no dia, e ship_by 14 ≥ postagem.
+    expect(assessNeededBy({ kind: "correios", deliveryDaysMax: 1 }, "2026-09-15", sunday)).toMatchObject({ fits: true, arrivesBy: "2026-09-15", daysToSpare: 0 });
+    expect(shipByFor({ kind: "correios", deliveryDaysMax: 1 }, "2026-09-15")).toBe("2026-09-14");
+  });
+
   it("ship_by: Correios volta o prazo em dias úteis; motoboy é o dia da janela", () => {
     expect(shipByFor({ kind: "correios", deliveryDaysMax: 5 }, "2026-10-16")).toBe("2026-10-08");
     expect(shipByFor({ kind: "correios", deliveryDaysMax: 0 }, "2026-10-16")).toBe("2026-10-16");
@@ -93,6 +108,9 @@ describe("citySealFor", () => {
     expect(citySealFor(dates, new Date("2026-10-11T13:00:00Z"), 9)?.text).toMatch(/^Círio é hoje/);
     expect(citySealFor(dates, new Date("2026-10-20T13:00:00Z"), 9)?.name).toBe("Natal");
     expect(citySealFor([], new Date(), 9)).toBeNull();
+    // Sem faixa de Correios: só a contagem, sem prometer prazo.
+    expect(citySealFor(dates, new Date("2026-09-13T13:00:00Z"), null)?.text).toBe("Círio em 28 dias");
+    expect(citySealFor(dates, new Date("2026-09-13T13:00:00Z"), 0)?.text).toBe("Círio em 28 dias");
     expect(citySealFor([{ name: "Passou", date: "2026-09-01" }], new Date("2026-09-13T13:00:00Z"), 9)).toBeNull();
   });
 });

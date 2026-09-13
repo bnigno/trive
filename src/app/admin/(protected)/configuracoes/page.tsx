@@ -6,6 +6,7 @@ import {
 } from "@/core/orders/payment-methods";
 import { cityDatesSchema, type CityDate } from "@/core/shipping/needed-by";
 import { getDb } from "@/db/client";
+import { spDayKey } from "@/lib/sp-day";
 import { requireOwner } from "@/services/auth";
 import {
   getDefaultPolicy,
@@ -134,7 +135,8 @@ async function loadSettings(): Promise<SettingsData | null> {
         manifesto: asString(map.store_manifesto),
         editionName: asString(map.edition_name),
       },
-      cityDates: cityDatesSchema.safeParse(map.city_dates).success ? (map.city_dates as CityDate[]) : [],
+      // Datas que já passaram somem do formulário (e, ao salvar, do setting).
+      cityDates: (cityDatesSchema.safeParse(map.city_dates).success ? (map.city_dates as CityDate[]) : []).filter((d) => d.date >= spDayKey(new Date())),
       debutLetter: {
         text: asString(map.debut_letter_text),
         signature: asString(map.debut_letter_signature),

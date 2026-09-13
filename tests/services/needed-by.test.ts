@@ -87,6 +87,20 @@ describe("createStoreOrder com data marcada", () => {
     expect(giftRow.giftDeliverBy).toBe("2026-10-20");
     expect(giftRow.shipBy).toBe("2026-10-13");
 
+    // A data do presente vinda da Lia (sem saber o dia de hoje) no passado não trava a venda: fica só informativa.
+    const stale = await createStoreOrder(sdb, input(variantId, pacId, { gift: { recipientName: "Mãe", deliverBy: "2026-09-10" } }), { now: NOW });
+    const [staleRow] = await db.select().from(schema.orders).where(eq(schema.orders.id, stale.orderId));
+    expect(staleRow.giftDeliverBy).toBe("2026-09-10");
+    expect(staleRow.neededBy).toBeNull();
+    expect(staleRow.shipBy).toBeNull();
+    // Motoboy com a janela depois da data marcada: o limite vira a própria data (vermelho no painel).
+    const lateMoto = await createStoreOrder(
+      sdb,
+      input(variantId, motoId, { expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-06", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-05" }),
+      { now: new Date("2026-10-05T21:00:00Z") },
+    );
+    expect((await db.select().from(schema.orders).where(eq(schema.orders.id, lateMoto.orderId)))[0].shipBy).toBe("2026-10-05");
+
     await expect(createStoreOrder(sdb, input(variantId, pacId, { neededBy: "2026-10-04" }), { now: NOW })).rejects.toMatchObject({ code: "NEEDED_BY_INVALID" });
     await expect(createStoreOrder(sdb, input(variantId, pacId, { neededBy: "2026-02-31" }), { now: NOW })).rejects.toMatchObject({ code: "NEEDED_BY_INVALID" });
     await expect(createStoreOrder(sdb, input(variantId, pacId, { neededBy: "2026-10-16", occasion: "x".repeat(61) }), { now: NOW })).rejects.toThrow(/60 caracteres/);
@@ -118,6 +132,12 @@ describe("listOrdersWithNeededBy / countOrdersMustShipToday", () => {
     expect(rows[1]).toMatchObject({ isMotoboy: true, status: "pending_payment", dispatched: false });
     expect(await countOrdersMustShipToday(sdb, { now: NOW })).toBe(2);
 
+    // Pedido antigo (antes do PR) com data mas sem ship_by: a lista e o contador usam a data marcada.
+    await db.update(schema.orders).set({ shipBy: null }).where(eq(schema.orders.id, red.orderId));
+    expect((await listOrdersWithNeededBy(sdb, { now: NOW })).find((r) => r.orderNumber === red.orderNumber)?.shipBy).toBe("2026-10-09");
+    expect(await countOrdersMustShipToday(sdb, { now: new Date("2026-10-09T12:00:00Z") })).toBe(3);
+    await db.update(schema.orders).set({ shipBy: "2026-10-02" }).where(eq(schema.orders.id, red.orderId));
+
     // Saiu com o motoboy: não conta mais como "precisa sair hoje".
     await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: NOW });
     expect(await countOrdersMustShipToday(sdb, { now: NOW })).toBe(1);
@@ -135,6 +155,11 @@ describe("listOrdersWithNeededBy / countOrdersMustShipToday", () => {
 
 describe("Datas da cidade e o selo", () => {
   it("horizonte = maior prazo dos Correios ativos; selo com o dia-limite; sem datas → null", async () => {
+    // Sem faixa de Correios: horizonte null e o selo só conta os dias.
+    await updateSetting(sdb, { key: "city_dates", value: [{ name: "Círio", date: "2026-10-11" }], userId: FIXED_USER_ID });
+    expect(await getDeliveryHorizonDays(sdb)).toBeNull();
+    expect((await getCitySeal(sdb, { now: NOW }))?.text).toBe("Círio em 6 dias");
+    await updateSetting(sdb, { key: "city_dates", value: [], userId: FIXED_USER_ID });
     await setup();
     expect(await getDeliveryHorizonDays(sdb)).toBe(5);
     expect(await getCitySeal(sdb, { now: NOW })).toBeNull();

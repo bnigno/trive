@@ -6,7 +6,7 @@
 import { z } from "zod";
 
 import { isNationalHoliday } from "@/core/shipping/holidays";
-import { addBusinessDaysSP, isSpDayKey, spDayKey, subtractBusinessDaysSP } from "@/lib/sp-day";
+import { addBusinessDaysSP, isSpDayKey, isWeekendSP, spDayKey, subtractBusinessDaysSP } from "@/lib/sp-day";
 
 export const OCCASION_MAX = 60;
 
@@ -46,16 +46,22 @@ function calendarDaysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86_400_000);
 }
 
-/** Dia em que a opção chega, no pior caso, se a peça sair em `shipDayKey`. */
-export function arrivalDayFor(option: DeliveryOptionForNeededBy, shipDayKey: string): string {
+/** Os Correios não postam sábado, domingo nem feriado: o dia de postagem é o próximo dia útil (hoje, se útil). */
+export function postingDayFor(todayKey: string): string {
+  return isWeekendSP(todayKey) || isNationalHoliday(todayKey) ? addBusinessDaysSP(todayKey, 1, isNationalHoliday) : todayKey;
+}
+
+/** Dia em que a opção chega, no pior caso, postando no primeiro dia útil a partir de `todayKey`. */
+export function arrivalDayFor(option: DeliveryOptionForNeededBy, todayKey: string): string {
   if (option.kind === "motoboy") return option.dayKey;
-  return addBusinessDaysSP(shipDayKey, option.deliveryDaysMax, isNationalHoliday);
+  return addBusinessDaysSP(postingDayFor(todayKey), option.deliveryDaysMax, isNationalHoliday);
 }
 
 /**
- * Chega a tempo? Correios: sai hoje (dia de SP de `now`) e leva o prazo
- * máximo em dias úteis. Motoboy: chega no dia da janela. O texto já vem
- * pronto para a opção ("Chega até sexta 16/10, 4 dias antes").
+ * Chega a tempo? Correios: posta no próximo dia útil (hoje, se for útil) e
+ * leva o prazo máximo em dias úteis — a mesma régua do ship_by, para o
+ * checkout e o painel nunca discordarem. Motoboy: chega no dia da janela.
+ * O texto já vem pronto para a opção ("Chega até sexta 16/10, 4 dias antes").
  */
 export function assessNeededBy(option: DeliveryOptionForNeededBy, neededBy: string, now: Date): NeededByVerdict {
   const today = spDayKey(now);
@@ -139,14 +145,18 @@ export interface CitySeal {
  * para pedir pelos Correios (`horizonDays` = maior prazo em dias úteis das
  * faixas ativas). null = nenhuma data à frente.
  */
-export function citySealFor(dates: readonly CityDate[], now: Date, horizonDays: number): CitySeal | null {
+export function citySealFor(dates: readonly CityDate[], now: Date, horizonDays: number | null): CitySeal | null {
   const today = spDayKey(now);
   const next = [...dates].filter((d) => isSpDayKey(d.date) && d.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
   if (!next) return null;
   const daysUntil = calendarDaysBetween(today, next.date);
+  const when = daysUntil === 0 ? "é hoje" : daysUntil === 1 ? "é amanhã" : `em ${daysUntil} dias`;
+  // Sem faixa de Correios ativa não há prazo para prometer: só a contagem.
+  if (horizonDays === null || horizonDays <= 0) {
+    return { name: next.name, date: next.date, daysUntil, orderBy: next.date, text: `${next.name} ${when}` };
+  }
   const orderBy = subtractBusinessDaysSP(next.date, horizonDays, isNationalHoliday);
   const [, m, d] = orderBy.split("-").map(Number);
-  const when = daysUntil === 0 ? "é hoje" : daysUntil === 1 ? "é amanhã" : `em ${daysUntil} dias`;
   const text =
     orderBy >= today
       ? `${next.name} ${when} · peça até ${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")} para chegar pelos Correios`

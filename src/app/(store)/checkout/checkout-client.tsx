@@ -186,6 +186,7 @@ export function CheckoutClient({
     document?: string;
     phone?: string;
     cep?: string;
+    neededBy?: string;
   }>({});
 
   // ----- Frete: re-cotado no servidor ao montar e quando CEP/itens mudam --
@@ -379,6 +380,10 @@ export function CheckoutClient({
     const phoneE164 = toE164BR(phoneValue);
     if (!phoneE164) errors.phone = "Telefone inválido. Informe DDD + número.";
     if (cepDigits.length !== 8) errors.cep = "CEP inválido. Use 8 dígitos.";
+    // Data marcada: com a caixa marcada, o dia precisa existir e ser hoje ou depois (relógio de agora, não o da abertura da página).
+    if (hasNeededBy && !isValidNeededBy(neededBy, spDayKey(new Date()))) {
+      errors.neededBy = neededBy ? "Escolha hoje ou um dia que ainda vem." : "Informe até que dia você precisa da peça.";
+    }
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       setSubmitError({
@@ -910,7 +915,7 @@ export function CheckoutClient({
             </label>
             {hasNeededBy ? (
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                <Field label="Até o dia" hint={neededBy && !isValidNeededBy(neededBy, todayKey) ? "Escolha hoje ou um dia que ainda vem." : "Confira a opção de entrega acima: ela diz se chega."}>
+                <Field label="Até o dia" error={fieldErrors.neededBy} hint="Confira a opção de entrega acima: ela diz se chega.">
                   <input
                     name="neededBy"
                     type="date"
@@ -918,6 +923,7 @@ export function CheckoutClient({
                     value={neededBy}
                     onChange={(event) => setNeededBy(event.target.value)}
                     required
+                    aria-invalid={fieldErrors.neededBy ? true : undefined}
                     className={inputClasses}
                   />
                 </Field>

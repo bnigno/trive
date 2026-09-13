@@ -96,8 +96,8 @@ export async function countOrdersMustShipToday(db: DbOrTx, input: { now?: Date }
       and(
         openStatusFilter(),
         isNotNull(orders.neededBy),
-        isNotNull(orders.shipBy),
-        sql`${orders.shipBy} <= ${todayKey}::date`,
+        // A mesma régua da lista: sem ship_by (pedido antigo), vale o dia marcado.
+        sql`coalesce(${orders.shipBy}, ${orders.neededBy}) <= ${todayKey}::date`,
         sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
       ),
     );
@@ -114,13 +114,13 @@ export async function getCityDates(db: DbOrTx): Promise<CityDate[]> {
   return parsed.success ? parsed.data : [];
 }
 
-/** Maior prazo (dias úteis) entre as faixas de Correios ativas — a régua do selo. 0 sem faixas. */
-export async function getDeliveryHorizonDays(db: DbOrTx): Promise<number> {
+/** Maior prazo (dias úteis) entre as faixas de Correios ativas — a régua do selo. null sem faixa. */
+export async function getDeliveryHorizonDays(db: DbOrTx): Promise<number | null> {
   const [row] = await db
-    .select({ value: sql<string>`coalesce(max(${shippingRates.deliveryDaysMax}), 0)` })
+    .select({ value: sql<string | null>`max(${shippingRates.deliveryDaysMax})` })
     .from(shippingRates)
     .where(and(eq(shippingRates.isActive, true), eq(shippingRates.kind, "correios")));
-  return Number(row?.value ?? 0);
+  return row?.value === null || row?.value === undefined ? null : Number(row.value);
 }
 
 /** O selo da vitrine: "Círio em 28 dias · peça até 29/09 para chegar pelos Correios". */
