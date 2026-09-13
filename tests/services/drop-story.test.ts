@@ -90,6 +90,15 @@ describe("buildDropStoryInput", () => {
     expect(await sharpnessOf(teaser.items[0].imageDataUrl)).toBeLessThanOrEqual((await sharpnessOf(open.items[0].imageDataUrl)) + 1);
   });
 
+  it("peça arquivada ou sem preço depois do agendamento fica fora do story", async () => {
+    const { dropId, a } = await scheduledDrop();
+    await db.update(schema.products).set({ status: "archived" }).where(eq(schema.products.id, a));
+    const open = await buildDropStoryInput(sdb, storage, { dropId, variant: "open", now: new Date(PUBLISH_AT.getTime() + 60_000) });
+    expect(open.items.map((i) => i.name)).toEqual(["Bolsa Tote"]);
+    await db.update(schema.priceVersions).set({ status: "superseded" });
+    await expect(buildDropStoryInput(sdb, storage, { dropId, variant: "teaser", now: NOW })).rejects.toMatchObject({ code: "sem_fotos" });
+  });
+
   it("rascunho não tem story; lançamento sem foto avisa", async () => {
     const [p] = await db.insert(schema.products).values({ name: "Sem foto", slug: "sem-foto", status: "draft" }).returning({ id: schema.products.id });
     const { dropId } = await createDrop(sdb, { name: "Rascunho", publishAt: PUBLISH_AT, vipWindowHours: 24, audienceLimit: 10, userId });

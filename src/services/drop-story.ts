@@ -71,9 +71,13 @@ export async function buildDropStoryInput(
   if (drop.phase === "draft" || drop.phase === "canceled") {
     throw new ServiceError("lancamento_sem_data", "Agende o lançamento antes de gerar o story.");
   }
-  const withPhoto = drop.products.filter((p) => p.imagePath).slice(0, DROP_STORY_MAX_ITEMS);
+  // Só o que está à venda de fato (ativa, com preço) e tem foto: peça
+  // arquivada ou sem preço depois do agendamento não pode virar destaque.
+  const withPhoto = drop.products
+    .filter((p) => p.imagePath && p.status === "active" && p.hasActivePrice)
+    .slice(0, DROP_STORY_MAX_ITEMS);
   if (withPhoto.length === 0) {
-    throw new ServiceError("sem_fotos", "Nenhuma peça do lançamento tem foto ainda.");
+    throw new ServiceError("sem_fotos", "Nenhuma peça do lançamento está ativa, com preço e foto.");
   }
   const priced = new Map(
     (await listPublicProducts(db, { productIds: withPhoto.map((p) => p.id), includeHidden: true, limit: withPhoto.length })).map((p) => [
