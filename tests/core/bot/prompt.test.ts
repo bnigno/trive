@@ -59,6 +59,12 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("nunca invente uma");
   });
 
+  it("regra 25: janelas só as que cotar_frete devolveu e a data marcada via entregar_ate", () => {
+    const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
+    expect(prompt).toContain("25. JANELAS E DATA MARCADA");
+    expect(prompt).toContain("entregar_ate em cotar_frete");
+  });
+
   it("nome vazio cai no padrão; planta da loja e política de troca entram quando existem", () => {
     const prompt = buildBotSystemPrompt({
       ...OPCOES,

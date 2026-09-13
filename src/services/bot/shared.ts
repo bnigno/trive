@@ -83,6 +83,8 @@ export type BotExecutorContext = {
    * respondem um texto explicando que estão desligados no ensaio.
    */
   dryRun?: boolean;
+  /** Relógio injetável (hora-limite do motoboy, data marcada); padrão: agora. */
+  now?: Date;
   /**
    * Caderninho em memória do ensaio: no dryRun nada é gravado, mas as
    * ferramentas do MESMO turno se enxergam (adicionar_a_sacola → validar_cupom

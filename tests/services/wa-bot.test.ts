@@ -1304,7 +1304,7 @@ describe("buildToolExecutor", () => {
     expect(state.lastQuotes![0].name).toBe("PAC");
   });
 
-  it("cotar_frete não oferece motoboy antes de a vendedora saber escolher janela (I4)", async () => {
+  it("cotar_frete oferece as janelas do motoboy (antes da hora-limite) com 'pague até' e guarda a opção no caderninho", async () => {
     await setupStore();
     await db.insert(schema.shippingRates).values({
       name: "Motoboy Belém",
@@ -1319,24 +1319,86 @@ describe("buildToolExecutor", () => {
       deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }],
     });
     const conversationId = await createConversation();
+    const morning = new Date("2026-09-18T13:30:00Z"); // 10:30 SP, sexta
     const executor = buildToolExecutor(sdb, {
       conversationId,
       phoneE164: PHONE,
       customerId: null,
       lastInboundId: DUMMY_INBOUND_ID,
+      now: morning,
     });
 
-    const result = await executor("cotar_frete", { cep: "01310100" });
+    const result = await executor("cotar_frete", { cep: "01310100", entregar_ate: "2026-09-18" });
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("PAC");
-    expect(result.text).not.toContain("Motoboy");
+    expect(result.text).toContain(`1. Motoboy Belém — hoje, 19h–21h — ${formatCentsBRL(900)} (pague até 13h) · Chega até sexta 18/09, no dia`);
+    expect(result.text).toContain("2. PAC —");
+    expect(result.text).toContain("Pode chegar só");
 
     const [conversation] = await db
       .select()
       .from(schema.waConversations)
       .where(eq(schema.waConversations.id, conversationId));
-    const state = conversation.botState as { lastQuotes?: { name: string }[]; chosenRateId?: string };
-    expect(state.lastQuotes?.map((q) => q.name)).toEqual(["PAC"]);
+    const state = conversation.botState as { lastQuotes?: { optionKey?: string; kind?: string }[]; chosenOptionKey?: string; neededBy?: string };
+    expect(state.lastQuotes?.map((q) => q.kind)).toEqual(["motoboy", "correios"]);
+    expect(state.lastQuotes?.[0].optionKey).toMatch(/:2026-09-18:19:00$/);
+    expect(state.chosenOptionKey).toBeUndefined();
+    expect(state.neededBy).toBe("2026-09-18");
+
+    // criar_pedido com a janela: o pedido nasce com delivery_window e a data marcada.
+    const order = await executor("criar_pedido", {
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      frete: "motoboy 19h",
+      nome_completo: "Maria da Silva",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+      ocasiao: "aniversário",
+    });
+    expect(order.ok).toBe(true);
+    const [row] = await db.select().from(schema.orders).orderBy(schema.orders.orderNumber);
+    expect(row.deliveryWindow).toMatchObject({ dayKey: "2026-09-18", start: "19:00", end: "21:00", cutoff: "13:00", rateName: "Motoboy Belém" });
+    expect(row.neededBy).toBe("2026-09-18");
+    expect(row.occasion).toBe("aniversário");
+    expect(row.shippingCents).toBe(900);
+  });
+
+  it("janela que passou da hora-limite entre a cotação e o fechamento: criar_pedido manda cotar de novo, sem criar pedido", async () => {
+    await setupStore();
+    await db.insert(schema.shippingRates).values({
+      name: "Motoboy Belém",
+      cepStart: "00000000",
+      cepEnd: "99999999",
+      weightMinGrams: 0,
+      weightMaxGrams: 30000,
+      priceCents: 900,
+      deliveryDaysMin: 0,
+      deliveryDaysMax: 0,
+      kind: "motoboy",
+      deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }],
+    });
+    const conversationId = await createConversation();
+    const base = { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: DUMMY_INBOUND_ID };
+    await buildToolExecutor(sdb, { ...base, now: new Date("2026-09-18T13:30:00Z") })("cotar_frete", { cep: "01310100" });
+    const late = buildToolExecutor(sdb, { ...base, now: new Date("2026-09-18T16:30:00Z") }); // 13:30 SP
+    const result = await late("criar_pedido", {
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      frete: "1",
+      nome_completo: "Maria da Silva",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("já passou da hora-limite");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
   });
 
   it("input inválido é recusado antes de qualquer efeito", async () => {

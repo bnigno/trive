@@ -33,9 +33,29 @@ const quoteSchema = z.object({
   priceCents: z.number().int(),
   deliveryDaysMin: z.number().int(),
   deliveryDaysMax: z.number().int(),
+  /** Chave da opção: rateId (Correios) ou rateId:dia:HH:MM (janela do motoboy). Ausente em estado antigo = rateId. */
+  optionKey: z.string().optional(),
+  kind: z.enum(["correios", "motoboy"]).optional(),
+  /** Motoboy: "hoje, 19h–21h · pague até 13h". */
+  label: z.string().optional(),
+  window: z.object({ dayKey: z.string(), start: z.string(), end: z.string(), cutoff: z.string() }).optional(),
+  /** Com data marcada: "chega sexta 16/10, 2 dias antes" / "pode chegar só…". */
+  arrival: z.string().optional(),
 });
 
 export type BotQuote = z.infer<typeof quoteSchema>;
+
+/** A chave que identifica a opção escolhida (estado antigo só tem rateId). */
+export function quoteKey(quote: Pick<BotQuote, "rateId" | "optionKey">): string {
+  return quote.optionKey ?? quote.rateId;
+}
+
+/** "PAC R$ 19,90 (5-8 dias úteis)" / "Motoboy hoje, 19h–21h · pague até 13h R$ 15,00". */
+export function quoteSummary(quote: BotQuote): string {
+  const price = formatCentsBRL(quote.priceCents);
+  const when = quote.label ?? formatDays(quote.deliveryDaysMin, quote.deliveryDaysMax);
+  return quote.kind === "motoboy" ? `${quote.name} ${when} ${price}` : `${quote.name} ${price} (${when})`;
+}
 
 export const botStateSchema = z
   .object({
@@ -67,6 +87,11 @@ export const botStateSchema = z
     /** Quando a cotação foi feita (ISO); cotação velha não fecha pedido. */
     lastQuotedAt: z.string().optional(),
     chosenRateId: z.string().optional(),
+    /** Opção escolhida (janela do motoboy inclusa); prevalece sobre chosenRateId. */
+    chosenOptionKey: z.string().optional(),
+    /** Data marcada que a cliente disse ("preciso até dia 16") e a ocasião. */
+    neededBy: z.string().optional(),
+    occasion: z.string().optional(),
     lastOrderNumber: z.number().int().optional(),
     /**
      * Cupom que validar_cupom confirmou nesta conversa. criar_pedido aplica
@@ -138,7 +163,7 @@ export function mergeBridgeIntoState(state: BotState, bridge: BridgeState): BotS
     ...state,
     bridge,
     ...(cart ? { cart } : {}),
-    ...(cartChanged ? { lastQuotes: undefined, lastQuotedAt: undefined, chosenRateId: undefined, coupon: undefined } : {}),
+    ...(cartChanged ? { lastQuotes: undefined, lastQuotedAt: undefined, chosenRateId: undefined, chosenOptionKey: undefined, coupon: undefined } : {}),
     ...(bridge.source !== "cart" && bridge.productSlug && bridge.productName
       ? { focus: { slug: bridge.productSlug, nome: bridge.productName, cor: null } }
       : {}),
@@ -259,21 +284,21 @@ export function renderContextNote(
       `• Peça em vista: ${state.focus.nome}${state.focus.cor ? ` (cor ${state.focus.cor})` : ""}`,
     );
   }
+  if (state.neededBy) {
+    const [, m, d] = state.neededBy.split("-");
+    linhas.push(`• Data marcada: precisa até ${d}/${m}${state.occasion ? ` (${state.occasion})` : ""} — passe entregar_ate em cotar_frete e criar_pedido`);
+  }
   if (state.lastCep) {
     const cotacoes = (state.lastQuotes ?? [])
-      .map(
-        (quote) =>
-          `${quote.name} ${formatCentsBRL(quote.priceCents)} (${formatDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})`,
-      )
+      .map((quote) => `${quoteSummary(quote)}${quote.arrival ? ` · ${quote.arrival}` : ""}`)
       .join(", ");
-    const escolhido = state.lastQuotes?.find(
-      (quote) => quote.rateId === state.chosenRateId,
-    );
+    const chosenKey = state.chosenOptionKey ?? state.chosenRateId;
+    const escolhido = state.lastQuotes?.find((quote) => quoteKey(quote) === chosenKey);
     // Sacola mudou depois da cotação (adicionar/remover zeram lastQuotes):
     // o CEP fica como pista, mas o frete tem de ser cotado de novo.
     linhas.push(
       cotacoes
-        ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.name}` : ""}`
+        ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.label ? `${escolhido.name} ${escolhido.label}` : escolhido.name}` : ""}`
         : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
     );
     if (state.lastCepAddress) {

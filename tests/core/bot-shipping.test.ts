@@ -6,10 +6,10 @@ import { describe, expect, it } from "vitest";
 import type { BotQuote } from "@/core/bot/memory";
 import {
   confirmQuoteUnchanged,
+  formatQuoteLines,
   pickChosenQuote,
   QUOTE_MAX_AGE_MS,
   resolveApprovedQuote,
-  withoutMotoboy,
 } from "@/core/bot/shipping";
 import { formatCentsBRL } from "@/lib/money";
 
@@ -151,13 +151,49 @@ describe("confirmQuoteUnchanged", () => {
   });
 });
 
-describe("withoutMotoboy (até a vendedora saber escolher janela — I4)", () => {
-  it("tira só as faixas de motoboy; faixa sem kind (cotação antiga no caderninho) fica", () => {
-    const quotes = [
-      { rateId: "m1", name: "Motoboy Belém", priceCents: 1500, deliveryDaysMin: 0, deliveryDaysMax: 0, kind: "motoboy" },
-      { rateId: "p1", name: "PAC", priceCents: 1990, deliveryDaysMin: 3, deliveryDaysMax: 5, kind: "correios" },
-      { rateId: "old", name: "Antiga", priceCents: 990, deliveryDaysMin: 1, deliveryDaysMax: 2 },
-    ];
-    expect(withoutMotoboy(quotes).map((q) => q.rateId)).toEqual(["p1", "old"]);
+const MOTO_19: BotQuote = {
+  rateId: "r-moto",
+  name: "Motoboy",
+  priceCents: 1500,
+  deliveryDaysMin: 0,
+  deliveryDaysMax: 0,
+  optionKey: "r-moto:2026-09-18:19:00",
+  kind: "motoboy",
+  label: "hoje, 19h–21h · pague até 13h",
+  window: { dayKey: "2026-09-18", start: "19:00", end: "21:00", cutoff: "13:00" },
+};
+const MOTO_16: BotQuote = {
+  ...MOTO_19,
+  optionKey: "r-moto:2026-09-18:16:00",
+  label: "hoje, 16h–19h · pague até 13h",
+  window: { dayKey: "2026-09-18", start: "16:00", end: "19:00", cutoff: "13:00" },
+};
+
+describe("janelas do motoboy (I4)", () => {
+  it("formatQuoteLines mostra a janela e a hora-limite; com data marcada, o 'chega dia'", () => {
+    expect(formatQuoteLines([PAC, MOTO_19])).toEqual([
+      `1. PAC — ${formatCentsBRL(1990)} (5-8 dias úteis)`,
+      `2. Motoboy — hoje, 19h–21h — ${formatCentsBRL(1500)} (pague até 13h)`,
+    ]);
+    expect(formatQuoteLines([{ ...PAC, arrival: "Chega até sexta 25/09, 3 dias antes" }])[0]).toContain("· Chega até sexta 25/09, 3 dias antes");
+  });
+
+  it("pickChosenQuote: duas janelas do mesmo motoboy — 'motoboy' sozinho é ambíguo; 'motoboy 19h', o número ou a chave escolhem", () => {
+    const quotes = [MOTO_16, MOTO_19, PAC];
+    expect(pickChosenQuote(quotes, "motoboy", undefined)).toEqual({ kind: "unrecognized", term: "motoboy" });
+    expect(pickChosenQuote(quotes, "motoboy 19h", undefined)).toEqual({ kind: "picked", quote: MOTO_19 });
+    expect(pickChosenQuote(quotes, "a das 16h", undefined)).toEqual({ kind: "picked", quote: MOTO_16 });
+    expect(pickChosenQuote(quotes, "2", undefined)).toEqual({ kind: "picked", quote: MOTO_19 });
+    expect(pickChosenQuote(quotes, undefined, "r-moto:2026-09-18:16:00")).toEqual({ kind: "picked", quote: MOTO_16 });
+    expect(pickChosenQuote(quotes, undefined, undefined)).toEqual({ kind: "missing" });
+    // Estado antigo: só rateId como chave.
+    expect(pickChosenQuote(QUOTES, undefined, "r-sedex")).toEqual({ kind: "picked", quote: SEDEX });
+  });
+
+  it("confirmQuoteUnchanged casa pela chave da opção: janela que passou da hora-limite manda cotar de novo", () => {
+    const sumiu = confirmQuoteUnchanged(MOTO_19, [MOTO_16, PAC], "66050000");
+    expect(sumiu.ok).toBe(false);
+    if (!sumiu.ok) expect(sumiu.text).toContain("A janela do motoboy (hoje, 19h–21h · pague até 13h) já passou da hora-limite");
+    expect(confirmQuoteUnchanged(MOTO_19, [MOTO_16, MOTO_19, PAC], "66050000")).toEqual({ ok: true, quote: MOTO_19 });
   });
 });

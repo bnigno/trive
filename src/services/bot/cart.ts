@@ -103,6 +103,7 @@ export async function execAdicionarASacola(
     // Sacola mudou: a cotação anterior valia para outro peso.
     lastQuotes: undefined,
     chosenRateId: undefined,
+    chosenOptionKey: undefined,
   }));
   return {
     ok: true,
@@ -143,6 +144,7 @@ export async function execRemoverDaSacola(
     cart: cartRemove(current.cart, input.sku),
     lastQuotes: undefined,
     chosenRateId: undefined,
+    chosenOptionKey: undefined,
   }));
   return {
     ok: true,

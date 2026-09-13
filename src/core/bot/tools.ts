@@ -55,7 +55,8 @@ export type BotToolInputs = {
   remover_da_sacola: { sku: string };
   /** Código como a cliente escreveu; o executor normaliza e calcula sobre a sacola. */
   validar_cupom: { cupom: string };
-  cotar_frete: { cep: string };
+  /** entregar_ate: data marcada da cliente (AAAA-MM-DD) — cada opção diz se chega. */
+  cotar_frete: { cep: string; entregar_ate?: string };
   buscar_cadastro: Record<string, never>;
   historico_de_compras: Record<string, never>;
   criar_pedido: {
@@ -80,6 +81,9 @@ export type BotToolInputs = {
     cidade?: string;
     uf?: string;
     cupom?: string;
+    /** Data marcada ("preciso até dia 16", AAAA-MM-DD) e a ocasião — a maison prioriza a saída. */
+    entregar_ate?: string;
+    ocasiao?: string;
     /** Aceito e ignorado — o pedido usa o telefone da conversa. */
     telefone?: string;
     /** Default 'online'; dinheiro só quando o cliente pedir explicitamente. */
@@ -249,7 +253,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "cotar_frete",
     description:
-      "Devolve as opções reais de entrega (transportadora, prazo e valor) para um CEP, com o peso das peças que estão na sacola. Chame depois de montar a sacola e SEMPRE com o CEP do endereço que VAI no pedido (o salvo que a cliente confirmou, ou o novo). Se o endereço ou a sacola mudar, cote de novo. A cliente ESCOLHE uma das opções; passe a escolha em criar_pedido (campo frete).",
+      "Devolve as opções reais de entrega (transportadora, prazo e valor) para um CEP, com o peso das peças que estão na sacola — o motoboy vem como uma opção por janela de horário ('hoje, 19h–21h', com a hora-limite para pagar). Chame depois de montar a sacola e SEMPRE com o CEP do endereço que VAI no pedido (o salvo que a cliente confirmou, ou o novo). Se o endereço ou a sacola mudar, cote de novo. Se a cliente disse até que dia precisa da peça, passe entregar_ate: cada opção volta com 'chega dia…' ou 'pode chegar só…'. A cliente ESCOLHE uma das opções; passe a escolha em criar_pedido (campo frete).",
     input_schema: {
       type: "object",
       properties: {
@@ -257,6 +261,11 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           type: "string",
           description: "CEP de entrega, somente os 8 dígitos (ex.: '01310100').",
           pattern: "^[0-9]{8}$",
+        },
+        entregar_ate: {
+          type: "string",
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+          description: "Data marcada (AAAA-MM-DD), só se a cliente disse até que dia precisa da peça. Cada opção volta dizendo se chega a tempo.",
         },
       },
       required: ["cep"],
@@ -314,7 +323,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         frete: {
           type: "string",
           description:
-            "A opção de entrega que a cliente escolheu — o nome ou o número EXATAMENTE como cotar_frete devolveu nesta conversa (ex.: 'SEDEX' ou '2'). Omita só se houver uma única opção. Nunca escreva um nome de frete que não veio de cotar_frete.",
+            "A opção de entrega que a cliente escolheu — o nome ou o número EXATAMENTE como cotar_frete devolveu nesta conversa (ex.: 'SEDEX' ou '2'). Omita só se houver uma única opção. Nunca escreva um nome de frete que não veio de cotar_frete. Para o motoboy, é a janela (ex.: 'motoboy hoje 19h–21h' ou o número da opção).",
         },
         usar_cadastro_salvo: {
           type: "boolean",
@@ -365,6 +374,16 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           default: "online",
           description:
             "Use 'dinheiro_na_entrega' SOMENTE quando a cliente pedir explicitamente para pagar em dinheiro na entrega. Caso contrário, omita: o padrão é 'online' (link de pagamento).",
+        },
+        entregar_ate: {
+          type: "string",
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+          description: "Data marcada (AAAA-MM-DD): até que dia a cliente precisa da peça, só se ela disse. Use a mesma data passada em cotar_frete.",
+        },
+        ocasiao: {
+          type: "string",
+          maxLength: 60,
+          description: "A ocasião da data marcada, como ela disse (ex.: 'aniversário da mãe', 'Círio'). Só com entregar_ate.",
         },
         presente: {
           type: "object",
@@ -632,6 +651,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   }),
   cotar_frete: z.strictObject({
     cep: digitos(8, "CEP"),
+    entregar_ate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "entregar_ate deve ser AAAA-MM-DD")
+      .optional(),
   }),
   criar_pedido: z.strictObject({
     itens: z
@@ -658,6 +681,11 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
       .regex(/^[A-Za-z]{2}$/, "UF deve ter 2 letras")
       .optional(),
     cupom: z.string().optional(),
+    entregar_ate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "entregar_ate deve ser AAAA-MM-DD")
+      .optional(),
+    ocasiao: z.string().trim().max(60).optional(),
     // Aceito e IGNORADO: o pedido usa o telefone da própria conversa. O
     // modelo tende a coletar telefone por instinto de vendedor — rejeitar o
     // campo travava a finalização (caso real em produção, 2026-08-26).

@@ -11,7 +11,7 @@ import {
   summarizePurchaseHistory,
   type PurchaseOrderSummary,
 } from "@/core/bot/purchases";
-import { confirmQuoteUnchanged, resolveApprovedQuote, withoutMotoboy } from "@/core/bot/shipping";
+import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { auditLog, customers, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
@@ -20,7 +20,9 @@ import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
-import { computeTotalWeightGrams, quoteShipping } from "@/services/store-catalog";
+import { computeTotalWeightGrams, quoteDeliveryOptions } from "@/services/store-catalog";
+
+import { toBotQuote } from "./shipping";
 import {
   createStoreOrder,
   PriceChangedError,
@@ -143,25 +145,26 @@ export async function execCriarPedido(
   // Frete: SÓ a cotação que a cliente viu nesta conversa, para o CEP do
   // endereço de entrega (o caderninho guarda CEP, opções e escolha). Depois,
   // recota com o peso real e confere que a tarifa aprovada não mudou.
+  const now = ctx.now ?? new Date();
   const approved = resolveApprovedQuote({
     quotedCep: state.lastCep,
     quotes: state.lastQuotes,
     quotedAt: state.lastQuotedAt,
-    chosenRateId: state.chosenRateId,
+    chosenRateId: state.chosenOptionKey ?? state.chosenRateId,
     orderCep: identity.postalCode,
     freteInput: input.frete,
+    now,
   });
   if (!approved.ok) return approved;
 
+  // Data marcada: a do fechamento, senão a que a cotação já conhecia.
+  const neededBy = input.entregar_ate ?? state.neededBy;
+  const occasion = input.ocasiao?.trim() || state.occasion;
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
-  const fresh = withoutMotoboy(
-    await quoteShipping(db, {
-      cep: identity.postalCode,
-      totalWeightGrams,
-    }),
-  );
+  // Recota pelas opções de AGORA (a janela do motoboy some quando passa da hora-limite).
+  const fresh = (await quoteDeliveryOptions(db, { cep: identity.postalCode, totalWeightGrams, now })).map((option) => toBotQuote(option, neededBy, now));
   const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
   if (!confirmed.ok) return confirmed;
   const chosen = confirmed.quote;
@@ -203,6 +206,8 @@ export async function execCriarPedido(
       })),
       shippingRateId: chosen.rateId,
       expectedShippingCents: chosen.priceCents,
+      ...(chosen.kind === "motoboy" && chosen.window ? { deliveryWindow: chosen.window } : {}),
+      ...(neededBy ? { neededBy, ...(occasion ? { occasion } : {}) } : {}),
       ...(couponCode !== "" ? { couponCode } : {}),
       ...(input.presente
         ? {
@@ -213,7 +218,7 @@ export async function execCriarPedido(
             },
           }
         : {}),
-    });
+    }, { now });
   } catch (error) {
     // Erros de negócio (preço mudou, estoque, cupom, frete) voltam com a
     // mensagem pt-BR do serviço para o modelo explicar ao cliente.
@@ -265,6 +270,9 @@ export async function execCriarPedido(
         lastQuotes: undefined,
         lastQuotedAt: undefined,
         chosenRateId: undefined,
+        chosenOptionKey: undefined,
+        neededBy: undefined,
+        occasion: undefined,
         coupon: undefined,
         // A ponte cumpriu o papel: o próximo turno é outra conversa.
         bridge: undefined,
