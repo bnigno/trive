@@ -30,7 +30,11 @@ export async function execCotarFrete(
     : await cartWeightGrams(db, cart);
 
   const now = ctx.now ?? new Date();
-  const neededBy = input.entregar_ate && isValidNeededBy(input.entregar_ate, spDayKey(now)) ? input.entregar_ate : undefined;
+  const todayKey = spDayKey(now);
+  // A data desta chamada; sem ela, a do caderninho continua valendo enquanto não passou.
+  const stateNeededBy = state.neededBy && isValidNeededBy(state.neededBy, todayKey) ? state.neededBy : undefined;
+  const neededBy = input.entregar_ate && isValidNeededBy(input.entregar_ate, todayKey) ? input.entregar_ate : stateNeededBy;
+  const occasion = input.ocasiao?.trim() || (neededBy === state.neededBy ? state.occasion : undefined);
   const options = await quoteDeliveryOptions(db, { cep: input.cep, totalWeightGrams, now });
   const quotes = options.map((option) => toBotQuote(option, neededBy, now));
   if (quotes.length === 0) {
@@ -60,7 +64,8 @@ export async function execCotarFrete(
     // Uma opção só já é a escolha (as duas chaves: leitores antigos olham chosenRateId).
     chosenRateId: quotes.length === 1 ? quotes[0].rateId : undefined,
     chosenOptionKey: quotes.length === 1 ? quoteKey(quotes[0]) : undefined,
-    ...(neededBy ? { neededBy } : {}),
+    neededBy,
+    occasion: neededBy ? occasion : undefined,
   }));
 
   const lines = formatQuoteLines(quotes);

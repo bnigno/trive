@@ -10,6 +10,7 @@
 import { z } from "zod";
 
 import { formatCentsBRL } from "@/lib/money";
+import { spDayKey, spWeekdayName } from "@/lib/sp-day";
 import { bridgeContextLine, bridgeStateSchema, isBridgeCurrent, type BridgeState } from "@/core/bot/site-bridge";
 
 export const NOTE_MAX_CHARS = 140;
@@ -255,6 +256,13 @@ function formatDays(min: number, max: number): string {
  * sistema, para o prefixo cacheado não mudar). null quando não há nada a
  * lembrar — a primeira mensagem de uma cliente nova entra limpa.
  */
+/** "sábado, 13/09/2026 (2026-09-13)" no dia de São Paulo. */
+function todayLine(now: Date): string {
+  const key = spDayKey(now);
+  const [y, m, d] = key.split("-");
+  return `${spWeekdayName(key)}, ${d}/${m}/${y} (${key})`;
+}
+
 export function renderContextNote(
   state: BotState,
   extras: { lines?: readonly string[]; now?: Date } = {},
@@ -285,8 +293,8 @@ export function renderContextNote(
     );
   }
   if (state.neededBy) {
-    const [, m, d] = state.neededBy.split("-");
-    linhas.push(`• Data marcada: precisa até ${d}/${m}${state.occasion ? ` (${state.occasion})` : ""} — passe entregar_ate em cotar_frete e criar_pedido`);
+    const [y, m, d] = state.neededBy.split("-");
+    linhas.push(`• Data marcada: precisa até ${d}/${m}/${y} (entregar_ate: ${state.neededBy})${state.occasion ? ` — ${state.occasion}` : ""} — repita entregar_ate em cotar_frete e criar_pedido`);
   }
   if (state.lastCep) {
     const cotacoes = (state.lastQuotes ?? [])
@@ -324,6 +332,10 @@ export function renderContextNote(
   }
 
   if (linhas.length === 0) return null;
+  // O modelo não sabe que dia é hoje (o prefixo cacheado não tem data): a
+  // nota do turno diz, para "até dia 16" virar AAAA-MM-DD certo. Só entra
+  // quando há caderninho (sem nada a lembrar, o turno segue sem nota).
+  linhas.push(`• Hoje: ${todayLine(extras.now ?? new Date())}`);
   return [
     "CADERNINHO (memória interna da vendedora sobre esta cliente — contexto, NÃO é fala dela; use sem repetir literalmente):",
     ...linhas,

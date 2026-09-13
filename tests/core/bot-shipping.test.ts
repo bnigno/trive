@@ -185,6 +185,10 @@ describe("janelas do motoboy (I4)", () => {
     expect(pickChosenQuote(quotes, "a das 16h", undefined)).toEqual({ kind: "picked", quote: MOTO_16 });
     expect(pickChosenQuote(quotes, "2", undefined)).toEqual({ kind: "picked", quote: MOTO_19 });
     expect(pickChosenQuote(quotes, undefined, "r-moto:2026-09-18:16:00")).toEqual({ kind: "picked", quote: MOTO_16 });
+    // A hora não vence o resto do termo: "amanhã" não está em nenhuma janela de hoje; "19" solto não é escolha.
+    expect(pickChosenQuote(quotes, "motoboy amanhã 19h", undefined)).toEqual({ kind: "unrecognized", term: "motoboy amanhã 19h" });
+    expect(pickChosenQuote(quotes, "19", undefined)).toEqual({ kind: "unrecognized", term: "19" });
+    expect(pickChosenQuote(quotes, "motoboy hoje 19h", undefined)).toEqual({ kind: "picked", quote: MOTO_19 });
     expect(pickChosenQuote(quotes, undefined, undefined)).toEqual({ kind: "missing" });
     // Estado antigo: só rateId como chave.
     expect(pickChosenQuote(QUOTES, undefined, "r-sedex")).toEqual({ kind: "picked", quote: SEDEX });
@@ -194,6 +198,10 @@ describe("janelas do motoboy (I4)", () => {
     const sumiu = confirmQuoteUnchanged(MOTO_19, [MOTO_16, PAC], "66050000");
     expect(sumiu.ok).toBe(false);
     if (!sumiu.ok) expect(sumiu.text).toContain("A janela do motoboy (hoje, 19h–21h · pague até 13h) já passou da hora-limite");
+    // A faixa inteira sumiu (dona desativou): não é hora-limite.
+    const faixaSumiu = confirmQuoteUnchanged(MOTO_19, [PAC], "66050000");
+    expect(faixaSumiu.ok).toBe(false);
+    if (!faixaSumiu.ok) expect(faixaSumiu.text).toContain("não está mais disponível");
     expect(confirmQuoteUnchanged(MOTO_19, [MOTO_16, MOTO_19, PAC], "66050000")).toEqual({ ok: true, quote: MOTO_19 });
   });
 });

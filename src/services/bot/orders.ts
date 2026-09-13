@@ -23,6 +23,8 @@ import { getSettingsMap } from "@/services/settings";
 import { computeTotalWeightGrams, quoteDeliveryOptions } from "@/services/store-catalog";
 
 import { toBotQuote } from "./shipping";
+import { isValidNeededBy, neededByLabel } from "@/core/shipping/needed-by";
+import { spDayKey } from "@/lib/sp-day";
 import {
   createStoreOrder,
   PriceChangedError,
@@ -157,9 +159,24 @@ export async function execCriarPedido(
   });
   if (!approved.ok) return approved;
 
-  // Data marcada: a do fechamento, senão a que a cotação já conhecia.
-  const neededBy = input.entregar_ate ?? state.neededBy;
-  const occasion = input.ocasiao?.trim() || state.occasion;
+  // Data marcada: a cliente só pode fechar com a data cujas opções ela viu
+  // ("chega dia…" veio de cotar_frete com entregar_ate). Data velha no
+  // caderninho não trava a venda: some.
+  const todayKey = spDayKey(now);
+  const stateNeededBy = state.neededBy && isValidNeededBy(state.neededBy, todayKey) ? state.neededBy : undefined;
+  if (input.entregar_ate !== undefined) {
+    if (!isValidNeededBy(input.entregar_ate, todayKey)) {
+      return { ok: false, text: `A data marcada ${input.entregar_ate} já passou ou não existe (hoje é ${todayKey}). Confirme com a cliente até que dia ela precisa e chame cotar_frete com entregar_ate.` };
+    }
+    if (input.entregar_ate !== stateNeededBy) {
+      return {
+        ok: false,
+        text: `A data marcada ${input.entregar_ate} não é a da cotação${stateNeededBy ? ` (${stateNeededBy})` : " (a cotação foi sem data)"}: chame cotar_frete com entregar_ate=${input.entregar_ate}, apresente as opções com o "chega dia…" e, com o SIM da cliente, chame criar_pedido de novo.`,
+      };
+    }
+  }
+  const neededBy = input.entregar_ate ?? stateNeededBy;
+  const occasion = input.ocasiao?.trim() || (neededBy ? state.occasion : undefined);
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
@@ -168,6 +185,13 @@ export async function execCriarPedido(
   const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
   if (!confirmed.ok) return confirmed;
   const chosen = confirmed.quote;
+  // A previsão "chega dia…" que a cliente viu ainda vale? (o dia de postagem muda com o relógio)
+  if (neededBy && approved.quote.arrival && chosen.arrival && approved.quote.arrival !== chosen.arrival) {
+    return {
+      ok: false,
+      text: `A previsão de entrega mudou desde a cotação: era "${approved.quote.arrival}", agora é "${chosen.arrival}". Chame cotar_frete de novo com entregar_ate=${neededBy}, apresente as opções atualizadas e, com o SIM da cliente, chame criar_pedido de novo.`,
+    };
+  }
 
   const isCash = input.forma_de_pagamento === "dinheiro_na_entrega";
 
@@ -317,7 +341,10 @@ export async function execCriarPedido(
       (r) =>
         `• ${r.quantity}× ${r.name} — ${formatCentsBRL(r.unitPriceCents * r.quantity)}`,
     ),
-    `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
+    chosen.kind === "motoboy" && chosen.label
+      ? `Entrega: ${chosen.name} — ${chosen.label} — ${formatCentsBRL(chosen.priceCents)}`
+      : `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
+    ...(neededBy ? [`Data marcada: ${neededByLabel(neededBy, occasion)}${chosen.arrival ? ` — ${chosen.arrival}` : ""}`] : []),
     ...(discountCents > 0 ? [`Desconto: -${formatCentsBRL(discountCents)}`] : []),
     `TOTAL: ${formatCentsBRL(created.totalCents)}`,
     ...(input.presente

@@ -55,8 +55,8 @@ export type BotToolInputs = {
   remover_da_sacola: { sku: string };
   /** Código como a cliente escreveu; o executor normaliza e calcula sobre a sacola. */
   validar_cupom: { cupom: string };
-  /** entregar_ate: data marcada da cliente (AAAA-MM-DD) — cada opção diz se chega. */
-  cotar_frete: { cep: string; entregar_ate?: string };
+  /** entregar_ate: data marcada da cliente (AAAA-MM-DD) — cada opção diz se chega; ocasiao só com entregar_ate. */
+  cotar_frete: { cep: string; entregar_ate?: string; ocasiao?: string };
   buscar_cadastro: Record<string, never>;
   historico_de_compras: Record<string, never>;
   criar_pedido: {
@@ -265,7 +265,12 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         entregar_ate: {
           type: "string",
           pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-          description: "Data marcada (AAAA-MM-DD), só se a cliente disse até que dia precisa da peça. Cada opção volta dizendo se chega a tempo.",
+          description: "Data marcada (AAAA-MM-DD), só se a cliente disse até que dia precisa da peça. Cada opção volta dizendo se chega a tempo. O caderninho diz que dia é hoje.",
+        },
+        ocasiao: {
+          type: "string",
+          maxLength: 60,
+          description: "A ocasião da data marcada, como ela disse (ex.: 'aniversário da mãe'). Só com entregar_ate.",
         },
       },
       required: ["cep"],
@@ -403,7 +408,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
             entregar_ate: {
               type: "string",
               pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-              description: "Data desejada de entrega (AAAA-MM-DD), só se ela disse uma. Informativa: o prazo real é o do frete.",
+              description: "Evite: a data de entrega do presente vai em entregar_ate (cotar_frete e criar_pedido), que mostra se chega a tempo. Aqui é só informativo.",
             },
           },
           required: ["para"],
@@ -655,6 +660,7 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, "entregar_ate deve ser AAAA-MM-DD")
       .optional(),
+    ocasiao: z.string().trim().max(60).optional(),
   }),
   criar_pedido: z.strictObject({
     itens: z

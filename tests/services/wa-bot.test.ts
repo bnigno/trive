@@ -1359,11 +1359,55 @@ describe("buildToolExecutor", () => {
       ocasiao: "aniversário",
     });
     expect(order.ok).toBe(true);
+    expect(order.text).toContain(`Entrega: Motoboy Belém — hoje, 19h–21h · pague até 13h — ${formatCentsBRL(900)}`);
+    expect(order.text).toContain("Data marcada: Para o dia 18/09 — aniversário — Chega até sexta 18/09, no dia");
     const [row] = await db.select().from(schema.orders).orderBy(schema.orders.orderNumber);
     expect(row.deliveryWindow).toMatchObject({ dayKey: "2026-09-18", start: "19:00", end: "21:00", cutoff: "13:00", rateName: "Motoboy Belém" });
     expect(row.neededBy).toBe("2026-09-18");
     expect(row.occasion).toBe("aniversário");
     expect(row.shippingCents).toBe(900);
+  });
+
+  it("data marcada: velha no caderninho some sem travar; diferente da cotada é recusada até cotar de novo", async () => {
+    await setupStore();
+    const conversationId = await createConversation();
+    const base = { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: DUMMY_INBOUND_ID };
+    // Cotou com data para 18/09; no dia 19 a cliente fecha sem data: a velha some e o pedido sai sem data marcada.
+    await buildToolExecutor(sdb, { ...base, now: new Date("2026-09-18T13:30:00Z") })("cotar_frete", { cep: "01310100", entregar_ate: "2026-09-18", ocasiao: "festa" });
+    let [conversation] = await db.select().from(schema.waConversations).where(eq(schema.waConversations.id, conversationId));
+    expect((conversation.botState as { neededBy?: string; occasion?: string }).occasion).toBe("festa");
+    const nextDay = buildToolExecutor(sdb, { ...base, now: new Date("2026-09-19T13:00:00Z") });
+    await nextDay("cotar_frete", { cep: "01310100" });
+    [conversation] = await db.select().from(schema.waConversations).where(eq(schema.waConversations.id, conversationId));
+    expect((conversation.botState as { neededBy?: string }).neededBy).toBeUndefined();
+
+    // Data no fechamento diferente da cotada (a cotação foi sem data): recusa e manda cotar com entregar_ate.
+    const mismatch = await nextDay("criar_pedido", {
+      itens: [{ sku: "CANECA-AZUL", quantidade: 1 }],
+      entregar_ate: "2026-09-25",
+      nome_completo: "Maria da Silva",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+    });
+    expect(mismatch.ok).toBe(false);
+    expect(mismatch.text).toContain("chame cotar_frete com entregar_ate=2026-09-25");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+
+    // Data no passado no fechamento: recusa dizendo que dia é hoje.
+    const past = await nextDay("criar_pedido", { itens: [{ sku: "CANECA-AZUL", quantidade: 1 }], entregar_ate: "2026-09-18", usar_cadastro_salvo: false, nome_completo: "Maria da Silva", cpf: VALID_CPF, cep: "01310100", rua: "Avenida Paulista", numero: "1000", bairro: "Bela Vista", cidade: "São Paulo", uf: "SP" });
+    expect(past.ok).toBe(false);
+    expect(past.text).toContain("hoje é 2026-09-19");
+
+    // Sem data: fecha normalmente, sem data marcada.
+    const ok = await nextDay("criar_pedido", { itens: [{ sku: "CANECA-AZUL", quantidade: 1 }], nome_completo: "Maria da Silva", cpf: VALID_CPF, cep: "01310100", rua: "Avenida Paulista", numero: "1000", bairro: "Bela Vista", cidade: "São Paulo", uf: "SP" });
+    expect(ok.ok).toBe(true);
+    const [row] = await db.select().from(schema.orders);
+    expect(row.neededBy).toBeNull();
   });
 
   it("janela que passou da hora-limite entre a cotação e o fechamento: criar_pedido manda cotar de novo, sem criar pedido", async () => {

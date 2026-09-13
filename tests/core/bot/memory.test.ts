@@ -167,6 +167,11 @@ describe("renderContextNote", () => {
     expect(renderContextNote({})).toBeNull();
   });
 
+  it("a nota diz que dia é hoje (o prefixo cacheado não tem data)", () => {
+    const note = renderContextNote({ displayName: "Maria" }, { now: new Date("2026-09-13T12:00:00Z") });
+    expect(note).toContain("• Hoje: domingo, 13/09/2026 (2026-09-13)");
+  });
+
   it("caderninho com janela do motoboy escolhida, 'chega dia' e data marcada", () => {
     const note = renderContextNote({
       lastCep: "66050000",
@@ -178,7 +183,7 @@ describe("renderContextNote", () => {
       neededBy: "2026-09-18",
       occasion: "aniversário da mãe",
     });
-    expect(note).toContain("• Data marcada: precisa até 18/09 (aniversário da mãe)");
+    expect(note).toContain("• Data marcada: precisa até 18/09/2026 (entregar_ate: 2026-09-18) — aniversário da mãe");
     expect(note).toContain(`Motoboy hoje, 19h–21h · pague até 13h ${formatCentsBRL(1500)} · Chega até sexta 18/09, no dia`);
     expect(note).toContain("· escolhido: Motoboy hoje, 19h–21h · pague até 13h");
   });

@@ -325,8 +325,9 @@ describe("sacola", () => {
     const state = await botState(conversationId);
     expect(state.lastCep).toBe("01310100");
     expect(state.lastQuotes).toHaveLength(1);
-    // Uma opção só: já é a escolhida.
+    // Uma opção só: já é a escolhida (as duas chaves).
     expect(state.chosenRateId).toBeDefined();
+    expect(state.chosenOptionKey).toBe(state.chosenRateId);
   });
 });
 

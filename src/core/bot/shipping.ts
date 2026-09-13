@@ -47,6 +47,8 @@ function normalizeTerm(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+const FILLER = new Set(["o", "a", "os", "as", "de", "do", "da", "dos", "das", "na", "no", "pra", "para", "pelo", "pela", "com", "quero", "mesmo", "opcao", "janela", "hora", "horario"]);
+
 /** O texto pelo qual a cliente reconhece a opção: nome + janela ("motoboy hoje, 19h–21h · pague até 13h"). */
 function quoteText(quote: BotQuote): string {
   return normalizeTerm(quote.label ? `${quote.name} ${quote.label}` : quote.name);
@@ -74,13 +76,18 @@ export function pickChosenQuote(
     // solto, que só serve quando não há janelas homônimas.
     const exact = quotes.find((quote) => quoteText(quote) === term);
     if (exact) return { kind: "picked", quote: exact };
-    // "motoboy 19h" / "a das 16h": a hora é o começo da janela.
+    // Palavras que dizem algo ("motoboy", "amanha", "hoje"); números soltos e
+    // "19h" ficam para a regra da hora; artigos e preposições não contam.
+    const words = term.split(" ").filter((word) => word.length > 1 && !/^\d+(?:h(?:\d{2})?)?$/.test(word) && !FILLER.has(word));
+    // "motoboy 19h" / "a das 16h": a hora é o começo da janela — mas o resto
+    // do termo tem de bater ("motoboy amanhã 19h" NÃO é a janela de hoje).
     const hour = /(?:^|\D)(\d{1,2})h(?:\d{2})?(?:\D|$)/.exec(term);
     if (hour) {
       const byStart = quotes.filter((quote) => quote.window && Number(quote.window.start.split(":")[0]) === Number(hour[1]));
-      if (byStart.length === 1) return { kind: "picked", quote: byStart[0] };
+      const narrowed = words.length > 0 ? byStart.filter((quote) => words.every((word) => quoteText(quote).includes(word))) : byStart;
+      if (narrowed.length === 1) return { kind: "picked", quote: narrowed[0] };
+      if (byStart.length > 0) return { kind: "unrecognized", term: input!.trim() };
     }
-    const words = term.split(" ").filter((word) => word.length > 1);
     const byWords = words.length > 0 ? quotes.filter((quote) => words.every((word) => quoteText(quote).includes(word))) : [];
     if (byWords.length === 1) return { kind: "picked", quote: byWords[0] };
     const byName = quotes.filter((quote) => normalizeTerm(quote.name).includes(term) || term.includes(normalizeTerm(quote.name)));
@@ -190,7 +197,9 @@ export function confirmQuoteUnchanged(
   }
   const current = fresh.find((quote) => quoteKey(quote) === quoteKey(approved));
   if (!current) {
-    const what = approved.kind === "motoboy" && approved.label ? `A janela do motoboy (${approved.label}) já passou da hora-limite` : `A opção ${approved.name} não está mais disponível para o CEP ${cep}`;
+    // Só é "passou da hora-limite" quando a faixa ainda existe com outra janela; senão a faixa sumiu mesmo.
+    const sameRateOtherWindow = approved.kind === "motoboy" && fresh.some((quote) => quote.rateId === approved.rateId);
+    const what = sameRateOtherWindow && approved.label ? `A janela do motoboy (${approved.label}) já passou da hora-limite` : `A opção ${approved.label ? `${approved.name} ${approved.label}` : approved.name} não está mais disponível para o CEP ${cep}`;
     return {
       ok: false,
       text: `${what}. Chame cotar_frete de novo, apresente as opções atuais e, com o SIM da cliente, chame criar_pedido de novo.`,
