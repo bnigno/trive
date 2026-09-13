@@ -37,8 +37,9 @@ export function ImageUploadForm({ productId }: { productId: string }) {
       let sent = 0;
       for (const [index, original] of files.entries()) {
         setProgress({ done: index, total: files.length });
-        const { file, shrunk } = await shrinkImage(original);
-        const blocker = uploadBlocker(file.size, shrunk);
+        const reduced = await shrinkImage(original);
+        const { file } = reduced;
+        const blocker = uploadBlocker(reduced);
         if (blocker) {
           failures.push(`“${original.name}”: ${blocker}`);
           continue;
