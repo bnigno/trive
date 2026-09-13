@@ -143,6 +143,12 @@ body {
 [data-store] {
   color-scheme: light;
   -webkit-tap-highlight-color: transparent;
+  /* As famílias da maison só existem onde o next/font põe --font-cormorant e
+     --font-jost (o wrapper da vitrine). Declaradas no :root pelo @theme, as
+     variáveis viram inválidas (var() sem destino) e todo título cairia na
+     fonte do body: por isso são resolvidas AQUI, no mesmo elemento. */
+  --font-display: var(--font-cormorant), Georgia, "Times New Roman", serif;
+  --font-store: var(--font-jost), system-ui, -apple-system, sans-serif;
 }
 
 /* Âncoras (#colecao, #busca) param abaixo do header sticky. */
