@@ -134,7 +134,8 @@ export function bridgeContextLine(bridge: BridgeState, now: Date): string {
             ? ` há ${Math.round(minutes / 60)} h`
             : ` há ${Math.round(minutes / (60 * 24))} dia(s)`;
   const onde = bridge.sourceLabel ?? originLabel(bridge.source);
-  if (bridge.items && bridge.items.length > 0) {
+  // Fora da sacola, `items` é só a foto da peça para o estoque: a frase é da peça.
+  if (bridge.source === "cart" && bridge.items && bridge.items.length > 0) {
     const lista = bridge.items.map((item) => `${item.quantity}× ${item.name}${item.variation ? ` (${item.variation})` : ""}`).join(", ");
     return `Veio do site${quando} (${onde}) com a sacola: ${lista}`;
   }
@@ -142,4 +143,20 @@ export function bridgeContextLine(bridge: BridgeState, now: Date): string {
     return `Veio do site${quando} (${onde}): ${bridge.productName}${bridge.variation ? ` (${bridge.variation})` : ""}`;
   }
   return `Veio do site${quando} (${onde})`;
+}
+
+/** Ponte recente (até 1 h): o estoque das peças dela ainda vale a pena conferir. */
+export const BRIDGE_FRESH_MS = 60 * 60 * 1000;
+
+export function isBridgeFresh(bridge: BridgeState, now: Date): boolean {
+  const at = new Date(bridge.at).getTime();
+  return Number.isFinite(at) && now.getTime() - at <= BRIDGE_FRESH_MS;
+}
+
+/** Ponte vigente (até 24 h): depois disso o caderninho para de dizer "Veio do site". */
+export const BRIDGE_CURRENT_MS = 24 * 60 * 60 * 1000;
+
+export function isBridgeCurrent(bridge: BridgeState, now: Date): boolean {
+  const at = new Date(bridge.at).getTime();
+  return Number.isFinite(at) && now.getTime() - at <= BRIDGE_CURRENT_MS;
 }

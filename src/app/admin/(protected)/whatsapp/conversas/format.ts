@@ -1,4 +1,5 @@
 import type { BadgeTone } from "@/components/ui/badge";
+import type { BotToolName } from "@/core/bot/tools";
 import type { WaMessageOrigin } from "@/core/whatsapp/origin";
 
 /** '+5511999991234' -> '(11) •••••-1234' — nunca expõe o número inteiro. */
@@ -85,18 +86,27 @@ export function originPrefix(
 }
 
 /** O que a vendedora fez num turno, em português de painel. */
-const TOOL_LABELS: Record<string, string> = {
+// Toda ferramenta da Lia tem rótulo: o teste em tests/app/wa-chat-format
+// confere contra BOT_TOOL_NAMES, para uma ferramenta nova não aparecer crua.
+export const TOOL_LABELS: Record<BotToolName, string> = {
   listar_produtos: "mostrou o catálogo",
   detalhar_produto: "detalhou uma peça",
   adicionar_a_sacola: "pôs na sacola",
   ver_sacola: "conferiu a sacola",
   remover_da_sacola: "tirou da sacola",
+  validar_cupom: "validou um cupom",
   cotar_frete: "cotou o frete",
   buscar_cadastro: "consultou o cadastro",
+  historico_de_compras: "viu as compras anteriores",
   criar_pedido: "criou o pedido",
   status_do_pedido: "consultou o pedido",
   enviar_chave_pix: "enviou a chave Pix",
   avisar_dono: "avisou você",
+  reservar_peca: "guardou uma peça",
+  liberar_reserva: "liberou a reserva",
+  avisar_quando_voltar: "anotou o aviso de volta",
+  atualizar_cartela: "atualizou a cartela",
+  montar_look: "montou um look",
   anotar: "anotou no caderninho",
   transferir_para_atendente: "passou para você",
 };
@@ -104,7 +114,7 @@ const TOOL_LABELS: Record<string, string> = {
 export function describeTools(tools: readonly string[]): string | null {
   const labels: string[] = [];
   for (const tool of tools) {
-    const label = TOOL_LABELS[tool] ?? tool;
+    const label = (TOOL_LABELS as Record<string, string | undefined>)[tool] ?? tool;
     if (!labels.includes(label)) labels.push(label);
   }
   if (labels.length === 0) return null;

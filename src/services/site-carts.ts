@@ -3,7 +3,7 @@
 // o link do WhatsApp com a mensagem pronta. A Lia consome a ponte quando a
 // primeira mensagem chega (wa-inbound) e liga ao pedido ao fechar.
 
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
@@ -11,13 +11,16 @@ import {
   BRIDGE_MAX_LINES,
   BRIDGE_MAX_QTY,
   BRIDGE_SOURCES,
+  bridgeItemSchema,
   buildBridgeMessage,
   generateBridgeCode,
+  originLabel,
   type BridgeItem,
   type BridgeSource,
+  type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
-import { siteCarts } from "@/db/schema";
+import { products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -177,6 +180,101 @@ function isUniqueViolation(error: unknown): boolean {
 export async function getSiteCart(db: DbOrTx, id: string) {
   const [row] = await db.select().from(siteCarts).where(eq(siteCarts.id, z.uuid().parse(id))).limit(1);
   return row ?? null;
+}
+
+/** Uma ponte vale por uma semana: código mais velho que isso não é reconhecido. */
+export const BRIDGE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * A primeira mensagem trouxe o código: consome a ponte (uma vez só — a
+ * UNIQUE parcial garante que só há uma aberta com esse código), liga à
+ * conversa e devolve o que o caderninho guarda. null quando não há ponte
+ * aberta com esse código (código inventado, velho ou já usado).
+ */
+export async function consumeSiteCartByCode(
+  db: DbOrTx,
+  input: { code: string; conversationId: string; now: Date },
+): Promise<BridgeState | null> {
+  const code = input.code.trim().toUpperCase();
+  const since = new Date(input.now.getTime() - BRIDGE_MAX_AGE_MS);
+  const [row] = await db
+    .update(siteCarts)
+    .set({ consumedAt: input.now, conversationId: input.conversationId })
+    .where(and(eq(siteCarts.code, code), isNull(siteCarts.consumedAt), gte(siteCarts.createdAt, since)))
+    .returning();
+  if (!row) return null;
+  const items = z.array(bridgeItemSchema).safeParse(row.items);
+  const list = items.success ? items.data : [];
+  const [product] = row.productId
+    ? await db.select({ slug: products.slug, name: products.name }).from(products).where(eq(products.id, row.productId)).limit(1)
+    : [];
+  const source = row.source as BridgeSource;
+  const first = list[0];
+  return {
+    siteCartId: row.id,
+    code,
+    source,
+    sourceLabel: originLabel(source, row.campaignSlug),
+    // "Veio do site agora" conta da chegada da mensagem: quem tocou ontem e
+    // escreveu hoje também merece a linha de estoque no primeiro turno.
+    at: input.now.toISOString(),
+    ...(product ? { productSlug: product.slug, productName: product.name } : first && source !== "cart" ? { productName: first.name } : {}),
+    ...(source !== "cart" && first?.variation ? { variation: first.variation } : {}),
+    ...(list.length > 0 ? { items: list } : {}),
+  };
+}
+
+/** Uma ponte só "converte" em pedido fechado até uma semana depois de chegar. */
+export const BRIDGE_ATTRIBUTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * O pedido fechou nesta conversa: a ponte consumida mais recente (ainda sem
+ * pedido, chegada há menos de uma semana) ganha o order_id — é o que o funil
+ * conta como venda pela ponte. Ponte velha não herda pedido de outra visita.
+ */
+export async function markSiteCartOrdered(
+  db: DbOrTx,
+  input: { conversationId: string; orderId: string; now?: Date },
+): Promise<boolean> {
+  const since = new Date((input.now ?? new Date()).getTime() - BRIDGE_ATTRIBUTION_MS);
+  const [latest] = await db
+    .select({ id: siteCarts.id })
+    .from(siteCarts)
+    .where(and(eq(siteCarts.conversationId, input.conversationId), isNull(siteCarts.orderId), gte(siteCarts.consumedAt, since)))
+    .orderBy(desc(siteCarts.consumedAt), desc(siteCarts.createdAt))
+    .limit(1);
+  if (!latest) return false;
+  await db.update(siteCarts).set({ orderId: input.orderId }).where(eq(siteCarts.id, latest.id));
+  return true;
+}
+
+/** "Estoque agora: Longo Dunas (Areia · M): 2 disponíveis" — para o primeiro turno depois da ponte. */
+export async function bridgeStockLine(db: DbOrTx, bridge: BridgeState): Promise<string | null> {
+  const items = (bridge.items ?? []).slice(0, 5);
+  if (items.length === 0) return null;
+  const parts: string[] = [];
+  for (const item of items) {
+    // A ponte nasceu de uma sacola válida: a convidada da janela VIP já viu a
+    // peça escondida — a Lia precisa do estoque dela, não de "saiu do catálogo".
+    const variant = await getSellableVariantBySku(db, item.sku, { includeHidden: true });
+    const label = `${item.name}${item.variation ? ` (${item.variation})` : ""}`;
+    if (!variant) {
+      parts.push(`${label}: saiu do catálogo`);
+      continue;
+    }
+    const qty = variant.availableQty;
+    parts.push(`${label}: ${qty === 0 ? "esgotada" : qty === 1 ? "1 disponível" : `${qty} disponíveis`}, SKU ${variant.sku}`);
+  }
+  return `Estoque agora das peças da ponte: ${parts.join("; ")}`;
+}
+
+/** Quantas pontes há por conversa (o funil e o painel). */
+export async function countSiteCartsByConversation(db: DbOrTx, conversationId: string): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(siteCarts)
+    .where(eq(siteCarts.conversationId, conversationId));
+  return Number(row?.n ?? 0);
 }
 
 export type { BridgeSource };

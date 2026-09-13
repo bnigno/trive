@@ -7,7 +7,7 @@ import Link from "next/link";
 
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { formatCentsBRL } from "@/lib/money";
-import { formatTimeSP } from "./chat-format";
+import { daySeparatorLabel, formatTimeSP } from "./chat-format";
 import { formatPhoneBR } from "./format";
 import type { ChatContext } from "./use-chat-poll";
 
@@ -108,6 +108,19 @@ export function ContextPanel({
           </p>
         )}
       </div>
+
+      {context?.bridge ? (
+        <Section title="Veio do site">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
+            <p className="font-medium">
+              {context.bridge.productLabel ?? "Tocou em “Falar com a Lia”"}
+            </p>
+            <p className="mt-1 text-[11px] opacity-80">
+              pela {context.bridge.label} · {daySeparatorLabel(context.bridge.at).toLowerCase()} às {formatTimeSP(context.bridge.at)}
+            </p>
+          </div>
+        </Section>
+      ) : null}
 
       {context?.handoff ? (
         <Section title={`Resumo da ${sellerName}`}>

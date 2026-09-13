@@ -10,6 +10,8 @@ import {
   buildBridgeMessage,
   extractBridgeCode,
   generateBridgeCode,
+  isBridgeCurrent,
+  isBridgeFresh,
   originLabel,
 } from "@/core/bot/site-bridge";
 
@@ -111,9 +113,46 @@ describe("bridgeContextLine", () => {
         now,
       ),
     ).toBe("Veio do site há 40 min (sacola) com a sacola: 1× Longo Dunas (Areia · M)");
+    // Página da peça guarda a foto da peça em `items` (para o estoque): a frase continua sendo da peça, não "sacola".
+    expect(
+      bridgeContextLine(
+        {
+          siteCartId: "x",
+          code: "K7F2",
+          source: "pdp",
+          at: "2026-09-12T14:59:00Z",
+          productName: "Longo Dunas",
+          variation: "Areia · M",
+          items: [{ sku: "A", name: "Longo Dunas", variation: "Areia · M", quantity: 1, priceCents: 1 }],
+        },
+        now,
+      ),
+    ).toBe("Veio do site agora (página da peça): Longo Dunas (Areia · M)");
     expect(bridgeContextLine({ siteCartId: "x", code: "K7F2", source: "footer", at: "2026-09-12T10:00:00Z" }, now)).toBe("Veio do site há 5 h (rodapé do site)");
     expect(bridgeContextLine({ siteCartId: "x", code: "K7F2", source: "campaign", sourceLabel: "story «verao»", at: "2026-09-10T10:00:00Z" }, now)).toBe(
       "Veio do site há 2 dia(s) (story «verao»)",
     );
+  });
+});
+
+describe("isBridgeCurrent", () => {
+  it("vale por 24 h; depois o caderninho para de falar da ponte", () => {
+    const now = new Date("2026-09-13T15:00:00Z");
+    const bridge = (at: string) => ({ siteCartId: "x", code: "K7F2", source: "pdp" as const, at });
+    expect(isBridgeCurrent(bridge("2026-09-12T15:00:00Z"), now)).toBe(true);
+    expect(isBridgeCurrent(bridge("2026-09-12T14:59:59Z"), now)).toBe(false);
+    expect(isBridgeCurrent(bridge("x"), now)).toBe(false);
+  });
+});
+
+describe("isBridgeFresh", () => {
+  const now = new Date("2026-09-12T15:00:00Z");
+  const bridge = (at: string) => ({ siteCartId: "x", code: "K7F2", source: "pdp" as const, at });
+
+  it("até 1 h vale conferir o estoque; depois, não; data torta é velha", () => {
+    expect(isBridgeFresh(bridge("2026-09-12T14:00:00Z"), now)).toBe(true);
+    expect(isBridgeFresh(bridge("2026-09-12T13:59:59Z"), now)).toBe(false);
+    expect(isBridgeFresh(bridge("2026-09-12T15:00:00Z"), now)).toBe(true);
+    expect(isBridgeFresh(bridge("nunca"), now)).toBe(false);
   });
 });

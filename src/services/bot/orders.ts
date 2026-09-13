@@ -35,6 +35,7 @@ import { loadSavedRegistration, resolveSavedIdentity } from "./customer";
 import type { OrderIdentity } from "./customer";
 import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
+import { markSiteCartOrdered } from "@/services/site-carts";
 
 export const ORDER_STATUS_LABELS = BOT_ORDER_STATUS_LABELS;
 
@@ -263,11 +264,16 @@ export async function execCriarPedido(
         lastQuotedAt: undefined,
         chosenRateId: undefined,
         coupon: undefined,
+        // A ponte cumpriu o papel: o próximo turno é outra conversa.
+        bridge: undefined,
+        focus: undefined,
         lastOrderNumber: created.orderNumber,
       },
       updatedAt: new Date(),
     })
     .where(eq(waConversations.id, ctx.conversationId));
+  // A ponte do site (se houver) ganha o pedido: o funil "de onde vieram" conta a venda.
+  await markSiteCartOrdered(db, { conversationId: ctx.conversationId, orderId: created.orderId });
 
   // Link de pagamento: Mercado Pago quando ligado; senão a página pública do
   // pedido. Falha ao criar a preference NÃO derruba o pedido já criado.

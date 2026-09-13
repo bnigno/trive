@@ -23,6 +23,9 @@ import { isValidE164, toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
+import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
+import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
+import { consumeSiteCartByCode } from "@/services/site-carts";
 
 export const OPT_OUT_ACK_BODY =
   "Pronto! Você não receberá mais avisos. Se mudar de ideia, é só chamar. 💬";
@@ -525,6 +528,32 @@ export async function processZapiInbound(
       } as const;
     }
 
+    // A ponte do site: a mensagem trouxe "#K7F2" → a ponte vira caderninho
+    // (peça em vista, sacola fundida) e a conversa fica ligada a ela. Código
+    // inventado, velho ou já usado não faz nada. Se o bot estiver desligado,
+    // a linha "Veio do site" vai junto no encaminhamento ao dono.
+    let forwardText: string | undefined;
+    const bridgeCode = extractBridgeCode(text);
+    if (bridgeCode) {
+      const bridge = await consumeSiteCartByCode(tx, { code: bridgeCode, conversationId: conversation.id, now });
+      if (bridge) {
+        const [current] = await tx
+          .select({ botState: waConversations.botState })
+          .from(waConversations)
+          .where(eq(waConversations.id, conversation.id))
+          .limit(1);
+        const state = parseBotState(current?.botState);
+        await tx
+          .update(waConversations)
+          .set({ botState: mergeBridgeIntoState(state, bridge), updatedAt: now })
+          .where(eq(waConversations.id, conversation.id));
+        // O texto da cliente vem primeiro e inteiro (o encaminhamento corta em
+        // FORWARD_BODY_MAX_CHARS); a linha da ponte fecha, curta.
+        const bridgeLine = bridgeContextLine(bridge, now).slice(0, 90);
+        forwardText = `${text.slice(0, FORWARD_BODY_MAX_CHARS - bridgeLine.length - 1)}\n${bridgeLine}`;
+      }
+    }
+
     // Áudio: com a vendedora ouvindo (setting + chave), a mensagem vai para a
     // fila de transcrição; quem transcreve decide a rota depois (bot ou dono).
     if (
@@ -561,6 +590,7 @@ export async function processZapiInbound(
       phoneE164,
       zapiMessageId: messageId,
       text,
+      ...(forwardText ? { forwardText } : {}),
       ...(customer ? { customerName: customer.fullName } : {}),
       now,
     });
