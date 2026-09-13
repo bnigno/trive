@@ -85,6 +85,13 @@ const ORDER_WA_MILESTONES = {
     ownerTemplate: null,
     ownerDedupePrefix: null,
   },
+  // Dinheiro na entrega saiu com o motoboy (sem transição de status).
+  out_for_delivery: {
+    clientTemplate: "order_out_for_delivery",
+    clientDedupePrefix: "wa.order_out_for_delivery:",
+    ownerTemplate: null,
+    ownerDedupePrefix: null,
+  },
 } as const;
 
 async function sendOrderWa(
@@ -511,6 +518,9 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     await sendOrderWa(orderId, "store_created");
   },
   "order.preparing": async () => {},
+  "order.out_for_delivery": async (event) => {
+    await sendOrderWa(String(event.payload.orderId), "out_for_delivery");
+  },
   "order.delivered": async () => {},
   // Cancelado (pela dona ou pela expiração da reserva): a cliente recebe o
   // motivo em linguagem humana e o link do pedido (só com opt-in).

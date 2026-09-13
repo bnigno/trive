@@ -172,8 +172,8 @@ export function OrderActions({
   trackingCode: string | null;
   /** Reembolso lança saída no financeiro: só o dono. A action confere de novo. */
   canRefund: boolean;
-  /** Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio. */
-  motoboy?: { customerName: string } | null;
+  /** Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio; dispatchedLabel = já saiu. */
+  motoboy?: { customerName: string; dispatchedLabel: string | null } | null;
 }) {
   if (status === "canceled" || status === "refunded") {
     return (
@@ -221,7 +221,15 @@ export function OrderActions({
         />
       ) : null}
 
-      {motoboy && (status === "paid" || status === "preparing") ? (
+      {motoboy && motoboy.dispatchedLabel && status !== "shipped" && status !== "delivered" ? (
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          🛵 Saiu com o motoboy {motoboy.dispatchedLabel}.{" "}
+          {status === "pending_payment" ? "Ao receber o dinheiro, marque como pago e depois como entregue." : ""}
+        </p>
+      ) : null}
+      {motoboy &&
+      !motoboy.dispatchedLabel &&
+      (status === "paid" || status === "preparing" || (status === "pending_payment" && paymentMethod === "cash")) ? (
         <div className="flex flex-col gap-1">
           <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
           <p className="text-xs text-zinc-500 dark:text-zinc-400">

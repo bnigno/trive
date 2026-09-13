@@ -10,6 +10,8 @@ import { spDayKey, spMinutesOfDay, spNextDayKey } from "@/lib/sp-day";
 export interface RouteOrderLike {
   id: string;
   window: DeliveryWindowChoice;
+  /** Já saiu com o motoboy (pedido em dinheiro: sai antes de virar "pago"). */
+  dispatchedAt?: Date | null;
 }
 
 export interface RouteWindowGroup<T extends RouteOrderLike> {
@@ -26,6 +28,8 @@ export interface RouteDayGroup<T extends RouteOrderLike> {
 }
 
 export interface RouteOfDay<T extends RouteOrderLike> {
+  /** Na rua: saíram com o motoboy e ainda não fecharam (dinheiro na entrega). */
+  out: T[];
   /** Janela em dia anterior a hoje e a peça ainda não saiu. */
   late: T[];
   /** Hoje, por janela (ordem de horário). */
@@ -60,11 +64,13 @@ function groupByWindow<T extends RouteOrderLike>(orders: readonly T[]): RouteWin
  * por hora do pagamento).
  */
 export function groupRouteOrders<T extends RouteOrderLike>(orders: readonly T[], todayKey: string): RouteOfDay<T> {
+  const out: T[] = [];
   const late: T[] = [];
   const today: T[] = [];
   const upcomingByDay = new Map<string, T[]>();
   for (const order of orders) {
-    if (order.window.dayKey < todayKey) late.push(order);
+    if (order.dispatchedAt) out.push(order);
+    else if (order.window.dayKey < todayKey) late.push(order);
     else if (order.window.dayKey === todayKey) today.push(order);
     else {
       const list = upcomingByDay.get(order.window.dayKey) ?? [];
@@ -76,7 +82,8 @@ export function groupRouteOrders<T extends RouteOrderLike>(orders: readonly T[],
   const upcoming = [...upcomingByDay.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dayKey, list]) => ({ dayKey, windows: groupByWindow(list) }));
-  return { late, today: groupByWindow(today), upcoming, todayCount: today.length };
+  out.sort((a, b) => (a.dispatchedAt?.getTime() ?? 0) - (b.dispatchedAt?.getTime() ?? 0));
+  return { out, late, today: groupByWindow(today), upcoming, todayCount: today.length };
 }
 
 /** "hoje" / "amanhã" / "sábado 20/09" para os cabeçalhos da rota. */

@@ -15,7 +15,7 @@ import {
   listRouteOfDay,
   rescheduleOrderWindow,
 } from "@/services/delivery-routes";
-import { ServiceError, transitionOrder } from "@/services/orders";
+import { transitionOrder } from "@/services/orders";
 import { createStoreOrder, type CreateStoreOrderInput } from "@/services/store-orders";
 import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
@@ -184,7 +184,51 @@ describe("dispatchOrder ('Saiu')", () => {
     expect(route.todayCount).toBe(0);
   });
 
-  it("em separação (já embalado) também sai; pedido Correios ou não pago é recusado", async () => {
+  it("dinheiro na entrega: entra na rota ainda 'aguardando pagamento'; 'Saiu' marca a saída sem transição e avisa pela fila; some para 'na rua'; não repete", async () => {
+    const { variantId, rateId } = await setup();
+    const cash = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
+      { now: MORNING },
+    );
+    const before = await listRouteOfDay(sdb, { now: new Date("2026-09-18T14:00:00Z") });
+    expect(before.today[0].orders.map((o) => [o.orderNumber, o.status, o.collectCashCents, o.dispatchedAt])).toEqual([
+      [cash.orderNumber, "pending_payment", 15900 + 1500, null],
+    ]);
+
+    const dispatchedAt = new Date("2026-09-18T20:30:00Z");
+    const result = await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: dispatchedAt });
+    expect(result).toMatchObject({ from: "pending_payment", to: "pending_payment", idempotent: false });
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, cash.orderId));
+    expect(order.status).toBe("pending_payment");
+    expect(order.deliveryWindow?.dispatchedAt).toBe(dispatchedAt.toISOString());
+    expect(order.deliveryWindow?.label).toBe("sexta 18/09, 19h–21h");
+    const types = await outboxTypes(cash.orderId);
+    expect(types.filter((t) => t === "order.out_for_delivery")).toHaveLength(1);
+    expect(types).not.toContain("order.shipped");
+
+    const after = await listRouteOfDay(sdb, { now: new Date("2026-09-18T21:00:00Z") });
+    expect(after.today).toEqual([]);
+    expect(after.out.map((o) => [o.orderNumber, o.dispatchedAt?.toISOString()])).toEqual([[cash.orderNumber, dispatchedAt.toISOString()]]);
+    expect(after.todayCount).toBe(0);
+
+    // Segundo clique: nada de novo (nem aviso).
+    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).idempotent).toBe(true);
+    // O motoboy voltou com o dinheiro: pago → ainda 'na rua' até marcar entregue; "Saiu" continua idempotente (sem order.shipped duplicando o aviso).
+    await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
+    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).idempotent).toBe(true);
+    expect((await outboxTypes(cash.orderId)).filter((t) => t === "order.out_for_delivery" || t === "order.shipped")).toEqual(["order.out_for_delivery"]);
+    expect((await listRouteOfDay(sdb, { now: new Date("2026-09-18T21:00:00Z") })).out.map((o) => o.status)).toEqual(["paid"]);
+    await transitionOrder(sdb, { orderId: cash.orderId, to: "delivered", userId: FIXED_USER_ID });
+    expect((await listRouteOfDay(sdb, { now: new Date("2026-09-18T21:00:00Z") })).out).toEqual([]);
+    // Já saiu: não reagenda.
+    await expect(
+      rescheduleOrderWindow(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: new Date("2026-09-18T21:00:00Z") }),
+    ).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+  });
+
+  it("em separação (já embalado) também sai; pedido Correios ou online não pago é recusado", async () => {
     const { variantId, rateId } = await setup();
     const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
     await transitionOrder(sdb, { orderId: created.orderId, to: "preparing", userId: FIXED_USER_ID });
@@ -197,7 +241,8 @@ describe("dispatchOrder ('Saiu')", () => {
     await expect(dispatchOrder(sdb, { orderId: pacOrder.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "NOT_MOTOBOY" });
 
     const unpaid = await createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] } }), { now: MORNING });
-    await expect(dispatchOrder(sdb, { orderId: unpaid.orderId, userId: FIXED_USER_ID })).rejects.toBeInstanceOf(ServiceError);
+    await expect(dispatchOrder(sdb, { orderId: unpaid.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+    expect(await outboxTypes(unpaid.orderId)).not.toContain("order.out_for_delivery");
     const [still] = await db.select({ status: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, unpaid.orderId));
     expect(still.status).toBe("pending_payment");
   });

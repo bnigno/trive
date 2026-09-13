@@ -40,8 +40,23 @@ describe("groupRouteOrders", () => {
     ]);
   });
 
+  it("quem já saiu com o motoboy vai para 'na rua' (por hora de saída), fora de atrasados/hoje", () => {
+    const route = groupRouteOrders(
+      [
+        { ...order("late-out", "2026-09-17", W3), dispatchedAt: new Date("2026-09-18T15:00:00Z") },
+        { ...order("today-out", TODAY, W2), dispatchedAt: new Date("2026-09-18T14:00:00Z") },
+        order("today", TODAY, W2),
+      ],
+      TODAY,
+    );
+    expect(route.out.map((o) => o.id)).toEqual(["today-out", "late-out"]);
+    expect(route.late).toEqual([]);
+    expect(route.today[0].orders.map((o) => o.id)).toEqual(["today"]);
+    expect(route.todayCount).toBe(1);
+  });
+
   it("lista vazia → tudo vazio", () => {
-    expect(groupRouteOrders([], TODAY)).toEqual({ late: [], today: [], upcoming: [], todayCount: 0 });
+    expect(groupRouteOrders([], TODAY)).toEqual({ out: [], late: [], today: [], upcoming: [], todayCount: 0 });
   });
 });
 

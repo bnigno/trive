@@ -40,9 +40,16 @@ function rescheduleChoices(todayKey: string, rates: { rateName: string; windows:
   return choices;
 }
 
+function statusBadge(order: RouteOrder) {
+  if (order.status === "preparing") return <Badge tone="info">Em separação</Badge>;
+  if (order.status === "pending_payment") return <Badge tone="warning">Paga ao receber</Badge>;
+  return <Badge tone="warning">Pago</Badge>;
+}
+
 function OrderCard({ order, todayKey, choices, late }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean }) {
   const wa = waMeUrl(order.phoneE164);
-  const needsLook = late || order.paidAfterCutoff;
+  const out = order.dispatchedAt !== null;
+  const needsLook = !out && (late || order.paidAfterCutoff);
   return (
     <li className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-start justify-between gap-3">
@@ -57,8 +64,8 @@ function OrderCard({ order, todayKey, choices, late }: { order: RouteOrder; toda
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <Badge tone={order.status === "preparing" ? "info" : "warning"}>{order.status === "preparing" ? "Em separação" : "Pago"}</Badge>
-          {order.window.dayKey !== todayKey ? <Badge tone={late ? "danger" : "neutral"}>{order.windowLabel}</Badge> : null}
+          {statusBadge(order)}
+          {out || order.window.dayKey !== todayKey ? <Badge tone={late ? "danger" : "neutral"}>{order.windowLabel}</Badge> : null}
           {order.paidAfterCutoff ? <Badge tone="danger">pagou depois das {hourLabel(order.window.cutoff)}</Badge> : null}
           {order.collectCashCents !== null ? (
             <Badge tone="warning">
@@ -84,7 +91,13 @@ function OrderCard({ order, todayKey, choices, late }: { order: RouteOrder; toda
       </ul>
 
       <div className="flex flex-wrap items-center gap-3">
-        <DispatchForm orderId={order.id} customerName={order.customerName} compact />
+        {out ? (
+          <Link href={`/admin/pedidos/${order.id}`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Saiu {order.dispatchedAt ? formatDateTimeSP(order.dispatchedAt) : ""} — registrar pagamento e entrega
+          </Link>
+        ) : (
+          <DispatchForm orderId={order.id} customerName={order.customerName} compact />
+        )}
         {wa ? (
           <a href={wa} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
             WhatsApp da cliente
@@ -119,7 +132,7 @@ export default async function RotaPage() {
   const db = getDb();
   const [route, rates] = await Promise.all([listRouteOfDay(db), listMotoboyWindows(db)]);
   const choices = rescheduleChoices(route.todayKey, rates);
-  const empty = route.late.length === 0 && route.today.length === 0 && route.upcoming.length === 0;
+  const empty = route.out.length === 0 && route.late.length === 0 && route.today.length === 0 && route.upcoming.length === 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -138,6 +151,19 @@ export default async function RotaPage() {
           title="Nenhuma entrega por motoboy na fila."
           hint="Pedidos pagos com janela de entrega aparecem aqui, agrupados por horário. A faixa Motoboy se cadastra em Frete."
         />
+      ) : null}
+
+      {route.out.length > 0 ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
+            Na rua <span className="font-normal text-zinc-500">· {route.out.length} — dinheiro na entrega; ao receber, registre o pagamento no pedido</span>
+          </h2>
+          <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {route.out.map((order) => (
+              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late={false} />
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {route.late.length > 0 ? (

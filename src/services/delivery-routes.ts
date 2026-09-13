@@ -3,7 +3,7 @@
 // "Saiu" (paid → preparing → shipped numa transação só; o evento
 // order.shipped avisa a cliente "saiu da maison") e o reagendamento de uma
 // janela que passou. A regra de agrupamento é pura (core/shipping/route).
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or } from "drizzle-orm";
 import { z } from "zod";
 
 import type { OrderStatus } from "@/core/orders/state-machine";
@@ -18,7 +18,7 @@ import {
 import { groupRouteOrders, isPaidAfterCutoff, type RouteOfDay } from "@/core/shipping/route";
 import { auditLog, customers, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
 import { spDayKey } from "@/lib/sp-day";
-import type { DbOrTx } from "@/queue/enqueue";
+import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { parseWindows } from "@/services/shipping";
 
@@ -47,6 +47,8 @@ export interface RouteOrder {
   paidAt: Date | null;
   /** Pagou depois da hora-limite: a promessa "hoje" precisa de um olhar da dona. */
   paidAfterCutoff: boolean;
+  /** Saiu com o motoboy (pedido em dinheiro ainda por receber). */
+  dispatchedAt: Date | null;
 }
 
 /** Retrato gravado por createStoreOrder (tolerante: linha estranha não derruba a rota). */
@@ -57,6 +59,7 @@ const storedWindowSchema = z.object({
   cutoff: z.string(),
   rateName: z.string().default("Motoboy"),
   label: z.string().optional(),
+  dispatchedAt: z.string().optional(),
 });
 
 const storedAddressSchema = z
@@ -80,8 +83,10 @@ export function addressLineOf(raw: unknown): { line: string | null; postalCode: 
   return { line: line || null, postalCode: a.postalCode ?? null };
 }
 
-/** Só o que ainda não saiu: pago ou em separação. */
+/** Pago ou em separação — e o dinheiro na entrega, que fica "aguardando pagamento" até o motoboy voltar. */
 const ROUTE_STATUSES: OrderStatus[] = ["paid", "preparing"];
+const routeStatusFilter = () =>
+  or(inArray(orders.status, ROUTE_STATUSES), and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")))!;
 
 export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
   const rows = await db
@@ -101,7 +106,7 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
-    .where(and(inArray(orders.status, ROUTE_STATUSES), isNotNull(orders.deliveryWindow)))
+    .where(and(routeStatusFilter(), isNotNull(orders.deliveryWindow)))
     .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
   if (rows.length === 0) return [];
 
@@ -129,7 +134,7 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
   for (const row of rows) {
     const stored = storedWindowSchema.safeParse(row.deliveryWindow);
     if (!stored.success) continue;
-    const { rateName, label, ...window } = stored.data;
+    const { rateName, label, dispatchedAt, ...window } = stored.data;
     const address = addressLineOf(row.shippingAddress);
     const paymentMethod = (row.paymentMethod ?? null) as PaymentMethod | null;
     result.push({
@@ -152,6 +157,7 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
       packagePhotoPath: row.packagePhotoPath,
       paidAt: row.paidAt,
       paidAfterCutoff: isPaidAfterCutoff(row.paidAt, window),
+      dispatchedAt: dispatchedAt ? new Date(dispatchedAt) : null,
     });
   }
   return result;
@@ -181,23 +187,40 @@ export function paymentLabelOf(method: PaymentMethod | null): string {
 const dispatchSchema = z.object({
   orderId: z.uuid(),
   userId: z.uuid(),
+  now: z.date().optional(),
 });
 
+export interface DispatchResult {
+  orderId: string;
+  orderNumber: number;
+  from: OrderStatus;
+  /** 'shipped' (pago) ou 'pending_payment' (dinheiro na entrega: saiu, paga ao receber). */
+  to: OrderStatus;
+  idempotent: boolean;
+}
+
 /**
- * Marca o pedido como enviado. A máquina de estados não tem paid → shipped:
- * passa por preparing na mesma transação (dois savepoints); só a transição
- * final gera efeito externo (order.shipped → "Saiu da maison" no WhatsApp,
- * com a janela, quando o pedido tem delivery_window). Idempotente: pedido já
- * enviado devolve `idempotent: true`.
+ * "Saiu": a peça está com o motoboy.
+ * - Pedido pago (ou em separação): paid → preparing → shipped na mesma
+ *   transação (a máquina não tem paid → shipped); só a transição final gera
+ *   efeito externo — order.shipped vira "Saiu da maison" com a janela.
+ * - Dinheiro na entrega: o pedido fica "aguardando pagamento" até o motoboy
+ *   voltar, então não há transição — a saída fica no retrato da janela
+ *   (dispatchedAt) e o aviso vai pela fila (order.out_for_delivery).
+ * Idempotente: quem já saiu devolve `idempotent: true`, sem novo aviso.
  */
-export async function dispatchOrder(
-  db: DbOrTx,
-  input: z.input<typeof dispatchSchema>,
-): Promise<{ orderId: string; orderNumber: number; from: OrderStatus; to: "shipped"; idempotent: boolean }> {
+export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSchema>): Promise<DispatchResult> {
   const parsed = dispatchSchema.parse(input);
+  const now = parsed.now ?? new Date();
   return db.transaction(async (tx) => {
     const [order] = await tx
-      .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, deliveryWindow: orders.deliveryWindow })
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        paymentMethod: orders.paymentMethod,
+        deliveryWindow: orders.deliveryWindow,
+      })
       .from(orders)
       .where(eq(orders.id, parsed.orderId))
       .for("update");
@@ -206,15 +229,38 @@ export async function dispatchOrder(
       throw new ServiceError("NOT_MOTOBOY", "Este pedido não é de motoboy — use o envio normal com rastreio.");
     }
     const from = order.status as OrderStatus;
-    if (from === "shipped") return { orderId: order.id, orderNumber: order.orderNumber, from, to: "shipped", idempotent: true };
+    const base = { orderId: order.id, orderNumber: order.orderNumber, from };
+    if (from === "shipped" || order.deliveryWindow.dispatchedAt) return { ...base, to: from, idempotent: true };
+
+    const snapshot = { ...order.deliveryWindow, dispatchedAt: now.toISOString() };
+    if (from === "pending_payment" && order.paymentMethod === "cash") {
+      await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: now }).where(eq(orders.id, order.id));
+      await enqueueOutboxEvent(tx, {
+        eventType: "order.out_for_delivery",
+        dedupeKey: `order.out_for_delivery:${order.id}`,
+        aggregateType: "order",
+        aggregateId: order.id,
+        payload: { orderId: order.id, orderNumber: order.orderNumber },
+      });
+      await tx.insert(auditLog).values({
+        actorType: "user",
+        actorId: parsed.userId,
+        action: "order.dispatch",
+        entityType: "order",
+        entityId: order.id,
+        after: { dispatchedAt: snapshot.dispatchedAt, paymentMethod: "cash" },
+      });
+      return { ...base, to: "pending_payment", idempotent: false };
+    }
     if (!ROUTE_STATUSES.includes(from)) {
-      throw new ServiceError("INVALID_TRANSITION", "Só um pedido pago (ou em separação) pode sair para entrega.");
+      throw new ServiceError("INVALID_TRANSITION", "Só um pedido pago (ou em dinheiro na entrega) pode sair para entrega.");
     }
     if (from === "paid") {
       await transitionOrder(tx, { orderId: order.id, to: "preparing", userId: parsed.userId });
     }
     await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
-    return { orderId: order.id, orderNumber: order.orderNumber, from, to: "shipped", idempotent: false };
+    await tx.update(orders).set({ deliveryWindow: snapshot }).where(eq(orders.id, order.id));
+    return { ...base, to: "shipped", idempotent: false };
   });
 }
 
@@ -251,13 +297,14 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
   if (parsed.dayKey < todayKey) throw new ServiceError("PAST_DAY", "Escolha hoje ou um dia que ainda vem.");
   return db.transaction(async (tx) => {
     const [order] = await tx
-      .select({ id: orders.id, status: orders.status, deliveryWindow: orders.deliveryWindow })
+      .select({ id: orders.id, status: orders.status, paymentMethod: orders.paymentMethod, deliveryWindow: orders.deliveryWindow })
       .from(orders)
       .where(eq(orders.id, parsed.orderId))
       .for("update");
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     if (!order.deliveryWindow) throw new ServiceError("NOT_MOTOBOY", "Este pedido não é de motoboy.");
-    if (!ROUTE_STATUSES.includes(order.status as OrderStatus)) {
+    const waitingCash = order.status === "pending_payment" && order.paymentMethod === "cash";
+    if (order.deliveryWindow.dispatchedAt || (!ROUTE_STATUSES.includes(order.status as OrderStatus) && !waitingCash)) {
       throw new ServiceError("INVALID_TRANSITION", "Só um pedido que ainda não saiu pode ser reagendado.");
     }
     const rates = await listMotoboyWindows(tx);
@@ -266,7 +313,7 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     if (!owner) throw new ServiceError("WINDOW_UNKNOWN", "Essa janela não existe mais nas faixas de motoboy.");
 
     const choice: DeliveryWindowChoice = { dayKey: parsed.dayKey, ...parsed.window };
-    const snapshot = { ...choice, rateName: owner.rateName, label: windowDateLabel(choice) };
+    const snapshot = { ...order.deliveryWindow, ...choice, rateName: owner.rateName, label: windowDateLabel(choice) };
     await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: new Date() }).where(eq(orders.id, order.id));
     await tx.insert(auditLog).values({
       actorType: "user",
