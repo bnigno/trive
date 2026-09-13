@@ -124,8 +124,10 @@ Next não manda nisso. Por isso todo upload do painel (fotos da peça, foto do
 pacote, "começar pela foto") é reduzido no navegador (`src/components/admin/shrink-image.ts`,
 lado maior 1600 px, JPEG) e vai **um arquivo por requisição**. Se a tela de erro
 do navegador voltar a aparecer num upload: algum formulário está mandando
-arquivo cru num POST nativo — passe-o pelo `shrinkImage` + envio em JS. HEIC só
-abre no Safari/iPhone; no Chrome do Mac, converta para JPEG antes.
+arquivo cru num POST nativo — passe-o pelo `shrinkImage` + envio em JS. HEIC do
+iPhone: o Safari abre sozinho; no Chrome/Firefox o `shrinkImage` decodifica com
+`heic-to` (libheif em WASM, carregado só quando aparece um HEIC) e converte
+para JPEG antes de subir.
 
 ## Estoque não bate
 

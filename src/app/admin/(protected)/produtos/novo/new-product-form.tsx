@@ -192,8 +192,9 @@ export function NewProductForm({
         rejected.push(`"${original.name}"`);
         continue;
       }
-      const { file, shrunk } = await shrinkImage(original);
-      if (uploadBlocker(file.size, shrunk)) {
+      const reduced = await shrinkImage(original);
+      const { file } = reduced;
+      if (uploadBlocker(reduced)) {
         rejected.push(`"${original.name}"`);
         continue;
       }
@@ -211,7 +212,7 @@ export function NewProductForm({
     setPhotoNotice(
       rejected.length === 0
         ? undefined
-        : `Deixei de fora ${rejected.join(", ")} — precisa ser uma imagem que o navegador consiga abrir (HEIC fora do iPhone não abre: converta para JPEG).`,
+        : `Deixei de fora ${rejected.join(", ")} — não consegui abrir como imagem aqui (tente de novo ou exporte como JPEG).`,
     );
   }, []);
 

@@ -43,8 +43,9 @@ export function PackForm({
     setLocalError(undefined);
     setPreparing(true);
     try {
-      const { file, shrunk } = await shrinkImage(original);
-      const blocker = uploadBlocker(file.size, shrunk);
+      const reduced = await shrinkImage(original);
+      const { file } = reduced;
+      const blocker = uploadBlocker(reduced);
       if (blocker) {
         setLocalError(blocker);
         return;
