@@ -38,6 +38,8 @@ import {
 } from "@/services/coupons";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
+import { isValidNeededBy, neededByLabel, OCCASION_MAX, shipByFor } from "@/core/shipping/needed-by";
+import { spDayKey } from "@/lib/sp-day";
 import { parseWindows } from "@/services/shipping";
 
 export { ServiceError };
@@ -158,6 +160,12 @@ const createStoreOrderSchema = z.object({
       cutoff: z.string(),
     })
     .optional(),
+  /**
+   * Data marcada: "preciso até o dia 16" (+ ocasião). O presente com data
+   * desejada também cai aqui quando neededBy não vem.
+   */
+  neededBy: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data marcada inválida.").optional(),
+  occasion: z.string().trim().max(OCCASION_MAX, `A ocasião cabe em ${OCCASION_MAX} caracteres.`).optional(),
   /** Código de cupom digitado no checkout (opcional; normalizado no serviço). */
   couponCode: z.string().trim().optional(),
   /**
@@ -320,7 +328,14 @@ export async function createStoreOrder(
     // (b) Frete: a opção escolhida deve estar ativa; o valor é RECALCULADO
     // pelo peso total e pelo CEP (faixas da tabela shipping_rates).
     const [chosenRate] = await tx
-      .select({ id: shippingRates.id, name: shippingRates.name, isActive: shippingRates.isActive, kind: shippingRates.kind, deliveryWindows: shippingRates.deliveryWindows })
+      .select({
+        id: shippingRates.id,
+        name: shippingRates.name,
+        isActive: shippingRates.isActive,
+        kind: shippingRates.kind,
+        deliveryWindows: shippingRates.deliveryWindows,
+        deliveryDaysMax: shippingRates.deliveryDaysMax,
+      })
       .from(shippingRates)
       .where(eq(shippingRates.id, parsed.shippingRateId));
     if (!chosenRate || !chosenRate.isActive) {
@@ -349,6 +364,25 @@ export async function createStoreOrder(
       }
       deliveryWindowSnapshot = { ...choice, rateName: chosenRate.name, label: windowDateLabel(choice) };
     }
+
+    // (b2) Data marcada: hoje ou depois (dia de SP); o dia-limite para sair
+    // vem do prazo máximo da faixa (Correios, dias úteis) ou da janela
+    // (motoboy). Não recusa quando não dá tempo — a cliente já viu o aviso
+    // no checkout; a dona vê o semáforo vermelho.
+    const neededBy = parsed.neededBy ?? parsed.gift?.deliverBy ?? null;
+    if (neededBy !== null && !isValidNeededBy(neededBy, spDayKey(now))) {
+      throw new ServiceError("NEEDED_BY_INVALID", "A data marcada precisa ser hoje ou um dia que ainda vem.");
+    }
+    const shipBy =
+      neededBy === null
+        ? null
+        : shipByFor(
+            deliveryWindowSnapshot
+              ? { kind: "motoboy", dayKey: deliveryWindowSnapshot.dayKey }
+              : { kind: "correios", deliveryDaysMax: chosenRate.deliveryDaysMax },
+            neededBy,
+          );
+    const occasion = parsed.occasion?.trim() || null;
 
     const cep = parsed.address.postalCode;
     const [applicableRate] = await tx
@@ -566,6 +600,9 @@ export async function createStoreOrder(
         totalCents: totals.totalCents,
         shippingAddress: addressValues,
         deliveryWindow: deliveryWindowSnapshot,
+        neededBy,
+        occasion,
+        shipBy,
         note: "Pedido da loja",
         createdBy: null,
       })
@@ -846,6 +883,8 @@ export interface PublicOrder {
   giftNotePath: string | null;
   /** Entrega por motoboy: "hoje, 19h–21h" (retrato do fechamento). */
   deliveryWindowLabel: string | null;
+  /** Data marcada: "Para o dia 16/10 — aniversário da mãe". */
+  neededByLabel: string | null;
 }
 
 /**
@@ -885,6 +924,8 @@ export async function getPublicOrder(
         giftRecipientName: orders.giftRecipientName,
         giftNotePath: orders.giftNotePath,
         deliveryWindow: orders.deliveryWindow,
+        neededBy: orders.neededBy,
+        occasion: orders.occasion,
       })
       .from(orders)
       .where(eq(orders.publicToken, parsedToken.data));
@@ -949,5 +990,6 @@ export async function getPublicOrder(
     giftRecipientName: order.giftRecipientName,
     giftNotePath: order.giftNotePath,
     deliveryWindowLabel: order.deliveryWindow ? `${order.deliveryWindow.rateName} — ${order.deliveryWindow.label}` : null,
+    neededByLabel: order.neededBy ? neededByLabel(order.neededBy, order.occasion) : null,
   };
 }

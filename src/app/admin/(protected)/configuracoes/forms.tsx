@@ -20,6 +20,7 @@ import {
   updateStoreDataAction,
   updateStorefrontAction,
   updateDebutLetterAction,
+  updateCityDatesAction,
   type FormState,
 } from "./actions";
 
@@ -603,6 +604,32 @@ export function DebutLetterForm({ defaults }: { defaults: { text: string; signat
 
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar carta de estreia</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+const CITY_DATES_MAX = 12;
+
+export function CityDatesForm({ defaults }: { defaults: { name: string; date: string }[] }) {
+  const [state, formAction] = useActionState(updateCityDatesAction, INITIAL_STATE);
+  // Linhas em branco são ignoradas ao salvar: sempre há espaço para mais uma.
+  const rows = [...defaults, ...Array.from({ length: Math.max(1, Math.min(3, CITY_DATES_MAX - defaults.length)) }, () => ({ name: "", date: "" }))].slice(0, CITY_DATES_MAX);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      <div className="grid gap-2">
+        {rows.map((row, index) => (
+          <div key={index} className="grid grid-cols-[minmax(0,1fr)_11rem] gap-2">
+            <Input name={`city_date_${index}_name`} defaultValue={row.name} maxLength={40} placeholder={index === 0 ? "Círio de Nazaré" : ""} aria-label={`Data ${index + 1}: nome`} />
+            <Input name={`city_date_${index}_date`} type="date" defaultValue={row.date} aria-label={`Data ${index + 1}: dia`} />
+          </div>
+        ))}
+      </div>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar datas da cidade</SubmitButton>
       </div>
     </form>
   );

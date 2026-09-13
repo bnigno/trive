@@ -83,3 +83,34 @@ export function spDayLabel(key: string): string {
 export function spWeekdayName(key: string): string {
   return weekdayFormatter.format(new Date(spDayStart(key).getTime() + DAY_MS / 2));
 }
+
+/** Sábado ou domingo no calendário de São Paulo. */
+export function isWeekendSP(key: string): boolean {
+  const weekday = weekdayIndexSP(key);
+  return weekday === 0 || weekday === 6;
+}
+
+/**
+ * Soma `n` dias úteis a partir de `key` (o próprio dia não conta), pulando
+ * fins de semana e os dias que `isHoliday` marcar. n = 0 devolve `key`.
+ */
+export function addBusinessDaysSP(key: string, n: number, isHoliday: (day: string) => boolean = () => false): string {
+  let day = key;
+  let remaining = Math.max(0, Math.floor(n));
+  while (remaining > 0) {
+    day = spNextDayKey(day);
+    if (!isWeekendSP(day) && !isHoliday(day)) remaining -= 1;
+  }
+  return day;
+}
+
+/** Volta `n` dias úteis a partir de `key`, com a mesma régua de addBusinessDaysSP. */
+export function subtractBusinessDaysSP(key: string, n: number, isHoliday: (day: string) => boolean = () => false): string {
+  let day = key;
+  let remaining = Math.max(0, Math.floor(n));
+  while (remaining > 0) {
+    day = spPreviousDayKey(day);
+    if (!isWeekendSP(day) && !isHoliday(day)) remaining -= 1;
+  }
+  return day;
+}

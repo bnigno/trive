@@ -601,6 +601,7 @@ describe("getPublicOrder", () => {
         "giftRecipientName",
         "giftNotePath",
         "deliveryWindowLabel",
+        "neededByLabel",
       ].sort(),
     );
     expect(Object.keys(pub!.items[0]).sort()).toEqual(

@@ -46,6 +46,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "drop_audience_limit", value: 60 },
   { key: "catalog_draft_enabled", value: true },
   { key: "edition_name", value: "" },
+  // Datas da cidade (Círio, Natal…): a dona cadastra em Configurações.
+  { key: "city_dates", value: [] },
   // A carta de estreia fica desligada até a dona escrevê-la em Configurações.
   { key: "debut_letter_text", value: "" },
   { key: "debut_letter_signature", value: "" },
@@ -286,6 +288,7 @@ export const initialWaTemplates: Array<{
       "Bom dia! ☕ Seu resumo de {{dia}}, {{data}}:\n" +
       "Vendas: {{vendas}} em {{pedidos}} pedido(s) · ticket {{ticket}}\n" +
       "Aguardando você: {{a_pagar}} a pagar · {{a_embalar}} a embalar · {{a_enviar}} a enviar\n" +
+      "Data marcada: {{sair_hoje}} pedido(s) precisam sair hoje\n" +
       "A Lia atendeu {{lia_conversas}} conversa(s) e fechou {{lia_pedidos}} pedido(s) 🤎",
     variables: [
       "dia",
@@ -296,6 +299,7 @@ export const initialWaTemplates: Array<{
       "a_pagar",
       "a_embalar",
       "a_enviar",
+      "sair_hoje",
       "lia_conversas",
       "lia_pedidos",
       "lia_custo",

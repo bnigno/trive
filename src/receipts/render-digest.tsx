@@ -230,6 +230,11 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
             tone={waiting.toShip > 0 ? "gold" : "ink"}
           />
         </Section>
+        {waiting.mustShipToday > 0 ? (
+          <div style={{ marginTop: 10, fontSize: 22, color: C.claret600 }}>
+            {`${waiting.mustShipToday} ${plural(waiting.mustShipToday, "pedido com data marcada precisa", "pedidos com data marcada precisam")} sair hoje`}
+          </div>
+        ) : null}
         {waiting.conversationsAwaitingOwner > 0 ? (
           <div style={{ marginTop: 10, fontSize: 22, color: C.claret600 }}>
             {`${waiting.conversationsAwaitingOwner} ${plural(waiting.conversationsAwaitingOwner, "conversa espera", "conversas esperam")} a sua resposta no WhatsApp`}

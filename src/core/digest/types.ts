@@ -24,6 +24,8 @@ export interface DailyDigestData {
     toPack: number;
     toShip: number;
     conversationsAwaitingOwner: number;
+    /** Data marcada: precisam sair hoje (ou já atrasaram) e não saíram. */
+    mustShipToday: number;
   };
   bot: {
     conversations: number;

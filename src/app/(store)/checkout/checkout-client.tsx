@@ -48,7 +48,9 @@ import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
 import { readStoredStyle } from "@/lib/style-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { assessNeededBy, isValidNeededBy, OCCASION_MAX } from "@/core/shipping/needed-by";
 import { writeStoredCep } from "@/lib/cep-storage";
+import { spDayKey } from "@/lib/sp-day";
 import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
@@ -118,6 +120,21 @@ const PAYMENT_OPTIONS = [
   },
 ] as const;
 
+/** Por opção de entrega: "Chega até sexta 16/10, 4 dias antes" ou "Pode chegar só…". */
+function NeededByVerdictLine({ option, neededBy }: { option: DeliveryOption; neededBy: string }) {
+  const verdict = assessNeededBy(
+    option.kind === "motoboy" ? { kind: "motoboy", dayKey: option.window.dayKey } : { kind: "correios", deliveryDaysMax: option.deliveryDaysMax },
+    neededBy,
+    new Date(),
+  );
+  return (
+    <span className={cx("mt-0.5 block text-[13px]", verdict.fits ? "text-laurel-700" : "text-claret-700")}>
+      {verdict.fits ? "✓ " : "✕ "}
+      {verdict.label}
+    </span>
+  );
+}
+
 export function CheckoutClient({
   initialCepDigits,
   initialOptionKey,
@@ -143,6 +160,13 @@ export function CheckoutClient({
 
   // ----- Campos com máscara (controlados) --------------------------------
   const [isGift, setIsGift] = useState(false);
+  // Data marcada: "preciso até o dia X" — cada opção de entrega diz se chega a tempo.
+  const [hasNeededBy, setHasNeededBy] = useState(false);
+  const [neededBy, setNeededBy] = useState("");
+  const [occasion, setOccasion] = useState("");
+  // Relógio lido uma vez por montagem (o React Compiler não memoiza chamadas impuras no render).
+  const [todayKey] = useState(() => spDayKey(new Date()));
+  const neededByActive = hasNeededBy && isValidNeededBy(neededBy, todayKey) ? neededBy : null;
   const [giftMessage, setGiftMessage] = useState("");
   const [documentValue, setDocumentValue] = useState("");
   const [phoneValue, setPhoneValue] = useState("");
@@ -410,12 +434,10 @@ export function CheckoutClient({
             gift: {
               recipientName: String(form.get("giftRecipientName") ?? "").trim(),
               ...(giftMessage.trim() ? { message: giftMessage.trim() } : {}),
-              ...(String(form.get("giftDeliverBy") ?? "").trim()
-                ? { deliverBy: String(form.get("giftDeliverBy")).trim() }
-                : {}),
             },
           }
         : {}),
+      ...(neededByActive ? { neededBy: neededByActive, ...(occasion.trim() ? { occasion: occasion.trim() } : {}) } : {}),
     };
     submitPayload(payload);
   }
@@ -750,7 +772,16 @@ export function CheckoutClient({
                             setWindowGone(false);
                           }}
                           title={option.name}
-                          detail={deliveryLabel(option)}
+                          detail={
+                            neededByActive ? (
+                              <>
+                                {deliveryLabel(option)}
+                                <NeededByVerdictLine option={option} neededBy={neededByActive} />
+                              </>
+                            ) : (
+                              deliveryLabel(option)
+                            )
+                          }
                           trailing={
                             option.priceCents === 0 ? (
                               <span className="text-laurel-700">Grátis</span>
@@ -859,14 +890,44 @@ export function CheckoutClient({
                     className={cx(inputClasses, "min-h-24 resize-y")}
                   />
                 </Field>
-                <Field
-                  label="Data desejada de entrega (opcional)"
-                  hint="Fazemos o possível; o prazo real é o do frete escolhido."
-                >
+              </div>
+            ) : null}
+          </FormSection>
+
+          <FormSection id="data-title" number="04" title="É para uma data?">
+            <label className="flex min-h-11 cursor-pointer items-start gap-3 font-store text-sm text-ink-700">
+              <input
+                type="checkbox"
+                name="hasNeededBy"
+                checked={hasNeededBy}
+                onChange={(event) => setHasNeededBy(event.target.checked)}
+                className="mt-0.5 h-5 w-5 shrink-0 accent-gold-600"
+              />
+              <span>
+                Sim, preciso da peça até um dia. Mostramos, em cada opção de entrega,{" "}
+                <strong className="font-medium text-espresso-900">se chega a tempo</strong> — e a maison prioriza a saída.
+              </span>
+            </label>
+            {hasNeededBy ? (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <Field label="Até o dia" hint={neededBy && !isValidNeededBy(neededBy, todayKey) ? "Escolha hoje ou um dia que ainda vem." : "Confira a opção de entrega acima: ela diz se chega."}>
                   <input
-                    name="giftDeliverBy"
+                    name="neededBy"
                     type="date"
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={todayKey}
+                    value={neededBy}
+                    onChange={(event) => setNeededBy(event.target.value)}
+                    required
+                    className={inputClasses}
+                  />
+                </Field>
+                <Field label="Ocasião (opcional)" hint={`${occasion.length}/${OCCASION_MAX} · ex.: aniversário da mãe, Círio`}>
+                  <input
+                    name="occasion"
+                    maxLength={OCCASION_MAX}
+                    value={occasion}
+                    onChange={(event) => setOccasion(event.target.value)}
+                    autoComplete="off"
                     className={inputClasses}
                   />
                 </Field>
@@ -874,7 +935,7 @@ export function CheckoutClient({
             ) : null}
           </FormSection>
 
-          <FormSection id="pagamento-title" number="04" title="Pagamento">
+          <FormSection id="pagamento-title" number="05" title="Pagamento">
             <fieldset>
               <legend className="sr-only">Forma de pagamento</legend>
               <div className="space-y-2">
