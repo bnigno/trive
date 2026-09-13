@@ -58,7 +58,8 @@ export async function execCotarFrete(
     lastCepAddress: cepAddress,
     lastQuotes: quotes,
     lastQuotedAt: now.toISOString(),
-    chosenRateId: undefined,
+    // Uma opção só já é a escolha (as duas chaves: leitores antigos olham chosenRateId).
+    chosenRateId: quotes.length === 1 ? quotes[0].rateId : undefined,
     chosenOptionKey: quotes.length === 1 ? quoteKey(quotes[0]) : undefined,
     ...(neededBy ? { neededBy } : {}),
   }));
