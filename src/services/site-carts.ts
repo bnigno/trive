@@ -304,7 +304,14 @@ const funnelAggregates = {
   conversations: sql<number>`count(distinct ${siteCarts.conversationId})::int`,
   orders: sql<number>`count(distinct ${siteCarts.orderId})::int`,
   paidOrders: sql<number>`count(distinct case when ${paidOrder()} then ${orders.id} end)::int`,
-  paidCents: sql<number>`coalesce(sum(case when ${paidOrder()} then ${orders.totalCents} else 0 end), 0)::int`,
+  // Dinheiro por PEDIDO distinto (um pedido em duas pontes soma uma vez):
+  // soma dos totais dos ids únicos do grupo.
+  paidCents: sql<number>`coalesce((
+    select sum(t.total_cents) from (
+      select distinct unnest(array_agg(case when ${paidOrder()} then ${orders.id} end)) as id,
+             unnest(array_agg(case when ${paidOrder()} then ${orders.totalCents} end)) as total_cents
+    ) t where t.id is not null
+  ), 0)::int`,
 };
 
 /**

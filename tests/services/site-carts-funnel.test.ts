@@ -83,13 +83,15 @@ describe("siteBridgeFunnel", () => {
     await createCampaignLink(sdb, { slug: "dunas", label: "Dunas no story", productId, userId: FIXED_USER_ID });
     const now = new Date();
 
-    // Página da peça: 2 toques, 1 conversa, 1 pedido pago.
+    // Página da peça: 2 toques, 1 conversa, 1 pedido pago — ligado às DUAS
+    // pontes (defesa: dinheiro e pedido contam uma vez).
     const pdp1 = await createSiteCart(sdb, { source: "pdp", productSlug: "longo-dunas" });
-    await createSiteCart(sdb, { source: "pdp", productSlug: "longo-dunas" });
+    const pdp2 = await createSiteCart(sdb, { source: "pdp", productSlug: "longo-dunas" });
     const c1 = await conversation("+5591988880001");
     await bridgeInto(c1, pdp1.code, now);
     const paid = await order("+5591988880001", true);
     await db.update(schema.siteCarts).set({ orderId: paid }).where(eq(schema.siteCarts.id, pdp1.id));
+    await db.update(schema.siteCarts).set({ orderId: paid }).where(eq(schema.siteCarts.id, pdp2.id));
 
     // Story «dunas»: 3 toques, 2 códigos na MESMA conversa (= 1 conversa), 1 pedido sem pagar.
     const s1 = (await tapCampaignLink(sdb, { slug: "dunas" }))!;
