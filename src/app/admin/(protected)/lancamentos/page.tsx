@@ -45,7 +45,7 @@ export default async function LancamentosPage() {
         {drops.length === 0 ? (
           <EmptyState title="Nenhum lançamento ainda" hint="Crie o primeiro acima: nome, data de publicação, janela VIP e limite de convidadas." />
         ) : (
-          <Table headers={["Lançamento", "Fase", "Janela VIP", "Publicação", "Peças", "Convidadas"]}>
+          <Table headers={["Lançamento", "Fase", "Janela VIP", "Publicação", "Peças", "Convidadas", "Quero ser avisada"]}>
             {drops.map((drop) => (
               <Tr key={drop.id}>
                 <Td>
@@ -63,6 +63,10 @@ export default async function LancamentosPage() {
                   {drop.invites.total}
                   {drop.invites.sent > 0 ? ` · ${drop.invites.sent} enviadas` : ""}
                   {drop.invites.visited > 0 ? ` · ${drop.invites.visited} abriram` : ""}
+                </Td>
+                <Td className="tabular-nums">
+                  {drop.waitlist.total}
+                  {drop.waitlist.notified > 0 ? ` · ${drop.waitlist.notified} avisadas` : ""}
                 </Td>
               </Tr>
             ))}

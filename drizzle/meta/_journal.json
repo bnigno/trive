@@ -204,6 +204,13 @@
       "when": 1789242401337,
       "tag": "0028_hard_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1789273784917,
+      "tag": "0029_red_proudstar",
+      "breakpoints": true
     }
   ]
 }

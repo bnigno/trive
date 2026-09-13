@@ -3,7 +3,7 @@
 // e histórico conversam com as peças recebem o convite — uma por cliente,
 // escalonado na janela de envio, só com opt-in. O público é materializado
 // ao agendar (drop_invites) para o relatório fechar com o que foi enviado.
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
@@ -12,23 +12,19 @@ import {
   DROP_MAX_PRODUCTS,
   dropPhase,
   rankAudience,
+  TEASER_OPEN_GRACE_MS,
+  teaserState,
   vipStartsAt,
   type AudienceCandidate,
   type DropAffinityProduct,
   type DropPhase,
   type DropProductFacts,
   type RankedInvite,
+  type TeaserState,
 } from "@/core/drops";
 import { styleProfileSchema } from "@/core/style/profile";
 import { renderTemplate } from "@/core/whatsapp/render";
-import {
-  DEFAULT_BULK_INTERVAL_SECONDS,
-  DEFAULT_SEND_WINDOW,
-  isWithinSendWindow,
-  nextSendWindowStart,
-  staggerSchedule,
-  type SendWindow,
-} from "@/core/whatsapp/send-window";
+import { isWithinSendWindow, nextSendWindowStart, staggerWithinWindow } from "@/core/whatsapp/send-window";
 import {
   auditLog,
   customerProfiles,
@@ -36,6 +32,7 @@ import {
   dropInvites,
   dropProducts,
   drops,
+  dropWaitlist,
   orderItems,
   orders,
   products,
@@ -48,6 +45,7 @@ import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { enqueueProductPublished } from "@/services/product-cards-queue";
 import { getSettingsMap } from "@/services/settings";
+import { loadSendPolicy } from "@/services/wa-send-policy";
 import {
   listPublicProducts,
   publicImageUrl,
@@ -111,6 +109,8 @@ export interface DropView {
   createdAt: Date;
   products: DropProductView[];
   invites: { total: number; sent: number; visited: number };
+  /** "Quero ser avisada" em /estreia: quantas pediram e quantas já receberam. */
+  waitlist: { total: number; notified: number };
 }
 
 async function loadDropProducts(db: DbOrTx, dropId: string): Promise<DropProductView[]> {
@@ -161,7 +161,21 @@ async function inviteCounts(db: DbOrTx, dropId: string): Promise<DropView["invit
   return { total: Number(row?.total ?? 0), sent: Number(row?.sent ?? 0), visited: Number(row?.visited ?? 0) };
 }
 
-function toView(row: typeof drops.$inferSelect, productsView: DropProductView[], invites: DropView["invites"], now: Date): DropView {
+async function waitlistCounts(db: DbOrTx, dropId: string): Promise<DropView["waitlist"]> {
+  const [row] = await db
+    .select({ total: sql<string>`count(*)`, notified: sql<string>`count(${dropWaitlist.notifiedAt})` })
+    .from(dropWaitlist)
+    .where(eq(dropWaitlist.dropId, dropId));
+  return { total: Number(row?.total ?? 0), notified: Number(row?.notified ?? 0) };
+}
+
+function toView(
+  row: typeof drops.$inferSelect,
+  productsView: DropProductView[],
+  invites: DropView["invites"],
+  waitlist: DropView["waitlist"],
+  now: Date,
+): DropView {
   return {
     id: row.id,
     name: row.name,
@@ -178,24 +192,75 @@ function toView(row: typeof drops.$inferSelect, productsView: DropProductView[],
     createdAt: row.createdAt,
     products: productsView,
     invites,
+    waitlist,
   };
 }
 
 export async function getDrop(db: DbOrTx, dropId: string, now = new Date()): Promise<DropView | null> {
   const [row] = await db.select().from(drops).where(eq(drops.id, dropId)).limit(1);
   if (!row) return null;
-  const [productsView, invites] = await Promise.all([loadDropProducts(db, dropId), inviteCounts(db, dropId)]);
-  return toView(row, productsView, invites, now);
+  const [productsView, invites, waitlist] = await Promise.all([loadDropProducts(db, dropId), inviteCounts(db, dropId), waitlistCounts(db, dropId)]);
+  return toView(row, productsView, invites, waitlist, now);
 }
 
 export async function listDrops(db: DbOrTx, now = new Date()): Promise<DropView[]> {
   const rows = await db.select().from(drops).orderBy(desc(drops.publishAt)).limit(50);
   const views: DropView[] = [];
   for (const row of rows) {
-    const [productsView, invites] = await Promise.all([loadDropProducts(db, row.id), inviteCounts(db, row.id)]);
-    views.push(toView(row, productsView, invites, now));
+    const [productsView, invites, waitlist] = await Promise.all([loadDropProducts(db, row.id), inviteCounts(db, row.id), waitlistCounts(db, row.id)]);
+    views.push(toView(row, productsView, invites, waitlist, now));
   }
   return views;
+}
+
+// ---------------------------------------------------------------------------
+// /estreia — a próxima estreia pública (ou a que acabou de abrir)
+// ---------------------------------------------------------------------------
+
+export interface DropTeaser {
+  dropId: string;
+  name: string;
+  publishAt: Date;
+  state: Exclude<TeaserState, "hidden">;
+  /** Peças do lançamento com a primeira foto (silhuetas no teaser; fotos na abertura). */
+  products: { id: string; name: string; slug: string; imagePath: string | null }[];
+  waitlist: { total: number };
+}
+
+/**
+ * O que /estreia mostra agora: a estreia que abriu há menos de um dia (open)
+ * tem prioridade — é para lá que o aviso "a cortina abriu" manda; senão a
+ * agendada mais próxima (teaser). null = nada em cartaz.
+ */
+export async function getUpcomingDropTeaser(db: DbOrTx, now = new Date()): Promise<DropTeaser | null> {
+  const since = new Date(now.getTime() - TEASER_OPEN_GRACE_MS);
+  const [justOpened] = await db
+    .select()
+    .from(drops)
+    .where(and(inArray(drops.status, ["scheduled", "vip_sent", "published"]), gt(drops.publishAt, since), lte(drops.publishAt, now)))
+    .orderBy(desc(drops.publishAt))
+    .limit(1);
+  const [upcoming] = justOpened
+    ? []
+    : await db
+        .select()
+        .from(drops)
+        .where(and(inArray(drops.status, ["scheduled", "vip_sent"]), gt(drops.publishAt, now)))
+        .orderBy(asc(drops.publishAt))
+        .limit(1);
+  const row = justOpened ?? upcoming;
+  if (!row) return null;
+  const state = teaserState(row, now);
+  if (state === "hidden") return null;
+  const [productsView, waitlist] = await Promise.all([loadDropProducts(db, row.id), waitlistCounts(db, row.id)]);
+  return {
+    dropId: row.id,
+    name: row.name,
+    publishAt: row.publishAt,
+    state,
+    products: productsView.map((p) => ({ id: p.id, name: p.name, slug: p.slug, imagePath: p.imagePath })),
+    waitlist: { total: waitlist.total },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -493,20 +558,6 @@ export async function scheduleDrop(
 // Cron: dispatchDueDrops → dispatchDropVip / publishDrop
 // ---------------------------------------------------------------------------
 
-async function loadSendPolicy(db: DbOrTx): Promise<{ window: SendWindow; intervalSeconds: number }> {
-  const map = await getSettingsMap(db, ["wa_send_window_start", "wa_send_window_end", "wa_bulk_interval_seconds"]);
-  const start = Number(map["wa_send_window_start"]);
-  const end = Number(map["wa_send_window_end"]);
-  const interval = Number(map["wa_bulk_interval_seconds"]);
-  return {
-    window: {
-      startHour: Number.isFinite(start) ? start : DEFAULT_SEND_WINDOW.startHour,
-      endHour: Number.isFinite(end) ? end : DEFAULT_SEND_WINDOW.endHour,
-    },
-    intervalSeconds: Number.isFinite(interval) && interval > 0 ? interval : DEFAULT_BULK_INTERVAL_SECONDS,
-  };
-}
-
 /** Um evento por convidada, escalonado a partir da abertura da janela. */
 export async function dispatchDropVip(db: DbOrTx, input: { dropId: string; now?: Date }): Promise<{ queued: number }> {
   const now = input.now ?? new Date();
@@ -516,7 +567,8 @@ export async function dispatchDropVip(db: DbOrTx, input: { dropId: string; now?:
     .where(and(eq(dropInvites.dropId, input.dropId), isNull(dropInvites.sentAt)))
     .orderBy(desc(dropInvites.score), asc(dropInvites.createdAt));
   const policy = await loadSendPolicy(db);
-  const schedule = staggerSchedule(pending.length, { from: nextSendWindowStart(now, policy.window), intervalSeconds: policy.intervalSeconds });
+  // A fila não atravessa o fim da janela (a cauda segue amanhã às 9h no mesmo passo).
+  const schedule = staggerWithinWindow(pending.length, { from: now, intervalSeconds: policy.intervalSeconds, window: policy.window });
   let queued = 0;
   for (const [index, invite] of pending.entries()) {
     const id = await enqueueOutboxEvent(db, {
@@ -548,6 +600,15 @@ export async function publishDrop(db: DbOrTx, input: { dropId: string; now?: Dat
     for (const productId of ids) {
       await enqueueProductPublished(tx, { productId, dedupeSuffix: `drop:${input.dropId}` });
     }
+    // A cortina abriu: quem pediu aviso em /estreia recebe (fan-out no handler,
+    // dentro da janela de envio). Na MESMA transação — regra 5.
+    await enqueueOutboxEvent(tx, {
+      eventType: "drop.published",
+      dedupeKey: `drop.published:${input.dropId}`,
+      aggregateType: "drop",
+      aggregateId: input.dropId,
+      payload: { dropId: input.dropId },
+    });
   });
 }
 

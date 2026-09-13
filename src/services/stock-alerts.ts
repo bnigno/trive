@@ -3,20 +3,13 @@
 // (stock.restocked), os avisos abertos viram UM evento cada, escalonados na
 // janela de envio, e a cliente recebe UMA mensagem (foto da peça + texto).
 // Quem deu SAIR não recebe; quem não tem estoque de novo espera o próximo.
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
 import { variantLabel } from "@/core/catalog/attributes";
 import { renderTemplate } from "@/core/whatsapp/render";
-import {
-  DEFAULT_BULK_INTERVAL_SECONDS,
-  DEFAULT_SEND_WINDOW,
-  isWithinSendWindow,
-  nextSendWindowStart,
-  staggerSchedule,
-  type SendWindow,
-} from "@/core/whatsapp/send-window";
+import { isWithinSendWindow, nextSendWindowStart, staggerWithinWindow } from "@/core/whatsapp/send-window";
 import {
   auditLog,
   customers,
@@ -30,7 +23,7 @@ import {
 import { siteUrl } from "@/lib/site-url";
 import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
-import { getSettingsMap } from "@/services/settings";
+import { loadSendPolicy } from "@/services/wa-send-policy";
 import { publicImageUrl } from "@/services/store-catalog";
 import {
   isWaEnabled,
@@ -194,6 +187,16 @@ export async function cancelStockAlert(
 // Consultas
 // ---------------------------------------------------------------------------
 
+/** SAIR pelo WhatsApp: cancela todo aviso aberto desse telefone (com ou sem cadastro). */
+export async function cancelStockAlertsByPhone(db: DbOrTx, phoneE164: string, now = new Date()): Promise<number> {
+  const rows = await db
+    .update(stockAlerts)
+    .set({ canceledAt: now })
+    .where(and(eq(stockAlerts.phoneE164, phoneE164), isNull(stockAlerts.notifiedAt), isNull(stockAlerts.canceledAt)))
+    .returning({ id: stockAlerts.id });
+  return rows.length;
+}
+
 export async function listOpenAlertsByPhone(db: DbOrTx, phoneE164: string): Promise<StockAlertView[]> {
   const rows = await alertsQuery(db)
     .where(and(eq(stockAlerts.phoneE164, phoneE164), openCondition))
@@ -228,20 +231,6 @@ export async function listAlertsByVariant(db: DbOrTx, variantId: string, limit =
 // fanOutRestockAlerts — handler de stock.restocked
 // ---------------------------------------------------------------------------
 
-async function loadSendPolicy(db: DbOrTx): Promise<{ window: SendWindow; intervalSeconds: number }> {
-  const map = await getSettingsMap(db, ["wa_send_window_start", "wa_send_window_end", "wa_bulk_interval_seconds"]);
-  const start = Number(map["wa_send_window_start"]);
-  const end = Number(map["wa_send_window_end"]);
-  const interval = Number(map["wa_bulk_interval_seconds"]);
-  return {
-    window: {
-      startHour: Number.isFinite(start) ? start : DEFAULT_SEND_WINDOW.startHour,
-      endHour: Number.isFinite(end) ? end : DEFAULT_SEND_WINDOW.endHour,
-    },
-    intervalSeconds: Number.isFinite(interval) && interval > 0 ? interval : DEFAULT_BULK_INTERVAL_SECONDS,
-  };
-}
-
 /**
  * Um evento wa.restock_notify por aviso aberto, com next_attempt_at
  * escalonado a partir da abertura da janela — nunca uma rajada.
@@ -259,10 +248,9 @@ export async function fanOutRestockAlerts(
   if (open.length === 0) return { queued: 0 };
 
   const policy = await loadSendPolicy(db);
-  const schedule = staggerSchedule(open.length, {
-    from: nextSendWindowStart(now, policy.window),
-    intervalSeconds: policy.intervalSeconds,
-  });
+  // A fila não atravessa o fim da janela: a cauda continua amanhã às 9h no
+  // mesmo passo (nunca uma rajada na manhã seguinte).
+  const schedule = staggerWithinWindow(open.length, { from: now, intervalSeconds: policy.intervalSeconds, window: policy.window });
   let queued = 0;
   for (const [index, alert] of open.entries()) {
     const id = await enqueueOutboxEvent(db, {
@@ -337,11 +325,14 @@ export async function notifyRestockAlert(
     .limit(1);
   if (customer && !customer.marketingOptIn) {
     const [optOut] = await db
-      .select({ id: auditLog.id })
+      .select({ createdAt: auditLog.createdAt })
       .from(auditLog)
       .where(and(eq(auditLog.action, "wa.opt_out"), eq(auditLog.entityId, customer.id)))
+      .orderBy(desc(auditLog.createdAt))
       .limit(1);
-    if (optOut) {
+    // SAIR depois de pedir o aviso cancela; pedido feito DEPOIS de um SAIR
+    // antigo é consentimento novo e vale (mesma regra da lista da estreia).
+    if (optOut && optOut.createdAt.getTime() >= alert.consentAt.getTime()) {
       await cancelStockAlert(db, { alertId: alert.id });
       return { skipped: "sem_opt_in" };
     }

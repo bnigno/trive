@@ -194,3 +194,30 @@ describe("notifyRestockAlert", () => {
     expect(provider.sentMessages).toHaveLength(0);
   });
 });
+
+describe("SAIR antigo × pedido novo", () => {
+  it("aviso pedido DEPOIS de um SAIR antigo é consentimento novo: manda (mesma régua da lista da estreia)", async () => {
+    await seedTemplate();
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://x.supabase.co");
+    const [customer] = await db
+      .insert(schema.customers)
+      .values({ fullName: "Ana Souza", phoneE164: PHONE, marketingOptIn: false })
+      .returning({ id: schema.customers.id });
+    await db.insert(schema.auditLog).values({
+      actorType: "customer",
+      actorId: customer.id,
+      action: "wa.opt_out",
+      entityType: "customer",
+      entityId: customer.id,
+      createdAt: new Date(Date.now() - 86_400_000),
+    });
+    const { variantId } = await soldOutVariant();
+    const { alertId } = await requestStockAlert(sdb, { variantId, phoneE164: PHONE, source: "lia" });
+    const received = await adjustStock(sdb, { variantId, quantityDelta: 2, note: "voltou", userId });
+    const provider = new FakeMessagingProvider();
+    const result = await notifyRestockAlert(sdb, provider, { alertId: alertId as string, movementId: received.movementId, now: NOON_SP });
+    expect("sent" in result).toBe(true);
+    expect(provider.sentImages.length + provider.sentMessages.length).toBe(1);
+  });
+});
+

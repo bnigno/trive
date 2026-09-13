@@ -13,6 +13,7 @@ import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
+import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
 import { getMessagingProvider } from "@/adapters/zapi";
@@ -155,6 +156,8 @@ const waTranscribePayloadSchema = z.object({ waMessageId: z.uuid() });
 const stockRestockedPayloadSchema = z.object({ variantId: z.uuid(), movementId: z.uuid() });
 const restockNotifyPayloadSchema = z.object({ alertId: z.uuid(), movementId: z.uuid() });
 const dropInvitePayloadSchema = z.object({ inviteId: z.uuid() });
+const dropPublishedPayloadSchema = z.object({ dropId: z.uuid() });
+const dropOpenNotifyPayloadSchema = z.object({ waitlistId: z.uuid(), dropId: z.uuid() });
 
 const digestDailyPayloadSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -193,6 +196,19 @@ async function prerenderProductCards(event: OutboxEvent): Promise<void> {
     },
     event,
   );
+}
+
+/**
+ * revalidatePath fora do runtime do Next (worker, testes) lança: captura e
+ * loga — o cache expira sozinho e o evento não deve ir para a DLQ.
+ */
+async function revalidateQuietly(paths: string[], context: string): Promise<void> {
+  try {
+    const { revalidatePath } = await import("next/cache");
+    for (const path of paths) revalidatePath(path);
+  } catch (error) {
+    console.warn(`[outbox] ${context}: revalidatePath indisponível neste contexto.`, error);
+  }
 }
 
 export const outboxHandlers: Record<string, OutboxHandler> = {
@@ -504,6 +520,20 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const payload = dropInvitePayloadSchema.parse(event.payload);
     const result = await sendDropInvite(getDb(), getMessagingProvider(), { inviteId: payload.inviteId });
     console.info(`[wa.drop_invite] ${payload.inviteId} → ${JSON.stringify(result)}`);
+  },
+  // A cortina abriu: /estreia muda de cara agora e quem pediu aviso recebe
+  // (um evento por linha, escalonado na janela de envio).
+  "drop.published": async (event) => {
+    const payload = dropPublishedPayloadSchema.parse(event.payload);
+    const result = await fanOutDropWaitlist(getDb(), payload);
+    await revalidateQuietly(["/estreia", "/produtos", "/"], `drop.published (event ${event.id})`);
+    console.info(`[drop.published] ${payload.dropId} → ${JSON.stringify(result)}`);
+  },
+  // UMA mensagem para quem pediu o aviso da estreia, dentro da janela.
+  "wa.drop_open_notify": async (event) => {
+    const payload = dropOpenNotifyPayloadSchema.parse(event.payload);
+    const result = await notifyDropOpen(getDb(), getMessagingProvider(), { waitlistId: payload.waitlistId });
+    console.info(`[wa.drop_open_notify] ${payload.waitlistId} → ${JSON.stringify(result)}`);
   },
   // Peça voltou: um evento por aviso aberto, escalonado na janela de envio.
   "stock.restocked": async (event) => {

@@ -5,6 +5,7 @@ import {
   nextSendWindowStart,
   spHour,
   staggerSchedule,
+  staggerWithinWindow,
 } from "@/core/whatsapp/send-window";
 
 describe("janela de envio (São Paulo, UTC-3)", () => {
@@ -41,3 +42,30 @@ describe("janela de envio (São Paulo, UTC-3)", () => {
     expect(staggerSchedule(2, { from, intervalSeconds: 0.2 })[1].getTime() - from.getTime()).toBe(1000);
   });
 });
+
+describe("staggerWithinWindow", () => {
+  it("a fila não atravessa o fim da janela: o que não cabe hoje continua amanhã às 9h no mesmo passo", () => {
+    // 20:59:30 SP = 23:59:30Z; 5 envios a cada 20 s: 2 cabem hoje, 3 vão para amanhã às 9h (12:00Z).
+    const from = new Date("2026-09-19T23:59:30Z");
+    const slots = staggerWithinWindow(5, { from, intervalSeconds: 20 }).map((d) => d.toISOString());
+    expect(slots).toEqual([
+      "2026-09-19T23:59:30.000Z",
+      "2026-09-19T23:59:50.000Z",
+      "2026-09-20T12:00:00.000Z",
+      "2026-09-20T12:00:20.000Z",
+      "2026-09-20T12:00:40.000Z",
+    ]);
+  });
+
+  it("começando fora da janela, tudo parte da próxima abertura; dentro, é igual ao escalonamento simples", () => {
+    const night = new Date("2026-09-20T02:00:00Z");
+    expect(staggerWithinWindow(2, { from: night, intervalSeconds: 30 }).map((d) => d.toISOString())).toEqual([
+      "2026-09-20T12:00:00.000Z",
+      "2026-09-20T12:00:30.000Z",
+    ]);
+    const noon = new Date("2026-09-20T15:00:00Z");
+    expect(staggerWithinWindow(3, { from: noon, intervalSeconds: 20 })).toEqual(staggerSchedule(3, { from: noon, intervalSeconds: 20 }));
+    expect(staggerWithinWindow(0, { from: noon, intervalSeconds: 20 })).toEqual([]);
+  });
+});
+

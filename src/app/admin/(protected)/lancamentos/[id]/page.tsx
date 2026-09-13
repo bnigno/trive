@@ -5,11 +5,13 @@ import { and, asc, isNull, ne } from "drizzle-orm";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { CopyField } from "@/components/ui/copy-field";
 import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { canSchedule } from "@/core/drops";
 import { getDb } from "@/db/client";
+import { siteUrl } from "@/lib/site-url";
 import { products } from "@/db/schema";
 import { requireOwner } from "@/services/auth";
 import { formatDropMoment, getDrop, getDropReport } from "@/services/drops";
@@ -107,6 +109,23 @@ export default async function LancamentoPage({ params }: { params: Promise<{ id:
                 Cancelar desfaz o agendamento e as peças deixam de ficar escondidas. Convites já enviados não são apagados do WhatsApp das clientes.
               </p>
               <CancelDropForm dropId={drop.id} />
+            </Card>
+          ) : null}
+
+          {drop.phase !== "draft" && drop.phase !== "canceled" ? (
+            <Card title="Estreia pública">
+              <div className="flex flex-col gap-4">
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {drop.phase === "published"
+                    ? `A cortina abriu. ${drop.waitlist.total} ${drop.waitlist.total === 1 ? "pessoa pediu" : "pessoas pediram"} aviso; ${drop.waitlist.notified} já ${drop.waitlist.notified === 1 ? "recebeu" : "receberam"} (as demais recebem dentro da janela de envio, uma por vez).`
+                    : `Em trivemaison.com.br/estreia qualquer pessoa vê a contagem e as silhuetas das peças, e deixa o WhatsApp para ser avisada na hora. ${drop.waitlist.total} ${drop.waitlist.total === 1 ? "pessoa já pediu" : "pessoas já pediram"}.`}
+                </p>
+                <CopyField
+                  label="Link público da estreia"
+                  value={`${siteUrl()}/estreia`}
+                  hint="Cole na bio e nos stories. Na hora marcada a página abre sozinha; o aviso no WhatsApp vai das 9h às 21h — estreia fora desse horário avisa na manhã seguinte."
+                />
+              </div>
             </Card>
           ) : null}
 

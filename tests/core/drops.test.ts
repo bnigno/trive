@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   canSchedule,
+  countdownParts,
   dropPhase,
+  publicDropLabel,
+  teaserState,
   rankAudience,
   scoreDropAffinity,
   vipStartsAt,
@@ -24,6 +27,35 @@ describe("fases do lançamento", () => {
     expect(dropPhase({ ...drop, status: "draft" }, new Date("2026-09-19T20:00:00Z"))).toBe("draft");
     expect(dropPhase({ ...drop, status: "canceled" }, new Date("2026-09-25T00:00:00Z"))).toBe("canceled");
     expect(dropPhase({ ...drop, status: "published" }, new Date("2026-09-19T00:00:00Z"))).toBe("published");
+  });
+
+  it("teaserState: nada/rascunho/cancelado escondem; agendado é teaser; na hora (ou publicado) abre", () => {
+    const drop = { status: "scheduled", publishAt, vipWindowHours: 24 };
+    expect(teaserState(null, new Date())).toBe("hidden");
+    expect(teaserState({ ...drop, status: "draft" }, new Date("2026-09-18T13:00:00Z"))).toBe("hidden");
+    expect(teaserState({ ...drop, status: "canceled" }, new Date("2026-09-18T13:00:00Z"))).toBe("hidden");
+    expect(teaserState(drop, new Date("2026-09-18T13:00:00Z"))).toBe("teaser");
+    expect(teaserState({ ...drop, status: "vip_sent" }, new Date("2026-09-19T20:00:00Z"))).toBe("teaser");
+    // Pelo relógio, mesmo antes de o cron marcar published.
+    expect(teaserState(drop, new Date("2026-09-20T13:00:00Z"))).toBe("open");
+    expect(teaserState({ ...drop, status: "published" }, new Date("2026-09-19T00:00:00Z"))).toBe("open");
+  });
+
+  it("publicDropLabel fala como gente, no relógio de São Paulo", () => {
+    // 2026-09-20T13:00Z = domingo 10h em SP; 2026-09-19T23:00Z = sábado 20h.
+    const saturday20 = new Date("2026-09-19T23:00:00Z");
+    expect(publicDropLabel(saturday20, new Date("2026-09-15T12:00:00Z"))).toBe("sábado, 20h");
+    expect(publicDropLabel(saturday20, new Date("2026-09-19T12:00:00Z"))).toBe("hoje, 20h");
+    expect(publicDropLabel(saturday20, new Date("2026-09-18T12:00:00Z"))).toBe("amanhã, 20h");
+    expect(publicDropLabel(saturday20, new Date("2026-09-01T12:00:00Z"))).toBe("19 de setembro, 20h");
+    expect(publicDropLabel(new Date("2026-09-19T23:30:00Z"), new Date("2026-09-15T12:00:00Z"))).toBe("sábado, 20h30");
+    // Meia-noite em SP vira "0h", não "24h".
+    expect(publicDropLabel(new Date("2026-09-20T03:00:00Z"), new Date("2026-09-15T12:00:00Z"))).toBe("domingo, 0h");
+  });
+
+  it("countdownParts nunca fica negativa e quebra em dias/horas/minutos/segundos", () => {
+    expect(countdownParts(publishAt, new Date("2026-09-18T11:58:30Z"))).toEqual({ days: 2, hours: 1, minutes: 1, seconds: 30, total: 176_490_000 });
+    expect(countdownParts(publishAt, new Date("2026-09-21T00:00:00Z"))).toEqual({ days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 });
   });
 
   it("canSchedule lista os problemas", () => {

@@ -25,6 +25,8 @@ import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
 import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
 import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
+import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
+import { cancelStockAlertsByPhone } from "@/services/stock-alerts";
 import { consumeSiteCartByCode } from "@/services/site-carts";
 
 export const OPT_OUT_ACK_BODY =
@@ -486,6 +488,10 @@ export async function processZapiInbound(
 
     const keyword = normalizeKeyword(text);
     if (keyword === "SAIR" || keyword === "PARAR") {
+      // Com ou sem cadastro: o que esse telefone pediu para receber é cancelado
+      // (lista da estreia e avisos de "voltou") — a /estreia é sem login.
+      await cancelDropWaitlistByPhone(tx, phoneE164, now);
+      await cancelStockAlertsByPhone(tx, phoneE164, now);
       if (customer) {
         await tx
           .update(customers)

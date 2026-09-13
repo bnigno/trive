@@ -83,3 +83,34 @@ export const dropInvites = pgTable(
     index("drop_invites_customer_idx").on(table.customerId),
   ],
 );
+
+// Lista "me avisa quando a cortina abrir" da estreia pública (/estreia): um
+// telefone por lançamento enquanto ainda não foi avisado; ao publicar, cada
+// linha vira uma mensagem (dentro da janela de envio, escalonada).
+export const dropWaitlist = pgTable(
+  "drop_waitlist",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dropId: uuid("drop_id")
+      .notNull()
+      .references(() => drops.id, { onDelete: "cascade" }),
+    phoneE164: text("phone_e164").notNull(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    /** De onde veio o pedido: 'site' (/estreia), 'lia' ou 'admin'. */
+    source: text("source").notNull().default("site"),
+    /** A cliente marcou "quero receber no WhatsApp" — consentimento literal. */
+    consentAt: timestamp("consent_at", { withTimezone: true }).notNull().defaultNow(),
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    notifiedWaMessageId: uuid("notified_wa_message_id"),
+    canceledAt: timestamp("canceled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("drop_waitlist_open_idx")
+      .on(table.dropId, table.phoneE164)
+      .where(sql`${table.notifiedAt} IS NULL AND ${table.canceledAt} IS NULL`),
+    index("drop_waitlist_drop_idx").on(table.dropId),
+    index("drop_waitlist_phone_idx").on(table.phoneE164),
+    check("drop_waitlist_source_check", sql`${table.source} IN ('site', 'lia', 'admin')`),
+  ],
+);
