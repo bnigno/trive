@@ -3,12 +3,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  INTAKE_LATE_PHOTO_MS,
   INTAKE_MAX_PHOTOS,
   INTAKE_WINDOW_MS,
   hasOpenBatch,
   noteFromMessage,
   openPhotos,
   selectIntakeBatch,
+  selectLatePhotos,
   type IntakeMessage,
 } from "@/core/atelier/batch";
 import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
@@ -61,7 +63,7 @@ describe("selectIntakeBatch", () => {
     expect(batch.noteKind).toBe("text");
   });
 
-  it("passando do máximo, ficam as mais próximas do recado (em ordem)", () => {
+  it("passando do máximo, ficam as mais recentes antes do recado (em ordem)", () => {
     const note = text("n1", 0, "vestido");
     const messages = [photo("f1", -300), photo("f2", -240), photo("f3", -180), photo("f4", -120), photo("f5", -60), note];
     const batch = selectIntakeBatch(messages, note);
@@ -69,10 +71,10 @@ describe("selectIntakeBatch", () => {
     expect(batch.photos.map((item) => item.id)).toEqual(["f3", "f4", "f5"]);
   });
 
-  it("a foto que chega logo depois do recado entra (o respiro da fila existe para isso)", () => {
+  it("ao abrir, só as fotos ANTES do recado são reivindicadas; a atrasada fica para a montagem", () => {
     const note = text("n1", 0, "saia midi");
     const batch = selectIntakeBatch([photo("f1", -10), note, photo("f2", 20)], note);
-    expect(batch.photos.map((item) => item.id)).toEqual(["f1", "f2"]);
+    expect(batch.photos.map((item) => item.id)).toEqual(["f1"]);
   });
 
   it("foto usada por outra chegada e foto fora da janela ficam de fora", () => {
@@ -108,5 +110,21 @@ describe("noteFromMessage", () => {
       note: "Baby look",
       noteKind: "caption",
     });
+  });
+});
+
+describe("selectLatePhotos", () => {
+  it("absorve fotos sem dona que chegaram até 60 s depois do recado, até completar o máximo", () => {
+    const note = text("n1", 0, "saia midi");
+    const messages = [note, photo("f2", 20), photo("f3", 40), photo("used", 50, { consumed: true }), photo("f4", 55), photo("late", 120)];
+    expect(selectLatePhotos(messages, note, 1).map((item) => item.id)).toEqual(["f2", "f3"]);
+    expect(selectLatePhotos(messages, note, 0).map((item) => item.id)).toEqual(["f2", "f3", "f4"]);
+    expect(selectLatePhotos(messages, note, INTAKE_MAX_PHOTOS)).toEqual([]);
+    expect(INTAKE_LATE_PHOTO_MS).toBe(60_000);
+  });
+
+  it("recado como legenda: a própria foto não é 'atrasada'", () => {
+    const captioned = photo("f1", 0, { body: `${INBOUND_MEDIA_MARKERS.image} Cropped` });
+    expect(selectLatePhotos([captioned, photo("f2", 10)], captioned, 1).map((item) => item.id)).toEqual(["f2"]);
   });
 });

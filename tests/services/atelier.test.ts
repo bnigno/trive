@@ -111,6 +111,7 @@ async function seedArrival(note = "chegou o Longo Dunas da Aurora, custou 120"):
   const noteId = await seedInbound(conversationId, { kind: "text", body: note, at: NOW, zapiId: "MSG-NOTE" });
   await openAtelierIntake(sdb, {
     conversationId,
+    phoneE164: OWNER,
     triggerWaMessageId: noteId,
     zapiMessageId: "MSG-NOTE",
     kind: "text",
@@ -143,6 +144,7 @@ describe("processAtelierIntake", () => {
     const [intake] = await db.select().from(schema.atelierIntakes);
     expect(intake).toMatchObject({ status: "done", productId: product.id, photosCount: 2, noteKind: "text" });
     expect(intake.photoWaMessageIds).toEqual(photoIds);
+    expect(intake.uploadedWaMessageIds).toEqual(photoIds);
     expect(await getAtelierIntakeForProduct(sdb, product.id)).toMatchObject({ id: intake.id, photosCount: 2 });
 
     expect(provider.sentMessages).toHaveLength(1);
@@ -204,6 +206,7 @@ describe("processAtelierIntake", () => {
     const noteId = await seedInbound(conversationId, { kind: "text", body: "chegou o vestido", at: NOW, zapiId: "MSG-SO-TEXTO" });
     await openAtelierIntake(sdb, {
       conversationId,
+      phoneE164: OWNER,
       triggerWaMessageId: noteId,
       zapiMessageId: "MSG-SO-TEXTO",
       kind: "text",
@@ -228,6 +231,7 @@ describe("processAtelierIntake", () => {
     const { conversationId, noteId } = await seedArrival();
     const second = await openAtelierIntake(sdb, {
       conversationId,
+      phoneE164: OWNER,
       triggerWaMessageId: noteId,
       zapiMessageId: "MSG-NOTE",
       kind: "text",
@@ -240,5 +244,114 @@ describe("processAtelierIntake", () => {
     expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe("wa.atelier_intake");
     expect(events[0].nextAttemptAt.getTime()).toBe(NOW.getTime() + 45_000);
+  });
+
+  it("a chegada reivindica as fotos ao abrir: um recado seguinte não as vê", async () => {
+    const { conversationId, photoIds } = await seedArrival();
+    const secondNoteId = await seedInbound(conversationId, {
+      kind: "text",
+      body: "esqueci: custou 120",
+      at: new Date(NOW.getTime() + 20_000),
+      zapiId: "MSG-NOTE-2",
+    });
+    await openAtelierIntake(sdb, {
+      conversationId,
+      phoneE164: OWNER,
+      triggerWaMessageId: secondNoteId,
+      zapiMessageId: "MSG-NOTE-2",
+      kind: "text",
+      body: "esqueci: custou 120",
+      now: new Date(NOW.getTime() + 20_000),
+    });
+    const rows = await db.select().from(schema.atelierIntakes).orderBy(schema.atelierIntakes.createdAt);
+    expect(rows[0].photoWaMessageIds).toEqual(photoIds);
+    expect(rows[1].photoWaMessageIds).toEqual([]);
+  });
+
+  it("foto que chega logo depois do recado (webhook atrasado) entra na mesma chegada", async () => {
+    const { conversationId, noteId } = await seedArrival();
+    provider.setMediaFixture("https://cdn.z-api/foto-late.jpg", await jpeg("#a0b0c0"), "image/jpeg");
+    const lateId = await seedInbound(conversationId, {
+      kind: "image",
+      body: INBOUND_MEDIA_MARKERS.image,
+      mediaUrl: "https://cdn.z-api/foto-late.jpg",
+      at: new Date(NOW.getTime() + 20_000),
+      zapiId: "MSG-FOTO-LATE",
+    });
+    const result = await processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId }, clock);
+    expect(result).toMatchObject({ created: true, photos: 3 });
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.photoWaMessageIds).toHaveLength(3);
+    expect(intake.photoWaMessageIds[2]).toBe(lateId);
+  });
+
+  it("foto 3 minutos depois do recado já é de outra chegada: não entra", async () => {
+    const { conversationId, noteId } = await seedArrival();
+    await seedInbound(conversationId, {
+      kind: "image",
+      body: INBOUND_MEDIA_MARKERS.image,
+      mediaUrl: "https://cdn.z-api/foto-1.jpg",
+      at: new Date(NOW.getTime() + 180_000),
+      zapiId: "MSG-FOTO-DEPOIS",
+    });
+    const result = await processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId }, {
+      now: () => new Date(NOW.getTime() + 200_000),
+    });
+    expect(result).toMatchObject({ created: true, photos: 2 });
+  });
+
+  it("retomada depois de falha no meio: sobe só a foto que faltou e reenvia o aviso", async () => {
+    const { conversationId, photoIds, noteId } = await seedArrival();
+    const first = await processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in first)) throw new Error("esperava created");
+    // Como se a 1.ª tentativa tivesse caído depois da primeira foto.
+    await db
+      .update(schema.atelierIntakes)
+      .set({ status: "failed", uploadedWaMessageIds: [photoIds[0]], errorDetail: "queda" })
+      .where(eq(schema.atelierIntakes.triggerWaMessageId, noteId));
+    provider.sentMessages.length = 0;
+    const again = await processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true, productId: first.productId, photos: 2, failedPhotos: 0 });
+    // 2 da primeira passada + 1 reenviada (a que "faltava"); nenhum produto novo.
+    const images = await db.select().from(schema.productImages).where(eq(schema.productImages.productId, first.productId));
+    expect(images).toHaveLength(3);
+    expect(await db.select().from(schema.products)).toHaveLength(1);
+    // O aviso tem dedupe por chegada: não sai duas vezes.
+    expect(provider.sentMessages).toHaveLength(0);
+  });
+
+  it("provedor fora na hora do aviso: a chegada fica por fechar e a retomada só reenvia (1 produto, 1 audit)", async () => {
+    const { conversationId, noteId } = await seedArrival();
+    provider.simulateDisconnect();
+    await expect(
+      processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId }, clock),
+    ).rejects.toThrow();
+    let [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.status).toBe("failed");
+    expect(intake.productId).not.toBeNull();
+    expect(intake.uploadedWaMessageIds).toHaveLength(2);
+    expect(await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "atelier.intake"))).toHaveLength(0);
+
+    provider.simulateReconnect();
+    const again = await processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true, photos: 2, failedPhotos: 0 });
+    [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.status).toBe("done");
+    expect(await db.select().from(schema.products)).toHaveLength(1);
+    expect(await db.select().from(schema.productImages)).toHaveLength(2);
+    expect(await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "atelier.intake"))).toHaveLength(1);
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(provider.sentMessages[0].body).toContain("Rascunho pronto");
+  });
+
+  it("WhatsApp desligado: o rascunho nasce, a chegada fecha e fica anotado que o aviso não saiu", async () => {
+    await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "wa_enabled"));
+    const { conversationId, noteId } = await seedArrival();
+    const result = await processAtelierIntake(sdb, provider, storage, { conversationId, triggerWaMessageId: noteId }, clock);
+    expect(result).toMatchObject({ created: true, photos: 2 });
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.status).toBe("done");
+    expect(intake.errorDetail).toBe("aviso não enviado: desabilitado");
+    expect(provider.sentMessages).toHaveLength(0);
   });
 });

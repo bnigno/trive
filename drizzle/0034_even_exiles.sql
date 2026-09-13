@@ -5,6 +5,7 @@ CREATE TABLE "atelier_intakes" (
 	"note_kind" text DEFAULT 'text' NOT NULL,
 	"note" text DEFAULT '' NOT NULL,
 	"photo_wa_message_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"uploaded_wa_message_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"photos_count" integer DEFAULT 0 NOT NULL,
 	"status" text DEFAULT 'queued' NOT NULL,
 	"product_id" uuid,

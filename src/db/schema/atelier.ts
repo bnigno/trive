@@ -23,8 +23,10 @@ export const atelierIntakes = pgTable(
       .references(() => waMessages.id, { onDelete: "restrict" }),
     noteKind: text("note_kind").notNull().default("text"),
     note: text("note").notNull().default(""),
-    /** ids de wa_messages das fotos usadas (preenchido quando o lote é montado). */
+    /** ids de wa_messages das fotos desta chegada — reivindicadas ao abrir (nenhuma outra chegada as usa). */
     photoWaMessageIds: jsonb("photo_wa_message_ids").$type<string[]>().notNull().default([]),
+    /** Das fotos acima, as que já entraram na ficha (a retomada sobe só o que falta). */
+    uploadedWaMessageIds: jsonb("uploaded_wa_message_ids").$type<string[]>().notNull().default([]),
     photosCount: integer("photos_count").notNull().default(0),
     status: text("status").notNull().default("queued"),
     productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),

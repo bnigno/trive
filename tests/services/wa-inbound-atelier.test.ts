@@ -201,4 +201,32 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
     expect(await intakes()).toHaveLength(0);
     expect((await outbox()).map((event) => event.eventType)).toEqual(["wa.bot_turn", "wa.bot_turn"]);
   });
+
+  it("conversa da dona encerrada no painel entre a foto e o recado: a chegada acha a foto mesmo assim", async () => {
+    await send(photo("MSG-F1"));
+    await db.update(schema.waConversations).set({ status: "closed" });
+    const result = await send(text("MSG-NOTE", "chegou o vestido"));
+    expect(result.action).toBe("atelier_queued");
+    const [photoRow] = await db.select().from(schema.waMessages).where(eq(schema.waMessages.zapiMessageId, "MSG-F1"));
+    const [intake] = await intakes();
+    expect(intake.photoWaMessageIds).toEqual([photoRow.id]);
+    expect(await db.select().from(schema.waConversations)).toHaveLength(2);
+  });
+
+  it("SAIR do dono com lote aberto continua sendo o comando, não um recado", async () => {
+    await send(photo("MSG-F1"));
+    const result = await send(text("MSG-SAIR", "SAIR"));
+    expect(result.action).toBe("opt_out");
+    expect(await intakes()).toHaveLength(0);
+  });
+
+  it("a chegada reivindica as fotos ao abrir (ids gravados na linha)", async () => {
+    await send(photo("MSG-F1"));
+    await send(photo("MSG-F2"));
+    await send(text("MSG-NOTE", "chegou o vestido"));
+    const [intake] = await intakes();
+    const rows = await db.select().from(schema.waMessages).where(eq(schema.waMessages.kind, "image"));
+    expect([...intake.photoWaMessageIds].sort()).toEqual(rows.map((row) => row.id).sort());
+    expect(intake.photosCount).toBe(2);
+  });
 });

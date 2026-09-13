@@ -1,5 +1,5 @@
 {
-  "id": "c9af2a02-4099-4d5a-ac6f-1886d87f64fe",
+  "id": "e9348987-526d-416a-b15d-63629ae249da",
   "prevId": "aeadea8e-30e9-46e1-a168-93b218af95d8",
   "version": "7",
   "dialect": "postgresql",
@@ -43,6 +43,13 @@
         },
         "photo_wa_message_ids": {
           "name": "photo_wa_message_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "uploaded_wa_message_ids": {
+          "name": "uploaded_wa_message_ids",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true,

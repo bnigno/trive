@@ -270,7 +270,7 @@ export async function routeInboundMessage(
     (await isAtelierEnabled(tx))
   ) {
     const decision = await routeOwnerInbound(tx, {
-      conversationId: conversation.id,
+      phoneE164: input.phoneE164,
       kind: "note",
       body: input.text,
       mediaUrl: null,
@@ -279,6 +279,7 @@ export async function routeInboundMessage(
     if (decision.kind === "intake") {
       await openAtelierIntake(tx, {
         conversationId: conversation.id,
+        phoneE164: input.phoneE164,
         triggerWaMessageId: input.waMessageId,
         zapiMessageId: input.zapiMessageId,
         kind: "audio",
@@ -560,13 +561,17 @@ export async function processZapiInbound(
       });
     };
 
+    const keyword = normalizeKeyword(text);
+    const isOptOut = keyword === "SAIR" || keyword === "PARAR";
+
     // O celular do dono no número da maison: Ateliê antes de tudo. Foto
     // abre o lote; áudio vai transcrever (a rota volta ao Ateliê depois);
     // recado com fotos recentes abre a chegada; documento pede a foto.
-    // Texto solto dele cai no fluxo normal (testar a Lia como cliente).
-    if ((await isOwnerPhone(tx, phoneE164)) && (await isAtelierEnabled(tx))) {
+    // Texto solto dele cai no fluxo normal (testar a Lia como cliente);
+    // SAIR/PARAR continua sendo o comando, mesmo com lote aberto.
+    if (!isOptOut && (await isOwnerPhone(tx, phoneE164)) && (await isAtelierEnabled(tx))) {
       const decision = await routeOwnerInbound(tx, {
-        conversationId: conversation.id,
+        phoneE164,
         kind: media?.kind ?? "text",
         body: text,
         mediaUrl: media?.mediaUrl ?? null,
@@ -579,6 +584,7 @@ export async function processZapiInbound(
       if (decision.kind === "intake") {
         await openAtelierIntake(tx, {
           conversationId: conversation.id,
+          phoneE164,
           triggerWaMessageId: message.id,
           zapiMessageId: messageId,
           kind: media?.kind ?? "text",
@@ -598,8 +604,7 @@ export async function processZapiInbound(
       }
     }
 
-    const keyword = normalizeKeyword(text);
-    if (keyword === "SAIR" || keyword === "PARAR") {
+    if (isOptOut) {
       // Com ou sem cadastro: o que esse telefone pediu para receber é cancelado
       // (lista da estreia e avisos de "voltou") — a /estreia é sem login.
       await cancelDropWaitlistByPhone(tx, phoneE164, now);

@@ -3,7 +3,12 @@
 // (full/md/thumb), nada na loja. Duas metades: a decisão no webhook (é a
 // dona? é foto, recado ou pedido de ajuda?) e a montagem do rascunho na
 // fila (baixa as fotos, cria o produto, responde "Rascunho pronto").
-import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+//
+// Posse das fotos: a chegada REIVINDICA as fotos no ato de abrir (na mesma
+// transação do webhook) e guarda os ids; nenhuma outra chegada as vê. A
+// montagem só absorve as fotos que chegaram logo depois do recado e ainda
+// não têm dona. A retomada (tentativa seguinte) sobe só o que falta.
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
@@ -11,10 +16,12 @@ import { isTranscriptionConfigured } from "@/adapters/transcription";
 import type { MessagingProvider } from "@/adapters/zapi";
 import {
   INTAKE_GRACE_MS,
+  INTAKE_LATE_PHOTO_MS,
   INTAKE_WINDOW_MS,
   hasOpenBatch,
   noteFromMessage,
   selectIntakeBatch,
+  selectLatePhotos,
   type IntakeMessage,
   type NoteKind,
 } from "@/core/atelier/batch";
@@ -31,10 +38,10 @@ import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
 import {
   atelierIntakes,
   auditLog,
-  productImages,
   productVariants,
   settings,
   users,
+  waConversations,
   waMessages,
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -44,6 +51,8 @@ import { sendToOwner, siteBaseUrl, type SendWaMessageResult } from "@/services/w
 
 /** Foto original da câmera (a ficha reduz depois); acima disso a foto fica de fora. */
 export const ATELIER_PHOTO_MAX_BYTES = 12 * 1024 * 1024;
+/** Cada download tem este teto; a função da fila tem 60 s para tudo. */
+export const ATELIER_DOWNLOAD_TIMEOUT_MS = 12_000;
 export const ATELIER_DRAFT_TEMPLATE = "owner_atelier_draft";
 export const ATELIER_HELP_TEMPLATE = "owner_atelier_help";
 
@@ -69,13 +78,13 @@ export async function resolveAtelierActorUserId(db: DbOrTx): Promise<string | nu
 }
 
 /**
- * As mensagens recebidas da dona num período, com a marca "já usada": uma
- * foto pertence à chegada cujo recado veio depois dela (o recado fecha o
- * lote). A chegada `excludeIntakeId` não conta — é a que está sendo montada.
+ * As mensagens recebidas desse telefone num período — em QUALQUER conversa
+ * dele (a conversa pode ter sido encerrada no painel entre a foto e o
+ * recado) — com a marca "já reivindicada por uma chegada".
  */
 async function loadIntakeMessages(
   db: DbOrTx,
-  input: { conversationId: string; from: Date; to: Date; excludeIntakeId?: string },
+  input: { phoneE164: string; from: Date; to: Date },
 ): Promise<IntakeMessage[]> {
   const rows = await db
     .select({
@@ -86,39 +95,35 @@ async function loadIntakeMessages(
       createdAt: waMessages.createdAt,
     })
     .from(waMessages)
+    .innerJoin(waConversations, eq(waConversations.id, waMessages.conversationId))
     .where(
       and(
-        eq(waMessages.conversationId, input.conversationId),
+        eq(waConversations.phoneE164, input.phoneE164),
         eq(waMessages.direction, "inbound"),
         gte(waMessages.createdAt, input.from),
         lte(waMessages.createdAt, input.to),
       ),
     )
     .orderBy(asc(waMessages.createdAt));
+  if (rows.length === 0) return [];
 
-  const intakes = await db
-    .select({ id: atelierIntakes.id, createdAt: atelierIntakes.createdAt })
+  const claims = await db
+    .select({ photoWaMessageIds: atelierIntakes.photoWaMessageIds })
     .from(atelierIntakes)
+    .innerJoin(waConversations, eq(waConversations.id, atelierIntakes.conversationId))
     .where(
       and(
-        eq(atelierIntakes.conversationId, input.conversationId),
-        gte(atelierIntakes.createdAt, input.from),
-        ne(atelierIntakes.status, "failed"),
+        eq(waConversations.phoneE164, input.phoneE164),
+        gte(atelierIntakes.createdAt, new Date(input.from.getTime() - INTAKE_WINDOW_MS)),
       ),
     );
-  const closers = intakes
-    .filter((intake) => intake.id !== input.excludeIntakeId)
-    .map((intake) => intake.createdAt.getTime());
-
-  return rows.map((row) => ({
-    ...row,
-    consumed: closers.some((closedAt) => closedAt >= row.createdAt.getTime()),
-  }));
+  const claimed = new Set(claims.flatMap((claim) => claim.photoWaMessageIds));
+  return rows.map((row) => ({ ...row, consumed: claimed.has(row.id) }));
 }
 
-export async function hasOpenAtelierBatch(db: DbOrTx, conversationId: string, now: Date): Promise<boolean> {
+export async function hasOpenAtelierBatch(db: DbOrTx, phoneE164: string, now: Date): Promise<boolean> {
   const messages = await loadIntakeMessages(db, {
-    conversationId,
+    phoneE164,
     from: new Date(now.getTime() - INTAKE_WINDOW_MS),
     to: new Date(now.getTime() + 60_000),
   });
@@ -145,7 +150,7 @@ export type OwnerInboundRoute =
 export async function routeOwnerInbound(
   db: DbOrTx,
   input: {
-    conversationId: string;
+    phoneE164: string;
     kind: "image" | "audio" | "text" | "note";
     body: string;
     mediaUrl: string | null;
@@ -172,19 +177,21 @@ export async function routeOwnerInbound(
   ) {
     return { kind: "normal" };
   }
-  if (await hasOpenAtelierBatch(db, input.conversationId, input.now)) return { kind: "intake" };
+  if (await hasOpenAtelierBatch(db, input.phoneE164, input.now)) return { kind: "intake" };
   return input.kind === "note" ? { kind: "help", reason: "sem_fotos" } : { kind: "normal" };
 }
 
 /**
- * Abre a chegada na MESMA transação do webhook (o recado é o gatilho; a
- * reentrega da Z-API bate no UNIQUE e não duplica) e agenda a montagem
- * para depois do respiro — a última foto às vezes chega depois do recado.
+ * Abre a chegada na MESMA transação do webhook: reivindica as fotos do
+ * lote (o recado é o gatilho; a reentrega da Z-API bate no UNIQUE e não
+ * duplica) e agenda a montagem para depois do respiro — a última foto às
+ * vezes chega depois do recado e a montagem a absorve.
  */
 export async function openAtelierIntake(
   tx: DbOrTx,
   input: {
     conversationId: string;
+    phoneE164: string;
     triggerWaMessageId: string;
     zapiMessageId: string;
     kind: string;
@@ -192,14 +199,31 @@ export async function openAtelierIntake(
     now: Date;
   },
 ): Promise<string | null> {
-  const { note, noteKind } = noteFromMessage({ kind: input.kind, body: input.body });
+  const [trigger] = await tx
+    .select({ id: waMessages.id, mediaUrl: waMessages.mediaUrl, createdAt: waMessages.createdAt })
+    .from(waMessages)
+    .where(eq(waMessages.id, input.triggerWaMessageId))
+    .limit(1);
+  if (!trigger) return null;
+  const messages = await loadIntakeMessages(tx, {
+    phoneE164: input.phoneE164,
+    from: new Date(trigger.createdAt.getTime() - INTAKE_WINDOW_MS),
+    to: new Date(trigger.createdAt.getTime() + 60_000),
+  });
+  const batch = selectIntakeBatch(
+    messages,
+    { id: trigger.id, kind: input.kind, body: input.body, mediaUrl: trigger.mediaUrl, createdAt: trigger.createdAt, consumed: false },
+  );
+
   const [intake] = await tx
     .insert(atelierIntakes)
     .values({
       conversationId: input.conversationId,
       triggerWaMessageId: input.triggerWaMessageId,
-      note,
-      noteKind,
+      note: batch.note,
+      noteKind: batch.noteKind,
+      photoWaMessageIds: batch.photos.map((photo) => photo.id),
+      photosCount: batch.photos.length,
       createdAt: input.now,
       updatedAt: input.now,
     })
@@ -268,6 +292,22 @@ function isLastAttempt(attempt: number): boolean {
   return attempt + 1 >= getRetryPolicy("wa.atelier_intake").maxAttempts;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("tempo esgotado")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function uniqueSkuFor(db: DbOrTx, name: string): Promise<string> {
   const base = buildSku(skuBaseFromName(name), []);
   const taken = await db
@@ -289,6 +329,22 @@ async function markIntake(
     .where(eq(atelierIntakes.id, intakeId));
 }
 
+async function loadPhotos(db: DbOrTx, ids: readonly string[]): Promise<IntakeMessage[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({
+      id: waMessages.id,
+      kind: waMessages.kind,
+      body: waMessages.body,
+      mediaUrl: waMessages.mediaUrl,
+      createdAt: waMessages.createdAt,
+    })
+    .from(waMessages)
+    .where(inArray(waMessages.id, [...ids]))
+    .orderBy(asc(waMessages.createdAt));
+  return rows.map((row) => ({ ...row, consumed: false }));
+}
+
 export async function processAtelierIntake(
   db: DbOrTx,
   provider: MessagingProvider,
@@ -307,8 +363,10 @@ export async function processAtelierIntake(
       body: waMessages.body,
       mediaUrl: waMessages.mediaUrl,
       createdAt: waMessages.createdAt,
+      phoneE164: waConversations.phoneE164,
     })
     .from(waMessages)
+    .innerJoin(waConversations, eq(waConversations.id, waMessages.conversationId))
     .where(and(eq(waMessages.id, triggerWaMessageId), eq(waMessages.conversationId, conversationId)))
     .limit(1);
   if (!trigger) return { skipped: "mensagem_inexistente" };
@@ -335,56 +393,47 @@ export async function processAtelierIntake(
     return { failed: reason, intakeId: intake.id };
   };
 
-  // O lote: na primeira passada, as fotos perto do recado; na retomada
-  // (tentativa seguinte), as mesmas fotos de antes.
-  let photos: IntakeMessage[];
-  let note = intake.note;
-  let noteKind = intake.noteKind as NoteKind;
-  if (intake.photoWaMessageIds.length > 0) {
-    const rows = await db
-      .select({
-        id: waMessages.id,
-        kind: waMessages.kind,
-        body: waMessages.body,
-        mediaUrl: waMessages.mediaUrl,
-        createdAt: waMessages.createdAt,
-      })
-      .from(waMessages)
-      .where(inArray(waMessages.id, intake.photoWaMessageIds))
-      .orderBy(asc(waMessages.createdAt));
-    photos = rows.map((row) => ({ ...row, consumed: false }));
-  } else {
-    const messages = await loadIntakeMessages(db, {
-      conversationId,
-      from: new Date(trigger.createdAt.getTime() - INTAKE_WINDOW_MS),
-      to: new Date(trigger.createdAt.getTime() + INTAKE_WINDOW_MS),
-      excludeIntakeId: intake.id,
+  // O lote: as fotos reivindicadas ao abrir + as que chegaram logo depois
+  // do recado e ninguém reivindicou (só na primeira passada, antes de
+  // haver produto — a retomada trabalha com o conjunto já fixado).
+  let photoIds = [...intake.photoWaMessageIds];
+  if (!intake.productId) {
+    const recent = await loadIntakeMessages(db, {
+      phoneE164: trigger.phoneE164,
+      from: trigger.createdAt,
+      to: new Date(trigger.createdAt.getTime() + INTAKE_LATE_PHOTO_MS + 1_000),
     });
-    const batch = selectIntakeBatch(messages, { ...trigger, consumed: false }, {});
-    photos = batch.photos;
-    // O áudio pode ter sido transcrito depois da abertura: o recado atual vale.
-    if (batch.note) {
-      note = batch.note;
-      noteKind = batch.noteKind;
+    const late = selectLatePhotos(recent, { ...trigger, consumed: false }, photoIds.length);
+    if (late.length > 0) {
+      photoIds = [...photoIds, ...late.map((photo) => photo.id)];
+      await markIntake(db, intake.id, { photoWaMessageIds: photoIds, photosCount: photoIds.length }, now());
     }
-    if (photos.length === 0) return fail("sem_fotos");
-    await markIntake(
-      db,
-      intake.id,
-      { photoWaMessageIds: photos.map((photo) => photo.id), photosCount: photos.length, note, noteKind },
-      now(),
-    );
   }
+  const photos = await loadPhotos(db, photoIds);
+  if (photos.length === 0) return fail("sem_fotos");
+
+  // O recado pode ter sido transcrito depois da abertura: o texto atual vale.
+  const current = noteFromMessage({ kind: trigger.kind, body: trigger.body });
+  const note = current.note || intake.note;
+  const noteKind: NoteKind = current.note ? current.noteKind : (intake.noteKind as NoteKind);
 
   const userId = await resolveAtelierActorUserId(db);
   if (!userId) return fail("sem_usuario");
 
-  // As fotos originais, uma a uma (URL expirada = foto de fora, não falha).
+  // As fotos originais, uma a uma, cada uma com o próprio teto de tempo
+  // (URL expirada ou lenta = foto de fora, não falha da chegada).
+  const uploaded = new Set(intake.uploadedWaMessageIds);
+  const pendingPhotos = photos.filter((photo) => !uploaded.has(photo.id));
   const downloads = await Promise.allSettled(
-    photos.map(async (photo) => {
-      const media = await provider.downloadMedia({ url: photo.mediaUrl as string, maxBytes: ATELIER_PHOTO_MAX_BYTES });
-      return { photo, data: media.data, contentType: media.contentType ?? "image/jpeg" };
-    }),
+    pendingPhotos.map((photo) =>
+      withTimeout(
+        (async () => {
+          const media = await provider.downloadMedia({ url: photo.mediaUrl as string, maxBytes: ATELIER_PHOTO_MAX_BYTES });
+          return { photo, data: media.data, contentType: media.contentType ?? "image/jpeg" };
+        })(),
+        ATELIER_DOWNLOAD_TIMEOUT_MS,
+      ),
+    ),
   );
   const available = downloads.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
   for (const outcome of downloads) {
@@ -392,7 +441,7 @@ export async function processAtelierIntake(
       console.warn("[atelier] foto da chegada não baixou:", outcome.reason?.message ?? outcome.reason);
     }
   }
-  if (available.length === 0) return fail("fotos_indisponiveis");
+  if (available.length === 0 && uploaded.size === 0) return fail("fotos_indisponiveis");
 
   const name = draftNameFromNote(note, startedAt);
   try {
@@ -400,25 +449,23 @@ export async function processAtelierIntake(
     if (intake.productId) {
       productId = intake.productId;
     } else {
+      // Produto e vínculo com a chegada na MESMA transação: uma queda entre
+      // os dois não deixa um rascunho órfão que a retomada duplicaria.
       const sku = await uniqueSkuFor(db, name);
-      const created = await createProduct(db as unknown as ServiceDb, {
-        name,
-        description: note ? `Recado da chegada: ${note}` : undefined,
-        variants: [{ sku, attributes: {} }],
-        userId,
+      productId = await db.transaction(async (tx) => {
+        const created = await createProduct(tx as unknown as ServiceDb, {
+          name,
+          description: note ? `Recado da chegada: ${note}`.slice(0, 1200) : undefined,
+          variants: [{ sku, attributes: {} }],
+          userId,
+        });
+        await markIntake(tx, intake.id, { productId: created.product.id, note, noteKind }, now());
+        return created.product.id;
       });
-      productId = created.product.id;
-      await markIntake(db, intake.id, { productId }, now());
     }
 
-    // Retomada: as fotos que já entraram ficam; só as que faltam sobem.
-    const [{ existing }] = await db
-      .select({ existing: sql<number>`count(*)::int` })
-      .from(productImages)
-      .where(eq(productImages.productId, productId));
-    let added = 0;
-    let failedPhotos = 0;
-    for (const item of available.slice(existing)) {
+    let failedPhotos = pendingPhotos.length - available.length;
+    for (const item of available) {
       try {
         await addProductImage(db as unknown as ServiceDb, storage, {
           productId,
@@ -426,14 +473,27 @@ export async function processAtelierIntake(
           contentType: item.contentType.startsWith("image/") ? item.contentType : "image/jpeg",
           userId,
         });
-        added += 1;
+        uploaded.add(item.photo.id);
+        await markIntake(db, intake.id, { uploadedWaMessageIds: [...uploaded] }, now());
       } catch (error) {
         failedPhotos += 1;
         console.warn("[atelier] foto não entrou na ficha:", error instanceof Error ? error.message : error);
       }
     }
-    const photosOnProduct = existing + added;
-    failedPhotos += photos.length - available.length;
+    const photosOnProduct = uploaded.size;
+
+    // O aviso sai ANTES do "done": se o provedor falhar, a chegada continua
+    // por fechar e a retomada só reenvia (dedupe por chegada); "done" e o
+    // audit entram uma vez só. WhatsApp desligado não é erro — fica anotado.
+    const notice = await sendToOwner(db, provider, {
+      templateKey: ATELIER_DRAFT_TEMPLATE,
+      vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}` }),
+      dedupeKey: `wa.atelier_draft:${intake.id}`,
+    });
+    const details = [
+      failedPhotos > 0 ? `${failedPhotos} foto(s) ficaram de fora` : null,
+      "skipped" in notice ? `aviso não enviado: ${notice.skipped}` : null,
+    ].filter((line): line is string => line !== null);
 
     await markIntake(
       db,
@@ -442,7 +502,7 @@ export async function processAtelierIntake(
         status: "done",
         productId,
         photosCount: photosOnProduct,
-        errorDetail: failedPhotos > 0 ? `${failedPhotos} foto(s) ficaram de fora` : null,
+        errorDetail: details.length > 0 ? details.join("; ") : null,
         processedAt: now(),
       },
       now(),
@@ -460,20 +520,15 @@ export async function processAtelierIntake(
         noteChars: note.length,
         photos: photosOnProduct,
         failedPhotos,
+        notice: "skipped" in notice ? notice.skipped : "sent",
         ms: now().getTime() - startedAt.getTime(),
       },
     });
 
-    await sendToOwner(db, provider, {
-      templateKey: ATELIER_DRAFT_TEMPLATE,
-      vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}` }),
-      dedupeKey: `wa.atelier_draft:${intake.id}`,
-    });
-
     return { created: true, intakeId: intake.id, productId, name, photos: photosOnProduct, failedPhotos };
   } catch (error) {
-    // Erro de verdade (banco, storage): a fila tenta de novo; na última
-    // tentativa a dona fica sabendo em vez de esperar um rascunho que não vem.
+    // Erro de verdade (banco, storage, envio): a fila tenta de novo; na
+    // última tentativa a dona fica sabendo em vez de esperar um rascunho.
     await markIntake(
       db,
       intake.id,

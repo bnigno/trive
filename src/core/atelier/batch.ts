@@ -9,6 +9,8 @@ import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
 export const INTAKE_WINDOW_MS = 15 * 60_000;
 export const INTAKE_MAX_PHOTOS = 3;
 export const INTAKE_GRACE_MS = 45_000;
+/** Foto que chega até isto depois do recado ainda é da mesma chegada. */
+export const INTAKE_LATE_PHOTO_MS = 60_000;
 
 export type IntakeMessage = {
   id: string;
@@ -17,7 +19,7 @@ export type IntakeMessage = {
   body: string;
   mediaUrl: string | null;
   createdAt: Date;
-  /** Já pertence a uma chegada anterior (recado posterior à foto). */
+  /** Já reivindicada por outra chegada. */
   consumed: boolean;
 };
 
@@ -75,10 +77,9 @@ export function noteFromMessage(message: Pick<IntakeMessage, "kind" | "body">): 
 }
 
 /**
- * As fotos do lote fechado por `trigger`: as não usadas dentro da janela,
- * antes ou depois do recado (o respiro da fila deixa a última entrar); a
- * própria foto quando o recado veio como legenda. Passando do máximo,
- * ficam as mais próximas do recado.
+ * As fotos que o recado `trigger` reivindica no ato de abrir a chegada: as
+ * não reivindicadas dentro da janela antes dele (a própria foto quando o
+ * recado veio como legenda). Passando do máximo, ficam as mais recentes.
  */
 export function selectIntakeBatch(
   messages: readonly IntakeMessage[],
@@ -93,12 +94,41 @@ export function selectIntakeBatch(
     (message) =>
       isPhoto(message) &&
       (message.id === trigger.id || !message.consumed) &&
-      Math.abs(message.createdAt.getTime() - at) <= windowMs,
+      message.createdAt.getTime() <= at &&
+      at - message.createdAt.getTime() <= windowMs,
   );
-  const nearest = [...candidates]
-    .sort((a, b) => Math.abs(a.createdAt.getTime() - at) - Math.abs(b.createdAt.getTime() - at))
-    .slice(0, maxPhotos)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const photos = [...candidates]
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .slice(-maxPhotos);
 
-  return { photos: nearest, ...noteFromMessage(trigger) };
+  return { photos, ...noteFromMessage(trigger) };
+}
+
+/**
+ * Fotos que chegaram logo DEPOIS do recado (webhooks fora de ordem) e
+ * ninguém reivindicou: a montagem, que roda após o respiro, as absorve até
+ * completar o máximo.
+ */
+export function selectLatePhotos(
+  messages: readonly IntakeMessage[],
+  trigger: IntakeMessage,
+  alreadyClaimed: number,
+  options: IntakeBatchOptions & { lateMs?: number } = {},
+): IntakeMessage[] {
+  const maxPhotos = options.maxPhotos ?? INTAKE_MAX_PHOTOS;
+  const lateMs = options.lateMs ?? INTAKE_LATE_PHOTO_MS;
+  const at = trigger.createdAt.getTime();
+  const room = Math.max(0, maxPhotos - alreadyClaimed);
+  if (room === 0) return [];
+  return messages
+    .filter(
+      (message) =>
+        isPhoto(message) &&
+        !message.consumed &&
+        message.id !== trigger.id &&
+        message.createdAt.getTime() > at &&
+        message.createdAt.getTime() - at <= lateMs,
+    )
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .slice(0, room);
 }
