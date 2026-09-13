@@ -10,10 +10,14 @@ export type CollectionCanonical = {
 export function collectionCanonical(input: {
   categoria?: string | null;
   q?: string | null;
+  /** Chip de uma Edição de Belém: a página canônica é /belem/<slug>. */
+  edicao?: string | null;
 }): CollectionCanonical {
   const q = (input.q ?? "").trim();
   const categoria = (input.categoria ?? "").trim();
+  const edicao = (input.edicao ?? "").trim();
   if (q !== "") return { canonical: "/produtos", noindex: true };
+  if (edicao !== "") return { canonical: `/belem/${encodeURIComponent(edicao)}`, noindex: true };
   if (categoria !== "") {
     return { canonical: `/produtos?categoria=${encodeURIComponent(categoria)}`, noindex: false };
   }

@@ -17,6 +17,8 @@ import { products } from "@/db/schema";
 import { requireOwner } from "@/services/auth";
 import { formatDropMoment, getDrop, getDropReport } from "@/services/drops";
 
+import { listCityEditions } from "@/services/city-editions";
+
 import { AudiencePreviewForm, CancelDropForm, DropEditForm, DropProductsForm, DropStoryForm, ScheduleDropForm } from "../forms";
 import { PHASE_LABEL } from "../page";
 
@@ -39,7 +41,7 @@ export default async function LancamentoPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const db = getDb();
   const storage = getFileStorage();
-  const drop = await getDrop(db, id);
+  const [drop, editions] = await Promise.all([getDrop(db, id), listCityEditions(db)]);
   if (!drop) notFound();
 
   const editable = drop.status === "draft";
@@ -72,9 +74,10 @@ export default async function LancamentoPage({ params }: { params: Promise<{ id:
         <div className="flex flex-col gap-6">
           <Card title="Dados">
             <DropEditForm
-              drop={{ id: drop.id, name: drop.name, vipWindowHours: drop.vipWindowHours, audienceLimit: drop.audienceLimit, messageOverride: drop.messageOverride }}
+              drop={{ id: drop.id, name: drop.name, vipWindowHours: drop.vipWindowHours, audienceLimit: drop.audienceLimit, messageOverride: drop.messageOverride, cityEditionId: drop.cityEditionId }}
               publishAtLocal={toSpLocalInput(drop.publishAt)}
               editable={editable}
+              editions={editions.filter((e) => e.isActive || e.id === drop.cityEditionId).map((e) => ({ id: e.id, name: e.name }))}
             />
           </Card>
           <Card title={`Peças (${drop.products.length})`}>

@@ -37,6 +37,14 @@ function parseSpDateTime(raw: string, label: string): Date {
   return date;
 }
 
+/** Select da edição: vazio = nenhuma (null); ausente do form = não mexe (undefined). */
+function editionIdFromForm(formData: FormData): string | null | undefined {
+  const raw = formData.get("cityEditionId");
+  if (raw === null) return undefined;
+  const value = String(raw).trim();
+  return value ? z.uuid().parse(value) : null;
+}
+
 function parseIntField(raw: string, label: string, min: number, max: number): number {
   const value = Number(raw.trim());
   if (!Number.isInteger(value) || value < min || value > max) {
@@ -55,6 +63,7 @@ export async function createDropAction(_prev: FormState, formData: FormData): Pr
       vipWindowHours: parseIntField(String(formData.get("vipWindowHours") ?? "24"), "Janela VIP (horas)", 1, 168),
       audienceLimit: parseIntField(String(formData.get("audienceLimit") ?? "60"), "Limite de convidadas", 1, 500),
       messageOverride: String(formData.get("messageOverride") ?? "").trim() || undefined,
+      cityEditionId: editionIdFromForm(formData),
       userId: user.id,
     });
     dropId = result.dropId;
@@ -77,6 +86,7 @@ export async function updateDropAction(_prev: FormState, formData: FormData): Pr
       ...(formData.get("vipWindowHours") ? { vipWindowHours: parseIntField(String(formData.get("vipWindowHours")), "Janela VIP (horas)", 1, 168) } : {}),
       ...(formData.get("audienceLimit") ? { audienceLimit: parseIntField(String(formData.get("audienceLimit")), "Limite de convidadas", 1, 500) } : {}),
       messageOverride: String(formData.get("messageOverride") ?? "").trim(),
+      cityEditionId: editionIdFromForm(formData),
       userId: user.id,
     });
     revalidatePath(`/admin/lancamentos/${dropId}`);

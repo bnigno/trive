@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { products } from "./catalog";
+import { cityEditions } from "./city-editions";
 import { customers } from "./customers";
 
 // Lançamento com janela VIP: as peças ficam escondidas (products.visible_from
@@ -33,12 +34,15 @@ export const drops = pgTable(
     /** Última imagem de story gerada (Storage): atrás do véu e aberta. */
     storyTeaserPath: text("story_teaser_path"),
     storyOpenPath: text("story_open_path"),
+    /** Edição de Belém a que o lançamento pertence (a /estreia mostra a frase dela). */
+    cityEditionId: uuid("city_edition_id").references(() => cityEditions.id, { onDelete: "set null" }),
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("drops_status_publish_at_idx").on(table.status, table.publishAt),
+    index("drops_city_edition_idx").on(table.cityEditionId),
     check(
       "drops_status_check",
       sql`${table.status} IN ('draft', 'scheduled', 'vip_sent', 'published', 'canceled')`,

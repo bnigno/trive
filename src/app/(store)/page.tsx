@@ -12,6 +12,7 @@ import { Monogram, markSrcSet } from "@/components/store/brand/monogram";
 import { Tagline } from "@/components/store/brand/tagline";
 import { Wordmark } from "@/components/store/brand/wordmark";
 import { CategoryCover } from "@/components/store/category-cover";
+import { CityEditionSection } from "@/components/store/city-edition-section";
 import { EditionForYou } from "@/components/store/edition-for-you";
 import { HeroSentinel } from "@/components/store/hero-sentinel";
 import {
@@ -36,6 +37,7 @@ import { getDb } from "@/db/client";
 import { STORE_NAME_DEFAULT, VEIL_SEEN_KEY } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { waMeUrl } from "@/lib/phone";
+import { getCurrentCityEdition } from "@/services/city-editions";
 import { getSettingsMap } from "@/services/settings";
 import {
   listPublicCategories,
@@ -120,8 +122,8 @@ export default async function HomePage() {
     imageSizes: HERO_MARK_SIZES,
   });
 
-  const [products, categories, settings] = await tryOrBuildFallback(
-    [[], [], {}],
+  const [products, categories, settings, edition] = await tryOrBuildFallback(
+    [[], [], {}, null],
     () => {
       const db = getDb();
       return Promise.all([
@@ -133,9 +135,14 @@ export default async function HomePage() {
           "store_tagline",
           "store_manifesto",
         ]),
+        getCurrentCityEdition(db),
       ]);
     },
   );
+  // A edição vigente de Belém: capa, frase e as peças escolhidas pela dona.
+  const editionProducts = edition
+    ? await tryOrBuildFallback([], () => listPublicProducts(getDb(), { editionSlug: edition.slug, limit: 4 }))
+    : [];
   const storeName = asText(settings.store_name) || STORE_NAME_DEFAULT;
   const tagline = asText(settings.store_tagline) || DEFAULT_TAGLINE;
   const manifestoFromPanel = manifestoParagraphs(asText(settings.store_manifesto));
@@ -265,6 +272,9 @@ export default async function HomePage() {
                     </Reveal>
                   </div>
                 </section>
+
+                {/* 2b. Edições de Belém — a vigente (hora > período > sempre), quando existe */}
+                {edition ? <CityEditionSection edition={edition} products={editionProducts} /> : null}
 
                 {/* 3. A Coleção */}
                 <section aria-labelledby="colecao" className="py-12">
