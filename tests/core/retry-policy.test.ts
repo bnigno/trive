@@ -24,6 +24,10 @@ describe("RETRY_POLICIES", () => {
   it("falls back to default for unknown event types", () => {
     expect(getRetryPolicy("unknown.event")).toEqual(RETRY_POLICIES["default"]);
   });
+
+  it("chegada do Ateliê: poucas tentativas e curtas (a dona espera no WhatsApp)", () => {
+    expect(getRetryPolicy("wa.atelier_intake")).toEqual({ maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 });
+  });
 });
 
 describe("nextAttemptDelayMs", () => {

@@ -61,3 +61,15 @@ export function toE164BR(input: string): string | null {
 
   return `+55${ddd}${subscriber}`;
 }
+
+/**
+ * Dois telefones são o mesmo número? Compara em E.164 quando os dois
+ * normalizam (o setting do dono pode vir '(91) 98103-7536'; a Z-API manda
+ * '5591981037536'); senão, pelos dígitos.
+ */
+export function sameE164(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const left = toE164BR(a) ?? `+${a.replace(/\D/g, "")}`;
+  const right = toE164BR(b) ?? `+${b.replace(/\D/g, "")}`;
+  return left.length > 1 && left === right;
+}

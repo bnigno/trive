@@ -20,15 +20,15 @@ import {
 } from "@/core/whatsapp/media";
 import { auditLog, customers, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
-import { routeInboundMessage } from "@/services/wa-inbound";
+import { routeInboundMessage, type InboundRoute } from "@/services/wa-inbound";
 
 export const AUDIO_MAX_BYTES = 25 * 1024 * 1024;
 const TRANSCRIPT_MAX_CHARS = 4000;
 const FORWARD_QUOTE_MAX_CHARS = 280;
 
 export type TranscribeInboundAudioResult =
-  | { transcribed: true; route: "bot_queued" | "forwarded"; chars: number; durationMs: number }
-  | { fallback: "falhou" | "longo" | "vazio"; route: "bot_queued" | "forwarded" }
+  | { transcribed: true; route: InboundRoute; chars: number; durationMs: number }
+  | { fallback: "falhou" | "longo" | "vazio"; route: InboundRoute }
   | { skipped: "ja_processado" | "mensagem_inexistente" | "sem_url" };
 
 const inputSchema = z.object({
@@ -133,6 +133,8 @@ export async function transcribeInboundAudio(
           : `🎤 (áudio) ${body}`,
       ...(row.customerName ? { customerName: row.customerName } : {}),
       now: new Date(),
+      waMessageId: row.id,
+      kind: "audio",
     });
 
     await tx.insert(auditLog).values({

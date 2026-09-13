@@ -149,6 +149,26 @@ data marcada, iguais aos do site. Janela que passou da hora-limite entre a
 cotação e o fechamento: `criar_pedido` recusa e manda cotar de novo. Um
 `presente.entregar_ate` no passado não trava a venda (fica informativo).
 
+## Ateliê pelo WhatsApp: fotos + recado viram rascunho de peça
+
+Do **celular da dona** (o número em **Vendedora & WhatsApp › Conexão**, nunca
+o número da própria linha — esse chega como `fromMe` e é ignorado), mande as
+fotos da peça para o número da maison e, em seguida, um recado com o nome
+(texto ou áudio). Em até ~1 minuto ela recebe "Rascunho pronto · Longo Dunas ·
+3 fotos" com o link da ficha; a peça nasce em rascunho, com as fotos, e nada
+aparece na loja. Regras: cada foto chega num webhook próprio, o lote são as
+fotos dos últimos 15 minutos (máx. 3, as mais próximas do recado); a fila
+espera 45 s antes de montar, porque a última foto às vezes chega depois do
+recado; legenda na foto já vale como recado; **texto solto da dona sem foto
+recente segue o fluxo normal** (ela pode testar a Lia como cliente); áudio
+dela é sempre Ateliê (sem transcrição configurada, pede o recado por texto);
+foto mandada "como documento" não chega — a resposta orienta. Foto expirada
+na Z-API, recado sem foto ou erro na montagem viram a mensagem
+`owner_atelier_help`; o que deu errado fica em **/admin/fila**
+(`wa.atelier_intake`) e na ficha (`atelier_intakes.error_detail`). Interruptor
+**Ateliê pelo WhatsApp** na Central; em produção as chaves entram com
+`scripts/sync-seed.ts --settings atelier_enabled --templates owner_atelier_draft,owner_atelier_help`.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

@@ -239,6 +239,13 @@
       "when": 1789307427840,
       "tag": "0033_ambitious_captain_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1789341405550,
+      "tag": "0034_wonderful_madrox",
+      "breakpoints": true
     }
   ]
 }
