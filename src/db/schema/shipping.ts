@@ -5,6 +5,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -28,6 +29,10 @@ export const shippingRates = pgTable(
     priceCents: bigint("price_cents", { mode: "number" }).notNull(),
     deliveryDaysMin: integer("delivery_days_min").notNull().default(3),
     deliveryDaysMax: integer("delivery_days_max").notNull().default(10),
+    /** 'correios' (prazo em dias) ou 'motoboy' (janelas do dia com hora-limite). */
+    kind: text("kind").notNull().default("correios"),
+    /** Motoboy: [{start:'19:00', end:'21:00', cutoff:'13:00'}]; Correios: []. */
+    deliveryWindows: jsonb("delivery_windows").$type<{ start: string; end: string; cutoff: string }[]>().notNull().default([]),
     isActive: boolean("is_active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -39,6 +44,7 @@ export const shippingRates = pgTable(
   },
   (table) => [
     index("shipping_rates_is_active_idx").on(table.isActive),
+    check("shipping_rates_kind_check", sql`${table.kind} IN ('correios', 'motoboy')`),
     check("shipping_rates_price_cents_check", sql`${table.priceCents} >= 0`),
     check(
       "shipping_rates_cep_range_check",

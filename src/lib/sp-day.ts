@@ -31,6 +31,19 @@ export function isSpDayKey(value: string): boolean {
   return DAY_KEY_PATTERN.test(value);
 }
 
+const hourMinuteFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: SP_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** Minutos desde 00:00 no relógio de parede de São Paulo (0–1439). */
+export function spMinutesOfDay(date: Date): number {
+  const [hh, mm] = hourMinuteFormatter.format(date).split(":").map(Number);
+  return ((hh % 24) * 60) + mm;
+}
+
 /** 'YYYY-MM-DD' do instante, no dia de São Paulo. */
 export function spDayKey(date: Date): string {
   return dayKeyFormatter.format(date);

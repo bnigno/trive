@@ -59,8 +59,27 @@ function parseIntField(raw: string, label: string): number {
   return value;
 }
 
+/** Até 4 janelas do formulário; linha totalmente em branco é ignorada. */
+function windowsFromForm(formData: FormData): { start: string; end: string; cutoff: string }[] {
+  const windows: { start: string; end: string; cutoff: string }[] = [];
+  for (let index = 0; index < 4; index += 1) {
+    const start = String(formData.get(`window_${index}_start`) ?? "").trim();
+    const end = String(formData.get(`window_${index}_end`) ?? "").trim();
+    const cutoff = String(formData.get(`window_${index}_cutoff`) ?? "").trim();
+    if (!start && !end && !cutoff) continue;
+    if (!start || !end || !cutoff) {
+      throw new ServiceError("janela_incompleta", `Janela ${index + 1}: preencha início, fim e “pague até”.`);
+    }
+    windows.push({ start: start.slice(0, 5), end: end.slice(0, 5), cutoff: cutoff.slice(0, 5) });
+  }
+  return windows;
+}
+
 function rateFieldsFromForm(formData: FormData) {
+  const kind = String(formData.get("kind") ?? "correios") === "motoboy" ? ("motoboy" as const) : ("correios" as const);
   return {
+    kind,
+    deliveryWindows: kind === "motoboy" ? windowsFromForm(formData) : [],
     name: String(formData.get("name") ?? ""),
     cepStart: String(formData.get("cepStart") ?? ""),
     cepEnd: String(formData.get("cepEnd") ?? ""),
@@ -76,11 +95,12 @@ function rateFieldsFromForm(formData: FormData) {
       String(formData.get("price") ?? ""),
       "Preço do frete (R$)",
     ),
-    deliveryDaysMin: parseIntField(
+    // Motoboy entrega no dia: os campos de prazo nem aparecem no formulário.
+    deliveryDaysMin: kind === "motoboy" ? 0 : parseIntField(
       String(formData.get("deliveryDaysMin") ?? ""),
       "Prazo mínimo (dias)",
     ),
-    deliveryDaysMax: parseIntField(
+    deliveryDaysMax: kind === "motoboy" ? 0 : parseIntField(
       String(formData.get("deliveryDaysMax") ?? ""),
       "Prazo máximo (dias)",
     ),
@@ -144,6 +164,8 @@ export async function toggleShippingRateAction(formData: FormData): Promise<void
     priceCents: rate.priceCents,
     deliveryDaysMin: rate.deliveryDaysMin,
     deliveryDaysMax: rate.deliveryDaysMax,
+    kind: rate.kind,
+    deliveryWindows: rate.deliveryWindows,
     isActive: !rate.isActive,
     userId: user.id,
   });

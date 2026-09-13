@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
+import { hourLabel } from "@/core/shipping/delivery-windows";
 import { listShippingRates, type ShippingRate } from "@/services/shipping";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -58,7 +59,14 @@ function toFormDefaults(rate: ShippingRate): RateFormDefaults {
     price: centsToInput(rate.priceCents),
     deliveryDaysMin: rate.deliveryDaysMin,
     deliveryDaysMax: rate.deliveryDaysMax,
+    kind: rate.kind,
+    deliveryWindows: rate.deliveryWindows,
   };
+}
+
+/** "9h–12h (até 8h) · 19h–21h (até 13h)" para a tabela. */
+function formatWindows(rate: ShippingRate): string {
+  return rate.deliveryWindows.map((w) => `${hourLabel(w.start)}–${hourLabel(w.end)} (até ${hourLabel(w.cutoff)})`).join(" · ");
 }
 
 async function loadRates(): Promise<ShippingRate[] | null> {
@@ -98,10 +106,10 @@ export default async function FretePage() {
       <Card title="Faixas de frete">
         <div className="flex flex-col gap-5">
           <p className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300">
-            O cliente vê a opção mais barata que cobre o CEP e o peso do
-            pedido. A faixa padrão cobre o Brasil inteiro — crie faixas
-            específicas (ex.: capital) com preço menor e elas vencem por serem
-            mais baratas.
+            A cliente vê todas as faixas que cobrem o CEP e o peso do pedido,
+            da mais barata para a mais cara (motoboy que ainda entrega hoje
+            vem primeiro), e escolhe. A faixa padrão cobre o Brasil inteiro —
+            crie faixas específicas (ex.: Belém por motoboy) com preço menor.
           </p>
 
           {rates.length === 0 ? (
@@ -134,7 +142,14 @@ export default async function FretePage() {
                     <Money cents={rate.priceCents} />
                   </Td>
                   <Td className="whitespace-nowrap">
-                    {formatDeliveryDays(rate.deliveryDaysMin, rate.deliveryDaysMax)}
+                    {rate.kind === "motoboy" ? (
+                      <span>
+                        <span className="font-medium">Motoboy</span>
+                        <span className="block text-xs text-zinc-500">{formatWindows(rate)}</span>
+                      </span>
+                    ) : (
+                      formatDeliveryDays(rate.deliveryDaysMin, rate.deliveryDaysMax)
+                    )}
                   </Td>
                   <Td>
                     {rate.isActive ? (

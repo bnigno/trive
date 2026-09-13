@@ -160,6 +160,9 @@ export default async function PedidosPage({
                 >
                   {order.isGift ? "🎁 " : ""}#{order.orderNumber}
                 </Link>
+                {order.deliveryWindow ? (
+                  <span className="mt-0.5 block text-[11px] text-amber-700 dark:text-amber-400">🛵 {order.deliveryWindow.label}</span>
+                ) : null}
               </Td>
               <Td>
                 <Link

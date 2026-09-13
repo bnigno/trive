@@ -3,6 +3,8 @@
 // SEMPRE o preço atual — e o total final é recalculado em createStoreOrder.
 import type { Metadata } from "next";
 
+import { parseFreteParam } from "@/lib/checkout-options";
+
 import { CheckoutClient } from "./checkout-client";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +26,7 @@ export default async function CheckoutPage({
   return (
     <CheckoutClient
       initialCepDigits={cepDigits}
-      initialRateId={params.frete ?? ""}
+      initialOptionKey={parseFreteParam(params.frete) ?? ""}
       initialCouponCode={couponCode}
     />
   );

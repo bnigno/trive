@@ -463,6 +463,87 @@ describe("createStoreOrder — dinheiro na entrega (cash)", () => {
   });
 });
 
+describe("createStoreOrder — motoboy com janela", () => {
+  const WINDOWS = [
+    { start: "16:00", end: "19:00", cutoff: "13:00" },
+    { start: "19:00", end: "21:00", cutoff: "13:00" },
+  ];
+  const MORNING = new Date("2026-09-18T13:30:00Z"); // 10:30 SP, sexta 18/09
+  const CHOICE = { dayKey: "2026-09-18", start: "19:00", end: "21:00", cutoff: "13:00" };
+
+  async function setupMotoboy() {
+    const { variantId } = await createTestVariant(db, { sku: "CANECA-AZUL", costCents: 1200, onHand: 10, name: "Caneca Azul" });
+    await activatePrice(variantId, 4990);
+    const rate = await createRate({ name: "Motoboy Belém", priceCents: 1500, kind: "motoboy", deliveryWindows: WINDOWS, deliveryDaysMin: 0, deliveryDaysMax: 0 });
+    return { variantId, rate };
+  }
+
+  it("guarda o retrato da janela no pedido e mostra o rótulo datado na página pública", async () => {
+    const { variantId, rate } = await setupMotoboy();
+    const result = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: CHOICE, now: MORNING }),
+    );
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
+    expect(order.deliveryWindow).toEqual({ ...CHOICE, rateName: "Motoboy Belém", label: "sexta 18/09, 19h–21h" });
+    expect(order.shippingCents).toBe(1500);
+
+    const pub = await getPublicOrder(sdb, result.publicToken);
+    expect(pub?.deliveryWindowLabel).toBe("Motoboy Belém — sexta 18/09, 19h–21h");
+  });
+
+  it("sem janela, ou janela que não existe na faixa: DELIVERY_WINDOW_REQUIRED (nada é gravado)", async () => {
+    const { variantId, rate } = await setupMotoboy();
+    const before = await countRows();
+
+    await expect(
+      createStoreOrder(sdb, baseInput(variantId, rate.id, { expectedShippingCents: 1500, now: MORNING })),
+    ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_REQUIRED" });
+    await expect(
+      createStoreOrder(
+        sdb,
+        baseInput(variantId, rate.id, { expectedShippingCents: 1500, now: MORNING, deliveryWindow: { ...CHOICE, start: "20:00" } }),
+      ),
+    ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_REQUIRED" });
+
+    expect(await countRows()).toEqual(before);
+    expect((await getLevel(variantId)).reserved).toBe(0);
+  });
+
+  it("janela de hoje depois da hora-limite (ou de ontem): DELIVERY_WINDOW_EXPIRED; amanhã vale a qualquer hora", async () => {
+    const { variantId, rate } = await setupMotoboy();
+    const afternoon = new Date("2026-09-18T16:00:00Z"); // 13:00 SP em ponto: o limite já passou
+
+    await expect(
+      createStoreOrder(sdb, baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: CHOICE, now: afternoon })),
+    ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_EXPIRED" });
+    await expect(
+      createStoreOrder(
+        sdb,
+        baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-17" }, now: afternoon }),
+      ),
+    ).rejects.toMatchObject({ code: "DELIVERY_WINDOW_EXPIRED" });
+
+    // Meia-noite UTC (21h em SP): "amanhã" em SP continua sendo 19/09.
+    const lateUtc = new Date("2026-09-19T00:00:00Z");
+    const result = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, { expectedShippingCents: 1500, deliveryWindow: { ...CHOICE, dayKey: "2026-09-19" }, now: lateUtc }),
+    );
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
+    expect(order.deliveryWindow?.label).toBe("sábado 19/09, 19h–21h");
+  });
+
+  it("faixa Correios ignora a janela mandada por engano", async () => {
+    const { variantId, rate } = await setupStore();
+    const result = await createStoreOrder(sdb, baseInput(variantId, rate.id, { deliveryWindow: CHOICE, now: MORNING }));
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
+    expect(order.deliveryWindow).toBeNull();
+    expect((await getPublicOrder(sdb, result.publicToken))?.deliveryWindowLabel).toBeNull();
+  });
+});
+
 describe("getPublicOrder", () => {
   it("retorna apenas dados não pessoais (sem nome/telefone/documento/endereço)", async () => {
     const { variantId, rate } = await setupStore();
@@ -495,6 +576,7 @@ describe("getPublicOrder", () => {
         "isGift",
         "giftRecipientName",
         "giftNotePath",
+        "deliveryWindowLabel",
       ].sort(),
     );
     expect(Object.keys(pub!.items[0]).sort()).toEqual(

@@ -21,6 +21,8 @@ import {
   shippingRates,
   stockLevels,
 } from "@/db/schema";
+import { expandDeliveryOptions, type DeliveryOption, type DeliveryWindow, type ShippingKind } from "@/core/shipping/delivery-windows";
+import { parseWindows } from "@/services/shipping";
 
 /**
  * Base estrutural comum a Db (postgres.js), transações e o TestDb (PGlite),
@@ -491,6 +493,9 @@ export interface ShippingQuote {
   priceCents: number;
   deliveryDaysMin: number;
   deliveryDaysMax: number;
+  /** 'correios' (prazo em dias) ou 'motoboy' (janelas do dia). Uma linha por faixa, como sempre. */
+  kind: ShippingKind;
+  deliveryWindows: DeliveryWindow[];
 }
 
 /** Normaliza para 8 dígitos; lança ServiceError (pt-BR) se o CEP for inválido. */
@@ -521,6 +526,8 @@ export async function quoteShipping(
       priceCents: shippingRates.priceCents,
       deliveryDaysMin: shippingRates.deliveryDaysMin,
       deliveryDaysMax: shippingRates.deliveryDaysMax,
+      kind: shippingRates.kind,
+      deliveryWindows: shippingRates.deliveryWindows,
     })
     .from(shippingRates)
     .where(
@@ -540,7 +547,22 @@ export async function quoteShipping(
     priceCents: Number(row.priceCents),
     deliveryDaysMin: Number(row.deliveryDaysMin),
     deliveryDaysMax: Number(row.deliveryDaysMax),
+    kind: (row.kind === "motoboy" ? "motoboy" : "correios") as ShippingKind,
+    deliveryWindows: row.kind === "motoboy" ? parseWindows(row.deliveryWindows) : [],
   }));
+}
+
+/**
+ * As opções que a sacola e o checkout mostram: Correios vira uma; motoboy
+ * vira uma por janela ("hoje, 19h–21h · pague até 13h" antes do limite no
+ * relógio de SP, "amanhã, 19h–21h" depois). `now` injetável.
+ */
+export async function quoteDeliveryOptions(
+  db: ServiceDb,
+  input: QuoteShippingInput & { now?: Date },
+): Promise<DeliveryOption[]> {
+  const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams: input.totalWeightGrams });
+  return expandDeliveryOptions(quotes, input.now ?? new Date());
 }
 
 // ---------------------------------------------------------------------------

@@ -267,6 +267,15 @@ export default async function PedidoDetalhePage({
                   {formatDateTimeSP(order.createdAt)}
                 </span>
               </div>
+              {order.deliveryWindow ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-zinc-500 dark:text-zinc-400">Entrega</span>
+                  <span className="text-right font-medium text-zinc-900 dark:text-zinc-100">
+                    {order.deliveryWindow.rateName} — {order.deliveryWindow.label}
+                    <span className="block text-xs font-normal text-zinc-500">pague até {order.deliveryWindow.cutoff.replace(/^0/, "").replace(":00", "h").replace(":", "h")}</span>
+                  </span>
+                </div>
+              ) : null}
               {order.shippingTrackingCode ? (
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-500 dark:text-zinc-400">

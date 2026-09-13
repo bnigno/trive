@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import {
   Field,
   FormError,
   FormSuccess,
   Input,
+  Select,
   SubmitButton,
 } from "@/components/ui/form";
 import {
@@ -29,11 +30,29 @@ export type RateFormDefaults = {
   price: string;
   deliveryDaysMin: number;
   deliveryDaysMax: number;
+  kind: "correios" | "motoboy";
+  /** Até 4 janelas do motoboy: 'HH:MM'. */
+  deliveryWindows: { start: string; end: string; cutoff: string }[];
 };
 
+const WINDOW_SLOTS = 4;
+const EMPTY_WINDOW = { start: "", end: "", cutoff: "" };
+
 function RateFields({ defaults }: { defaults: RateFormDefaults | null }) {
+  const [kind, setKind] = useState<"correios" | "motoboy">(defaults?.kind ?? "correios");
+  const windows = [...(defaults?.deliveryWindows ?? []), ...Array.from({ length: WINDOW_SLOTS }, () => EMPTY_WINDOW)].slice(0, WINDOW_SLOTS);
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <Field
+        label="Tipo"
+        hint="Correios/transportadora entrega em dias úteis; motoboy entrega no mesmo dia em janelas de horário (com hora-limite para pagar)."
+        className="sm:col-span-2"
+      >
+        <Select name="kind" value={kind} onChange={(event) => setKind(event.target.value === "motoboy" ? "motoboy" : "correios")}>
+          <option value="correios">Correios / transportadora (prazo em dias)</option>
+          <option value="motoboy">Motoboy (janelas de horário, no mesmo dia)</option>
+        </Select>
+      </Field>
       <Field
         label="Nome da faixa"
         hint="Como você identifica esta faixa. Ex.: Brasil inteiro, Capital SP."
@@ -101,32 +120,57 @@ function RateFields({ defaults }: { defaults: RateFormDefaults | null }) {
           placeholder="24,90"
         />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Prazo mínimo (dias)">
-          <Input
-            name="deliveryDaysMin"
-            type="number"
-            min={0}
-            step={1}
-            required
-            defaultValue={
-              defaults ? String(defaults.deliveryDaysMin) : "3"
-            }
-          />
-        </Field>
-        <Field label="Prazo máximo (dias)">
-          <Input
-            name="deliveryDaysMax"
-            type="number"
-            min={0}
-            step={1}
-            required
-            defaultValue={
-              defaults ? String(defaults.deliveryDaysMax) : "10"
-            }
-          />
-        </Field>
-      </div>
+      {kind === "correios" ? (
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Prazo mínimo (dias)">
+            <Input
+              name="deliveryDaysMin"
+              type="number"
+              min={0}
+              step={1}
+              required
+              defaultValue={
+                defaults ? String(defaults.deliveryDaysMin) : "3"
+              }
+            />
+          </Field>
+          <Field label="Prazo máximo (dias)">
+            <Input
+              name="deliveryDaysMax"
+              type="number"
+              min={0}
+              step={1}
+              required
+              defaultValue={
+                defaults ? String(defaults.deliveryDaysMax) : "10"
+              }
+            />
+          </Field>
+        </div>
+      ) : (
+        <div className="sm:col-span-2 flex flex-col gap-2">
+          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Janelas de entrega</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Até 4 janelas. “Pague até” é a hora-limite do pagamento para a peça sair na janela de HOJE; depois disso a cliente vê “amanhã”. Horários no relógio de Belém/Brasília.
+          </p>
+          <div className="grid gap-2">
+            {windows.map((window, index) => (
+              <div key={index} className="grid grid-cols-3 gap-2">
+                <Field label={index === 0 ? "Das" : ""}>
+                  <Input name={`window_${index}_start`} type="time" step={900} defaultValue={window.start} placeholder="19:00" />
+                </Field>
+                <Field label={index === 0 ? "Às" : ""}>
+                  <Input name={`window_${index}_end`} type="time" step={900} defaultValue={window.end} placeholder="21:00" />
+                </Field>
+                <Field label={index === 0 ? "Pague até" : ""}>
+                  <Input name={`window_${index}_cutoff`} type="time" step={900} defaultValue={window.cutoff} placeholder="13:00" />
+                </Field>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">Linha em branco é ignorada. Ex.: 9:00–12:00 pague até 8:00 · 16:00–19:00 pague até 13:00 · 19:00–21:00 pague até 13:00.</p>
+        </div>
+      )}
     </div>
   );
 }

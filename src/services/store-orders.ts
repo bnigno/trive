@@ -37,6 +37,8 @@ import {
   type CouponQuote,
 } from "@/services/coupons";
 import { ServiceError, transitionOrder } from "@/services/orders";
+import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
+import { parseWindows } from "@/services/shipping";
 
 export { ServiceError };
 
@@ -147,6 +149,17 @@ const createStoreOrderSchema = z.object({
   shippingRateId: z.uuid(),
   /** Frete que o cliente VIU no carrinho (em centavos). */
   expectedShippingCents: z.number().int().nonnegative(),
+  /** Motoboy: a janela escolhida ({dayKey, start, end, cutoff}); Correios não manda. */
+  deliveryWindow: z
+    .object({
+      dayKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      start: z.string(),
+      end: z.string(),
+      cutoff: z.string(),
+    })
+    .optional(),
+  /** Relógio injetável (testes da hora-limite). */
+  now: z.date().optional(),
   /** Código de cupom digitado no checkout (opcional; normalizado no serviço). */
   couponCode: z.string().trim().optional(),
   /**
@@ -307,7 +320,7 @@ export async function createStoreOrder(
     // (b) Frete: a opção escolhida deve estar ativa; o valor é RECALCULADO
     // pelo peso total e pelo CEP (faixas da tabela shipping_rates).
     const [chosenRate] = await tx
-      .select({ id: shippingRates.id, name: shippingRates.name, isActive: shippingRates.isActive })
+      .select({ id: shippingRates.id, name: shippingRates.name, isActive: shippingRates.isActive, kind: shippingRates.kind, deliveryWindows: shippingRates.deliveryWindows })
       .from(shippingRates)
       .where(eq(shippingRates.id, parsed.shippingRateId));
     if (!chosenRate || !chosenRate.isActive) {
@@ -315,6 +328,25 @@ export async function createStoreOrder(
         "SHIPPING_RATE_UNAVAILABLE",
         "A opção de frete escolhida não está mais disponível. Escolha outra opção de entrega.",
       );
+    }
+
+    // (b1) Motoboy: a janela tem de existir na faixa e ainda valer AGORA no
+    // relógio de São Paulo (hoje só até a hora-limite). O retrato vai no pedido.
+    const now = parsed.now ?? new Date();
+    let deliveryWindowSnapshot: typeof orders.$inferInsert["deliveryWindow"] = null;
+    if (chosenRate.kind === "motoboy") {
+      const windows = parseWindows(chosenRate.deliveryWindows);
+      const choice = parsed.deliveryWindow;
+      if (!choice || !windowBelongsToRate(choice, windows)) {
+        throw new ServiceError("DELIVERY_WINDOW_REQUIRED", "Escolha um horário de entrega do motoboy.");
+      }
+      if (!isWindowBookable(choice, now)) {
+        throw new ServiceError(
+          "DELIVERY_WINDOW_EXPIRED",
+          `Esse horário já passou da hora-limite (${hourLabel(choice.cutoff)}). Escolha outro horário de entrega.`,
+        );
+      }
+      deliveryWindowSnapshot = { ...choice, rateName: chosenRate.name, label: windowDateLabel(choice) };
     }
 
     const cep = parsed.address.postalCode;
@@ -532,6 +564,7 @@ export async function createStoreOrder(
         shippingCents,
         totalCents: totals.totalCents,
         shippingAddress: addressValues,
+        deliveryWindow: deliveryWindowSnapshot,
         note: "Pedido da loja",
         createdBy: null,
       })
@@ -810,6 +843,8 @@ export interface PublicOrder {
   isGift: boolean;
   giftRecipientName: string | null;
   giftNotePath: string | null;
+  /** Entrega por motoboy: "hoje, 19h–21h" (retrato do fechamento). */
+  deliveryWindowLabel: string | null;
 }
 
 /**
@@ -848,6 +883,7 @@ export async function getPublicOrder(
         isGift: orders.isGift,
         giftRecipientName: orders.giftRecipientName,
         giftNotePath: orders.giftNotePath,
+        deliveryWindow: orders.deliveryWindow,
       })
       .from(orders)
       .where(eq(orders.publicToken, parsedToken.data));
@@ -911,5 +947,6 @@ export async function getPublicOrder(
     isGift: order.isGift,
     giftRecipientName: order.giftRecipientName,
     giftNotePath: order.giftNotePath,
+    deliveryWindowLabel: order.deliveryWindow ? `${order.deliveryWindow.rateName} — ${order.deliveryWindow.label}` : null,
   };
 }

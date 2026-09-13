@@ -551,6 +551,7 @@ export async function listOrders(db: DbOrTx, input: ListOrdersInput = {}) {
       status: orders.status,
       channel: orders.channel,
       isGift: orders.isGift,
+      deliveryWindow: orders.deliveryWindow,
       totalCents: orders.totalCents,
       createdAt: orders.createdAt,
       customerId: orders.customerId,
