@@ -118,9 +118,16 @@ describe("mergeBridgeIntoState", () => {
     // Sacola mudou: a cotação anterior não vale mais.
     expect(merged.lastQuotes).toBeUndefined();
     expect(merged.chosenRateId).toBeUndefined();
-    // A mesma sacola do site duas vezes (toque duplo, ou volta no dia seguinte) não dobra nada.
-    const again = mergeBridgeIntoState(merged, { ...bridge, siteCartId: "s3", code: "AB23" });
+    // A mesma sacola do site duas vezes (toque duplo, ou volta no dia seguinte) não dobra nada —
+    // e, como nada mudou, frete cotado e cupom validados no meio-tempo ficam.
+    const quoted = { ...merged, lastQuotes: [{ rateId: "r2", name: "SEDEX", priceCents: 2990, deliveryDaysMin: 2, deliveryDaysMax: 2 }], chosenRateId: "r2", coupon: { code: "DEZ", discountCents: 1000, at: AT } };
+    const again = mergeBridgeIntoState(quoted, { ...bridge, siteCartId: "s3", code: "AB23" });
     expect(again.cart).toEqual(merged.cart);
+    expect(again.chosenRateId).toBe("r2");
+    expect(again.coupon?.code).toBe("DEZ");
+    // Sacola diferente: cupom validado para a sacola antiga sai (a Lia valida de novo).
+    const changed = mergeBridgeIntoState(quoted, { ...bridge, items: [{ ...bridge.items[1], quantity: 3 }] });
+    expect(changed.coupon).toBeUndefined();
     // Quantidade acima do teto da conversa é cortada, não invalida o caderninho.
     const big = mergeBridgeIntoState({}, { ...bridge, items: [{ ...bridge.items[0], quantity: 24 }] });
     expect(big.cart?.[0].quantidade).toBe(CART_MAX_QTY);

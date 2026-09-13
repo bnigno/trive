@@ -120,7 +120,6 @@ export function cartSet(cart: readonly BotCartItem[] | undefined, item: BotCartI
  */
 export function mergeBridgeIntoState(state: BotState, bridge: BridgeState): BotState {
   let cart = state.cart;
-  let cartChanged = false;
   if (bridge.source === "cart") {
     for (const item of bridge.items ?? []) {
       cart = cartSet(cart, {
@@ -130,14 +129,16 @@ export function mergeBridgeIntoState(state: BotState, bridge: BridgeState): BotS
         variacao: item.variation,
         precoCents: item.priceCents,
       });
-      cartChanged = true;
     }
   }
+  // Só o que de fato mudou invalida frete e cupom: a mesma sacola de novo
+  // (toque duplo) não faz a cliente recotar nem perder o desconto validado.
+  const cartChanged = JSON.stringify(cart ?? []) !== JSON.stringify(state.cart ?? []);
   return {
     ...state,
     bridge,
     ...(cart ? { cart } : {}),
-    ...(cartChanged ? { lastQuotes: undefined, lastQuotedAt: undefined, chosenRateId: undefined } : {}),
+    ...(cartChanged ? { lastQuotes: undefined, lastQuotedAt: undefined, chosenRateId: undefined, coupon: undefined } : {}),
     ...(bridge.source !== "cart" && bridge.productSlug && bridge.productName
       ? { focus: { slug: bridge.productSlug, nome: bridge.productName, cor: null } }
       : {}),
