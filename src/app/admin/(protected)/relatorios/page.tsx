@@ -89,6 +89,12 @@ export default async function ReportsPage({
         actions={
           <div className="flex items-center gap-2 text-sm">
             <Link
+              href="/admin/whatsapp/origens"
+              className="mr-2 rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              De onde vieram
+            </Link>
+            <Link
               href={`/admin/relatorios?m=${shiftMonth(month, -1)}`}
               aria-label="Mês anterior"
               className="rounded-md border border-zinc-300 px-2.5 py-1.5 font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"

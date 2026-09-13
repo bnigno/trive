@@ -3,7 +3,7 @@
 // o link do WhatsApp com a mensagem pronta. A Lia consome a ponte quando a
 // primeira mensagem chega (wa-inbound) e liga ao pedido ao fechar.
 
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
@@ -20,7 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
-import { campaignLinks, products, siteCarts } from "@/db/schema";
+import { campaignLinks, orders, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -274,6 +274,97 @@ export async function bridgeStockLine(db: DbOrTx, bridge: BridgeState): Promise<
     parts.push(`${label}: ${qty === 0 ? "esgotada" : qty === 1 ? "1 disponível" : `${qty} disponíveis`}, SKU ${variant.sku}`);
   }
   return `Estoque agora das peças da ponte: ${parts.join("; ")}`;
+}
+
+export type BridgeFunnelRow = {
+  source: BridgeSource;
+  campaignSlug: string | null;
+  /** "página da peça", "sacola", "rodapé do site", "story «Dunas no story»". */
+  label: string;
+  /** Toques = pontes criadas; conversas = consumidas; pedidos = com pedido; pagos = pedido pago (e a soma). */
+  taps: number;
+  conversations: number;
+  orders: number;
+  paidOrders: number;
+  paidCents: number;
+};
+
+export type BridgeFunnel = {
+  rows: BridgeFunnelRow[];
+  totals: Omit<BridgeFunnelRow, "source" | "campaignSlug" | "label">;
+};
+
+/** Pedido "pago" como nos relatórios: paid_at preenchido E não cancelado/reembolsado (paid_at nunca é apagado). */
+const paidOrder = () => sql`${orders.paidAt} is not null and ${orders.status} not in ('canceled', 'refunded')`;
+
+const funnelAggregates = {
+  taps: sql<number>`count(*)::int`,
+  // Toques = pontes; conversas = conversas DISTINTAS (a mesma cliente pode
+  // mandar dois códigos no mesmo chat) — a mesma régua da Central de links.
+  conversations: sql<number>`count(distinct ${siteCarts.conversationId})::int`,
+  orders: sql<number>`count(distinct ${siteCarts.orderId})::int`,
+  paidOrders: sql<number>`count(distinct case when ${paidOrder()} then ${orders.id} end)::int`,
+  // Dinheiro por PEDIDO distinto (um pedido em duas pontes soma uma vez):
+  // soma dos totais dos ids únicos do grupo.
+  paidCents: sql<number>`coalesce((
+    select sum(t.total_cents) from (
+      select distinct unnest(array_agg(case when ${paidOrder()} then ${orders.id} end)) as id,
+             unnest(array_agg(case when ${paidOrder()} then ${orders.totalCents} end)) as total_cents
+    ) t where t.id is not null
+  ), 0)::int`,
+};
+
+/**
+ * "De onde vieram": por origem (e por link de story), no período [from, to):
+ * quantas tocaram (pontes), quantas conversas chegaram, quantos pedidos e
+ * quantos pagos (regra dos relatórios: cancelado/reembolsado não é venda).
+ * Os totais são calculados sobre o período inteiro (uma conversa com pontes
+ * de duas origens conta uma vez no total). Ordenado por toques.
+ */
+export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date }): Promise<BridgeFunnel> {
+  const period = and(gte(siteCarts.createdAt, input.from), lt(siteCarts.createdAt, input.to));
+  const [rows, [overall]] = await Promise.all([
+    db
+      .select({
+        source: siteCarts.source,
+        campaignSlug: siteCarts.campaignSlug,
+        campaignLabel: campaignLinks.label,
+        ...funnelAggregates,
+      })
+      .from(siteCarts)
+      .leftJoin(campaignLinks, and(eq(siteCarts.source, "campaign"), eq(campaignLinks.slug, siteCarts.campaignSlug)))
+      .leftJoin(orders, eq(orders.id, siteCarts.orderId))
+      .where(period)
+      .groupBy(siteCarts.source, siteCarts.campaignSlug, campaignLinks.label),
+    db
+      .select(funnelAggregates)
+      .from(siteCarts)
+      .leftJoin(orders, eq(orders.id, siteCarts.orderId))
+      .where(period),
+  ]);
+  const list: BridgeFunnelRow[] = rows
+    .map((row) => {
+      const source = row.source as BridgeSource;
+      return {
+        source,
+        campaignSlug: source === "campaign" ? row.campaignSlug : null,
+        label: originLabel(source, row.campaignLabel ?? row.campaignSlug),
+        taps: Number(row.taps),
+        conversations: Number(row.conversations),
+        orders: Number(row.orders),
+        paidOrders: Number(row.paidOrders),
+        paidCents: Number(row.paidCents),
+      };
+    })
+    .sort((a, b) => b.taps - a.taps || a.label.localeCompare(b.label, "pt-BR"));
+  const totals = {
+    taps: Number(overall?.taps ?? 0),
+    conversations: Number(overall?.conversations ?? 0),
+    orders: Number(overall?.orders ?? 0),
+    paidOrders: Number(overall?.paidOrders ?? 0),
+    paidCents: Number(overall?.paidCents ?? 0),
+  };
+  return { rows: list, totals };
 }
 
 /** Quantas pontes há por conversa (o funil e o painel). */
