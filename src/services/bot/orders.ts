@@ -11,7 +11,7 @@ import {
   summarizePurchaseHistory,
   type PurchaseOrderSummary,
 } from "@/core/bot/purchases";
-import { confirmQuoteUnchanged, resolveApprovedQuote, withoutMotoboy } from "@/core/bot/shipping";
+import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { auditLog, customers, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
@@ -20,7 +20,11 @@ import { isValidCpf } from "@/lib/document";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
-import { computeTotalWeightGrams, quoteShipping } from "@/services/store-catalog";
+import { computeTotalWeightGrams, quoteDeliveryOptions } from "@/services/store-catalog";
+
+import { toBotQuote } from "./shipping";
+import { isValidNeededBy, neededByLabel } from "@/core/shipping/needed-by";
+import { spDayKey } from "@/lib/sp-day";
 import {
   createStoreOrder,
   PriceChangedError,
@@ -143,28 +147,51 @@ export async function execCriarPedido(
   // Frete: SÓ a cotação que a cliente viu nesta conversa, para o CEP do
   // endereço de entrega (o caderninho guarda CEP, opções e escolha). Depois,
   // recota com o peso real e confere que a tarifa aprovada não mudou.
+  const now = ctx.now ?? new Date();
   const approved = resolveApprovedQuote({
     quotedCep: state.lastCep,
     quotes: state.lastQuotes,
     quotedAt: state.lastQuotedAt,
-    chosenRateId: state.chosenRateId,
+    chosenRateId: state.chosenOptionKey ?? state.chosenRateId,
     orderCep: identity.postalCode,
     freteInput: input.frete,
+    now,
   });
   if (!approved.ok) return approved;
 
+  // Data marcada: a cliente só pode fechar com a data cujas opções ela viu
+  // ("chega dia…" veio de cotar_frete com entregar_ate). Data velha no
+  // caderninho não trava a venda: some.
+  const todayKey = spDayKey(now);
+  const stateNeededBy = state.neededBy && isValidNeededBy(state.neededBy, todayKey) ? state.neededBy : undefined;
+  if (input.entregar_ate !== undefined) {
+    if (!isValidNeededBy(input.entregar_ate, todayKey)) {
+      return { ok: false, text: `A data marcada ${input.entregar_ate} já passou ou não existe (hoje é ${todayKey}). Confirme com a cliente até que dia ela precisa e chame cotar_frete com entregar_ate.` };
+    }
+    if (input.entregar_ate !== stateNeededBy) {
+      return {
+        ok: false,
+        text: `A data marcada ${input.entregar_ate} não é a da cotação${stateNeededBy ? ` (${stateNeededBy})` : " (a cotação foi sem data)"}: chame cotar_frete com entregar_ate=${input.entregar_ate}, apresente as opções com o "chega dia…" e, com o SIM da cliente, chame criar_pedido de novo.`,
+      };
+    }
+  }
+  const neededBy = input.entregar_ate ?? stateNeededBy;
+  const occasion = input.ocasiao?.trim() || (neededBy ? state.occasion : undefined);
   const totalWeightGrams = computeTotalWeightGrams(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
-  const fresh = withoutMotoboy(
-    await quoteShipping(db, {
-      cep: identity.postalCode,
-      totalWeightGrams,
-    }),
-  );
+  // Recota pelas opções de AGORA (a janela do motoboy some quando passa da hora-limite).
+  const fresh = (await quoteDeliveryOptions(db, { cep: identity.postalCode, totalWeightGrams, now })).map((option) => toBotQuote(option, neededBy, now));
   const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
   if (!confirmed.ok) return confirmed;
   const chosen = confirmed.quote;
+  // A previsão "chega dia…" que a cliente viu ainda vale? (o dia de postagem muda com o relógio)
+  if (neededBy && approved.quote.arrival && chosen.arrival && approved.quote.arrival !== chosen.arrival) {
+    return {
+      ok: false,
+      text: `A previsão de entrega mudou desde a cotação: era "${approved.quote.arrival}", agora é "${chosen.arrival}". Chame cotar_frete de novo com entregar_ate=${neededBy}, apresente as opções atualizadas e, com o SIM da cliente, chame criar_pedido de novo.`,
+    };
+  }
 
   const isCash = input.forma_de_pagamento === "dinheiro_na_entrega";
 
@@ -203,6 +230,8 @@ export async function execCriarPedido(
       })),
       shippingRateId: chosen.rateId,
       expectedShippingCents: chosen.priceCents,
+      ...(chosen.kind === "motoboy" && chosen.window ? { deliveryWindow: chosen.window } : {}),
+      ...(neededBy ? { neededBy, ...(occasion ? { occasion } : {}) } : {}),
       ...(couponCode !== "" ? { couponCode } : {}),
       ...(input.presente
         ? {
@@ -213,7 +242,7 @@ export async function execCriarPedido(
             },
           }
         : {}),
-    });
+    }, { now });
   } catch (error) {
     // Erros de negócio (preço mudou, estoque, cupom, frete) voltam com a
     // mensagem pt-BR do serviço para o modelo explicar ao cliente.
@@ -265,6 +294,9 @@ export async function execCriarPedido(
         lastQuotes: undefined,
         lastQuotedAt: undefined,
         chosenRateId: undefined,
+        chosenOptionKey: undefined,
+        neededBy: undefined,
+        occasion: undefined,
         coupon: undefined,
         // A ponte cumpriu o papel: o próximo turno é outra conversa.
         bridge: undefined,
@@ -309,7 +341,10 @@ export async function execCriarPedido(
       (r) =>
         `• ${r.quantity}× ${r.name} — ${formatCentsBRL(r.unitPriceCents * r.quantity)}`,
     ),
-    `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
+    chosen.kind === "motoboy" && chosen.label
+      ? `Entrega: ${chosen.name} — ${chosen.label} — ${formatCentsBRL(chosen.priceCents)}`
+      : `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
+    ...(neededBy ? [`Data marcada: ${neededByLabel(neededBy, occasion)}${chosen.arrival ? ` — ${chosen.arrival}` : ""}`] : []),
     ...(discountCents > 0 ? [`Desconto: -${formatCentsBRL(discountCents)}`] : []),
     `TOTAL: ${formatCentsBRL(created.totalCents)}`,
     ...(input.presente

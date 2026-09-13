@@ -167,6 +167,27 @@ describe("renderContextNote", () => {
     expect(renderContextNote({})).toBeNull();
   });
 
+  it("a nota diz que dia é hoje (o prefixo cacheado não tem data)", () => {
+    const note = renderContextNote({ displayName: "Maria" }, { now: new Date("2026-09-13T12:00:00Z") });
+    expect(note).toContain("• Hoje: domingo, 13/09/2026 (2026-09-13)");
+  });
+
+  it("caderninho com janela do motoboy escolhida, 'chega dia' e data marcada", () => {
+    const note = renderContextNote({
+      lastCep: "66050000",
+      lastQuotes: [
+        { rateId: "r-moto", name: "Motoboy", priceCents: 1500, deliveryDaysMin: 0, deliveryDaysMax: 0, optionKey: "r-moto:2026-09-18:19:00", kind: "motoboy", label: "hoje, 19h–21h · pague até 13h", arrival: "Chega até sexta 18/09, no dia" },
+        { rateId: "r1", name: "PAC", priceCents: 1990, deliveryDaysMin: 3, deliveryDaysMax: 5, optionKey: "r1", kind: "correios" },
+      ],
+      chosenOptionKey: "r-moto:2026-09-18:19:00",
+      neededBy: "2026-09-18",
+      occasion: "aniversário da mãe",
+    });
+    expect(note).toContain("• Data marcada: precisa até 18/09/2026 (entregar_ate: 2026-09-18) — aniversário da mãe");
+    expect(note).toContain(`Motoboy hoje, 19h–21h · pague até 13h ${formatCentsBRL(1500)} · Chega até sexta 18/09, no dia`);
+    expect(note).toContain("· escolhido: Motoboy hoje, 19h–21h · pague até 13h");
+  });
+
   it("monta o caderninho com nome, anotações, sacola, peça em vista, CEP e frete", () => {
     const note = renderContextNote({
       displayName: "Maria",

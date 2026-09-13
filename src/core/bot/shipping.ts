@@ -10,19 +10,10 @@
 
 import { formatCentsBRL } from "@/lib/money";
 
-import { formatCep, type BotQuote } from "./memory";
+import { formatCep, quoteKey, type BotQuote } from "./memory";
 
 /** Depois disso a cotação é velha demais para fechar: cote de novo. */
 export const QUOTE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Até a vendedora saber apresentar janelas e guardar a escolha (Onda 5, I4),
- * o motoboy fica fora da cotação dela: sem janela o pedido não fecha
- * (DELIVERY_WINDOW_REQUIRED) e "0 dias úteis" seria mentira.
- */
-export function withoutMotoboy<T extends { kind?: string }>(quotes: readonly T[]): T[] {
-  return quotes.filter((quote) => quote.kind !== "motoboy");
-}
 
 export type PickedQuote =
   | { kind: "picked"; quote: BotQuote }
@@ -35,12 +26,32 @@ function formatDays(min: number, max: number): string {
   return min === max ? `${min} dias úteis` : `${min}-${max} dias úteis`;
 }
 
-/** "1. PAC — R$ 19,90 (5-8 dias úteis)" para cada cotação. */
+/**
+ * "1. PAC — R$ 19,90 (5-8 dias úteis)" e, para o motoboy, "2. Motoboy —
+ * hoje, 19h–21h — R$ 15,00 (pague até 13h)". Com data marcada, cada linha
+ * ganha " · chega sexta 16/10, 2 dias antes".
+ */
 export function formatQuoteLines(quotes: readonly BotQuote[]): string[] {
-  return quotes.map(
-    (quote, index) =>
-      `${index + 1}. ${quote.name} — ${formatCentsBRL(quote.priceCents)} (${formatDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})`,
-  );
+  return quotes.map((quote, index) => {
+    const price = formatCentsBRL(quote.priceCents);
+    const arrival = quote.arrival ? ` · ${quote.arrival}` : "";
+    if (quote.kind === "motoboy" && quote.label) {
+      const [range, cutoff] = quote.label.split(" · ");
+      return `${index + 1}. ${quote.name} — ${range} — ${price}${cutoff ? ` (${cutoff})` : ""}${arrival}`;
+    }
+    return `${index + 1}. ${quote.name} — ${price} (${formatDays(quote.deliveryDaysMin, quote.deliveryDaysMax)})${arrival}`;
+  });
+}
+
+function normalizeTerm(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+const FILLER = new Set(["o", "a", "os", "as", "de", "do", "da", "dos", "das", "na", "no", "pra", "para", "pelo", "pela", "com", "quero", "mesmo", "opcao", "janela", "hora", "horario"]);
+
+/** O texto pelo qual a cliente reconhece a opção: nome + janela ("motoboy hoje, 19h–21h · pague até 13h"). */
+function quoteText(quote: BotQuote): string {
+  return normalizeTerm(quote.label ? `${quote.name} ${quote.label}` : quote.name);
 }
 
 /**
@@ -54,27 +65,45 @@ export function formatQuoteLines(quotes: readonly BotQuote[]): string[] {
 export function pickChosenQuote(
   quotes: readonly BotQuote[],
   input: string | undefined,
-  chosenRateId: string | undefined,
+  chosenKey: string | undefined,
 ): PickedQuote {
-  const term = input?.trim().toLowerCase() ?? "";
+  const term = normalizeTerm(input ?? "");
   if (term !== "") {
     const byIndex = /^\d+$/.test(term) ? quotes[Number(term) - 1] : undefined;
     if (byIndex) return { kind: "picked", quote: byIndex };
-    const byName =
-      quotes.find((quote) => quote.name.toLowerCase() === term) ??
-      quotes.find((quote) => quote.name.toLowerCase().includes(term)) ??
-      quotes.find((quote) => term.includes(quote.name.toLowerCase()));
-    return byName ? { kind: "picked", quote: byName } : { kind: "unrecognized", term: input!.trim() };
+    // Texto exato da opção, depois "motoboy 19h" (todas as palavras do termo
+    // aparecem na opção) — só quando isso aponta UMA opção; por fim o nome
+    // solto, que só serve quando não há janelas homônimas.
+    const exact = quotes.find((quote) => quoteText(quote) === term);
+    if (exact) return { kind: "picked", quote: exact };
+    // Palavras que dizem algo ("motoboy", "amanha", "hoje"); números soltos e
+    // "19h" ficam para a regra da hora; artigos e preposições não contam.
+    const words = term.split(" ").filter((word) => word.length > 1 && !/^\d+(?:h(?:\d{2})?)?$/.test(word) && !FILLER.has(word));
+    // "motoboy 19h" / "a das 16h": a hora é o começo da janela — mas o resto
+    // do termo tem de bater ("motoboy amanhã 19h" NÃO é a janela de hoje).
+    const hour = /(?:^|\D)(\d{1,2})h(?:\d{2})?(?:\D|$)/.exec(term);
+    if (hour) {
+      const byStart = quotes.filter((quote) => quote.window && Number(quote.window.start.split(":")[0]) === Number(hour[1]));
+      const narrowed = words.length > 0 ? byStart.filter((quote) => words.every((word) => quoteText(quote).includes(word))) : byStart;
+      if (narrowed.length === 1) return { kind: "picked", quote: narrowed[0] };
+      if (byStart.length > 0) return { kind: "unrecognized", term: input!.trim() };
+    }
+    const byWords = words.length > 0 ? quotes.filter((quote) => words.every((word) => quoteText(quote).includes(word))) : [];
+    if (byWords.length === 1) return { kind: "picked", quote: byWords[0] };
+    const byName = quotes.filter((quote) => normalizeTerm(quote.name).includes(term) || term.includes(normalizeTerm(quote.name)));
+    if (byName.length === 1) return { kind: "picked", quote: byName[0] };
+    if (byName.length > 1 && new Set(byName.map(quoteText)).size === 1) return { kind: "picked", quote: byName[0] };
+    return { kind: "unrecognized", term: input!.trim() };
   }
   if (quotes.length === 1) return { kind: "picked", quote: quotes[0] };
   // Opções com o mesmo nome (duas faixas "PAC") não são uma escolha real:
   // vale a mais barata (cotar_frete ordena por preço).
-  if (quotes.length > 1 && new Set(quotes.map((quote) => quote.name.toLowerCase())).size === 1) {
+  if (quotes.length > 1 && new Set(quotes.map(quoteText)).size === 1) {
     return { kind: "picked", quote: quotes[0] };
   }
-  if (chosenRateId) {
-    const byId = quotes.find((quote) => quote.rateId === chosenRateId);
-    if (byId) return { kind: "picked", quote: byId };
+  if (chosenKey) {
+    const byKey = quotes.find((quote) => quoteKey(quote) === chosenKey);
+    if (byKey) return { kind: "picked", quote: byKey };
   }
   return { kind: "missing" };
 }
@@ -83,6 +112,7 @@ export type ResolveApprovedQuoteInput = {
   /** CEP da última cotar_frete desta conversa (caderninho). */
   quotedCep: string | undefined;
   quotes: readonly BotQuote[] | undefined;
+  /** Chave da opção já escolhida (chosenOptionKey, ou o chosenRateId do estado antigo). */
   chosenRateId: string | undefined;
   /** Quando a cotação foi feita (ISO); ausente em estado antigo = aceita. */
   quotedAt?: string | undefined;
@@ -165,11 +195,14 @@ export function confirmQuoteUnchanged(
       text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
     };
   }
-  const current = fresh.find((quote) => quote.rateId === approved.rateId);
+  const current = fresh.find((quote) => quoteKey(quote) === quoteKey(approved));
   if (!current) {
+    // Só é "passou da hora-limite" quando a faixa ainda existe com outra janela; senão a faixa sumiu mesmo.
+    const sameRateOtherWindow = approved.kind === "motoboy" && fresh.some((quote) => quote.rateId === approved.rateId);
+    const what = sameRateOtherWindow && approved.label ? `A janela do motoboy (${approved.label}) já passou da hora-limite` : `A opção ${approved.label ? `${approved.name} ${approved.label}` : approved.name} não está mais disponível para o CEP ${cep}`;
     return {
       ok: false,
-      text: `A opção ${approved.name} não está mais disponível para o CEP ${cep}. Chame cotar_frete de novo, apresente o resumo atualizado e, com o SIM da cliente, chame criar_pedido de novo.`,
+      text: `${what}. Chame cotar_frete de novo, apresente as opções atuais e, com o SIM da cliente, chame criar_pedido de novo.`,
     };
   }
   if (current.priceCents !== approved.priceCents) {

@@ -254,6 +254,13 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
     expect(schema.safeParse({ ordenar: "x" }).success).toBe(false);
   });
 
+  it("cotar_frete aceita entregar_ate; criar_pedido aceita entregar_ate e ocasiao (formatos)", () => {
+    expect(BOT_TOOL_INPUT_SCHEMAS.cotar_frete.safeParse({ cep: "66050000", entregar_ate: "2026-10-16" }).success).toBe(true);
+    expect(BOT_TOOL_INPUT_SCHEMAS.cotar_frete.safeParse({ cep: "66050000", entregar_ate: "16/10/2026" }).success).toBe(false);
+    expect(BOT_TOOL_INPUT_SCHEMAS.criar_pedido.safeParse({ usar_cadastro_salvo: true, entregar_ate: "2026-10-16", ocasiao: "Círio" }).success).toBe(true);
+    expect(BOT_TOOL_INPUT_SCHEMAS.criar_pedido.safeParse({ usar_cadastro_salvo: true, ocasiao: "x".repeat(61) }).success).toBe(false);
+  });
+
   it("detalhar_produto: exige produto e aceita cor opcional", () => {
     const schema = BOT_TOOL_INPUT_SCHEMAS.detalhar_produto;
     expect(schema.safeParse({ produto: "CAM-P-AZUL" }).success).toBe(true);

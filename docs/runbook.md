@@ -139,6 +139,16 @@ da imagem e a linha `{{edicoes}}` na legenda — template em produção:
 `scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
 (confira antes se a dona editou o texto).
 
+## Lia: janelas do motoboy e data marcada
+
+`cotar_frete` devolve as mesmas opções da sacola do site — Correios por prazo
+e o motoboy uma linha por janela ("hoje, 19h–21h — R$ 15,00 (pague até
+13h)"). Com `entregar_ate`, cada opção diz "chega dia…". A cliente escolhe
+pelo número ou pelo texto ("motoboy 19h") e o pedido nasce com a janela e a
+data marcada, iguais aos do site. Janela que passou da hora-limite entre a
+cotação e o fechamento: `criar_pedido` recusa e manda cotar de novo. Um
+`presente.entregar_ate` no passado não trava a venda (fica informativo).
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).
