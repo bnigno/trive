@@ -117,6 +117,16 @@ Aprovação em lote: em **/admin/precos/pendencias**, as propostas de um mesmo
 recálculo aparecem agrupadas; use **Aprovar lote** / **Rejeitar lote** (com
 motivo).
 
+## Foto não sobe ("This page couldn't load" / "a página não carregou")
+
+Na Vercel, cada requisição aceita no máximo **4,5 MB** — o `bodySizeLimit` do
+Next não manda nisso. Por isso todo upload do painel (fotos da peça, foto do
+pacote, "começar pela foto") é reduzido no navegador (`src/components/admin/shrink-image.ts`,
+lado maior 1600 px, JPEG) e vai **um arquivo por requisição**. Se a tela de erro
+do navegador voltar a aparecer num upload: algum formulário está mandando
+arquivo cru num POST nativo — passe-o pelo `shrinkImage` + envio em JS. HEIC só
+abre no Safari/iPhone; no Chrome do Mac, converta para JPEG antes.
+
 ## Estoque não bate
 
 O **histórico de movimentações é a verdade**. Consultar o histórico do

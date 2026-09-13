@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { shrinkImage } from "@/components/admin/shrink-image";
 import { Card } from "@/components/ui/card";
 import { Button, Field, FormError, Input } from "@/components/ui/form";
 import { formatUsdCents } from "@/core/ai/model-cost";
 import { DRAFT_MAX_PHOTOS, type ProductDraft } from "@/core/catalog/product-draft";
 
 import { draftFromPhotosAction } from "./actions";
-import { shrinkImage } from "./shrink-image";
 
 /** Teto do corpo da server action (8 MB), com folga para o resto do formulário. */
 const DRAFT_TOTAL_BYTES = 6 * 1024 * 1024;
