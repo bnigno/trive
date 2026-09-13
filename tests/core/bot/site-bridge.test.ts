@@ -10,6 +10,7 @@ import {
   buildBridgeMessage,
   extractBridgeCode,
   generateBridgeCode,
+  isBridgeCurrent,
   isBridgeFresh,
   originLabel,
 } from "@/core/bot/site-bridge";
@@ -131,6 +132,16 @@ describe("bridgeContextLine", () => {
     expect(bridgeContextLine({ siteCartId: "x", code: "K7F2", source: "campaign", sourceLabel: "story «verao»", at: "2026-09-10T10:00:00Z" }, now)).toBe(
       "Veio do site há 2 dia(s) (story «verao»)",
     );
+  });
+});
+
+describe("isBridgeCurrent", () => {
+  it("vale por 24 h; depois o caderninho para de falar da ponte", () => {
+    const now = new Date("2026-09-13T15:00:00Z");
+    const bridge = (at: string) => ({ siteCartId: "x", code: "K7F2", source: "pdp" as const, at });
+    expect(isBridgeCurrent(bridge("2026-09-12T15:00:00Z"), now)).toBe(true);
+    expect(isBridgeCurrent(bridge("2026-09-12T14:59:59Z"), now)).toBe(false);
+    expect(isBridgeCurrent(bridge("x"), now)).toBe(false);
   });
 });
 

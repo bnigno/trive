@@ -7,7 +7,7 @@ import Link from "next/link";
 
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { formatCentsBRL } from "@/lib/money";
-import { formatTimeSP } from "./chat-format";
+import { daySeparatorLabel, formatTimeSP } from "./chat-format";
 import { formatPhoneBR } from "./format";
 import type { ChatContext } from "./use-chat-poll";
 
@@ -116,7 +116,7 @@ export function ContextPanel({
               {context.bridge.productLabel ?? "Tocou em “Falar com a Lia”"}
             </p>
             <p className="mt-1 text-[11px] opacity-80">
-              pela {context.bridge.label} · às {formatTimeSP(context.bridge.at)}
+              pela {context.bridge.label} · {daySeparatorLabel(context.bridge.at).toLowerCase()} às {formatTimeSP(context.bridge.at)}
             </p>
           </div>
         </Section>

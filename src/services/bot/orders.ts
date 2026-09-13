@@ -264,6 +264,9 @@ export async function execCriarPedido(
         lastQuotedAt: undefined,
         chosenRateId: undefined,
         coupon: undefined,
+        // A ponte cumpriu o papel: o próximo turno é outra conversa.
+        bridge: undefined,
+        focus: undefined,
         lastOrderNumber: created.orderNumber,
       },
       updatedAt: new Date(),

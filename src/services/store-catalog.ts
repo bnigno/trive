@@ -617,9 +617,13 @@ export type SellableVariant = {
  * vindo da internet não é curinga). SKU é adivinhável, então só peça já
  * visível ao público: a ponte anônima não pode revelar lançamento escondido.
  */
-export async function getSellableVariantBySku(db: ServiceDb, sku: string): Promise<SellableVariant | null> {
+export async function getSellableVariantBySku(
+  db: ServiceDb,
+  sku: string,
+  opts: { includeHidden?: boolean } = {},
+): Promise<SellableVariant | null> {
   const clean = z.string().trim().min(1).parse(sku);
-  return findSellableVariant(db, sql`lower(${productVariants.sku}) = lower(${clean})`, { publicOnly: true });
+  return findSellableVariant(db, sql`lower(${productVariants.sku}) = lower(${clean})`, { publicOnly: !opts.includeHidden });
 }
 
 /**

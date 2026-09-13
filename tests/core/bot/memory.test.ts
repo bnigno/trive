@@ -95,25 +95,36 @@ describe("mergeBridgeIntoState", () => {
     expect(merged.bridge?.code).toBe("K7F2");
   });
 
-  it("sacola do site: funde na sacola da conversa por SKU (soma quantidade, não duplica) e não mexe na peça em vista", () => {
+  it("sacola do site: entra na sacola da conversa com as quantidades do SITE (fixa, não soma) e não mexe na peça em vista", () => {
+    const bridge = {
+      siteCartId: "s2",
+      code: "M3PQ",
+      source: "cart" as const,
+      at: AT,
+      items: [
+        { sku: "VEST-DUNAS-PRET-M", name: "Vestido Dunas", variation: "Preto · M", quantity: 2, priceCents: 28900 },
+        { sku: "TOTE", name: "Bolsa Tote", variation: "", quantity: 1, priceCents: 12900 },
+      ],
+    };
     const merged = mergeBridgeIntoState(
-      { cart: [VESTIDO], focus: { slug: "outra", nome: "Outra", cor: null } },
-      {
-        siteCartId: "s2",
-        code: "M3PQ",
-        source: "cart",
-        at: AT,
-        items: [
-          { sku: "VEST-DUNAS-PRET-M", name: "Vestido Dunas", variation: "Preto · M", quantity: 2, priceCents: 28900 },
-          { sku: "TOTE", name: "Bolsa Tote", variation: "", quantity: 1, priceCents: 12900 },
-        ],
-      },
+      { cart: [VESTIDO], focus: { slug: "outra", nome: "Outra", cor: null }, lastQuotes: [{ rateId: "r1", name: "PAC", priceCents: 1990, deliveryDaysMin: 3, deliveryDaysMax: 5 }], chosenRateId: "r1" },
+      bridge,
     );
     expect(merged.cart).toEqual([
-      { ...VESTIDO, quantidade: 3 },
+      { ...VESTIDO, quantidade: 2 },
       { sku: "TOTE", quantidade: 1, nome: "Bolsa Tote", variacao: "", precoCents: 12900 },
     ]);
     expect(merged.focus).toEqual({ slug: "outra", nome: "Outra", cor: null });
+    // Sacola mudou: a cotação anterior não vale mais.
+    expect(merged.lastQuotes).toBeUndefined();
+    expect(merged.chosenRateId).toBeUndefined();
+    // A mesma sacola do site duas vezes (toque duplo, ou volta no dia seguinte) não dobra nada.
+    const again = mergeBridgeIntoState(merged, { ...bridge, siteCartId: "s3", code: "AB23" });
+    expect(again.cart).toEqual(merged.cart);
+    // Quantidade acima do teto da conversa é cortada, não invalida o caderninho.
+    const big = mergeBridgeIntoState({}, { ...bridge, items: [{ ...bridge.items[0], quantity: 24 }] });
+    expect(big.cart?.[0].quantidade).toBe(CART_MAX_QTY);
+    expect(parseBotState(big)).toMatchObject({ cart: big.cart });
   });
 
   it("rodapé sem peça: só registra a ponte; segunda ponte substitui a primeira", () => {
@@ -137,6 +148,12 @@ describe("renderContextNote", () => {
     const lines = note.split("\n");
     expect(lines[1]).toBe("• Nome no WhatsApp: Ana");
     expect(lines[2]).toBe("• Veio do site agora (página da peça): Longo Dunas (Areia · M)");
+  });
+
+  it("ponte com mais de 24 h some do caderninho (a conversa já é outra); até lá, fica", () => {
+    const bridge = { siteCartId: "x", code: "K7F2", source: "pdp" as const, at: "2026-09-12T15:00:00Z", productName: "Longo Dunas" };
+    expect(renderContextNote({ displayName: "Ana", bridge }, { now: new Date("2026-09-13T14:59:00Z") })).toContain("Veio do site");
+    expect(renderContextNote({ displayName: "Ana", bridge }, { now: new Date("2026-09-13T15:01:00Z") })).not.toContain("Veio do site");
   });
 
   it("null quando não há nada a lembrar", () => {

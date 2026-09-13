@@ -547,7 +547,10 @@ export async function processZapiInbound(
           .update(waConversations)
           .set({ botState: mergeBridgeIntoState(state, bridge), updatedAt: now })
           .where(eq(waConversations.id, conversation.id));
-        forwardText = `${bridgeContextLine(bridge, now)}\n${text}`;
+        // O texto da cliente vem primeiro e inteiro (o encaminhamento corta em
+        // FORWARD_BODY_MAX_CHARS); a linha da ponte fecha, curta.
+        const bridgeLine = bridgeContextLine(bridge, now).slice(0, 90);
+        forwardText = `${text.slice(0, FORWARD_BODY_MAX_CHARS - bridgeLine.length - 1)}\n${bridgeLine}`;
       }
     }
 

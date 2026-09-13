@@ -10,7 +10,7 @@
 import { z } from "zod";
 
 import { formatCentsBRL } from "@/lib/money";
-import { bridgeContextLine, bridgeStateSchema, type BridgeState } from "@/core/bot/site-bridge";
+import { bridgeContextLine, bridgeStateSchema, isBridgeCurrent, type BridgeState } from "@/core/bot/site-bridge";
 
 export const NOTE_MAX_CHARS = 140;
 export const NOTES_MAX = 10;
@@ -98,27 +98,46 @@ export type BotState = z.infer<typeof botStateSchema>;
 export type BotCartItem = z.infer<typeof cartItemSchema>;
 
 /**
+ * Linha da sacola com a quantidade FIXADA (não somada): a sacola do site é a
+ * verdade do que a cliente vê — tocar duas vezes não pode dobrar a peça.
+ */
+export function cartSet(cart: readonly BotCartItem[] | undefined, item: BotCartItem): BotCartItem[] {
+  const atual = [...(cart ?? [])];
+  const indice = atual.findIndex((existente) => existente.sku.toLowerCase() === item.sku.toLowerCase());
+  const linha = { ...item, quantidade: Math.min(CART_MAX_QTY, item.quantidade) };
+  if (indice >= 0) {
+    atual[indice] = { ...atual[indice], ...linha };
+    return atual;
+  }
+  return [...atual, linha].slice(-CART_MAX_ITEMS);
+}
+
+/**
  * A ponte entra no caderninho: a peça vira "peça em vista"; a sacola do
- * site é FUNDIDA na sacola da conversa (uma conversa antiga com sacola não
- * perde o que já tinha; SKU repetido soma quantidade).
+ * site entra na sacola da conversa com as quantidades do site (uma conversa
+ * antiga não perde o que já tinha; a mesma ponte duas vezes não dobra nada).
+ * Sacola mudou → a cotação de frete anterior não vale mais (como adicionar_a_sacola).
  */
 export function mergeBridgeIntoState(state: BotState, bridge: BridgeState): BotState {
   let cart = state.cart;
+  let cartChanged = false;
   if (bridge.source === "cart") {
     for (const item of bridge.items ?? []) {
-      cart = cartAdd(cart, {
+      cart = cartSet(cart, {
         sku: item.sku,
         quantidade: item.quantity,
         nome: item.name,
         variacao: item.variation,
         precoCents: item.priceCents,
       });
+      cartChanged = true;
     }
   }
   return {
     ...state,
     bridge,
     ...(cart ? { cart } : {}),
+    ...(cartChanged ? { lastQuotes: undefined, lastQuotedAt: undefined, chosenRateId: undefined } : {}),
     ...(bridge.source !== "cart" && bridge.productSlug && bridge.productName
       ? { focus: { slug: bridge.productSlug, nome: bridge.productName, cor: null } }
       : {}),
@@ -219,8 +238,9 @@ export function renderContextNote(
   if (state.displayName?.trim()) {
     linhas.push(`• Nome no WhatsApp: ${state.displayName.trim()}`);
   }
-  // A ponte vem antes de tudo: é o motivo de a conversa existir.
-  if (state.bridge) {
+  // A ponte vem antes de tudo: é o motivo de a conversa existir — enquanto é
+  // recente. Dias depois (ou depois do pedido, que a apaga) a conversa é outra.
+  if (state.bridge && isBridgeCurrent(state.bridge, extras.now ?? new Date())) {
     linhas.push(`• ${bridgeContextLine(state.bridge, extras.now ?? new Date())}`);
   }
   if (state.notes && state.notes.length > 0) {

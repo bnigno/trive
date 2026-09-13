@@ -201,5 +201,40 @@ describe("runBotTurn com a ponte do site", () => {
     expect(attributed.conversationId).toBe(conversationId);
     expect(untouched.orderId).toBeNull();
     expect(untouched.conversationId).toBe(otherConversation);
+
+    // O pedido fecha a ponte no caderninho: no turno seguinte a Lia não é mais
+    // mandada "ir direto à peça".
+    const [conv] = await db.select({ botState: schema.waConversations.botState }).from(schema.waConversations).where(eq(schema.waConversations.id, conversationId));
+    const state = conv.botState as Record<string, unknown>;
+    expect(state.bridge).toBeUndefined();
+    expect(state.focus).toBeUndefined();
+    expect(state.lastOrderNumber).toBe(order.orderNumber);
+    await addInbound(conversationId, "obrigada! quando chega?");
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    const note = assistant.inputs[1].history[0].text;
+    expect(note).not.toContain("Veio do site");
+    expect(note).not.toContain("Peça em vista");
+  });
+
+  it("ponte velha (mais de uma semana) não herda o pedido de outra visita", async () => {
+    await dunas(3);
+    const old = await createSiteCart(sdb, { source: "pdp", productSlug: "longo-dunas" });
+    const conversationId = await createConversation();
+    await bridgeInto(conversationId, old.code, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
+    await db.update(schema.siteCarts).set({ consumedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000) }).where(eq(schema.siteCarts.id, old.id));
+    const { markSiteCartOrdered } = await import("@/services/site-carts");
+    expect(await markSiteCartOrdered(sdb, { conversationId, orderId: "00000000-0000-4000-8000-000000000001" })).toBe(false);
+    expect((await db.select().from(schema.siteCarts))[0].orderId).toBeNull();
+  });
+
+  it("convidada VIP: a peça do lançamento escondido aparece com estoque real na linha da ponte, não como 'saiu do catálogo'", async () => {
+    const { productId, variantId } = await dunas(3);
+    const link = await createSiteCart(sdb, { source: "cart", items: [{ variantId, sku: "DUNAS-AREIA-M", quantity: 1 }] });
+    await db.update(schema.products).set({ visibleFrom: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }).where(eq(schema.products.id, productId));
+    const conversationId = await createConversation();
+    await bridgeInto(conversationId, link.code);
+    await addInbound(conversationId, link.message);
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(assistant.inputs[0].history[0].text).toContain("Longo Dunas (Areia · M): 3 disponíveis, SKU DUNAS-AREIA-M");
   });
 });

@@ -215,22 +215,32 @@ export async function consumeSiteCartByCode(
     code,
     source,
     sourceLabel: originLabel(source, row.campaignSlug),
-    at: row.createdAt.toISOString(),
+    // "Veio do site agora" conta da chegada da mensagem: quem tocou ontem e
+    // escreveu hoje também merece a linha de estoque no primeiro turno.
+    at: input.now.toISOString(),
     ...(product ? { productSlug: product.slug, productName: product.name } : first && source !== "cart" ? { productName: first.name } : {}),
     ...(source !== "cart" && first?.variation ? { variation: first.variation } : {}),
     ...(list.length > 0 ? { items: list } : {}),
   };
 }
 
+/** Uma ponte só "converte" em pedido fechado até uma semana depois de chegar. */
+export const BRIDGE_ATTRIBUTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * O pedido fechou nesta conversa: a ponte consumida mais recente (ainda sem
- * pedido) ganha o order_id — é o que o funil conta como venda pela ponte.
+ * pedido, chegada há menos de uma semana) ganha o order_id — é o que o funil
+ * conta como venda pela ponte. Ponte velha não herda pedido de outra visita.
  */
-export async function markSiteCartOrdered(db: DbOrTx, input: { conversationId: string; orderId: string }): Promise<boolean> {
+export async function markSiteCartOrdered(
+  db: DbOrTx,
+  input: { conversationId: string; orderId: string; now?: Date },
+): Promise<boolean> {
+  const since = new Date((input.now ?? new Date()).getTime() - BRIDGE_ATTRIBUTION_MS);
   const [latest] = await db
     .select({ id: siteCarts.id })
     .from(siteCarts)
-    .where(and(eq(siteCarts.conversationId, input.conversationId), isNull(siteCarts.orderId)))
+    .where(and(eq(siteCarts.conversationId, input.conversationId), isNull(siteCarts.orderId), gte(siteCarts.consumedAt, since)))
     .orderBy(desc(siteCarts.consumedAt), desc(siteCarts.createdAt))
     .limit(1);
   if (!latest) return false;
@@ -244,7 +254,9 @@ export async function bridgeStockLine(db: DbOrTx, bridge: BridgeState): Promise<
   if (items.length === 0) return null;
   const parts: string[] = [];
   for (const item of items) {
-    const variant = await getSellableVariantBySku(db, item.sku);
+    // A ponte nasceu de uma sacola válida: a convidada da janela VIP já viu a
+    // peça escondida — a Lia precisa do estoque dela, não de "saiu do catálogo".
+    const variant = await getSellableVariantBySku(db, item.sku, { includeHidden: true });
     const label = `${item.name}${item.variation ? ` (${item.variation})` : ""}`;
     if (!variant) {
       parts.push(`${label}: saiu do catálogo`);

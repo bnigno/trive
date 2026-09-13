@@ -121,7 +121,7 @@ describe("processZapiInbound → ponte do site", () => {
     expect(outbox.map((e) => e.eventType)).toEqual(["wa.bot_turn"]);
   });
 
-  it("sacola do site: as peças entram na sacola da conversa, somando com o que já estava", async () => {
+  it("sacola do site: as peças entram na sacola da conversa com a quantidade do site (a conversa mantém o que só ela tinha)", async () => {
     await dunas();
     const tote = await createTestVariant(db, { sku: "TOTE", costCents: 4000, onHand: 5, name: "Bolsa Tote" });
     await priced(tote.variantId, 12900);
@@ -143,12 +143,31 @@ describe("processZapiInbound → ponte do site", () => {
     if (result.action !== "bot_queued") throw new Error("unreachable");
 
     const { state } = await conversationState(result.conversationId);
+    // A conversa já tinha 1× Dunas; o site diz 1× Dunas + 2× Tote: vale o site (não soma 1+1).
     expect(state.cart).toEqual([
-      { sku: "DUNAS-AREIA-M", quantidade: 2, nome: "Longo Dunas", variacao: "Areia · M", precoCents: 28900 },
+      { sku: "DUNAS-AREIA-M", quantidade: 1, nome: "Longo Dunas", variacao: "Areia · M", precoCents: 28900 },
       { sku: "TOTE", quantidade: 2, nome: "Bolsa Tote", variacao: "", precoCents: 12900 },
     ]);
     expect(state.focus).toBeUndefined();
     expect((state.bridge as { source: string }).source).toBe("cart");
+  });
+
+  it("a mesma sacola do site duas vezes (toque duplo ou volta no dia seguinte) não dobra a peça", async () => {
+    await dunas();
+    const first = await createSiteCart(sdb, { source: "cart", items: [{ sku: "DUNAS-AREIA-M", quantity: 1 }] });
+    const r1 = await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-DUP-1", first.message) });
+    if (r1.action !== "bot_queued") throw new Error("unreachable");
+    expect((await conversationState(r1.conversationId)).state.cart).toEqual([expect.objectContaining({ sku: "DUNAS-AREIA-M", quantidade: 1 })]);
+
+    const tote = await createTestVariant(db, { sku: "TOTE", costCents: 4000, onHand: 5, name: "Bolsa Tote" });
+    await priced(tote.variantId, 12900);
+    const second = await createSiteCart(sdb, { source: "cart", items: [{ sku: "DUNAS-AREIA-M", quantity: 1 }, { sku: "TOTE", quantity: 1 }] });
+    const r2 = await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-DUP-2", second.message) });
+    if (r2.action !== "bot_queued") throw new Error("unreachable");
+    expect((await conversationState(r2.conversationId)).state.cart).toEqual([
+      expect.objectContaining({ sku: "DUNAS-AREIA-M", quantidade: 1 }),
+      expect.objectContaining({ sku: "TOTE", quantidade: 1 }),
+    ]);
   });
 
   it("código inventado, já usado ou velho demais: nada acontece e o turno segue normal", async () => {
@@ -192,8 +211,8 @@ describe("processZapiInbound → ponte do site", () => {
 
     const [forward] = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.owner_forward"));
     const body = (forward.payload as { body: string }).body;
-    expect(body.startsWith("Veio do site agora (página da peça): Longo Dunas (Areia · M)\n")).toBe(true);
-    expect(body).toContain(link.message);
+    // O texto da cliente vem inteiro e primeiro; a linha da ponte fecha.
+    expect(body).toBe(`${link.message}\nVeio do site agora (página da peça): Longo Dunas (Areia · M)`);
 
     const [cart] = await db.select().from(schema.siteCarts);
     expect(cart.consumedAt).not.toBeNull();

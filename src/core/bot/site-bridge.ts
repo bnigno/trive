@@ -152,3 +152,11 @@ export function isBridgeFresh(bridge: BridgeState, now: Date): boolean {
   const at = new Date(bridge.at).getTime();
   return Number.isFinite(at) && now.getTime() - at <= BRIDGE_FRESH_MS;
 }
+
+/** Ponte vigente (até 24 h): depois disso o caderninho para de dizer "Veio do site". */
+export const BRIDGE_CURRENT_MS = 24 * 60 * 60 * 1000;
+
+export function isBridgeCurrent(bridge: BridgeState, now: Date): boolean {
+  const at = new Date(bridge.at).getTime();
+  return Number.isFinite(at) && now.getTime() - at <= BRIDGE_CURRENT_MS;
+}
