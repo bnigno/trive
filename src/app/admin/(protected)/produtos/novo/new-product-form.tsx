@@ -4,6 +4,7 @@ import { CARE_SYMBOL_KEYS, formatCareNotes } from "@/core/catalog/care";
 import { CareFields } from "../care-fields";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
+import { shrinkImage, uploadBlocker } from "@/components/admin/shrink-image";
 import { Card } from "@/components/ui/card";
 import {
   Button,
@@ -78,7 +79,6 @@ const SIZE_SUGGESTIONS = [
  * Uma foto por requisição, e a server action aceita 8 MB por requisição
  * (next.config.ts). 7 MB deixa folga para o resto do formulário.
  */
-const MAX_PHOTO_BYTES = 7 * 1024 * 1024;
 
 /**
  * As duas fases do cadastro. Depois de "creating" dar certo o produto EXISTE:
@@ -182,12 +182,19 @@ export function NewProductForm({
     [grid],
   );
 
-  const handleAddPhotos = useCallback((files: File[]) => {
+  // Foto escolhida à mão é reduzida no navegador como as do rascunho: na
+  // Vercel cada requisição aceita 4,5 MB e a foto crua da câmera passa disso.
+  const handleAddPhotos = useCallback(async (files: File[]) => {
     const rejected: string[] = [];
     const accepted: PhotoItem[] = [];
-    for (const file of files) {
-      if (!file.type.startsWith("image/") || file.size > MAX_PHOTO_BYTES) {
-        rejected.push(`"${file.name}"`);
+    for (const original of files) {
+      if (!original.type.startsWith("image/")) {
+        rejected.push(`"${original.name}"`);
+        continue;
+      }
+      const { file, shrunk } = await shrinkImage(original);
+      if (uploadBlocker(file.size, shrunk)) {
+        rejected.push(`"${original.name}"`);
         continue;
       }
       photoCounter.current += 1;
@@ -204,7 +211,7 @@ export function NewProductForm({
     setPhotoNotice(
       rejected.length === 0
         ? undefined
-        : `Deixei de fora ${rejected.join(", ")} — cada foto precisa ser uma imagem de até 7 MB.`,
+        : `Deixei de fora ${rejected.join(", ")} — precisa ser uma imagem que o navegador consiga abrir (HEIC fora do iPhone não abre: converta para JPEG).`,
     );
   }, []);
 

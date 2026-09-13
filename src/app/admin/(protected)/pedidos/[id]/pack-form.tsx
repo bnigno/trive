@@ -1,11 +1,14 @@
 "use client";
 
 // "Embalei": foto do pacote tirada pelo celular (capture=environment abre a
-// câmera). A action processa, guarda e — se a cliente aceitou avisos — manda
-// a foto pelo WhatsApp. Refazer a foto só troca a imagem (não reenvia).
-import { useActionState, useState } from "react";
+// câmera). A foto é reduzida no navegador antes de subir (teto de 4,5 MB por
+// requisição na Vercel — a foto crua da câmera passa disso) e a action
+// processa, guarda e — se a cliente aceitou avisos — manda a foto pelo
+// WhatsApp. Refazer a foto só troca a imagem (não reenvia).
+import { startTransition, useActionState, useState } from "react";
 
-import { FormError, FormSuccess, SubmitButton } from "@/components/ui/form";
+import { shrinkImage, uploadBlocker } from "@/components/admin/shrink-image";
+import { Button, FormError, FormSuccess } from "@/components/ui/form";
 import { packOrderAction, type FormState } from "./actions";
 
 const initialState: FormState = {};
@@ -23,12 +26,42 @@ export function PackForm({
   /** Mesa de embalagem: sem miniatura grande, botão direto. */
   compact?: boolean;
 }) {
-  const [state, formAction] = useActionState(packOrderAction, initialState);
+  const [state, formAction, pending] = useActionState(packOrderAction, initialState);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [localError, setLocalError] = useState<string | undefined>();
   const hasPhoto = photoUrl !== null;
 
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const original = (form.elements.namedItem("photo") as HTMLInputElement | null)?.files?.[0];
+    if (!original || original.size === 0) {
+      setLocalError("Escolha (ou tire) a foto do pacote antes de enviar.");
+      return;
+    }
+    setLocalError(undefined);
+    setPreparing(true);
+    try {
+      const { file, shrunk } = await shrinkImage(original);
+      const blocker = uploadBlocker(file.size, shrunk);
+      if (blocker) {
+        setLocalError(blocker);
+        return;
+      }
+      const body = new FormData();
+      body.set("orderId", orderId);
+      body.set("photo", file);
+      startTransition(() => formAction(body));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  const busy = preparing || pending;
+
   return (
-    <form action={formAction} className="flex flex-col gap-3">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
       <input type="hidden" name="orderId" value={orderId} />
       {hasPhoto && !compact ? (
         <div className="flex items-start gap-3">
@@ -70,13 +103,13 @@ export function PackForm({
         ) : null}
       </label>
 
-      <FormError message={state.error} />
-      <FormSuccess message={state.success} />
+      <FormError message={localError ?? state.error} />
+      <FormSuccess message={localError ? undefined : state.success} />
 
       <div className="flex flex-wrap items-center gap-3">
-        <SubmitButton pendingLabel="Enviando a foto…">
-          {hasPhoto ? "Trocar a foto" : "Embalei — enviar foto"}
-        </SubmitButton>
+        <Button type="submit" disabled={busy}>
+          {preparing ? "Preparando a foto…" : pending ? "Enviando a foto…" : hasPhoto ? "Trocar a foto" : "Embalei — enviar foto"}
+        </Button>
       </div>
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         Fotografe só o pacote — sem etiqueta, endereço ou nota. A foto vai para
