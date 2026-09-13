@@ -29,11 +29,24 @@ export const metadata: Metadata = {
 async function loadData(): Promise<{ links: CampaignLink[]; products: ProductOption[] } | null> {
   try {
     const db = getDb();
-    const [links, products] = await Promise.all([listCampaignLinks(db), listProducts(db, { status: "active" })]);
+    const [links, products] = await Promise.all([listCampaignLinks(db), listProducts(db)]);
+    // Todas as peças (não só as ativas): a peça de um link nunca some do select —
+    // editar o rótulo não pode apagar a peça por engano. Status e preço no rótulo.
     return {
       links,
       products: products
-        .map((product) => ({ id: product.id, name: product.name }))
+        .map((product) => ({
+          id: product.id,
+          name: product.name,
+          hint:
+            product.status !== "active"
+              ? product.status === "draft"
+                ? "rascunho"
+                : "arquivada"
+              : product.minActivePriceCents === null
+                ? "sem preço"
+                : null,
+        }))
         .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
     };
   } catch {

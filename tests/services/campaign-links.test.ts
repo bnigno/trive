@@ -99,10 +99,28 @@ describe("tapCampaignLink / getCampaignCurtain", () => {
     expect(await db.select().from(schema.siteCarts)).toHaveLength(0);
 
     const curtain = (await getCampaignCurtain(sdb, "dunas"))!;
-    expect(curtain).toMatchObject({ slug: "dunas", label: "Dunas", isActive: false, productSlug: "longo-dunas", sellerName: "Lia" });
+    expect(curtain).toMatchObject({ slug: "dunas", label: "Dunas", isActive: false, productPublicNow: true, sellerName: "Lia" });
     expect(curtain.product?.name).toBe("Longo Dunas");
     expect(curtain.plainWaUrl).toContain("wa.me/5591988887777");
     expect(await getCampaignCurtain(sdb, "nao-existe")).toBeNull();
+
+    // Peça arquivada: a cortina não tem para onde mandar (a página cai — vai para a home).
+    await db.update(schema.products).set({ status: "archived" }).where(eq(schema.products.id, productId));
+    const archived = (await getCampaignCurtain(sdb, "dunas"))!;
+    expect(archived.product).toBeNull();
+    expect(archived.productPublicNow).toBe(false);
+  });
+
+  it("peça ainda escondida (janela VIP) amarrada ao story pela dona: entra na mensagem e na cortina; a página dela não abre ao público", async () => {
+    const { productId } = await dunas();
+    await db.update(schema.products).set({ visibleFrom: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }).where(eq(schema.products.id, productId));
+    await createCampaignLink(sdb, { slug: "futuro", label: "Lançamento", productId, userId: FIXED_USER_ID });
+    const tap = (await tapCampaignLink(sdb, { slug: "futuro" }))!;
+    expect(tap.message).toBe(`Oi Lia, vi o Longo Dunas no story (#${tap.code})`);
+    expect((await db.select().from(schema.siteCarts))[0].productId).toBe(productId);
+    const curtain = (await getCampaignCurtain(sdb, "futuro"))!;
+    expect(curtain.product?.name).toBe("Longo Dunas");
+    expect(curtain.productPublicNow).toBe(false);
   });
 });
 
@@ -128,10 +146,11 @@ describe("listCampaignLinks (funil) e a origem na Lia", () => {
       .returning({ id: schema.orders.id });
     await db.update(schema.siteCarts).set({ orderId: order.id }).where(eq(schema.siteCarts.code, t1.code));
 
+    // Duas pontes consumidas na MESMA conversa contam UMA conversa.
     const links = await listCampaignLinks(sdb);
     expect(links.map((l) => [l.slug, l.taps, l.conversations, l.orders])).toEqual([
       ["vazio", 0, 0, 0],
-      ["dunas", 3, 2, 1],
+      ["dunas", 3, 1, 1],
     ]);
   });
 });

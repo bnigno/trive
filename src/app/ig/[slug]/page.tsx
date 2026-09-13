@@ -8,7 +8,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Monogram } from "@/components/store/brand/monogram";
 import { Wordmark } from "@/components/store/brand/wordmark";
-import { eyebrowNoir } from "@/components/store/styles";
+import { btnGold, eyebrowNoir } from "@/components/store/styles";
 import { getDb } from "@/db/client";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { getCampaignCurtain } from "@/services/campaign-links";
@@ -37,7 +37,8 @@ export default async function CampaignCurtainPage({ params }: Props) {
   const { slug } = await params;
   const [curtain, storeName] = await Promise.all([getCampaignCurtain(getDb(), slug), loadStoreName()]);
   if (!curtain) notFound();
-  if (!curtain.isActive) redirect(curtain.productSlug ? `/produto/${curtain.productSlug}` : "/");
+  // Link desligado: para a peça só se a página dela abre ao público agora; senão, a maison.
+  if (!curtain.isActive) redirect(curtain.product && curtain.productPublicNow ? `/produto/${curtain.product.slug}` : "/");
 
   const product = curtain.product;
   const photo = product?.images[0]?.path ?? null;
@@ -77,7 +78,8 @@ export default async function CampaignCurtainPage({ params }: Props) {
             <h1 className="font-display text-3xl font-normal leading-tight text-ivory-50">{product.name}</h1>
           </div>
         ) : (
-          <h1 className="font-display text-3xl font-normal leading-tight text-ivory-50">{curtain.label}</h1>
+          // O rótulo do link é interno (da dona): a cliente vê a maison.
+          <h1 className="font-display text-3xl font-normal leading-tight text-ivory-50">Fale com a {curtain.sellerName}</h1>
         )}
 
         <p className="text-sm text-ivory-200/80" aria-live="polite">
@@ -85,8 +87,19 @@ export default async function CampaignCurtainPage({ params }: Props) {
         </p>
 
         <CurtainRedirect slug={curtain.slug} sellerName={curtain.sellerName} fallbackUrl={curtain.plainWaUrl} />
+        {curtain.plainWaUrl ? (
+          <noscript>
+            <a href={curtain.plainWaUrl} className={`${btnGold} w-full max-w-xs`}>
+              Abrir o WhatsApp da {curtain.sellerName}
+            </a>
+          </noscript>
+        ) : (
+          <p className="font-store text-sm text-ivory-200/80">
+            O WhatsApp da maison ainda não está configurado — fale com a gente pela coleção.
+          </p>
+        )}
 
-        {product ? (
+        {product && curtain.productPublicNow ? (
           <Link
             href={`/produto/${product.slug}`}
             className="min-h-11 text-xs uppercase tracking-[0.16em] text-gold-300 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-200"

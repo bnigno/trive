@@ -9,7 +9,7 @@ import { createCampaignLinkAction, updateCampaignLinkAction, type FormState } fr
 
 const INITIAL_STATE: FormState = {};
 
-export type ProductOption = { id: string; name: string };
+export type ProductOption = { id: string; name: string; hint: string | null };
 
 function ProductSelect({ name, options, defaultValue }: { name: string; options: ProductOption[]; defaultValue?: string }) {
   return (
@@ -18,6 +18,7 @@ function ProductSelect({ name, options, defaultValue }: { name: string; options:
       {options.map((option) => (
         <option key={option.id} value={option.id}>
           {option.name}
+          {option.hint ? ` — ${option.hint}` : ""}
         </option>
       ))}
     </Select>
@@ -54,7 +55,7 @@ export function CampaignLinkCreateForm({ siteUrl, products }: { siteUrl: string;
         <Field label="Rótulo" hint="Como a origem aparece para você e para a Lia. Ex.: Dunas no story do Círio.">
           <Input name="label" required maxLength={60} placeholder="Dunas no story" autoComplete="off" />
         </Field>
-        <Field label="Peça do story" hint="A cliente chega à Lia já falando dessa peça; o preview do link mostra o cartão dela.">
+        <Field label="Peça do story" hint="A cliente chega à Lia já falando dessa peça; o preview do link mostra o cartão dela. Peça em rascunho ou sem preço entra sem foto/preço na mensagem — publique antes do story.">
           <ProductSelect name="productId" options={products} />
         </Field>
       </div>

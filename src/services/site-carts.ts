@@ -43,6 +43,8 @@ const createSiteCartSchema = z.object({
   source: z.enum(BRIDGE_SOURCES),
   campaignSlug: z.string().trim().min(1).max(60).optional(),
   productSlug: z.string().trim().min(1).max(200).optional(),
+  /** Só no story: a dona amarrou a peça ao link, então ela entra mesmo antes de ficar visível (janela VIP). */
+  includeHiddenProduct: z.boolean().optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
   /**
    * A sacola (source = cart): variação (id, como a sacola guarda; SKU só como
@@ -114,7 +116,9 @@ async function snapshotItems(db: DbOrTx, input: z.output<typeof createSiteCartSc
     }
   }
   if (input.productSlug) {
-    const product = await getPublicProductBySlug(db, input.productSlug);
+    const product = await getPublicProductBySlug(db, input.productSlug, undefined, {
+      includeHidden: input.source === "campaign" && input.includeHiddenProduct === true,
+    });
     if (product) {
       // Sem variação escolhida: a peça, com o primeiro preço como referência.
       const first = product.variants[0];

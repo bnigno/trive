@@ -93,7 +93,8 @@ export async function createCampaignLink(db: DbOrTx, rawInput: CreateCampaignLin
         .values({ slug, label: input.label, productId: input.productId ?? null, createdBy: input.userId })
         .returning();
     } catch (error) {
-      if ((error as { code?: string }).code === "23505") throw taken;
+      const code = (error as { code?: string; cause?: { code?: string } }).code ?? (error as { cause?: { code?: string } }).cause?.code;
+      if (code === "23505") throw taken;
       throw error;
     }
     await tx.insert(auditLog).values({
@@ -147,7 +148,7 @@ export async function listCampaignLinks(db: DbOrTx, filter: { id?: string } = {}
     .select({
       campaignSlug: siteCarts.campaignSlug,
       taps: sql<number>`count(*)::int`.as("taps"),
-      conversations: sql<number>`count(${siteCarts.consumedAt})::int`.as("conversations"),
+      conversations: sql<number>`count(distinct ${siteCarts.conversationId})::int`.as("conversations"),
       orders: sql<number>`count(${siteCarts.orderId})::int`.as("orders"),
     })
     .from(siteCarts)
@@ -185,10 +186,13 @@ export type CampaignCurtain = {
   slug: string;
   label: string;
   isActive: boolean;
-  /** A peça do link, quando existe e está visível ao público agora. */
+  /**
+   * A peça do link (ativa, mesmo que ainda escondida pela janela VIP — a dona
+   * a amarrou ao story de propósito). null quando não há peça ou ela saiu do ar.
+   */
   product: PublicProductDetail | null;
-  /** Slug da peça mesmo fora do ar (para mandar a cliente à página, se o link estiver desligado). */
-  productSlug: string | null;
+  /** A página /produto/[slug] abre para o público agora (para o redirect do link desligado). */
+  productPublicNow: boolean;
   sellerName: string;
   /** O WhatsApp da loja sem código — o botão de emergência da cortina. */
   plainWaUrl: string | null;
@@ -207,14 +211,14 @@ export async function getCampaignCurtain(db: DbOrTx, rawSlug: string): Promise<C
   if (!row) return null;
   const [settings, product] = await Promise.all([
     loadBridgeSettings(db),
-    row.productSlug ? getPublicProductBySlug(db, row.productSlug) : Promise.resolve(null),
+    row.productSlug ? getPublicProductBySlug(db, row.productSlug, undefined, { includeHidden: true }) : Promise.resolve(null),
   ]);
   return {
     slug: row.link.slug,
     label: row.link.label,
     isActive: row.link.isActive,
     product,
-    productSlug: row.productSlug,
+    productPublicNow: product?.publicNow === true,
     sellerName: settings.sellerName,
     plainWaUrl: plainBridgeUrl(settings),
   };
@@ -238,6 +242,6 @@ export async function tapCampaignLink(db: DbOrTx, input: { slug: string }): Prom
   return createSiteCart(db, {
     source: "campaign",
     campaignSlug: slug,
-    ...(row.productSlug ? { productSlug: row.productSlug } : {}),
+    ...(row.productSlug ? { productSlug: row.productSlug, includeHiddenProduct: true } : {}),
   });
 }

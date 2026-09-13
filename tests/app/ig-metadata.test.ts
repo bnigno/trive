@@ -29,7 +29,7 @@ const PRODUCT: PublicProductDetail = {
 };
 
 function curtain(over: Partial<CampaignCurtain> = {}): CampaignCurtain {
-  return { slug: "dunas", label: "Dunas no story", isActive: true, product: PRODUCT, productSlug: "longo-dunas", sellerName: "Lia", plainWaUrl: "https://wa.me/55", ...over };
+  return { slug: "dunas", label: "Dunas no story", isActive: true, product: PRODUCT, productPublicNow: true, sellerName: "Lia", plainWaUrl: "https://wa.me/55", ...over };
 }
 
 describe("curtainMetadata", () => {
@@ -61,7 +61,7 @@ describe("curtainMetadata", () => {
   });
 
   it("sem peça: a maison e a vendedora; link inexistente: só o título de erro", () => {
-    expect(curtainMetadata(curtain({ product: null, productSlug: null }), "TRIVÉ")).toMatchObject({
+    expect(curtainMetadata(curtain({ product: null, productPublicNow: false }), "TRIVÉ")).toMatchObject({
       title: { absolute: "TRIVÉ · Fale com a Lia" },
       description: "Toque para falar com a Lia no WhatsApp da TRIVÉ.",
       robots: { index: false, follow: false },
