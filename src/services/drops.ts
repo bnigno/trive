@@ -22,6 +22,7 @@ import {
   type RankedInvite,
   type TeaserState,
 } from "@/core/drops";
+import { isEditionPast } from "@/core/city-editions";
 import { styleProfileSchema } from "@/core/style/profile";
 import { renderTemplate } from "@/core/whatsapp/render";
 import { isWithinSendWindow, nextSendWindowStart, staggerWithinWindow } from "@/core/whatsapp/send-window";
@@ -31,6 +32,7 @@ import {
   customers,
   dropInvites,
   dropProducts,
+  cityEditions,
   drops,
   dropWaitlist,
   orderItems,
@@ -114,6 +116,8 @@ export interface DropView {
   /** Últimos stories gerados para o Instagram (paths no Storage). */
   storyTeaserPath: string | null;
   storyOpenPath: string | null;
+  /** Edição de Belém do lançamento (null = solto). */
+  cityEditionId: string | null;
   updatedAt: Date;
 }
 
@@ -199,6 +203,7 @@ function toView(
     waitlist,
     storyTeaserPath: row.storyTeaserPath,
     storyOpenPath: row.storyOpenPath,
+    cityEditionId: row.cityEditionId,
     updatedAt: row.updatedAt,
   };
 }
@@ -232,6 +237,8 @@ export interface DropTeaser {
   /** Peças do lançamento com a primeira foto (silhuetas no teaser; fotos na abertura). */
   products: { id: string; name: string; slug: string; imagePath: string | null }[];
   waitlist: { total: number };
+  /** Edição de Belém do lançamento: a frase de abertura vai para /estreia. */
+  edition: { name: string; slug: string; openingLine: string | null } | null;
 }
 
 /**
@@ -259,7 +266,27 @@ export async function getUpcomingDropTeaser(db: DbOrTx, now = new Date()): Promi
   if (!row) return null;
   const state = teaserState(row, now);
   if (state === "hidden") return null;
-  const [productsView, waitlist] = await Promise.all([loadDropProducts(db, row.id), waitlistCounts(db, row.id)]);
+  const [productsView, waitlist, edition] = await Promise.all([
+    loadDropProducts(db, row.id),
+    waitlistCounts(db, row.id),
+    row.cityEditionId
+      ? db
+          .select({
+            name: cityEditions.name,
+            slug: cityEditions.slug,
+            openingLine: cityEditions.openingLine,
+            startsOn: cityEditions.startsOn,
+            endsOn: cityEditions.endsOn,
+            hourStart: cityEditions.hourStart,
+            hourEnd: cityEditions.hourEnd,
+          })
+          .from(cityEditions)
+          .where(and(eq(cityEditions.id, row.cityEditionId), eq(cityEditions.isActive, true)))
+          .limit(1)
+          // Edição já encerrada não empresta mais a frase à estreia.
+          .then((rows) => (rows[0] && !isEditionPast(rows[0], now) ? { name: rows[0].name, slug: rows[0].slug, openingLine: rows[0].openingLine } : null))
+      : Promise.resolve(null),
+  ]);
   return {
     dropId: row.id,
     name: row.name,
@@ -267,6 +294,7 @@ export async function getUpcomingDropTeaser(db: DbOrTx, now = new Date()): Promi
     state,
     products: productsView.map((p) => ({ id: p.id, name: p.name, slug: p.slug, imagePath: p.imagePath })),
     waitlist: { total: waitlist.total },
+    edition,
   };
 }
 
@@ -286,6 +314,7 @@ const createSchema = z.object({
   vipWindowHours: z.number().int().min(1).max(168).default(24),
   audienceLimit: z.number().int().min(1).max(500).optional(),
   messageOverride: z.string().trim().max(600).optional(),
+  cityEditionId: z.uuid().nullable().optional(),
   userId: z.uuid(),
 });
 
@@ -301,6 +330,7 @@ export async function createDrop(db: DbOrTx, input: CreateDropInput): Promise<{ 
       vipWindowHours: parsed.vipWindowHours,
       audienceLimit: parsed.audienceLimit ?? (await audienceLimitDefault(db)),
       messageOverride: parsed.messageOverride || null,
+      cityEditionId: parsed.cityEditionId ?? null,
       createdBy: parsed.userId,
     })
     .returning({ id: drops.id });
@@ -322,6 +352,7 @@ const updateSchema = z.object({
   vipWindowHours: z.number().int().min(1).max(168).optional(),
   audienceLimit: z.number().int().min(1).max(500).optional(),
   messageOverride: z.string().trim().max(600).nullable().optional(),
+  cityEditionId: z.uuid().nullable().optional(),
   userId: z.uuid(),
 });
 
@@ -347,6 +378,7 @@ export async function updateDrop(db: DbOrTx, input: UpdateDropInput): Promise<vo
       ...(parsed.vipWindowHours !== undefined ? { vipWindowHours: parsed.vipWindowHours } : {}),
       ...(parsed.audienceLimit !== undefined ? { audienceLimit: parsed.audienceLimit } : {}),
       ...(parsed.messageOverride !== undefined ? { messageOverride: parsed.messageOverride || null } : {}),
+      ...(parsed.cityEditionId !== undefined ? { cityEditionId: parsed.cityEditionId } : {}),
       updatedAt: new Date(),
     })
     .where(eq(drops.id, parsed.dropId));

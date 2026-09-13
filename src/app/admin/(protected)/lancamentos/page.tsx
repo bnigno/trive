@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
+import { listCityEditions } from "@/services/city-editions";
 import { formatDropMoment, listDrops, type DropView } from "@/services/drops";
 
 import { DropCreateForm } from "./forms";
@@ -28,7 +29,8 @@ export const PHASE_LABEL: Record<DropView["phase"], { label: string; tone: Badge
 
 export default async function LancamentosPage() {
   await requireOwner("lancamentos");
-  const drops = await listDrops(getDb());
+  const db = getDb();
+  const [drops, editions] = await Promise.all([listDrops(db), listCityEditions(db)]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -38,7 +40,7 @@ export default async function LancamentosPage() {
       />
 
       <Card title="Novo lançamento">
-        <DropCreateForm />
+        <DropCreateForm editions={editions.filter((e) => e.isActive).map((e) => ({ id: e.id, name: e.name }))} />
       </Card>
 
       <Card title="Todos os lançamentos">

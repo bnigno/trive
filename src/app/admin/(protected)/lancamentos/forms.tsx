@@ -25,7 +25,25 @@ const WINDOW_OPTIONS = [
   { value: "72", label: "3 dias antes" },
 ];
 
-export function DropCreateForm() {
+export type EditionOption = { id: string; name: string };
+
+function EditionSelect({ options, value, disabled }: { options: EditionOption[]; value: string | null; disabled?: boolean }) {
+  if (options.length === 0) return null;
+  return (
+    <Field label="Edição de Belém (opcional)" hint="A /estreia mostra a frase de abertura da edição; o lançamento aparece ligado a ela.">
+      <Select name="cityEditionId" defaultValue={value ?? ""} disabled={disabled}>
+        <option value="">— Nenhuma —</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.name}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+export function DropCreateForm({ editions = [] }: { editions?: EditionOption[] }) {
   const [state, action] = useActionState(createDropAction, INITIAL);
   return (
     <form action={action} className="flex flex-col gap-4">
@@ -49,6 +67,7 @@ export function DropCreateForm() {
           <Input name="audienceLimit" type="number" min={1} max={500} defaultValue={20} />
         </Field>
       </div>
+      <EditionSelect options={editions} value={null} />
       <Field label="Mensagem do convite (opcional)" hint="Vazio = usa o template “Convite VIP de lançamento”. Pode usar {{nome}}, {{lancamento}}, {{pecas}}, {{prazo}}, {{link}}.">
         <TextArea name="messageOverride" rows={3} maxLength={600} />
       </Field>
@@ -64,10 +83,12 @@ export function DropEditForm({
   drop,
   publishAtLocal,
   editable,
+  editions = [],
 }: {
-  drop: { id: string; name: string; vipWindowHours: number; audienceLimit: number; messageOverride: string | null };
+  drop: { id: string; name: string; vipWindowHours: number; audienceLimit: number; messageOverride: string | null; cityEditionId: string | null };
   publishAtLocal: string;
   editable: boolean;
+  editions?: EditionOption[];
 }) {
   const [state, action] = useActionState(updateDropAction, INITIAL);
   return (
@@ -93,6 +114,7 @@ export function DropEditForm({
           <Input name="audienceLimit" type="number" min={1} max={500} defaultValue={drop.audienceLimit} disabled={!editable} />
         </Field>
       </div>
+      <EditionSelect options={editions} value={drop.cityEditionId} />
       <Field label="Mensagem do convite (opcional)" hint="Vazio = template. Variáveis: {{nome}}, {{lancamento}}, {{pecas}}, {{prazo}}, {{link}}.">
         <TextArea name="messageOverride" rows={3} maxLength={600} defaultValue={drop.messageOverride ?? ""} />
       </Field>

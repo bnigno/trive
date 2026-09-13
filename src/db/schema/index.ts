@@ -19,6 +19,7 @@ export { orderItems, orders, orderStatusHistory } from "./orders";
 export { stockLevels, stockMovements } from "./stock";
 export { stockAlerts, stockHolds } from "./holds";
 export { customerProfiles } from "./style";
+export { cityEditionProducts, cityEditions } from "./city-editions";
 export { dropInvites, dropProducts, drops, dropWaitlist } from "./drops";
 export { suppliers } from "./suppliers";
 export { financialEntries } from "./financial";

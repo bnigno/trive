@@ -120,6 +120,8 @@ const listPublicProductsSchema = z.object({
   includeDescription: z.boolean().default(false),
   /** Deixa um produto de fora (ex.: o próprio, na lista de relacionados). */
   excludeProductId: z.uuid().optional(),
+  /** Só as peças de uma Edição de Belém (slug). */
+  editionSlug: z.string().trim().min(1).optional(),
   limit: z.number().int().positive().max(200).default(60),
 });
 
@@ -160,6 +162,14 @@ export async function listPublicProducts(
   if (parsed.productIds) filters.push(inArray(products.id, parsed.productIds));
   if (parsed.categorySlug) filters.push(eq(categories.slug, parsed.categorySlug));
   if (parsed.excludeProductId) filters.push(ne(products.id, parsed.excludeProductId));
+  if (parsed.editionSlug) {
+    filters.push(
+      sql`exists (
+        select 1 from city_edition_products cep join city_editions ce on ce.id = cep.city_edition_id
+        where cep.product_id = ${products.id} and ce.slug = ${parsed.editionSlug} and ce.is_active = true
+      )`,
+    );
+  }
   if (parsed.q) {
     const pattern = `%${parsed.q}%`;
     filters.push(
@@ -203,7 +213,18 @@ export async function listPublicProducts(
     .leftJoin(categories, eq(categories.id, products.categoryId))
     .where(and(...filters))
     .groupBy(products.id, categories.name)
-    .orderBy(desc(products.createdAt))
+    .orderBy(
+      // Dentro de uma edição, a ordem é a que a dona deu às peças.
+      ...(parsed.editionSlug
+        ? [
+            asc(sql`(
+              select cep.sort_order from city_edition_products cep join city_editions ce on ce.id = cep.city_edition_id
+              where cep.product_id = ${products.id} and ce.slug = ${parsed.editionSlug} limit 1
+            )`),
+          ]
+        : []),
+      desc(products.createdAt),
+    )
     .limit(parsed.limit);
 
   return rows.map((row) => ({

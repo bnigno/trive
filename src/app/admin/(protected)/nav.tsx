@@ -42,6 +42,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Preços", href: "/admin/precos", area: "precos" },
       { label: "Frete", href: "/admin/frete", area: "frete" },
       { label: "Lançamentos", href: "/admin/lancamentos", area: "lancamentos" },
+      { label: "Edições de Belém", href: "/admin/edicoes", area: "edicoes" },
     ],
   },
   {

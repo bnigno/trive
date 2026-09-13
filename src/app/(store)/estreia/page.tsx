@@ -71,6 +71,9 @@ export default async function EstreiaPage() {
         <NoirStage grain className="flex flex-col items-center px-6 py-14 text-center text-ivory-100">
           <p className={eyebrowNoir}>A cortina abriu</p>
           <h1 className="mt-3 font-display text-4xl font-normal text-ivory-50 sm:text-5xl">{teaser.name}</h1>
+          {teaser.edition?.openingLine ? (
+            <p className="mt-3 font-display text-xl text-ivory-200/90 italic">{teaser.edition.openingLine}</p>
+          ) : null}
           <p className="mt-4 max-w-md font-store text-sm text-ivory-200/80">
             As peças estão na maison. Se quiser, a {sellerName} guarda uma por 24 horas — é só chamar.
           </p>
@@ -107,6 +110,9 @@ export default async function EstreiaPage() {
           <Monogram size={44} tone="gold" priority />
           <p className={eyebrowNoir}>Estreia · {publicDropLabel(teaser.publishAt, now)}</p>
           <h1 className="font-display text-4xl font-normal leading-tight text-ivory-50 sm:text-5xl">{teaser.name}</h1>
+          {teaser.edition?.openingLine ? (
+            <p className="font-display text-xl text-ivory-200/90 italic">{teaser.edition.openingLine}</p>
+          ) : null}
         </div>
 
         <Countdown publishAtIso={teaser.publishAt.toISOString()} serverNowIso={now.toISOString()} />

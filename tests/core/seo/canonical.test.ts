@@ -13,4 +13,10 @@ describe("collectionCanonical", () => {
     expect(collectionCanonical({ categoria: "sala nova & cia" }).canonical).toBe("/produtos?categoria=sala%20nova%20%26%20cia");
     expect(collectionCanonical({ q: "   " })).toEqual({ canonical: "/produtos", noindex: false });
   });
+
+  it("chip de Edição de Belém aponta para /belem/<slug> (a página da edição é a que indexa)", () => {
+    expect(collectionCanonical({ edicao: "vestida-para-o-cirio" })).toEqual({ canonical: "/belem/vestida-para-o-cirio", noindex: true });
+    expect(collectionCanonical({ edicao: "cirio", categoria: "vestidos" })).toEqual({ canonical: "/belem/cirio", noindex: true });
+    expect(collectionCanonical({ edicao: "cirio", q: "linho" })).toEqual({ canonical: "/produtos", noindex: true });
+  });
 });

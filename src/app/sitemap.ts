@@ -1,4 +1,4 @@
-// Sitemap da vitrine: home, coleção e salas, cada peça pública, cartela e
+// Sitemap da vitrine: home, coleção e salas, edições de Belém, cada peça pública, cartela e
 // páginas legais. Sacola, checkout, pedido e lançamentos ficam de fora (são
 // privados ou por token).
 import type { MetadataRoute } from "next";
@@ -6,15 +6,17 @@ import type { MetadataRoute } from "next";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { siteUrl } from "@/lib/site-url";
+import { listPublicCityEditions } from "@/services/city-editions";
 import { getUpcomingDropTeaser } from "@/services/drops";
 import { listPublicCategories, listPublicProducts } from "@/services/store-catalog";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrl();
-  const [products, categories, teaser] = await Promise.all([
+  const [products, categories, teaser, editions] = await Promise.all([
     tryOrBuildFallback([], () => listPublicProducts(getDb(), { limit: 200 })),
     tryOrBuildFallback([], () => listPublicCategories(getDb())),
     tryOrBuildFallback(null, () => getUpcomingDropTeaser(getDb())),
+    tryOrBuildFallback([], () => listPublicCityEditions(getDb())),
   ]);
   const now = new Date();
 
@@ -34,6 +36,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: product.updatedAt ?? now,
       changeFrequency: "weekly" as const,
       priority: 0.7,
+    })),
+    // Edições de Belém ativas (a vigente com mais peso).
+    ...editions.map((edition) => ({
+      url: `${base}/belem/${edition.slug}`,
+      lastModified: now,
+      changeFrequency: "daily" as const,
+      priority: edition.isCurrent ? 0.9 : 0.6,
     })),
     // /estreia só entra em cartaz (teaser ou aberta há menos de um dia).
     ...(teaser ? [{ url: `${base}/estreia`, lastModified: now, changeFrequency: "hourly" as const, priority: 0.8 }] : []),

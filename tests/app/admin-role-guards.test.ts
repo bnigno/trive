@@ -38,6 +38,7 @@ const OWNER_ONLY_DIRS: Array<{ dir: string; skipDirs?: string[] }> = [
   { dir: "cupons" },
   { dir: "fila" },
   { dir: "usuarios" },
+  { dir: "edicoes" },
   // Produtos é área compartilhada, mas o cadastro novo pede o custo inicial
   // (e dispara precificação): só o dono cria produto.
   { dir: path.join("produtos", "novo") },

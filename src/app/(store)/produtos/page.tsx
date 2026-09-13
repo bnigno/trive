@@ -24,6 +24,7 @@ import {
 import { cx } from "@/components/ui/cx";
 import { getDb } from "@/db/client";
 import { arrangeEdition } from "@/lib/editorial-rhythm";
+import { getPublicCityEditionBySlug, listPublicCityEditions } from "@/services/city-editions";
 import {
   listPublicCategories,
   listPublicProducts,
@@ -35,7 +36,7 @@ const COLLECTION_DESCRIPTION = "Todas as peças da maison, por sala ou por busca
 export async function generateMetadata({
   searchParams,
 }: {
-  searchParams: Promise<{ categoria?: string; q?: string }>;
+  searchParams: Promise<{ categoria?: string; q?: string; edicao?: string }>;
 }): Promise<Metadata> {
   const params = await searchParams;
   const { canonical, noindex } = collectionCanonical(params);
@@ -45,10 +46,14 @@ export async function generateMetadata({
         (category) => category.slug === categoria,
       )
     : undefined;
-  const title = sala ? `Sala ${sala.name}` : "A coleção";
-  const description = sala
-    ? `As peças da sala ${sala.name} da maison, escolhidas com calma.`
-    : COLLECTION_DESCRIPTION;
+  const edicao = (params.edicao ?? "").trim();
+  const edition = edicao ? await tryOrBuildFallback(null, () => getPublicCityEditionBySlug(getDb(), edicao)) : null;
+  const title = edition ? edition.name : sala ? `Sala ${sala.name}` : "A coleção";
+  const description = edition
+    ? (edition.openingLine ?? `As peças da ${edition.name}, escolhidas para Belém.`)
+    : sala
+      ? `As peças da sala ${sala.name} da maison, escolhidas com calma.`
+      : COLLECTION_DESCRIPTION;
   return {
     title,
     description,
@@ -60,8 +65,9 @@ export async function generateMetadata({
 
 const PAGE_LIMIT = 60;
 
-function chipHref(categoria: string | null, q: string): string {
+function chipHref(categoria: string | null, q: string, edicao: string | null = null): string {
   const params = new URLSearchParams();
+  if (edicao) params.set("edicao", edicao);
   if (categoria) params.set("categoria", categoria);
   if (q) params.set("q", q);
   const query = params.toString();
@@ -80,21 +86,24 @@ function countLabel(count: number): string {
 export default async function ProdutosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ categoria?: string; q?: string }>;
+  searchParams: Promise<{ categoria?: string; q?: string; edicao?: string }>;
 }) {
   const params = await searchParams;
   const categoria = (params.categoria ?? "").trim();
   const q = (params.q ?? "").trim();
+  const edicaoParam = (params.edicao ?? "").trim();
 
   const db = getDb();
-  const [found, categories] = await Promise.all([
-    listPublicProducts(db, {
-      categorySlug: categoria || undefined,
-      q: q || undefined,
-      limit: PAGE_LIMIT,
-    }),
-    listPublicCategories(db),
-  ]);
+  const [categories, editions] = await Promise.all([listPublicCategories(db), listPublicCityEditions(db)]);
+  // Edição desconhecida ou encerrada no link: a coleção inteira, sem filtro fantasma.
+  const activeEdition = editions.find((e) => e.slug === edicaoParam) ?? null;
+  const edicao = activeEdition?.slug ?? "";
+  const found = await listPublicProducts(db, {
+    categorySlug: categoria || undefined,
+    q: q || undefined,
+    editionSlug: edicao || undefined,
+    limit: PAGE_LIMIT,
+  });
 
   // As capas do primeiro ciclo ganham peças com foto; a primeira delas
   // carrega com prioridade quando está acima da dobra (índice 0 ou 1).
@@ -107,16 +116,18 @@ export default async function ProdutosPage({
   const count = countLabel(products.length);
   const eyebrowText = isSearch
     ? `Busca · ${count}`
-    : activeCategory
-      ? `Sala · ${count}`
-      : `A edição · ${count}`;
+    : activeEdition
+      ? `Edições de Belém · ${count}`
+      : activeCategory
+        ? `Sala · ${count}`
+        : `A edição · ${count}`;
   const title = isSearch
     ? `Resultados para “${q}”`
-    : (activeCategory?.name ?? "A coleção");
+    : (activeEdition?.name ?? activeCategory?.name ?? "A coleção");
   // A fita só se desenha na capa da edição inteira: nas salas e buscas a
   // página remonta a cada clique e a animação viraria tique.
-  const ribbonVariant = !categoria && !isSearch ? "enter" : "static";
-  const showCover = Boolean(activeCategory?.coverPath) && !isSearch;
+  const ribbonVariant = !categoria && !isSearch && !activeEdition ? "enter" : "static";
+  const showCover = Boolean(activeCategory?.coverPath) && !isSearch && !activeEdition;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -144,6 +155,14 @@ export default async function ProdutosPage({
             {title}
           </h1>
           <Ribbon variant={ribbonVariant} size="sm" />
+          {activeEdition ? (
+            <p className="max-w-prose font-store text-sm text-ink-700">
+              {activeEdition.openingLine ? <span className="font-display text-lg text-espresso-900">{activeEdition.openingLine} — </span> : null}
+              <Link href={`/belem/${activeEdition.slug}`} className="underline decoration-gold-500 underline-offset-4 hover:text-gold-800">
+                a página da edição
+              </Link>
+            </p>
+          ) : null}
           {isSearch ? (
             <Link
               href={chipHref(categoria || null, "")}
@@ -191,6 +210,7 @@ export default async function ProdutosPage({
               {categoria ? (
                 <input type="hidden" name="categoria" value={categoria} />
               ) : null}
+              {edicao ? <input type="hidden" name="edicao" value={edicao} /> : null}
             </div>
             <button type="submit" className={btnSmallDark}>
               Buscar
@@ -210,20 +230,32 @@ export default async function ProdutosPage({
               <RailScroll>
                 <Link
                   href={chipHref(null, q)}
-                  className={cx(chip, categoria ? chipIdle : chipActive)}
-                  aria-current={categoria ? undefined : "page"}
+                  className={cx(chip, categoria || edicao ? chipIdle : chipActive)}
+                  aria-current={categoria || edicao ? undefined : "page"}
                 >
                   Todas
                 </Link>
+                {/* Edições de Belém: a vigente vem primeiro, com a marca da cidade. */}
+                {editions.map((edition) => (
+                  <Link
+                    key={edition.id}
+                    href={chipHref(null, q, edition.slug)}
+                    className={cx(chip, edition.slug === edicao ? chipActive : chipIdle, edition.isCurrent ? "text-gold-800" : "")}
+                    aria-current={edition.slug === edicao ? "page" : undefined}
+                  >
+                    {edition.isCurrent ? "✦ " : ""}
+                    {edition.name}
+                  </Link>
+                ))}
                 {categories.map((category) => (
                   <Link
                     key={category.id}
                     href={chipHref(category.slug, q)}
                     className={cx(
                       chip,
-                      category.slug === categoria ? chipActive : chipIdle,
+                      category.slug === categoria && !edicao ? chipActive : chipIdle,
                     )}
-                    aria-current={category.slug === categoria ? "page" : undefined}
+                    aria-current={category.slug === categoria && !edicao ? "page" : undefined}
                   >
                     {category.name}
                   </Link>
@@ -242,7 +274,9 @@ export default async function ProdutosPage({
             title={
               isSearch
                 ? "Nenhuma peça atende a essa busca"
-                : "Esta sala está sendo arrumada"
+                : activeEdition
+                  ? "As peças desta edição ainda estão chegando"
+                  : "Esta sala está sendo arrumada"
             }
             hint={
               isSearch
