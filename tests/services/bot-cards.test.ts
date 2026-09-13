@@ -33,7 +33,7 @@ async function webp(color: string, width = 900, height = 1200): Promise<Buffer> 
 const render = vi.fn(async (data: CardData) => {
   // PNG pequeno; o que importa é que chegou o CardData montado.
   const items =
-    data.kind === "catalog"
+    data.kind === "catalog" || data.kind === "drop_story"
       ? data.items
       : data.kind === "look"
         ? [data.hero, ...data.complements]

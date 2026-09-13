@@ -34,7 +34,8 @@ export interface CardProductRef {
 }
 
 export interface PublishBotCardInput {
-  kind: CardData["kind"];
+  /** O story do lançamento (drop_story) tem serviço próprio (drop-story.ts). */
+  kind: Exclude<CardData["kind"], "drop_story">;
   storeName: string;
   eyebrow: string;
   title: string;
@@ -105,10 +106,16 @@ export class PhotoUnavailableError extends Error {
   }
 }
 
-async function loadPhoto(
+/**
+ * A foto da peça pronta para o cartão: JPEG (o Satori não lê WebP) recortada
+ * na moldura em 2×, em data URL. `blur` desfoca (o story "atrás do véu" —
+ * o Satori não tem filter: blur). Lança PhotoUnavailableError se não abrir.
+ */
+export async function loadCardPhotoDataUrl(
   storage: FileStorage,
   imagePath: string,
   frame: { width: number; height: number },
+  opts: { blur?: number } = {},
 ): Promise<string> {
   try {
     let file: { data: Buffer };
@@ -117,16 +124,16 @@ async function loadPhoto(
     } catch {
       file = await storage.download(imagePath);
     }
-    const jpeg = await sharp(file.data)
+    let pipeline = sharp(file.data)
       .rotate()
       .resize({
         width: frame.width * PHOTO_SCALE,
         height: frame.height * PHOTO_SCALE,
         fit: "cover",
         position: "attention",
-      })
-      .jpeg({ quality: 82 })
-      .toBuffer();
+      });
+    if (opts.blur && opts.blur > 0) pipeline = pipeline.blur(opts.blur).modulate({ saturation: 0.85 });
+    const jpeg = await pipeline.jpeg({ quality: 82 }).toBuffer();
     return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
   } catch (error) {
     throw new PhotoUnavailableError(imagePath, error);
@@ -151,7 +158,7 @@ async function buildCardData(storage: FileStorage, input: PublishBotCardInput): 
     slug: ref.slug,
     name: ref.name,
     priceLabel: ref.priceLabel,
-    imageDataUrl: await loadPhoto(storage, ref.imagePath, cardFrameSize(input.kind, role, input.items.length)),
+    imageDataUrl: await loadCardPhotoDataUrl(storage, ref.imagePath, cardFrameSize(input.kind, role, input.items.length)),
   });
   if (input.kind === "catalog") {
     const items = await Promise.all(input.items.map((ref) => toItem(ref, "item")));

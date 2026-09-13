@@ -53,11 +53,42 @@ export interface StoryCardData {
   hero: CardItem;
 }
 
-export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData;
+/**
+ * O story do lançamento (9:16): "ESTREIA · SÁBADO, 20H", até três peças —
+ * atrás do véu (silhuetas desfocadas, sem preço) ou abertas (foto e preço) —
+ * e o endereço da estreia. Vai para o WhatsApp da dona, que posta.
+ */
+export interface DropStoryCardData {
+  kind: "drop_story";
+  variant: "teaser" | "open";
+  storeName: string;
+  eyebrow: string;
+  title: string;
+  /** "A cortina abre sábado, às 20h" / "A cortina abriu". */
+  caption: string;
+  /** Peças (1–3). No teaser, imageDataUrl já vem desfocado e priceLabel vazio. */
+  items: CardItem[];
+  /** "trivemaison.com.br/estreia" — onde entrar na lista ou ver as peças. */
+  siteLine: string;
+}
 
-/** Tela de cada formato, em px. O WhatsApp usa 4:5; o story é 9:16. */
+export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData | DropStoryCardData;
+
+/** Tela de cada formato, em px. O WhatsApp usa 4:5; os stories são 9:16. */
 export function cardDimensions(kind: CardData["kind"]): { width: number; height: number } {
-  return kind === "story" ? { width: 1080, height: 1920 } : { width: 1080, height: 1350 };
+  return kind === "story" || kind === "drop_story" ? { width: 1080, height: 1920 } : { width: 1080, height: 1350 };
+}
+
+export const DROP_STORY_MAX_ITEMS = 3;
+
+/** "ESTREIA · SÁBADO, 20H" (a faixa põe em maiúsculas; aqui só o miolo). */
+export function dropStoryEyebrow(dateLabel: string): string {
+  return `ESTREIA · ${dateLabel}`.toUpperCase().slice(0, 60);
+}
+
+/** A frase sob o título, por fase. */
+export function dropStoryCaption(variant: DropStoryCardData["variant"], dateLabel: string): string {
+  return variant === "open" ? "A cortina abriu." : `A cortina abre ${dateLabel}.`;
 }
 
 const COUNT_WORDS = ["", "Uma peça", "Duas peças", "Três peças"] as const;
@@ -105,6 +136,13 @@ export function cardFrameSize(
   // o título, o nome/preço da moldura e o rodapé — senão a arte sai cortada.
   if (kind === "post") return { width: 540, height: 720 };
   if (kind === "story") return { width: 900, height: 1200 };
+  // Story do lançamento: uma peça grande, ou duas/três lado a lado, com
+  // respiro para a faixa, o título, a frase e o endereço da estreia.
+  if (kind === "drop_story") {
+    if (count >= 3) return { width: 330, height: 440 };
+    if (count === 2) return { width: 470, height: 627 };
+    return { width: 660, height: 880 };
+  }
   if (count >= 3) return { width: 310, height: 413 };
   if (count === 2) return { width: 440, height: 587 };
   return { width: 600, height: 800 };

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { cardDimensions, cardFrameSize, catalogCardEyebrow, catalogCardTitle, lookCardTitle } from "@/core/cards/types";
+import {
+  cardDimensions,
+  cardFrameSize,
+  catalogCardEyebrow,
+  catalogCardTitle,
+  DROP_STORY_MAX_ITEMS,
+  dropStoryCaption,
+  dropStoryEyebrow,
+  lookCardTitle,
+} from "@/core/cards/types";
 
 describe("cartão editorial — títulos e molduras", () => {
   it("título conta as peças por extenso e nunca passa de três", () => {
@@ -56,5 +65,27 @@ describe("cardDimensions / cardFrameSize dos formatos novos", () => {
     // 3:4 em ambos (é a proporção da foto recortada).
     expect(Math.round((post.height / post.width) * 100) / 100).toBe(1.33);
     expect(Math.round((story.height / story.width) * 100) / 100).toBe(1.33);
+  });
+});
+
+describe("story do lançamento (drop_story)", () => {
+  it("é 9:16, cabe 1–3 peças em molduras 3:4 que encolhem com a quantidade", () => {
+    expect(cardDimensions("drop_story")).toEqual({ width: 1080, height: 1920 });
+    const one = cardFrameSize("drop_story", "item", 1);
+    const two = cardFrameSize("drop_story", "item", 2);
+    const three = cardFrameSize("drop_story", "item", 3);
+    expect(one.width).toBeGreaterThan(two.width);
+    expect(two.width).toBeGreaterThan(three.width);
+    // Duas ou três lado a lado cabem na largura com os vãos.
+    expect(two.width * 2 + 40).toBeLessThan(1080);
+    expect(three.width * 3 + 60).toBeLessThan(1080);
+    for (const size of [one, two, three]) expect(Math.round((size.height / size.width) * 100) / 100).toBe(1.33);
+    expect(DROP_STORY_MAX_ITEMS).toBe(3);
+  });
+
+  it("eyebrow e frase por fase", () => {
+    expect(dropStoryEyebrow("sábado, 20h")).toBe("ESTREIA · SÁBADO, 20H");
+    expect(dropStoryCaption("teaser", "sábado, 20h")).toBe("A cortina abre sábado, 20h.");
+    expect(dropStoryCaption("open", "hoje, 20h")).toBe("A cortina abriu.");
   });
 });

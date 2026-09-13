@@ -77,18 +77,20 @@ function Frame({
           {clampName(item.name, width >= 500 ? 40 : 26)}
         </div>
       ) : null}
-      <div
-        style={{
-          marginTop: 6,
-          fontFamily: SANS,
-          fontWeight: 500,
-          fontSize: priceSize,
-          letterSpacing: 1.5,
-          color: C.gold800,
-        }}
-      >
-        {item.priceLabel}
-      </div>
+      {item.priceLabel ? (
+        <div
+          style={{
+            marginTop: 6,
+            fontFamily: SANS,
+            fontWeight: 500,
+            fontSize: priceSize,
+            letterSpacing: 1.5,
+            color: C.gold800,
+          }}
+        >
+          {item.priceLabel}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -172,6 +174,7 @@ function Footer({ storeName, line }: { storeName: string; line: string }) {
 function Card({ data, lockup }: { data: CardData; lockup: string }) {
   const { width, height } = cardDimensions(data.kind);
   const isPost = data.kind === "post" || data.kind === "story";
+  const isDropStory = data.kind === "drop_story";
   return (
     <div
       style={{
@@ -197,7 +200,66 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
         }}
       >
       <Title text={data.title} />
-      {data.kind === "post" || data.kind === "story" ? (
+      {data.kind === "drop_story" ? (
+        // Satori: um bloco de verdade (fragment solto some do layout).
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 40, width }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              fontFamily: SERIF,
+              fontStyle: "italic",
+              fontSize: 40,
+              lineHeight: 1.2,
+              color: C.ink700,
+              textAlign: "center",
+              padding: "0 80px",
+            }}
+          >
+            {normalizeReceiptText(data.caption)}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "flex-start",
+              gap: data.items.length >= 3 ? 30 : 40,
+              padding: "0 40px",
+            }}
+          >
+            {data.items.map((item) => {
+              const size = cardFrameSize("drop_story", "item", data.items.length);
+              return (
+                <Frame
+                  key={item.slug}
+                  item={item}
+                  width={size.width}
+                  height={size.height}
+                  nameSize={data.items.length >= 3 ? 28 : data.items.length === 2 ? 34 : 44}
+                  priceSize={data.items.length >= 3 ? 22 : 30}
+                  // Atrás do véu a peça não tem nome: só formas e cores.
+                  showName={data.variant === "open"}
+                />
+              );
+            })}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", fontFamily: SANS, fontSize: 24, letterSpacing: 4, color: C.gold800 }}>
+              {data.variant === "open" ? "AS PEÇAS ESTÃO NA MAISON" : "ME AVISA QUANDO ABRIR"}
+            </div>
+            <div style={{ display: "flex", fontFamily: SERIF, fontWeight: 600, fontSize: 52, color: C.ink900 }}>
+              {normalizeReceiptText(data.siteLine)}
+            </div>
+          </div>
+        </div>
+      ) : data.kind === "post" || data.kind === "story" ? (
         <Frame
           item={data.hero}
           width={cardFrameSize(data.kind, "hero", 1).width}
@@ -264,7 +326,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
       </div>
       <Footer
         storeName={data.storeName}
-        line={isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
+        line={isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
       />
     </div>
   );

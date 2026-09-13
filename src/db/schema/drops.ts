@@ -30,6 +30,9 @@ export const drops = pgTable(
     vipSentAt: timestamp("vip_sent_at", { withTimezone: true }),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
+    /** Última imagem de story gerada (Storage): atrás do véu e aberta. */
+    storyTeaserPath: text("story_teaser_path"),
+    storyOpenPath: text("story_open_path"),
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

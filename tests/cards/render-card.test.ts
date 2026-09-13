@@ -171,3 +171,61 @@ describe("post e story da peça", () => {
     expect(gold, "o traço dourado do rodapé sumiu: a arte estourou").toBeGreaterThan(50);
   });
 });
+
+describe("story do lançamento", () => {
+  it("1080×1920 com 1 e 3 peças; no véu não há preço; a cortina aberta mostra os preços; nada vai à rede", async () => {
+    const assets = await loadReceiptAssets();
+    const S = "/private/tmp/claude-501/-Users-fabiano-TRIV-/20560e3d-97e5-4ebf-9f52-dfaf7ef88d80/scratchpad";
+    const teaser = await renderCardPng(
+      {
+        kind: "drop_story",
+        variant: "teaser",
+        storeName: "TRIVÉ",
+        eyebrow: "ESTREIA · SÁBADO, 20H",
+        title: "Edição Círio",
+        caption: "A cortina abre sábado, 20h.",
+        items: items.map((item) => ({ ...item, priceLabel: "" })),
+        siteLine: "trivemaison.com.br/estreia",
+      },
+      assets,
+    );
+    const teaserMeta = await sharp(teaser).metadata();
+    expect(teaserMeta.width).toBe(1080);
+    expect(teaserMeta.height).toBe(1920);
+    await sharp(teaser).toFile(`${S}/drop-story-teaser.png`).catch(() => undefined);
+
+    const open = await renderCardPng(
+      {
+        kind: "drop_story",
+        variant: "open",
+        storeName: "TRIVÉ",
+        eyebrow: "ESTREIA · HOJE, 20H",
+        title: "Edição Círio",
+        caption: "A cortina abriu.",
+        items: [items[0]],
+        siteLine: "trivemaison.com.br/estreia",
+      },
+      assets,
+    );
+    const openMeta = await sharp(open).metadata();
+    expect(openMeta.width).toBe(1080);
+    expect(openMeta.height).toBe(1920);
+    await sharp(open).toFile(`${S}/drop-story-open.png`).catch(() => undefined);
+
+    // Faixa noir no alto, marfim embaixo, foto embutida, sem rede.
+    const raw = await sharp(open).raw().toBuffer({ resolveWithObject: true });
+    const pixel = (x: number, y: number) => {
+      const offset = (y * raw.info.width + x) * raw.info.channels;
+      return [raw.data[offset], raw.data[offset + 1], raw.data[offset + 2]];
+    };
+    expect(pixel(20, 20).reduce((a, b) => a + b, 0)).toBeLessThan(60);
+    expect(pixel(20, 1900)[0]).toBeGreaterThan(230);
+    let found = false;
+    for (let y = 400; y < 1700 && !found; y += 6) {
+      const [r, g, b] = pixel(540, y);
+      if (Math.abs(r - 0xb0) + Math.abs(g - 0x89) + Math.abs(b - 0x68) < 40) found = true;
+    }
+    expect(found).toBe(true);
+    expect(networkCalls).toEqual([]);
+  });
+});
