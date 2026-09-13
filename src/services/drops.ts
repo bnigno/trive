@@ -111,6 +111,10 @@ export interface DropView {
   invites: { total: number; sent: number; visited: number };
   /** "Quero ser avisada" em /estreia: quantas pediram e quantas já receberam. */
   waitlist: { total: number; notified: number };
+  /** Últimos stories gerados para o Instagram (paths no Storage). */
+  storyTeaserPath: string | null;
+  storyOpenPath: string | null;
+  updatedAt: Date;
 }
 
 async function loadDropProducts(db: DbOrTx, dropId: string): Promise<DropProductView[]> {
@@ -193,6 +197,9 @@ function toView(
     products: productsView,
     invites,
     waitlist,
+    storyTeaserPath: row.storyTeaserPath,
+    storyOpenPath: row.storyOpenPath,
+    updatedAt: row.updatedAt,
   };
 }
 

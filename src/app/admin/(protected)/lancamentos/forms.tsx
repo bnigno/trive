@@ -6,6 +6,7 @@ import { Field, FormError, FormSuccess, Input, Select, SubmitButton, TextArea } 
 import {
   cancelDropAction,
   createDropAction,
+  generateDropStoryAction,
   previewAudienceAction,
   scheduleDropAction,
   setDropProductsAction,
@@ -218,6 +219,24 @@ export function CancelDropForm({ dropId }: { dropId: string }) {
       <FormSuccess message={state.success} />
       <div>
         <SubmitButton variant="danger">Cancelar lançamento</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export function DropStoryForm({ dropId, variant, hasImage }: { dropId: string; variant: "teaser" | "open"; hasImage: boolean }) {
+  const [state, action] = useActionState(generateDropStoryAction, INITIAL);
+  const label = variant === "teaser" ? "story do véu" : "story aberta";
+  return (
+    <form action={action} className="flex flex-col gap-2">
+      <input type="hidden" name="dropId" value={dropId} />
+      <input type="hidden" name="variant" value={variant} />
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton variant="outline" size="sm" pendingLabel="Desenhando…">
+          {hasImage ? `Gerar ${label} de novo` : `Gerar ${label}`}
+        </SubmitButton>
       </div>
     </form>
   );

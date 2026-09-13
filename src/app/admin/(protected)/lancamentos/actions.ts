@@ -3,8 +3,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { getFileStorage } from "@/adapters/storage";
+import { renderCardPng } from "@/cards/render";
 import { getDb } from "@/db/client";
+import { loadReceiptAssets } from "@/receipts/assets";
 import { requireOwner } from "@/services/auth";
+import { dropStoryVariantSchema, publishDropStory } from "@/services/drop-story";
 import {
   cancelDrop,
   createDrop,
@@ -129,6 +133,28 @@ export async function cancelDropAction(_prev: FormState, formData: FormData): Pr
     revalidatePath("/admin/lancamentos");
     return { success: "Lançamento cancelado. As peças deixaram de ficar escondidas." };
   } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+/**
+ * "Gerar story do véu / aberta": desenha na hora (engine de cartões), guarda
+ * no Storage e enfileira o envio para o WhatsApp da dona. A prévia aparece
+ * ao recarregar; a imagem chega no WhatsApp em instantes.
+ */
+export async function generateDropStoryAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireOwner("lancamentos");
+  try {
+    const dropId = z.uuid().parse(formData.get("dropId"));
+    const variant = dropStoryVariantSchema.parse(formData.get("variant"));
+    const assets = await loadReceiptAssets();
+    const result = await publishDropStory(getDb(), getFileStorage(), (data) => renderCardPng(data, assets), { dropId, variant });
+    revalidatePath(`/admin/lancamentos/${dropId}`);
+    return {
+      success: `${variant === "teaser" ? "Story do véu" : "Story da cortina aberta"} pronto (${(result.renderMs / 1000).toFixed(1)} s). A imagem está abaixo e chega no seu WhatsApp em instantes.`,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "ServiceError") return { error: error.message };
     return { error: toErrorMessage(error) };
   }
 }

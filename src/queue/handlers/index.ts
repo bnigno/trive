@@ -13,6 +13,7 @@ import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
+import { sendDropStoryToOwner } from "@/services/drop-story";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -158,6 +159,7 @@ const restockNotifyPayloadSchema = z.object({ alertId: z.uuid(), movementId: z.u
 const dropInvitePayloadSchema = z.object({ inviteId: z.uuid() });
 const dropPublishedPayloadSchema = z.object({ dropId: z.uuid() });
 const dropOpenNotifyPayloadSchema = z.object({ waitlistId: z.uuid(), dropId: z.uuid() });
+const dropStorySendPayloadSchema = z.object({ dropId: z.uuid(), variant: z.enum(["teaser", "open"]), path: z.string().min(1) });
 
 const digestDailyPayloadSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -534,6 +536,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const payload = dropOpenNotifyPayloadSchema.parse(event.payload);
     const result = await notifyDropOpen(getDb(), getMessagingProvider(), { waitlistId: payload.waitlistId });
     console.info(`[wa.drop_open_notify] ${payload.waitlistId} → ${JSON.stringify(result)}`);
+  },
+  // O story do lançamento pronto vai para o WhatsApp da dona (uma vez por arquivo).
+  "wa.drop_story_send": async (event) => {
+    const payload = dropStorySendPayloadSchema.parse(event.payload);
+    const result = await sendDropStoryToOwner(getDb(), getFileStorage(), getMessagingProvider(), payload);
+    console.info(`[wa.drop_story_send] ${payload.dropId}/${payload.variant} → ${JSON.stringify(result)}`);
   },
   // Peça voltou: um evento por aviso aberto, escalonado na janela de envio.
   "stock.restocked": async (event) => {

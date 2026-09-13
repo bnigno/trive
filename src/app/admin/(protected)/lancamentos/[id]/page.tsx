@@ -9,17 +9,21 @@ import { CopyField } from "@/components/ui/copy-field";
 import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
-import { canSchedule } from "@/core/drops";
+import { getFileStorage } from "@/adapters/storage";
+import { canSchedule, publicDropLabel } from "@/core/drops";
 import { getDb } from "@/db/client";
 import { siteUrl } from "@/lib/site-url";
 import { products } from "@/db/schema";
 import { requireOwner } from "@/services/auth";
 import { formatDropMoment, getDrop, getDropReport } from "@/services/drops";
 
-import { AudiencePreviewForm, CancelDropForm, DropEditForm, DropProductsForm, ScheduleDropForm } from "../forms";
+import { AudiencePreviewForm, CancelDropForm, DropEditForm, DropProductsForm, DropStoryForm, ScheduleDropForm } from "../forms";
 import { PHASE_LABEL } from "../page";
 
 export const dynamic = "force-dynamic";
+// A action "Gerar story" desenha 1080×1920 com até 3 fotos (Satori + sharp):
+// pode passar de 10 s a frio.
+export const maxDuration = 60;
 
 export const metadata: Metadata = { title: "Lançamento" };
 
@@ -34,6 +38,7 @@ export default async function LancamentoPage({ params }: { params: Promise<{ id:
   await requireOwner("lancamentos");
   const { id } = await params;
   const db = getDb();
+  const storage = getFileStorage();
   const drop = await getDrop(db, id);
   if (!drop) notFound();
 
@@ -125,6 +130,42 @@ export default async function LancamentoPage({ params }: { params: Promise<{ id:
                   value={`${siteUrl()}/estreia`}
                   hint="Cole na bio e nos stories. Na hora marcada a página abre sozinha; o aviso no WhatsApp vai das 9h às 21h — estreia fora desse horário avisa na manhã seguinte."
                 />
+              </div>
+            </Card>
+          ) : null}
+
+          {drop.phase !== "draft" && drop.phase !== "canceled" ? (
+            <Card title="Story para o Instagram">
+              <div className="flex flex-col gap-4">
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  Imagem 1080×1920 no padrão dos cartões: “ESTREIA · {publicDropLabel(drop.publishAt, new Date()).toUpperCase()}”, as peças e o endereço /estreia. Ao gerar, a imagem chega no seu WhatsApp para salvar e postar.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {(["teaser", "open"] as const).map((variant) => {
+                    const path = variant === "teaser" ? drop.storyTeaserPath : drop.storyOpenPath;
+                    return (
+                      <div key={variant} className="flex flex-col gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          {variant === "teaser" ? "Atrás do véu (antes)" : "Cortina aberta (na hora)"}
+                        </p>
+                        {path ? (
+                          <a href={`${storage.publicUrl(path)}?v=${drop.updatedAt.getTime()}`} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={`${storage.publicUrl(path)}?v=${drop.updatedAt.getTime()}`}
+                              alt={`Story ${variant === "teaser" ? "do véu" : "aberto"} do lançamento`}
+                              className="aspect-[9/16] w-full max-w-[220px] rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
+                            />
+                          </a>
+                        ) : (
+                          <div className="flex aspect-[9/16] w-full max-w-[220px] items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-400 dark:border-zinc-700">
+                            ainda não gerado
+                          </div>
+                        )}
+                        <DropStoryForm dropId={drop.id} variant={variant} hasImage={Boolean(path)} />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </Card>
           ) : null}
