@@ -11,6 +11,7 @@ import { z } from "zod";
 import { getAdapterMode } from "@/adapters/adapter-mode";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { PAYMENT_METHOD_LABELS_SHORT } from "@/core/orders/payment-methods";
+import { hourLabel } from "@/core/shipping/delivery-windows";
 import { renderTemplate } from "@/core/whatsapp/render";
 import {
   auditLog,
@@ -24,6 +25,7 @@ import { formatDateTimeSP } from "@/emails/templates";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
 import { isValidE164 } from "@/lib/phone";
+import { spDayKey, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 
@@ -83,6 +85,15 @@ export function firstNameOf(fullName: string): string {
 // Labels curtos da fonte única do core (WhatsApp pede mensagens compactas).
 const PAYMENT_METHOD_LABELS: Record<string, string> = PAYMENT_METHOD_LABELS_SHORT;
 
+/** "hoje" / "amanhã" / "sábado 20/09" em relação ao dia de São Paulo de `now`. */
+export function deliveryDayWord(dayKey: string, now: Date): string {
+  const today = spDayKey(now);
+  if (dayKey === today) return "hoje";
+  if (dayKey === spNextDayKey(today)) return "amanhã";
+  const [, m, d] = dayKey.split("-");
+  return `${spWeekdayName(dayKey)} ${d}/${m}`;
+}
+
 export function buildOrderVars(input: {
   orderNumber: number;
   customerName: string;
@@ -94,8 +105,15 @@ export function buildOrderVars(input: {
   paymentMethod?: string | null;
   /** Presente: {{presente}} vira a linha "🎁 Presente — sem preço na embalagem". */
   isGift?: boolean;
+  /** Motoboy: {{janela}} = "19h e 21h", {{dia}} = "hoje" / "amanhã" / "sábado 20/09" (no dia do envio). */
+  deliveryWindow?: { dayKey: string; start: string; end: string } | null;
+  /** Relógio para o {{dia}} (padrão: agora). */
+  now?: Date;
 }): Record<string, string> {
+  const window = input.deliveryWindow ?? null;
   return {
+    janela: window ? `${hourLabel(window.start)} e ${hourLabel(window.end)}` : "",
+    dia: window ? deliveryDayWord(window.dayKey, input.now ?? new Date()) : "",
     presente: input.isGift ? "\n🎁 Presente — sem preço na embalagem" : "",
     nome: firstNameOf(input.customerName),
     cliente: input.customerName,

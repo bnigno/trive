@@ -174,3 +174,32 @@ export function windowDateLabel(choice: DeliveryWindowChoice): string {
   const weekday = WEEKDAYS_PT[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
   return `${weekday} ${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}, ${hourLabel(choice.start)}–${hourLabel(choice.end)}`;
 }
+
+/** O que a página da peça promete a quem já digitou o CEP na sacola. */
+export type SameDayPromise =
+  | { kind: "today"; rateName: string; payUntil: string; windowLabel: string; label: string }
+  | { kind: "tomorrow"; rateName: string; windowLabel: string; label: string };
+
+/**
+ * A promessa mais generosa entre as opções de motoboy: hoje, a janela com a
+ * hora-limite mais tarde ("Pague até 17h e chega hoje, 19h–21h"); senão a
+ * primeira de amanhã. Sem motoboy para o CEP → null (Correios não promete).
+ */
+export function sameDayPromise(options: readonly DeliveryOption[]): SameDayPromise | null {
+  const motoboy = options.filter((o): o is Extract<DeliveryOption, { kind: "motoboy" }> => o.kind === "motoboy");
+  const today = motoboy
+    .filter((o) => o.when === "today")
+    .sort((a, b) => minutesOf(b.window.cutoff) - minutesOf(a.window.cutoff) || minutesOf(a.window.start) - minutesOf(b.window.start));
+  if (today[0]) {
+    const o = today[0];
+    const windowLabel = `${hourLabel(o.window.start)}–${hourLabel(o.window.end)}`;
+    const payUntil = hourLabel(o.window.cutoff);
+    return { kind: "today", rateName: o.name, payUntil, windowLabel, label: `Pague até ${payUntil} e chega hoje, ${windowLabel}` };
+  }
+  const tomorrow = motoboy.find((o) => o.when === "tomorrow");
+  if (tomorrow) {
+    const windowLabel = `${hourLabel(tomorrow.window.start)}–${hourLabel(tomorrow.window.end)}`;
+    return { kind: "tomorrow", rateName: tomorrow.name, windowLabel, label: `Chega amanhã, ${windowLabel}` };
+  }
+  return null;
+}

@@ -5,6 +5,7 @@ import { getDb } from "@/db/client";
 import { orders, outboxEvents, priceVersions } from "@/db/schema";
 import { isOwner, requireUser } from "@/services/auth";
 import { listOrders } from "@/services/orders";
+import { countRouteOfDay } from "@/services/delivery-routes";
 import { countOrdersAwaitingPacking } from "@/services/packing";
 import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
@@ -90,7 +91,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness] =
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route] =
     await Promise.all([
       safe(async () => {
         const db = getDb();
@@ -107,9 +108,10 @@ async function loadSharedDashboard() {
       safe((): Promise<RecentOrder[]> => listOrders(getDb(), { limit: 5 })),
       safe(() => countOrdersAwaitingPacking(getDb())),
       safe(() => getReadinessSummary(getDb())),
+      safe(() => countRouteOfDay(getDb())),
     ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route };
 }
 
 /**
@@ -335,6 +337,16 @@ export default async function AdminDashboardPage() {
               />
             </Link>
           </>
+        ) : null}
+        {data.route && (data.route.today > 0 || data.route.late > 0) ? (
+          <Link href="/admin/pedidos/rota" className="block">
+            <StatCard
+              label="Saem hoje (motoboy)"
+              value={String(data.route.today)}
+              tone={data.route.late ? "warning" : "neutral"}
+              hint={data.route.late ? `${data.route.late} atrasado${data.route.late > 1 ? "s" : ""} — abra a rota.` : "Pedidos com janela de entrega hoje."}
+            />
+          </Link>
         ) : null}
         <Link href="/admin/pedidos/embalar" className="block">
           <StatCard

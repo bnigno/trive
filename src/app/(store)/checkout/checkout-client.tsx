@@ -48,6 +48,7 @@ import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
 import { readStoredStyle } from "@/lib/style-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { writeStoredCep } from "@/lib/cep-storage";
 import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
 
@@ -211,6 +212,7 @@ export function CheckoutClient({
         options: result.options,
         whatsappUrl: result.whatsappUrl,
       });
+      writeStoredCep(cepDigits);
       setShippingCentsOverride(null);
       // A janela de hoje pode ter passado da hora-limite entre a sacola e o
       // checkout: a chave some da lista, a escolha cai na primeira opção e a

@@ -149,6 +149,15 @@ export const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "rastreio", "link"],
   },
   {
+    key: "order_out_for_delivery",
+    label: "Saiu para entrega (motoboy)",
+    bodyTemplate:
+      "Boa notícia, {{nome}}! Seu pedido #{{pedido}} saiu da maison e chega {{dia}}, entre {{janela}}. 🛵\n" +
+      "Acompanhe por aqui: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "dia", "janela", "link"],
+  },
+  {
     key: "order_recovery",
     label: "Lembrete de pagamento",
     bodyTemplate:

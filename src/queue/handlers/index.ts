@@ -85,6 +85,13 @@ const ORDER_WA_MILESTONES = {
     ownerTemplate: null,
     ownerDedupePrefix: null,
   },
+  // Dinheiro na entrega saiu com o motoboy (sem transição de status).
+  out_for_delivery: {
+    clientTemplate: "order_out_for_delivery",
+    clientDedupePrefix: "wa.order_out_for_delivery:",
+    ownerTemplate: null,
+    ownerDedupePrefix: null,
+  },
 } as const;
 
 async function sendOrderWa(
@@ -100,19 +107,30 @@ async function sendOrderWa(
   const spec = ORDER_WA_MILESTONES[milestone];
   // Dinheiro na entrega: confirmação SEM link de pagamento nem prazo de
   // reserva (o template order_confirmed quebraria com {{prazo}} vazio).
+  // Motoboy: "enviado" não tem rastreio — é "saiu da maison, chega hoje
+  // entre 19h e 21h". A chave de dedupe é a mesma do despacho em dinheiro
+  // (order.out_for_delivery): um pedido só recebe "saiu" uma vez, por
+  // qualquer caminho.
+  const motoboyOut = ctx.hasDeliveryWindow && (milestone === "shipped" || milestone === "out_for_delivery");
   const clientTemplate =
     milestone === "store_created" && ctx.paymentMethod === "cash"
       ? "order_confirmed_cash"
-      : spec.clientTemplate;
+      : motoboyOut
+        ? "order_out_for_delivery"
+        : spec.clientTemplate;
+  const clientDedupePrefix = motoboyOut ? ORDER_WA_MILESTONES.out_for_delivery.clientDedupePrefix : spec.clientDedupePrefix;
+  // Dinheiro na entrega: "pagamento aprovado, já estamos preparando" não
+  // faz sentido — o pagamento é a própria entrega. Só a dona é avisada.
+  const skipClient = milestone === "paid" && ctx.paymentMethod === "cash";
   // Cliente sem telefone não é erro: o e-mail (quando houver) já cobriu.
-  if (ctx.customer.phoneE164) {
+  if (ctx.customer.phoneE164 && !skipClient) {
     await sendTemplateMessage(db, provider, {
       templateKey: clientTemplate,
       phoneE164: ctx.customer.phoneE164,
       vars: ctx.vars,
       customerId: ctx.customer.id,
       orderId,
-      dedupeKey: `${spec.clientDedupePrefix}${orderId}`,
+      dedupeKey: `${clientDedupePrefix}${orderId}`,
       requireOptIn: true,
     });
   }
@@ -507,6 +525,9 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     await sendOrderWa(orderId, "store_created");
   },
   "order.preparing": async () => {},
+  "order.out_for_delivery": async (event) => {
+    await sendOrderWa(String(event.payload.orderId), "out_for_delivery");
+  },
   "order.delivered": async () => {},
   // Cancelado (pela dona ou pela expiração da reserva): a cliente recebe o
   // motivo em linguagem humana e o link do pedido (só com opt-in).

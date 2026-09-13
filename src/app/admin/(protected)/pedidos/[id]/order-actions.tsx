@@ -4,6 +4,7 @@ import { useActionState } from "react";
 
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { ConfirmButton } from "@/components/ui/confirm-button";
+import { DeliveredForm, DispatchForm } from "../rota/forms";
 import {
   Field,
   FormError,
@@ -163,6 +164,7 @@ export function OrderActions({
   paymentMethod,
   trackingCode,
   canRefund,
+  motoboy,
 }: {
   orderId: string;
   status: OrderStatus;
@@ -170,6 +172,8 @@ export function OrderActions({
   trackingCode: string | null;
   /** Reembolso lança saída no financeiro: só o dono. A action confere de novo. */
   canRefund: boolean;
+  /** Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio; dispatchedLabel = já saiu. */
+  motoboy?: { customerName: string; dispatchedLabel: string | null } | null;
 }) {
   if (status === "canceled" || status === "refunded") {
     return (
@@ -217,7 +221,27 @@ export function OrderActions({
         />
       ) : null}
 
-      {status === "paid" ? (
+      {motoboy && motoboy.dispatchedLabel && status !== "delivered" ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+            🛵 Saiu com o motoboy {motoboy.dispatchedLabel}.{" "}
+            {status === "pending_payment" ? "Ao receber o dinheiro, marque como pago e depois como entregue." : "Quando ele voltar, marque como entregue."}
+          </p>
+          {status === "paid" || status === "preparing" || status === "shipped" ? <DeliveredForm orderId={orderId} /> : null}
+        </div>
+      ) : null}
+      {motoboy &&
+      !motoboy.dispatchedLabel &&
+      (status === "paid" || status === "preparing" || (status === "pending_payment" && paymentMethod === "cash")) ? (
+        <div className="flex flex-col gap-1">
+          <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            A peça foi com o motoboy: a cliente recebe “Saiu da maison, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
+          </p>
+        </div>
+      ) : null}
+
+      {status === "paid" && !motoboy?.dispatchedLabel ? (
         <>
           <AdvanceForm
             orderId={orderId}
@@ -236,11 +260,11 @@ export function OrderActions({
         </>
       ) : null}
 
-      {status === "preparing" ? (
+      {status === "preparing" && !motoboy ? (
         <ShipForm orderId={orderId} currentTrackingCode={trackingCode} />
       ) : null}
 
-      {status === "shipped" ? (
+      {status === "shipped" && !motoboy?.dispatchedLabel ? (
         <AdvanceForm
           orderId={orderId}
           action={markDeliveredAction}

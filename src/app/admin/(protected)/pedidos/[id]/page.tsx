@@ -469,6 +469,14 @@ export default async function PedidoDetalhePage({
               paymentMethod={order.paymentMethod}
               trackingCode={order.shippingTrackingCode}
               canRefund={owner}
+              motoboy={
+                order.deliveryWindow && order.customer
+                  ? {
+                      customerName: order.customer.fullName,
+                      dispatchedLabel: order.deliveryWindow.dispatchedAt ? formatDateTimeSP(order.deliveryWindow.dispatchedAt) : null,
+                    }
+                  : null
+              }
             />
           </Card>
         </div>

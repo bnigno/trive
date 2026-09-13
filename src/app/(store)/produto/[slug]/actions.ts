@@ -4,8 +4,10 @@
 // como no checkout e no WhatsApp. Honeypot silencioso contra robôs.
 import { z } from "zod";
 
+import type { SameDayPromise } from "@/core/shipping/delivery-windows";
 import { getDb } from "@/db/client";
 import { toE164BR } from "@/lib/phone";
+import { computeTotalWeightGrams, quoteSameDayPromise } from "@/services/store-catalog";
 import { requestStockAlert } from "@/services/stock-alerts";
 
 const schema = z.object({
@@ -43,5 +45,29 @@ export async function requestStockAlertAction(input: {
   } catch (error) {
     console.error("requestStockAlertAction", error);
     return { ok: false, message: "Não deu para registrar agora. Tente de novo em instantes." };
+  }
+}
+
+// "Pague até 13h e chega hoje": a promessa do motoboy para o CEP que a
+// cliente já deu na sacola. Peso de 1 peça (a variação escolhida); sem CEP
+// válido ou sem motoboy → null, e a página não mostra nada.
+const promiseSchema = z.object({
+  cep: z.string().regex(/^\d{8}$/),
+  weightGrams: z.number().int().positive().nullable(),
+});
+
+export async function sameDayPromiseAction(input: {
+  cep: string;
+  weightGrams: number | null;
+}): Promise<SameDayPromise | null> {
+  const parsed = promiseSchema.safeParse(input);
+  if (!parsed.success) return null;
+  try {
+    return await quoteSameDayPromise(getDb(), {
+      cep: parsed.data.cep,
+      totalWeightGrams: computeTotalWeightGrams([{ weightGrams: parsed.data.weightGrams, quantity: 1 }]),
+    });
+  } catch {
+    return null;
   }
 }

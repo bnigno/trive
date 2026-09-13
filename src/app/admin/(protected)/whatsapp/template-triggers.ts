@@ -12,7 +12,8 @@ export const TEMPLATE_TRIGGERS: Record<string, string> = {
   hold_reminder: "Lembrete único, 2 h antes de uma reserva gentil vencer",
   stock_back: "Uma vez, quando a peça que a cliente pediu para avisar volta ao estoque",
   drop_vip_invite: "Convite VIP de lançamento, para as clientes com mais afinidade, antes da publicação",
-  order_shipped: "Quando você marca o pedido como enviado",
+  order_shipped: "Quando você marca o pedido como enviado (Correios, com rastreio)",
+  order_out_for_delivery: "Quando você marca “Saiu” na Rota do dia — a peça foi com o motoboy",
   order_canceled:
     "Quando um pedido é cancelado (por você, com o motivo que você escreveu, ou quando a reserva expira)",
   order_refunded: "Quando o Mercado Pago confirma um reembolso",
@@ -48,6 +49,7 @@ export const PREVIEW_VARIABLES: Record<string, string> = {
   sku: "DUNAS-PRET-M",
   disponivel: "2",
   loja: "TRIVÉ",
+  janela: "19h e 21h",
   dia: "quarta-feira",
   data: "09/09",
   vendas: "R$ 1.247,00",

@@ -71,8 +71,20 @@ export const orders = pgTable(
     // Snapshot do endereço no momento do pedido.
     shippingAddress: jsonb("shipping_address"),
     shippingTrackingCode: text("shipping_tracking_code"),
-    /** Entrega por motoboy: janela escolhida no fechamento (imutável): {dayKey,start,end,cutoff,rateName,label}. */
-    deliveryWindow: jsonb("delivery_window").$type<{ dayKey: string; start: string; end: string; cutoff: string; rateName: string; label: string }>(),
+    /**
+     * Entrega por motoboy: janela escolhida no fechamento {dayKey,start,end,cutoff,rateName,label}
+     * + dispatchedAt (ISO) quando a peça saiu com o motoboy — é o que marca a saída de um
+     * pedido em dinheiro na entrega, que só vira "paid" quando o dinheiro chega.
+     */
+    deliveryWindow: jsonb("delivery_window").$type<{
+      dayKey: string;
+      start: string;
+      end: string;
+      cutoff: string;
+      rateName: string;
+      label: string;
+      dispatchedAt?: string;
+    }>(),
     note: text("note"),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     // Comprovante de pagamento em imagem (receipts/<id>/comprovante.jpg),
