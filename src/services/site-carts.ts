@@ -20,7 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
-import { products, siteCarts } from "@/db/schema";
+import { campaignLinks, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -43,6 +43,8 @@ const createSiteCartSchema = z.object({
   source: z.enum(BRIDGE_SOURCES),
   campaignSlug: z.string().trim().min(1).max(60).optional(),
   productSlug: z.string().trim().min(1).max(200).optional(),
+  /** Só no story: a dona amarrou a peça ao link, então ela entra mesmo antes de ficar visível (janela VIP). */
+  includeHiddenProduct: z.boolean().optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
   /**
    * A sacola (source = cart): variação (id, como a sacola guarda; SKU só como
@@ -114,7 +116,9 @@ async function snapshotItems(db: DbOrTx, input: z.output<typeof createSiteCartSc
     }
   }
   if (input.productSlug) {
-    const product = await getPublicProductBySlug(db, input.productSlug);
+    const product = await getPublicProductBySlug(db, input.productSlug, undefined, {
+      includeHidden: input.source === "campaign" && input.includeHiddenProduct === true,
+    });
     if (product) {
       // Sem variação escolhida: a peça, com o primeiro preço como referência.
       const first = product.variants[0];
@@ -208,13 +212,17 @@ export async function consumeSiteCartByCode(
   const [product] = row.productId
     ? await db.select({ slug: products.slug, name: products.name }).from(products).where(eq(products.id, row.productId)).limit(1)
     : [];
+  // No story, a origem é o rótulo do link ("Dunas no story"); apagado, fica o slug.
+  const [campaign] = row.campaignSlug
+    ? await db.select({ label: campaignLinks.label }).from(campaignLinks).where(eq(campaignLinks.slug, row.campaignSlug)).limit(1)
+    : [];
   const source = row.source as BridgeSource;
   const first = list[0];
   return {
     siteCartId: row.id,
     code,
     source,
-    sourceLabel: originLabel(source, row.campaignSlug),
+    sourceLabel: originLabel(source, campaign?.label ?? row.campaignSlug),
     // "Veio do site agora" conta da chegada da mensagem: quem tocou ontem e
     // escreveu hoje também merece a linha de estoque no primeiro turno.
     at: input.now.toISOString(),

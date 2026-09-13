@@ -4,13 +4,13 @@
 // mesma aba (popup blocker do Safari) — por isso a action só devolve a URL.
 import { z } from "zod";
 
-import { BRIDGE_SOURCES } from "@/core/bot/site-bridge";
 import { getDb } from "@/db/client";
 import { BRIDGE_MAX_LINES, BRIDGE_MAX_QTY, createSiteCart } from "@/services/site-carts";
 
+// O story ("campaign") entra por /ig/[slug] (tapCampaignLinkAction), que
+// confere se o link existe e está ligado: aqui ninguém inventa campanha.
 const schema = z.object({
-  source: z.enum(BRIDGE_SOURCES),
-  campaignSlug: z.string().trim().min(1).max(60).optional(),
+  source: z.enum(["pdp", "cart", "footer"]),
   productSlug: z.string().trim().min(1).max(200).optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
   items: z

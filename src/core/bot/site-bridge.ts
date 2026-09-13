@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 
+import { slugify } from "@/lib/slug";
+
 /** 30 símbolos legíveis em qualquer fonte: sem 0/O, 1/I/L. */
 export const BRIDGE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 export const BRIDGE_CODE_LENGTH = 4;
@@ -87,11 +89,15 @@ export function buildBridgeMessage(input: BridgeMessageInput): string {
     const onde = input.source === "campaign" ? " no story" : "";
     return `${oi} vi o ${itemPhrase(input.product)}${onde} ${tag}`;
   }
-  return `${oi} vim pelo site ${tag}`;
+  return `${oi} vim pelo ${input.source === "campaign" ? "story" : "site"} ${tag}`;
 }
 
-/** "página da peça", "sacola", "rodapé do site", "story «verao»" — para o caderninho e o painel. */
-export function originLabel(source: BridgeSource, campaignSlug?: string | null): string {
+/**
+ * "página da peça", "sacola", "rodapé do site", "story «Dunas»" — para o
+ * caderninho e o painel. No story, o nome é o rótulo do link (ou o slug,
+ * quando o link foi apagado).
+ */
+export function originLabel(source: BridgeSource, campaign?: string | null): string {
   switch (source) {
     case "pdp":
       return "página da peça";
@@ -100,8 +106,25 @@ export function originLabel(source: BridgeSource, campaignSlug?: string | null):
     case "footer":
       return "rodapé do site";
     case "campaign":
-      return campaignSlug ? `story «${campaignSlug}»` : "story";
+      return campaign?.trim() ? `story «${campaign.trim()}»` : "story";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Links de story (/ig/[slug])
+// ---------------------------------------------------------------------------
+
+export const CAMPAIGN_SLUG_MIN = 2;
+export const CAMPAIGN_SLUG_MAX = 40;
+export const CAMPAIGN_SLUG_RE = /^[a-z0-9-]{2,40}$/;
+
+/**
+ * "Círio 2026" → "cirio-2026"; "dunas" → "dunas". null quando não dá slug
+ * (vazio, só símbolos, curto ou longo demais) — a dona escolhe outro.
+ */
+export function normalizeCampaignSlug(raw: string): string | null {
+  const slug = slugify(raw);
+  return CAMPAIGN_SLUG_RE.test(slug) ? slug : null;
 }
 
 /** O que o caderninho guarda da ponte (core/bot/memory.ts). */

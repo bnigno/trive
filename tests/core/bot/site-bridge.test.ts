@@ -8,10 +8,12 @@ import {
   BRIDGE_CODE_LENGTH,
   bridgeContextLine,
   buildBridgeMessage,
+  CAMPAIGN_SLUG_RE,
   extractBridgeCode,
   generateBridgeCode,
   isBridgeCurrent,
   isBridgeFresh,
+  normalizeCampaignSlug,
   originLabel,
 } from "@/core/bot/site-bridge";
 
@@ -84,11 +86,35 @@ describe("buildBridgeMessage / originLabel", () => {
     expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "campaign", product: { name: "Longo Dunas" } })).toBe(
       "Oi Lia, vi o Longo Dunas no story (#K7F2)",
     );
-    // Sacola vazia no toque: vira "vim pelo site".
+    // Sacola vazia no toque: vira "vim pelo site"; story sem peça: "vim pelo story".
     expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "cart", items: [] })).toBe("Oi Lia, vim pelo site (#K7F2)");
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "campaign" })).toBe("Oi Lia, vim pelo story (#K7F2)");
     expect(originLabel("pdp")).toBe("página da peça");
-    expect(originLabel("campaign", "verao")).toBe("story «verao»");
+    expect(originLabel("campaign", "Dunas no story")).toBe("story «Dunas no story»");
+    expect(originLabel("campaign", "  ")).toBe("story");
     expect(originLabel("campaign")).toBe("story");
+  });
+});
+
+describe("normalizeCampaignSlug", () => {
+  it("nome vira slug de URL; fora da regra (2–40, [a-z0-9-]) é null", () => {
+    expect(normalizeCampaignSlug("Círio 2026")).toBe("cirio-2026");
+    expect(normalizeCampaignSlug("  dunas ")).toBe("dunas");
+    expect(normalizeCampaignSlug("Dunas — areia!")).toBe("dunas-areia");
+    expect(normalizeCampaignSlug("a")).toBeNull();
+    expect(normalizeCampaignSlug("!!!")).toBeNull();
+    expect(normalizeCampaignSlug("")).toBeNull();
+    expect(normalizeCampaignSlug("x".repeat(41))).toBeNull();
+    expect(normalizeCampaignSlug("x".repeat(40))).toBe("x".repeat(40));
+  });
+
+  it("o slug normalizado sempre passa na regra do banco (fast-check)", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 60 }), (raw) => {
+        const slug = normalizeCampaignSlug(raw);
+        return slug === null || CAMPAIGN_SLUG_RE.test(slug);
+      }),
+    );
   });
 });
 

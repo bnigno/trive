@@ -365,6 +365,8 @@ export async function getPublicProductBySlug(
   db: ServiceDb,
   slug: string,
   viewer?: CatalogViewer,
+  /** includeHidden: ignora visible_from (uso interno — ex.: peça que a dona amarrou a um link de story). */
+  opts: { includeHidden?: boolean } = {},
 ): Promise<PublicProductDetail | null> {
   const parsedSlug = z.string().trim().min(1).parse(slug);
 
@@ -381,7 +383,7 @@ export async function getPublicProductBySlug(
         eq(products.slug, parsedSlug),
         eq(products.status, "active"),
         isNull(products.deletedAt),
-        publiclyVisible(viewer),
+        ...(opts.includeHidden ? [] : [publiclyVisible(viewer)]),
       ),
     )
     .limit(1);
