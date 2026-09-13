@@ -6,13 +6,12 @@ import { assessNeededBy } from "@/core/shipping/needed-by";
 import { isValidNeededBy } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
 import type { BotToolInputs } from "@/core/bot/tools";
-import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import { formatLookedUpAddress, lookupAddressByCep } from "@/services/address-lookup";
 import { DEFAULT_ITEM_WEIGHT_GRAMS, quoteDeliveryOptions } from "@/services/store-catalog";
 
 import { cartWeightGrams } from "./cart";
-import { formatDeliveryDays, readBotState, updateBotState } from "./shared";
+import { readBotState, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 
 export async function execCotarFrete(
