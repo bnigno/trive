@@ -12,6 +12,7 @@ import {
   editionKind,
   editionPeriodLabel,
   isEditionCurrent,
+  isEditionPast,
   pickCurrentEdition,
   type EditionKind,
   type EditionRule,
@@ -94,8 +95,7 @@ export async function listEditionProductChoices(db: DbOrTx): Promise<{ id: strin
     .select({ id: products.id, name: products.name, status: products.status })
     .from(products)
     .where(and(isNull(products.deletedAt), ne(products.status, "archived")))
-    .orderBy(asc(products.name))
-    .limit(300);
+    .orderBy(asc(products.name));
 }
 
 export async function getCityEdition(db: DbOrTx, id: string): Promise<(CityEdition & { products: CityEditionProduct[] }) | null> {
@@ -172,7 +172,7 @@ export async function listPublicCityEditions(db: DbOrTx, input: { now?: Date } =
   const now = input.now ?? new Date();
   const rows = (await db.select().from(cityEditions).where(eq(cityEditions.isActive, true)).orderBy(asc(cityEditions.sortOrder), asc(cityEditions.name))).map(toEdition);
   const current = pickCurrentEdition(rows, now);
-  const visible = rows.filter((e) => e.endsOn === null || daysUntilEdition(e, now) !== null || isEditionCurrent(e, now));
+  const visible = rows.filter((e) => !isEditionPast(e, now));
   const ordered = [...(current ? [current] : []), ...visible.filter((e) => e.id !== current?.id)];
   return ordered.map((e) => toPublic(e, now));
 }
@@ -183,9 +183,13 @@ export async function getCurrentCityEdition(db: DbOrTx, input: { now?: Date } = 
   return list.find((e) => e.isCurrent) ?? null;
 }
 
+/** A página pública da edição: ativa e não encerrada (encerrada = 404, como as demais listas). */
 export async function getPublicCityEditionBySlug(db: DbOrTx, slug: string, input: { now?: Date } = {}): Promise<PublicCityEdition | null> {
+  const now = input.now ?? new Date();
   const [row] = await db.select().from(cityEditions).where(and(eq(cityEditions.slug, slug), eq(cityEditions.isActive, true))).limit(1);
-  return row ? toPublic(toEdition(row), input.now ?? new Date()) : null;
+  if (!row) return null;
+  const edition = toEdition(row);
+  return isEditionPast(edition, now) ? null : toPublic(edition, now);
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +218,7 @@ const fieldsSchema = z
   .refine((f) => f.hourStart == null || f.hourStart <= 23, { message: "A hora inicial vai de 0 a 23.", path: ["hourStart"] })
   .refine((f) => f.hourEnd == null || f.hourEnd >= 1, { message: "A hora final vai de 1 a 24.", path: ["hourEnd"] });
 
-const createSchema = z.object({ fields: fieldsSchema, userId: z.uuid() });
+const createSchema = z.object({ fields: fieldsSchema, isActive: z.boolean().default(false), userId: z.uuid() });
 const updateSchema = z.object({ editionId: z.uuid(), fields: fieldsSchema, isActive: z.boolean().optional(), userId: z.uuid() });
 
 export type CityEditionFields = z.input<typeof fieldsSchema>;
@@ -231,7 +235,7 @@ async function uniqueSlug(db: DbOrTx, wanted: string, ignoreId: string | null): 
 }
 
 export async function createCityEdition(db: DbOrTx, input: z.input<typeof createSchema>): Promise<{ editionId: string; slug: string }> {
-  const { fields, userId } = createSchema.parse(input);
+  const { fields, isActive, userId } = createSchema.parse(input);
   return db.transaction(async (tx) => {
     const slug = await uniqueSlug(tx, fields.slug || fields.name, null);
     const [row] = await tx
@@ -239,6 +243,7 @@ export async function createCityEdition(db: DbOrTx, input: z.input<typeof create
       .values({
         name: fields.name,
         slug,
+        isActive,
         openingLine: fields.openingLine || null,
         body: fields.body || null,
         districts: fields.districts || null,

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { z } from "zod";
 
 import { getFileStorage } from "@/adapters/storage";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ export const metadata: Metadata = { title: "Edição de Belém" };
 export default async function EdicaoPage({ params }: { params: Promise<{ id: string }> }) {
   await requireOwner("edicoes");
   const { id } = await params;
+  if (!z.uuid().safeParse(id).success) notFound();
   const db = getDb();
   const [edition, options, settings] = await Promise.all([getCityEdition(db, id), listEditionProductChoices(db), getSettingsMap(db, ["edition_name"])]);
   if (!edition) notFound();
@@ -70,7 +72,11 @@ export default async function EdicaoPage({ params }: { params: Promise<{ id: str
           </Card>
 
           <Card title="Peças da edição">
-            <EditionProductsForm editionId={edition.id} options={options} selected={edition.products.map((p) => p.id)} />
+            <EditionProductsForm
+              editionId={edition.id}
+              options={options}
+              selected={edition.products.map((p) => ({ id: p.id, name: p.name, status: p.status }))}
+            />
           </Card>
         </div>
 

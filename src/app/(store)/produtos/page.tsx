@@ -91,20 +91,19 @@ export default async function ProdutosPage({
   const params = await searchParams;
   const categoria = (params.categoria ?? "").trim();
   const q = (params.q ?? "").trim();
-  const edicao = (params.edicao ?? "").trim();
+  const edicaoParam = (params.edicao ?? "").trim();
 
   const db = getDb();
-  const [found, categories, editions] = await Promise.all([
-    listPublicProducts(db, {
-      categorySlug: categoria || undefined,
-      q: q || undefined,
-      editionSlug: edicao || undefined,
-      limit: PAGE_LIMIT,
-    }),
-    listPublicCategories(db),
-    listPublicCityEditions(db),
-  ]);
-  const activeEdition = editions.find((e) => e.slug === edicao) ?? null;
+  const [categories, editions] = await Promise.all([listPublicCategories(db), listPublicCityEditions(db)]);
+  // Edição desconhecida ou encerrada no link: a coleção inteira, sem filtro fantasma.
+  const activeEdition = editions.find((e) => e.slug === edicaoParam) ?? null;
+  const edicao = activeEdition?.slug ?? "";
+  const found = await listPublicProducts(db, {
+    categorySlug: categoria || undefined,
+    q: q || undefined,
+    editionSlug: edicao || undefined,
+    limit: PAGE_LIMIT,
+  });
 
   // As capas do primeiro ciclo ganham peças com foto; a primeira delas
   // carrega com prioridade quando está acima da dobra (índice 0 ou 1).
@@ -211,6 +210,7 @@ export default async function ProdutosPage({
               {categoria ? (
                 <input type="hidden" name="categoria" value={categoria} />
               ) : null}
+              {edicao ? <input type="hidden" name="edicao" value={edicao} /> : null}
             </div>
             <button type="submit" className={btnSmallDark}>
               Buscar

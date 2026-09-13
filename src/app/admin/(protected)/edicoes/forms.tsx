@@ -1,6 +1,7 @@
 "use client";
-import { useActionState } from "react";
+import { startTransition, useActionState, useState } from "react";
 
+import { shrinkImage, uploadBlocker } from "@/components/admin/shrink-image";
 import { Field, FormError, FormSuccess, Input, SubmitButton, TextArea } from "@/components/ui/form";
 
 import {
@@ -35,7 +36,10 @@ function EditionFields({ values }: { values: EditionFormValues | null }) {
         <Field label="Nome da edição" hint="Aparece na home, na coleção e na Lia. Ex.: Edição Círio.">
           <Input name="name" required maxLength={80} defaultValue={values?.name ?? ""} placeholder="Edição Círio" />
         </Field>
-        <Field label="Endereço (slug)" hint="Vira /belem/<slug>. Vazio = a partir do nome.">
+        <Field
+          label="Endereço (slug)"
+          hint={values ? "Vira /belem/<slug>. Vazio = mantém o atual. Mudar quebra links já divulgados." : "Vira /belem/<slug>. Vazio = a partir do nome."}
+        >
           <Input name="slug" maxLength={80} defaultValue={values?.slug ?? ""} placeholder="vestida-para-o-cirio" />
         </Field>
       </div>
@@ -68,7 +72,8 @@ function EditionFields({ values }: { values: EditionFormValues | null }) {
         </Field>
       </div>
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        Quando duas edições valem ao mesmo tempo, a de hora manda sobre a de período, que manda sobre a permanente.
+        Quando duas edições valem ao mesmo tempo, a de hora manda sobre a de período, que manda sobre a permanente. A vitrine
+        acompanha em até 5 minutos.
       </p>
     </>
   );
@@ -79,6 +84,10 @@ export function EditionCreateForm() {
   return (
     <form action={action} className="flex flex-col gap-4">
       <EditionFields values={null} />
+      <label className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+        <input type="checkbox" name="isActive" className="h-4 w-4 accent-zinc-900" />
+        Já colocar no ar (recomendado só depois de escolher capa e peças)
+      </label>
       <FormError message={state.error} />
       <div>
         <SubmitButton pendingLabel="Criando…">Criar edição</SubmitButton>
@@ -107,17 +116,48 @@ export function EditionEditForm({ editionId, values }: { editionId: string; valu
 }
 
 export function EditionCoverForm({ editionId }: { editionId: string }) {
-  const [state, action] = useActionState(uploadCityEditionCoverAction, INITIAL);
+  const [state, action, pending] = useActionState(uploadCityEditionCoverAction, INITIAL);
+  const [localError, setLocalError] = useState<string | undefined>();
+  const [preparing, setPreparing] = useState(false);
+
+  // A Vercel aceita 4,5 MB por requisição: a foto é reduzida no navegador
+  // antes de subir (mesmo caminho das fotos de produto).
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const original = (event.currentTarget.elements.namedItem("cover") as HTMLInputElement | null)?.files?.[0];
+    if (!original || original.size === 0) {
+      setLocalError("Escolha a imagem da capa antes de enviar.");
+      return;
+    }
+    setLocalError(undefined);
+    setPreparing(true);
+    try {
+      const reduced = await shrinkImage(original);
+      const blocker = uploadBlocker(reduced);
+      if (blocker) {
+        setLocalError(blocker);
+        return;
+      }
+      const body = new FormData();
+      body.set("editionId", editionId);
+      body.set("cover", reduced.file);
+      startTransition(() => action(body));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
   return (
-    <form action={action} className="flex flex-col gap-3">
-      <input type="hidden" name="editionId" value={editionId} />
-      <Field label="Capa" hint="JPG ou PNG, até 8 MB. Reduzimos para 1600 px. Formato paisagem funciona melhor na home.">
-        <Input name="cover" type="file" accept="image/jpeg,image/png,image/webp" required />
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+      <Field label="Capa" hint="JPG, PNG ou foto do celular: reduzimos no seu aparelho antes de subir. Formato paisagem funciona melhor na home.">
+        <Input name="cover" type="file" accept="image/*" required />
       </Field>
-      <FormError message={state.error} />
+      <FormError message={localError ?? state.error} />
       <FormSuccess message={state.success} />
       <div>
-        <SubmitButton pendingLabel="Enviando…">Enviar capa</SubmitButton>
+        <SubmitButton pendingLabel="Enviando…" disabled={preparing || pending}>
+          {preparing ? "Preparando…" : "Enviar capa"}
+        </SubmitButton>
       </div>
     </form>
   );
@@ -130,11 +170,13 @@ export function EditionProductsForm({
 }: {
   editionId: string;
   options: { id: string; name: string; status: string }[];
-  selected: string[];
+  /** As peças da edição, na ordem dela (sempre listadas, mesmo se não estiverem em `options`). */
+  selected: { id: string; name: string; status: string }[];
 }) {
   const [state, action] = useActionState(setCityEditionProductsAction, INITIAL);
+  const selectedIds = selected.map((p) => p.id);
   // As já escolhidas vêm primeiro, na ordem da edição: a ordem da lista é a ordem na vitrine.
-  const ordered = [...selected.map((id) => options.find((o) => o.id === id)).filter((o): o is (typeof options)[number] => !!o), ...options.filter((o) => !selected.includes(o.id))];
+  const ordered = [...selected, ...options.filter((o) => !selectedIds.includes(o.id))];
   return (
     <form action={action} className="flex flex-col gap-3">
       <input type="hidden" name="editionId" value={editionId} />
@@ -145,7 +187,7 @@ export function EditionProductsForm({
               type="checkbox"
               name="productIds"
               value={option.id}
-              defaultChecked={selected.includes(option.id)}
+              defaultChecked={selectedIds.includes(option.id)}
               className="h-4 w-4 accent-zinc-900"
             />
             <span className="flex-1 text-zinc-900 dark:text-zinc-100">{option.name}</span>

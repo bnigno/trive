@@ -22,6 +22,7 @@ import {
   type RankedInvite,
   type TeaserState,
 } from "@/core/drops";
+import { isEditionPast } from "@/core/city-editions";
 import { styleProfileSchema } from "@/core/style/profile";
 import { renderTemplate } from "@/core/whatsapp/render";
 import { isWithinSendWindow, nextSendWindowStart, staggerWithinWindow } from "@/core/whatsapp/send-window";
@@ -270,11 +271,20 @@ export async function getUpcomingDropTeaser(db: DbOrTx, now = new Date()): Promi
     waitlistCounts(db, row.id),
     row.cityEditionId
       ? db
-          .select({ name: cityEditions.name, slug: cityEditions.slug, openingLine: cityEditions.openingLine })
+          .select({
+            name: cityEditions.name,
+            slug: cityEditions.slug,
+            openingLine: cityEditions.openingLine,
+            startsOn: cityEditions.startsOn,
+            endsOn: cityEditions.endsOn,
+            hourStart: cityEditions.hourStart,
+            hourEnd: cityEditions.hourEnd,
+          })
           .from(cityEditions)
           .where(and(eq(cityEditions.id, row.cityEditionId), eq(cityEditions.isActive, true)))
           .limit(1)
-          .then((rows) => rows[0] ?? null)
+          // Edição já encerrada não empresta mais a frase à estreia.
+          .then((rows) => (rows[0] && !isEditionPast(rows[0], now) ? { name: rows[0].name, slug: rows[0].slug, openingLine: rows[0].openingLine } : null))
       : Promise.resolve(null),
   ]);
   return {

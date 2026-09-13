@@ -56,6 +56,7 @@ async function sellable(name: string, sku: string): Promise<string> {
 
 async function cirio() {
   return createCityEdition(sdb, {
+    isActive: true,
     fields: {
       name: "Edição Círio",
       openingLine: "Vestida para o Círio",
@@ -74,6 +75,8 @@ describe("createCityEdition / updateCityEdition", () => {
     expect(a.slug).toBe("edicao-cirio");
     const b = await createCityEdition(sdb, { fields: { name: "Edição Círio" }, userId: FIXED_USER_ID });
     expect(b.slug).toBe("edicao-cirio-2");
+    // Nasce desligada por padrão: a dona coloca capa e peças antes de aparecer.
+    expect((await getCityEdition(sdb, b.editionId))?.isActive).toBe(false);
 
     await expect(
       createCityEdition(sdb, { fields: { name: "Errada", startsOn: "2026-10-12", endsOn: "2026-10-01" }, userId: FIXED_USER_ID }),
@@ -140,30 +143,34 @@ describe("setCityEditionProducts / capa", () => {
 describe("leitura pública", () => {
   it("vigente primeiro (hora > período), encerradas de fora, desativadas de fora; slug público; parágrafos e bairros", async () => {
     const cirioEd = await cirio();
-    await createCityEdition(sdb, { fields: { name: "Chuva das 14h", hourStart: 14, hourEnd: 16 }, userId: FIXED_USER_ID });
-    await createCityEdition(sdb, { fields: { name: "Sempre Belém", sortOrder: 9 }, userId: FIXED_USER_ID });
-    const past = await createCityEdition(sdb, { fields: { name: "Natal 2025", startsOn: "2025-12-01", endsOn: "2025-12-25" }, userId: FIXED_USER_ID });
+    await createCityEdition(sdb, { isActive: true, fields: { name: "Chuva das 14h", hourStart: 14, hourEnd: 16 }, userId: FIXED_USER_ID });
+    await createCityEdition(sdb, { isActive: true, fields: { name: "Sempre Belém", sortOrder: 9 }, userId: FIXED_USER_ID });
+    const past = await createCityEdition(sdb, { isActive: true, fields: { name: "Natal 2025", startsOn: "2025-12-01", endsOn: "2025-12-25" }, userId: FIXED_USER_ID });
+    // Só com fim + faixa de hora: aparece na lista mesmo fora da hora (só some quando encerra).
+    await createCityEdition(sdb, { isActive: true, fields: { name: "Chuva até 12 out", endsOn: "2026-10-12", hourStart: 14, hourEnd: 16, sortOrder: 20 }, userId: FIXED_USER_ID });
     const off = await createCityEdition(sdb, { fields: { name: "Escondida" }, userId: FIXED_USER_ID });
-    await updateCityEdition(sdb, { editionId: off.editionId, fields: { name: "Escondida" }, isActive: false, userId: FIXED_USER_ID });
 
     const morning = await listPublicCityEditions(sdb, { now: IN_CIRIO });
     expect(morning.map((e) => [e.name, e.isCurrent])).toEqual([
       ["Edição Círio", true],
       ["Chuva das 14h", false],
       ["Sempre Belém", true],
+      ["Chuva até 12 out", false],
     ]);
     expect((await getCurrentCityEdition(sdb, { now: IN_CIRIO }))?.name).toBe("Edição Círio");
-    expect((await getCurrentCityEdition(sdb, { now: new Date("2026-10-05T17:30:00Z") }))?.name).toBe("Chuva das 14h");
+    // 14h30 no Círio: período + hora é a mais específica e ganha da só-hora.
+    expect((await getCurrentCityEdition(sdb, { now: new Date("2026-10-05T17:30:00Z") }))?.name).toBe("Chuva até 12 out");
+    expect((await getCurrentCityEdition(sdb, { now: new Date("2026-10-20T17:30:00Z") }))?.name).toBe("Chuva das 14h");
     expect((await getCurrentCityEdition(sdb, { now: BEFORE }))?.name).toBe("Sempre Belém");
     // Fora do Círio às 9h: a permanente manda; o resto na ordem do painel (ordem, nome).
     expect((await listPublicCityEditions(sdb, { now: BEFORE })).map((e) => [e.name, e.daysUntil])).toEqual([
       ["Sempre Belém", null],
       ["Chuva das 14h", null],
       ["Edição Círio", 11],
+      ["Chuva até 12 out", null],
     ]);
     expect(morning.map((e) => e.name)).not.toContain("Natal 2025");
     expect(morning.map((e) => e.name)).not.toContain("Escondida");
-    expect(past.editionId).toBeTruthy();
 
     const pub = await getPublicCityEditionBySlug(sdb, cirioEd.slug, { now: IN_CIRIO });
     expect(pub).toMatchObject({
@@ -177,6 +184,9 @@ describe("leitura pública", () => {
       daysUntil: 0,
     });
     expect(await getPublicCityEditionBySlug(sdb, "escondida")).toBeNull();
+    // Encerrada: a página some (404), como nas listas.
+    expect(await getPublicCityEditionBySlug(sdb, "natal-2025", { now: IN_CIRIO })).toBeNull();
+    expect(past.editionId).toBeTruthy();
   });
 
   it("listPublicProducts({ editionSlug }) devolve só as peças vendáveis da edição, na ordem da dona, sem duplicar", async () => {
@@ -205,6 +215,9 @@ describe("leitura pública", () => {
     const teaser = await getUpcomingDropTeaser(sdb);
     expect(teaser?.edition).toEqual({ name: "Edição Círio", slug: "edicao-cirio", openingLine: "Vestida para o Círio" });
 
+    // Edição encerrada não empresta mais a frase.
+    await updateCityEdition(sdb, { editionId, fields: { name: "Edição Círio", startsOn: "2025-10-01", endsOn: "2025-10-12" }, isActive: true, userId: FIXED_USER_ID });
+    expect((await getUpcomingDropTeaser(sdb))?.edition).toBeNull();
     await updateCityEdition(sdb, { editionId, fields: { name: "Edição Círio" }, isActive: false, userId: FIXED_USER_ID });
     expect((await getUpcomingDropTeaser(sdb))?.edition).toBeNull();
   });

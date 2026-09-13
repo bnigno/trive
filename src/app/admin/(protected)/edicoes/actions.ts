@@ -65,7 +65,12 @@ export async function createCityEditionAction(_prev: FormState, formData: FormDa
   const user = await requireOwner("edicoes");
   let editionId: string;
   try {
-    const result = await createCityEdition(getDb(), { fields: fieldsFromForm(formData), userId: user.id });
+    const result = await createCityEdition(getDb(), {
+      fields: fieldsFromForm(formData),
+      // Nasce desligada por padrão: a dona coloca capa e peças antes de aparecer na home.
+      isActive: formData.get("isActive") === "on",
+      userId: user.id,
+    });
     editionId = result.editionId;
   } catch (error) {
     return { error: toErrorMessage(error) };
@@ -78,11 +83,11 @@ export async function updateCityEditionAction(_prev: FormState, formData: FormDa
   const user = await requireOwner("edicoes");
   try {
     const editionId = z.uuid().parse(formData.get("editionId"));
-    const active = formData.get("isActive");
+    // O form de edição sempre traz o checkbox: desmarcado = desativar.
     await updateCityEdition(getDb(), {
       editionId,
       fields: fieldsFromForm(formData),
-      isActive: active === null ? undefined : active === "on" || active === "true",
+      isActive: formData.get("isActive") === "on",
       userId: user.id,
     });
     revalidateEdition(editionId);
