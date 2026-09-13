@@ -612,25 +612,32 @@ export type SellableVariant = {
   availableQty: number;
 };
 
-/** Pelo SKU (comparação exata sem diferenciar maiúsculas — nunca ILIKE: "%" vindo da internet não é curinga). */
+/**
+ * Pelo SKU (comparação exata sem diferenciar maiúsculas — nunca ILIKE: "%"
+ * vindo da internet não é curinga). SKU é adivinhável, então só peça já
+ * visível ao público: a ponte anônima não pode revelar lançamento escondido.
+ */
 export async function getSellableVariantBySku(db: ServiceDb, sku: string): Promise<SellableVariant | null> {
   const clean = z.string().trim().min(1).parse(sku);
-  return findSellableVariant(db, sql`lower(${productVariants.sku}) = lower(${clean})`);
-}
-
-/** Pelo id da variação (a sacola do site guarda o id; o SKU é rótulo editável). */
-export async function getSellableVariantById(db: ServiceDb, variantId: string): Promise<SellableVariant | null> {
-  const parsed = z.uuid().safeParse(variantId);
-  if (!parsed.success) return null;
-  return findSellableVariant(db, eq(productVariants.id, parsed.data));
+  return findSellableVariant(db, sql`lower(${productVariants.sku}) = lower(${clean})`, { publicOnly: true });
 }
 
 /**
- * Variação vendável AGORA para quem está no site: peça ativa e já visível
- * (janela VIP respeitada — a ponte pública não pode revelar lançamento
- * escondido), variação ativa, com preço ativo; estoque pode ser zero.
+ * Pelo id da variação (a sacola do site guarda o id; o SKU é rótulo editável).
+ * O id é um UUID não enumerável: quem o tem já viu a peça — inclusive a
+ * convidada da janela VIP, cuja sacola precisa chegar inteira à Lia.
  */
-async function findSellableVariant(db: ServiceDb, match: SQL): Promise<SellableVariant | null> {
+export async function getSellableVariantById(db: ServiceDb, variantId: string): Promise<SellableVariant | null> {
+  const parsed = z.uuid().safeParse(variantId);
+  if (!parsed.success) return null;
+  return findSellableVariant(db, eq(productVariants.id, parsed.data), { publicOnly: false });
+}
+
+/**
+ * Variação vendável AGORA: peça ativa (e, com `publicOnly`, já visível —
+ * janela VIP respeitada), variação ativa, com preço ativo; estoque pode ser zero.
+ */
+async function findSellableVariant(db: ServiceDb, match: SQL, opts: { publicOnly: boolean }): Promise<SellableVariant | null> {
   const [row] = await db
     .select({
       variantId: productVariants.id,
@@ -647,7 +654,12 @@ async function findSellableVariant(db: ServiceDb, match: SQL): Promise<SellableV
     .from(productVariants)
     .innerJoin(
       products,
-      and(eq(products.id, productVariants.productId), eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible()),
+      and(
+        eq(products.id, productVariants.productId),
+        eq(products.status, "active"),
+        isNull(products.deletedAt),
+        ...(opts.publicOnly ? [publiclyVisible()] : []),
+      ),
     )
     .innerJoin(priceVersions, activePriceJoin())
     .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))

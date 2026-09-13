@@ -15,10 +15,12 @@ import { bridgeContextLine, bridgeStateSchema } from "@/core/bot/site-bridge";
 export const NOTE_MAX_CHARS = 140;
 export const NOTES_MAX = 10;
 export const CART_MAX_ITEMS = 12;
+/** Teto por linha na sacola da conversa (a ponte do site pode trazer mais: cartAdd corta). */
+export const CART_MAX_QTY = 20;
 
 const cartItemSchema = z.object({
   sku: z.string().min(1),
-  quantidade: z.number().int().min(1).max(20),
+  quantidade: z.number().int().min(1).max(CART_MAX_QTY),
   nome: z.string().min(1),
   /** Rótulo da combinação (ex.: "Preto · M"); vazio para peça sem variação. */
   variacao: z.string().default(""),
@@ -124,11 +126,13 @@ export function cartAdd(
     atual[indice] = {
       ...existente,
       ...item,
-      quantidade: Math.min(20, existente.quantidade + item.quantidade),
+      quantidade: Math.min(CART_MAX_QTY, existente.quantidade + item.quantidade),
     };
     return atual;
   }
-  return [...atual, item].slice(-CART_MAX_ITEMS);
+  // Linha nova também respeita o teto: uma sacola do site com 24 unidades não
+  // pode deixar o caderninho inválido (parseBotState devolveria {}).
+  return [...atual, { ...item, quantidade: Math.min(CART_MAX_QTY, item.quantidade) }].slice(-CART_MAX_ITEMS);
 }
 
 export function cartRemove(

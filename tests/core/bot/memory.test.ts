@@ -5,6 +5,7 @@ import {
   addNote,
   cartAdd,
   cartRemove,
+  CART_MAX_QTY,
   cartSubtotalCents,
   formatCartLines,
   NOTES_MAX,
@@ -63,6 +64,12 @@ describe("sacola", () => {
 
     cart = cartRemove(cart, "VEST-DUNAS-PRET-M");
     expect(cart).toEqual([]);
+  });
+
+  it("linha nova acima do teto é cortada (a ponte do site pode trazer 24; o caderninho aceita até 20)", () => {
+    const cart = cartAdd(undefined, { ...VESTIDO, quantidade: 24 });
+    expect(cart[0].quantidade).toBe(CART_MAX_QTY);
+    expect(parseBotState({ cart })).toEqual({ cart });
   });
 
   it("formata linhas com variação e subtotal, e avisa sacola vazia", () => {

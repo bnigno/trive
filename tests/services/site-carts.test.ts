@@ -148,14 +148,18 @@ describe("createSiteCart", () => {
     expect(wildcard.message).toBe(`Oi Lia, vim pelo site (#${wildcard.code})`);
   });
 
-  it("peça de lançamento ainda escondida (janela VIP) não entra na ponte pública, nem por SKU nem por id", async () => {
+  it("peça de lançamento ainda escondida (janela VIP): por SKU (adivinhável) não entra; pelo id da sacola (convidada) entra", async () => {
     const { productId, variantId } = await dunas();
     await db.update(schema.products).set({ visibleFrom: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }).where(eq(schema.products.id, productId));
-    const link = await createSiteCart(sdb, { source: "cart", items: [{ variantId, quantity: 1 }, { sku: "DUNAS-AREIA-M", quantity: 1 }] });
-    expect((await getSiteCart(sdb, link.id))!.items).toEqual([]);
+    const bySku = await createSiteCart(sdb, { source: "cart", items: [{ sku: "DUNAS-AREIA-M", quantity: 1 }] });
+    expect((await getSiteCart(sdb, bySku.id))!.items).toEqual([]);
     const pdp = await createSiteCart(sdb, { source: "pdp", productSlug: "longo-dunas", variantSku: "DUNAS-AREIA-M" });
     expect(pdp.message).toBe(`Oi Lia, vim pelo site (#${pdp.code})`);
     expect((await getSiteCart(sdb, pdp.id))!.productId).toBeNull();
+    // A convidada montou a sacola na página do lançamento: o id da variação leva a peça à Lia.
+    const byId = await createSiteCart(sdb, { source: "cart", items: [{ variantId, sku: "DUNAS-AREIA-M", quantity: 1 }] });
+    expect((await getSiteCart(sdb, byId.id))!.items).toEqual([expect.objectContaining({ sku: "DUNAS-AREIA-M", name: "Longo Dunas" })]);
+    expect(byId.message).toBe(`Oi Lia, minha sacola no site: 1× Longo Dunas em areia · m (#${byId.code})`);
   });
 
   it("sacola grande (mais de 20 linhas ou de 20 unidades) entra inteira: os tetos são os da sacola", async () => {
@@ -165,6 +169,9 @@ describe("createSiteCart", () => {
     const lines = Array.from({ length: 30 }, () => ({ variantId, quantity: 1 }));
     const many = await createSiteCart(sdb, { source: "cart", items: lines });
     expect((await getSiteCart(sdb, many.id))!.items).toHaveLength(30);
+    // O retrato gravado continua válido para o caderninho (mesmo teto dos dois lados).
+    const { bridgeItemSchema } = await import("@/core/bot/site-bridge");
+    expect(bridgeItemSchema.array().safeParse((await getSiteCart(sdb, link.id))!.items).success).toBe(true);
   });
 
   it("entrada inválida é recusada na fronteira", async () => {

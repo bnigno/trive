@@ -8,6 +8,8 @@ import { z } from "zod";
 
 import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
 import {
+  BRIDGE_MAX_LINES,
+  BRIDGE_MAX_QTY,
   BRIDGE_SOURCES,
   buildBridgeMessage,
   generateBridgeCode,
@@ -33,9 +35,6 @@ export class ServiceError extends Error {
 /** Colisão de código entre pontes abertas é rara (30^4); três tentativas bastam. */
 const CODE_ATTEMPTS = 3;
 
-/** Tetos da sacola na ponte — folgados: a sacola do site limita só pelo estoque. */
-export const BRIDGE_MAX_LINES = 100;
-export const BRIDGE_MAX_QTY = 999;
 
 const createSiteCartSchema = z.object({
   source: z.enum(BRIDGE_SOURCES),
@@ -181,3 +180,4 @@ export async function getSiteCart(db: DbOrTx, id: string) {
 }
 
 export type { BridgeSource };
+export { BRIDGE_MAX_LINES, BRIDGE_MAX_QTY };

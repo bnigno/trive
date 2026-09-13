@@ -42,13 +42,17 @@ export function extractBridgeCode(text: string): string | null {
   return loose.length > 0 ? loose[loose.length - 1]![1]! : null;
 }
 
-/** Retrato de uma peça na ponte (o que a cliente estava vendo). */
+/** Tetos da sacola na ponte — folgados: a sacola do site só limita pelo estoque. */
+export const BRIDGE_MAX_LINES = 100;
+export const BRIDGE_MAX_QTY = 999;
+
+/** Retrato de uma peça na ponte (o que a cliente estava vendo). Mesmo teto de quem grava. */
 export const bridgeItemSchema = z.object({
   sku: z.string().min(1),
   name: z.string().min(1),
   /** "Areia · M"; vazio para peça sem variação. */
   variation: z.string().default(""),
-  quantity: z.number().int().min(1).max(20),
+  quantity: z.number().int().min(1).max(BRIDGE_MAX_QTY),
   priceCents: z.number().int().min(0),
 });
 export type BridgeItem = z.infer<typeof bridgeItemSchema>;
