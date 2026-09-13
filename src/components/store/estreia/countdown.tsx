@@ -27,20 +27,28 @@ export function Countdown({ publishAtIso, serverNowIso }: { publishAtIso: string
 
   useEffect(() => {
     const target = new Date(publishAtIso);
+    // O relógio do celular pode estar torto: tica com o do servidor
+    // (desvio medido na montagem), para a virada acontecer na hora certa.
+    const skewMs = Date.now() - new Date(serverNowIso).getTime();
+    const serverNow = () => new Date(Date.now() - skewMs);
     let retries = 0;
     let retryTimer: number | undefined;
+    let armed = false;
+    let disposed = false;
     // Na virada, a página pública é ISR: a primeira recarga pode pegar a cópia
     // velha. Insiste a cada poucos segundos (o servidor vira sozinho) até a
-    // página trocar — quem espera não fica olhando 00:00:00.
+    // página trocar — quem espera não fica olhando 00:00:00. Uma cadeia só.
     const retryRefresh = () => {
+      if (disposed) return;
       retries += 1;
       router.refresh();
       if (retries < OPEN_RETRY_MAX) retryTimer = window.setTimeout(retryRefresh, OPEN_RETRY_EVERY_MS);
     };
     const tick = () => {
-      const next = countdownParts(target, new Date());
+      const next = countdownParts(target, serverNow());
       setParts(next);
-      if (next.total === 0 && retries === 0) {
+      if (next.total === 0 && !armed) {
+        armed = true;
         setOpening(true);
         retryTimer = window.setTimeout(retryRefresh, 1500);
       }
@@ -48,10 +56,11 @@ export function Countdown({ publishAtIso, serverNowIso }: { publishAtIso: string
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => {
+      disposed = true;
       window.clearInterval(timer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [publishAtIso, router]);
+  }, [publishAtIso, serverNowIso, router]);
 
   if (opening) {
     return (

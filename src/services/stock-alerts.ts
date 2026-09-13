@@ -3,13 +3,13 @@
 // (stock.restocked), os avisos abertos viram UM evento cada, escalonados na
 // janela de envio, e a cliente recebe UMA mensagem (foto da peça + texto).
 // Quem deu SAIR não recebe; quem não tem estoque de novo espera o próximo.
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
 import { variantLabel } from "@/core/catalog/attributes";
 import { renderTemplate } from "@/core/whatsapp/render";
-import { isWithinSendWindow, nextSendWindowStart, staggerSchedule } from "@/core/whatsapp/send-window";
+import { isWithinSendWindow, nextSendWindowStart, staggerWithinWindow } from "@/core/whatsapp/send-window";
 import {
   auditLog,
   customers,
@@ -248,10 +248,9 @@ export async function fanOutRestockAlerts(
   if (open.length === 0) return { queued: 0 };
 
   const policy = await loadSendPolicy(db);
-  const schedule = staggerSchedule(open.length, {
-    from: nextSendWindowStart(now, policy.window),
-    intervalSeconds: policy.intervalSeconds,
-  });
+  // A fila não atravessa o fim da janela: a cauda continua amanhã às 9h no
+  // mesmo passo (nunca uma rajada na manhã seguinte).
+  const schedule = staggerWithinWindow(open.length, { from: now, intervalSeconds: policy.intervalSeconds, window: policy.window });
   let queued = 0;
   for (const [index, alert] of open.entries()) {
     const id = await enqueueOutboxEvent(db, {
@@ -326,11 +325,14 @@ export async function notifyRestockAlert(
     .limit(1);
   if (customer && !customer.marketingOptIn) {
     const [optOut] = await db
-      .select({ id: auditLog.id })
+      .select({ createdAt: auditLog.createdAt })
       .from(auditLog)
       .where(and(eq(auditLog.action, "wa.opt_out"), eq(auditLog.entityId, customer.id)))
+      .orderBy(desc(auditLog.createdAt))
       .limit(1);
-    if (optOut) {
+    // SAIR depois de pedir o aviso cancela; pedido feito DEPOIS de um SAIR
+    // antigo é consentimento novo e vale (mesma regra da lista da estreia).
+    if (optOut && optOut.createdAt.getTime() >= alert.consentAt.getTime()) {
       await cancelStockAlert(db, { alertId: alert.id });
       return { skipped: "sem_opt_in" };
     }

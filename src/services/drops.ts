@@ -24,7 +24,7 @@ import {
 } from "@/core/drops";
 import { styleProfileSchema } from "@/core/style/profile";
 import { renderTemplate } from "@/core/whatsapp/render";
-import { isWithinSendWindow, nextSendWindowStart, staggerSchedule } from "@/core/whatsapp/send-window";
+import { isWithinSendWindow, nextSendWindowStart, staggerWithinWindow } from "@/core/whatsapp/send-window";
 import {
   auditLog,
   customerProfiles,
@@ -567,7 +567,8 @@ export async function dispatchDropVip(db: DbOrTx, input: { dropId: string; now?:
     .where(and(eq(dropInvites.dropId, input.dropId), isNull(dropInvites.sentAt)))
     .orderBy(desc(dropInvites.score), asc(dropInvites.createdAt));
   const policy = await loadSendPolicy(db);
-  const schedule = staggerSchedule(pending.length, { from: nextSendWindowStart(now, policy.window), intervalSeconds: policy.intervalSeconds });
+  // A fila não atravessa o fim da janela (a cauda segue amanhã às 9h no mesmo passo).
+  const schedule = staggerWithinWindow(pending.length, { from: now, intervalSeconds: policy.intervalSeconds, window: policy.window });
   let queued = 0;
   for (const [index, invite] of pending.entries()) {
     const id = await enqueueOutboxEvent(db, {
