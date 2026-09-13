@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
+import { editionDigestLine } from "@/core/digest/editions";
 import { openingFor } from "@/core/digest/openings";
 import type { DailyDigestData } from "@/core/digest/types";
 import { normalizeReceiptText } from "@/core/receipts/types";
@@ -30,6 +31,7 @@ import {
 import type { DbOrTx } from "@/queue/enqueue";
 import { topProducts } from "@/services/reports";
 import { getStockOverview } from "@/services/stock";
+import { summarizeCityEditionsForDigest } from "@/services/city-editions";
 import { countOrdersMustShipToday } from "@/services/needed-by";
 import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
 import { summarizeBotActivity } from "@/services/wa-insights";
@@ -123,13 +125,15 @@ export async function buildDailyDigestData(
     }
   }
 
-  const [conversationsAwaitingOwner, bot, stock, top, storeName, mustShipToday] = await Promise.all([
+  const [conversationsAwaitingOwner, bot, stock, top, storeName, mustShipToday, editions] = await Promise.all([
     countConversationsAwaitingOwner(db),
     summarizeBotActivity(db, { from, to }),
     getStockOverview(db),
     topProducts(db, { days: BEST_SELLER_DAYS, limit: 1 }),
     loadStoreName(db),
     countOrdersMustShipToday(db, { now }),
+    // O Bom dia chega na manhã seguinte ao dia relatado: a vigência é a desse dia.
+    summarizeCityEditionsForDigest(db, { now: now }),
   ]);
 
   const lowStock = stock
@@ -170,6 +174,7 @@ export async function buildDailyDigestData(
           revenueCents: best.revenueCents,
         }
       : null,
+    editions: editions.map((e) => ({ ...e, name: normalizeReceiptText(e.name) || "Edição" })),
     storeName: normalizeReceiptText(storeName) || STORE_NAME_DEFAULT,
     generatedAt: new Date(),
   };
@@ -192,6 +197,7 @@ export function buildDigestVars(data: DailyDigestData): Record<string, string> {
     lia_pedidos: String(data.bot.orders),
     lia_custo: formatUsdCents(data.bot.costUsdCents),
     loja: data.storeName,
+    edicoes: editionDigestLine(data.editions) ?? "",
   };
 }
 

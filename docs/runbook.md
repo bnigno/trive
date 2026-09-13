@@ -129,6 +129,16 @@ prazo é o da faixa de Correios mais lenta em Frete. Template do Bom dia em
 produção: `scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
 (confira antes se a dona editou o texto).
 
+## Lia e as Edições de Belém
+
+A planta da loja da Lia lista as edições ativas (no ar ou por vir) e ela
+filtra com `edicao` em `listar_produtos` quando a cliente cita a ocasião
+("me mostra a edição do Círio"); a lista tocável e o cartão saem só com as
+peças da edição. O Bom dia ganha "Faltam N dias para a Edição Círio" no topo
+da imagem e a linha `{{edicoes}}` na legenda — template em produção:
+`scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
+(confira antes se a dona editou o texto).
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

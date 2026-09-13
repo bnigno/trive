@@ -24,6 +24,7 @@ const full: DailyDigestData = {
     { name: "Blusa Linho Areia G", sku: "LINHO-AREI-G", available: 1 },
   ],
   bestSeller: { name: "Vestido Dunas", quantity: 5, revenueCents: 144500 },
+  editions: [{ name: "Edição Círio", isCurrent: false, daysUntil: 28, products: 12, missingPhoto: 2 }],
   storeName: "TRIVÉ",
   generatedAt: new Date("2026-09-10T11:00:00Z"),
 };
@@ -36,6 +37,7 @@ const empty: DailyDigestData = {
   bot: { conversations: 0, turns: 0, handoffs: 0, orders: 0, ordersCents: 0, costUsdCents: 0 },
   lowStock: [],
   bestSeller: null,
+    editions: [],
 };
 
 const originalFetch = globalThis.fetch;

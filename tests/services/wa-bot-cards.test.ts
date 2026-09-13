@@ -10,9 +10,10 @@ import type { CardData } from "@/core/cards/types";
 import * as schema from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
+import { createCityEdition, setCityEditionProducts } from "@/services/city-editions";
 import { saveStyleProfile } from "@/services/style-profiles";
 import { buildToolExecutor, type BotAttachment } from "@/services/wa-bot";
-import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 let db: TestDb;
 let sdb: DbOrTx;
@@ -126,6 +127,25 @@ describe("listar_produtos + cartão editorial", () => {
     expect(data.eyebrow).toBe("A VITRINE DE HOJE");
     expect(result.text).toContain("Um cartão com as fotos de");
     expect(await db.select().from(schema.botCards)).toHaveLength(1);
+  });
+
+  it("edicao: só as peças da Edição de Belém, na ordem da dona, com o eyebrow da edição; edição desconhecida é recusada sem inventar", async () => {
+    const { editionId } = await createCityEdition(sdb, { isActive: true, fields: { name: "Edição Círio" }, userId: FIXED_USER_ID });
+    const ids = await db.select({ id: schema.products.id, name: schema.products.name }).from(schema.products);
+    const byName = new Map(ids.map((p) => [p.name, p.id]));
+    await setCityEditionProducts(sdb, { editionId, productIds: [byName.get("Boné Bordado")!, byName.get("LONGO DUNAS")!], userId: FIXED_USER_ID });
+
+    const { executeTool, attachments } = executor();
+    const result = await executeTool("listar_produtos", { edicao: "círio" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("2 peças encontradas (edição Edição Círio)");
+    const list = attachments[0];
+    expect(list.kind === "option_list" ? list.options.map((o) => o.title) : []).toEqual(["Boné Bordado", "LONGO DUNAS"]);
+    expect(render.mock.calls[0][0].eyebrow).toBe("EDIÇÃO EDIÇÃO CÍRIO".replace("EDIÇÃO EDIÇÃO", "EDIÇÃO EDIÇÃO"));
+
+    const unknown = await executor().executeTool("listar_produtos", { edicao: "carnaval" });
+    expect(unknown.ok).toBe(false);
+    expect(unknown.text).toContain("Não existe a edição");
   });
 
   it("filtros viram o eyebrow; segunda página não manda cartão; um cartão por turno", async () => {

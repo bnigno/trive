@@ -35,6 +35,7 @@ import {
 } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
+import { resolveCityEditionSlug } from "@/services/city-editions";
 import { getSettingsMap } from "@/services/settings";
 import {
   getPublicProductBySlug,
@@ -91,11 +92,24 @@ export async function execListarProdutos(
     categorySlug = slug;
     filtros.push(`categoria ${input.categoria.trim()}`);
   }
+  let editionSlug: string | undefined;
+  if (input.edicao?.trim()) {
+    const edition = await resolveCityEditionSlug(db, input.edicao);
+    if (!edition) {
+      return {
+        ok: false,
+        text: `Não existe a edição "${input.edicao}". Use uma das Edições de Belém da PLANTA DA LOJA ou busque sem o filtro edicao — e nunca invente uma edição para a cliente.`,
+      };
+    }
+    editionSlug = edition.slug;
+    filtros.push(`edição ${edition.name}`);
+  }
   if (busca) filtros.push(`"${busca}"`);
 
   let items: PublicProductListItem[] = await listPublicProducts(db, {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
+    ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
     limit: 200,
   });

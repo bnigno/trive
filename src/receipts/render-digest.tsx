@@ -6,6 +6,7 @@
 // display:flex, texto misto vira uma string só, nada vem da rede.
 import { ImageResponse } from "next/og";
 
+import { editionHeadline } from "@/core/digest/editions";
 import type { DailyDigestData } from "@/core/digest/types";
 import type { ReceiptAssets } from "@/core/receipts/types";
 import { formatCentsBRL, formatUsdCents } from "@/lib/money";
@@ -117,6 +118,7 @@ function plural(n: number, one: string, many: string): string {
 
 function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
   const { sales, waiting, bot } = data;
+  const editionLine = editionHeadline(data.editions);
   const hadSales = sales.paidOrders > 0;
 
   return (
@@ -157,6 +159,10 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
         <div style={{ marginTop: 8, fontSize: 22, color: C.ivory300 }}>
           {data.dayLabel}
         </div>
+        {/* Edições de Belém: na faixa do topo, para não roubar altura do papel (1350 px). */}
+        {editionLine ? (
+          <div style={{ marginTop: 10, fontSize: 20, letterSpacing: 2, color: C.gold400 }}>{editionLine.toUpperCase()}</div>
+        ) : null}
       </div>
 
       {/* O papel */}

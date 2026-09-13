@@ -53,6 +53,12 @@ describe("buildBotSystemPrompt", () => {
     expect(section).toContain("nunca o repita");
   });
 
+  it("ocasião de Belém: manda usar o filtro edicao e nunca inventar edição", () => {
+    const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
+    expect(prompt).toContain("listar_produtos com edicao");
+    expect(prompt).toContain("nunca invente uma");
+  });
+
   it("nome vazio cai no padrão; planta da loja e política de troca entram quando existem", () => {
     const prompt = buildBotSystemPrompt({
       ...OPCOES,

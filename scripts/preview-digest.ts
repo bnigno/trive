@@ -33,6 +33,7 @@ function fakeData(date: string, empty: boolean): DailyDigestData {
           { name: "Saia Midi Verde Militar P", sku: "SAIA-VERD-P", available: 2 },
         ],
     bestSeller: empty ? null : { name: "Vestido Dunas", quantity: 5, revenueCents: 144500 },
+    editions: empty ? [] : [{ name: "Edição Círio", isCurrent: false, daysUntil: 28, products: 12, missingPhoto: 2 }],
     storeName: "TRIVÉ",
     generatedAt: new Date(),
   };

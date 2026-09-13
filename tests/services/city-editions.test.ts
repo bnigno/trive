@@ -14,6 +14,9 @@ import {
   getPublicCityEditionBySlug,
   listCityEditions,
   listPublicCityEditions,
+  listStoreMapEditions,
+  resolveCityEditionSlug,
+  summarizeCityEditionsForDigest,
   setCityEditionCover,
   setCityEditionProducts,
   updateCityEdition,
@@ -220,5 +223,27 @@ describe("leitura pública", () => {
     expect((await getUpcomingDropTeaser(sdb))?.edition).toBeNull();
     await updateCityEdition(sdb, { editionId, fields: { name: "Edição Círio" }, isActive: false, userId: FIXED_USER_ID });
     expect((await getUpcomingDropTeaser(sdb))?.edition).toBeNull();
+  });
+});
+
+describe("planta da loja e a Lia", () => {
+  it("listStoreMapEditions conta só peças vendáveis; resolveCityEditionSlug aceita slug, nome sem acento e pedaço; encerrada/desativada não resolve", async () => {
+    const { editionId, slug } = await cirio();
+    const p1 = await sellable("Longo Dunas", "DUNAS");
+    const { productId: draft } = await createTestVariant(db, { sku: "RASCUNHO", costCents: 1000, onHand: 3, name: "Sem preço" });
+    await setCityEditionProducts(sdb, { editionId, productIds: [p1, draft], userId: FIXED_USER_ID });
+    await createCityEdition(sdb, { fields: { name: "Escondida" }, userId: FIXED_USER_ID });
+
+    expect(await listStoreMapEditions(sdb, { now: IN_CIRIO })).toEqual([{ name: "Edição Círio", slug, productCount: 1, current: true, daysUntil: 0 }]);
+    expect(await listStoreMapEditions(sdb, { now: BEFORE })).toEqual([{ name: "Edição Círio", slug, productCount: 1, current: false, daysUntil: 11 }]);
+
+    expect(await resolveCityEditionSlug(sdb, "edicao-cirio", { now: BEFORE })).toEqual({ slug, name: "Edição Círio" });
+    expect(await resolveCityEditionSlug(sdb, "EDICAO CIRIO", { now: BEFORE })).toEqual({ slug, name: "Edição Círio" });
+    expect(await resolveCityEditionSlug(sdb, "círio", { now: BEFORE })).toEqual({ slug, name: "Edição Círio" });
+    expect(await resolveCityEditionSlug(sdb, "carnaval", { now: BEFORE })).toBeNull();
+    expect(await resolveCityEditionSlug(sdb, "escondida", { now: BEFORE })).toBeNull();
+    expect(await resolveCityEditionSlug(sdb, "círio", { now: new Date("2026-11-01T12:00:00Z") })).toBeNull();
+
+    expect(await summarizeCityEditionsForDigest(sdb, { now: BEFORE })).toEqual([{ name: "Edição Círio", isCurrent: false, daysUntil: 11, products: 2, missingPhoto: 2 }]);
   });
 });

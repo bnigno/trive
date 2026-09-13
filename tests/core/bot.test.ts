@@ -248,6 +248,7 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
         pagina: 2,
       }).success,
     ).toBe(true);
+    expect(schema.safeParse({ edicao: "edicao-cirio" }).success).toBe(true);
     expect(schema.safeParse({ busca: 1 }).success).toBe(false);
     expect(schema.safeParse({ pagina: 0 }).success).toBe(false);
     expect(schema.safeParse({ ordenar: "x" }).success).toBe(false);

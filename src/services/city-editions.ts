@@ -192,6 +192,80 @@ export async function getPublicCityEditionBySlug(db: DbOrTx, slug: string, input
   return isEditionPast(edition, now) ? null : toPublic(edition, now);
 }
 
+/** Edição na planta da loja da Lia: nome, slug, peças vendáveis e vigência. */
+export interface StoreMapEdition {
+  name: string;
+  slug: string;
+  productCount: number;
+  current: boolean;
+  daysUntil: number | null;
+}
+
+/**
+ * As edições ativas e não encerradas, com a contagem de peças VENDÁVEIS
+ * (ativa, com preço e visível) — o que a Lia pode mostrar de verdade.
+ */
+export async function listStoreMapEditions(db: DbOrTx, input: { now?: Date } = {}): Promise<StoreMapEdition[]> {
+  const list = await listPublicCityEditions(db, input);
+  if (list.length === 0) return [];
+  const counts = await db
+    .select({
+      editionId: cityEditionProducts.cityEditionId,
+      count: sql<string>`count(distinct ${products.id})`,
+    })
+    .from(cityEditionProducts)
+    .innerJoin(products, eq(products.id, cityEditionProducts.productId))
+    .where(
+      and(
+        inArray(cityEditionProducts.cityEditionId, list.map((e) => e.id)),
+        eq(products.status, "active"),
+        isNull(products.deletedAt),
+        sql`(${products.visibleFrom} IS NULL OR ${products.visibleFrom} <= now())`,
+        sql`exists (
+          select 1 from product_variants pv join price_versions pr on pr.product_variant_id = pv.id
+          where pv.product_id = ${products.id} and pv.deleted_at is null and pv.is_active = true and pr.status = 'active'
+        )`,
+      ),
+    )
+    .groupBy(cityEditionProducts.cityEditionId);
+  const countById = new Map(counts.map((row) => [row.editionId, Number(row.count)]));
+  return list.map((e) => ({ name: e.name, slug: e.slug, productCount: countById.get(e.id) ?? 0, current: e.isCurrent, daysUntil: e.daysUntil }));
+}
+
+/** A edição que o "Bom dia" comenta: peças escolhidas e quantas ainda sem foto. */
+export async function summarizeCityEditionsForDigest(
+  db: DbOrTx,
+  input: { now?: Date } = {},
+): Promise<{ name: string; isCurrent: boolean; daysUntil: number | null; products: number; missingPhoto: number }[]> {
+  const list = await listPublicCityEditions(db, input);
+  const result = [];
+  for (const edition of list) {
+    const items = await loadEditionProducts(db, edition.id);
+    result.push({
+      name: edition.name,
+      isCurrent: edition.isCurrent,
+      daysUntil: edition.daysUntil,
+      products: items.length,
+      missingPhoto: items.filter((item) => item.imagePath === null).length,
+    });
+  }
+  return result;
+}
+
+/** Nome ou slug (sem caixa) → slug de uma edição ativa e não encerrada; null se não existir. */
+export async function resolveCityEditionSlug(db: DbOrTx, term: string, input: { now?: Date } = {}): Promise<{ slug: string; name: string } | null> {
+  const trimmed = term.trim();
+  if (trimmed === "") return null;
+  const list = await listPublicCityEditions(db, input);
+  const norm = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const wanted = norm(trimmed);
+  const found =
+    list.find((e) => e.slug === wanted) ??
+    list.find((e) => norm(e.name) === wanted) ??
+    list.find((e) => norm(e.name).includes(wanted) || wanted.includes(norm(e.name)));
+  return found ? { slug: found.slug, name: found.name } : null;
+}
+
 // ---------------------------------------------------------------------------
 // Escrita (painel, só o dono)
 // ---------------------------------------------------------------------------

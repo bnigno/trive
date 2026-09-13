@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 
 export default async function EstiloPage() {
   const map = await tryOrBuildFallback(
-    { totalProducts: 0, categories: [], colors: [], sizes: [] },
+    { totalProducts: 0, categories: [], colors: [], sizes: [], editions: [] },
     () => getStoreMap(getDb()),
   );
 

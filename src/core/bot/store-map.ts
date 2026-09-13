@@ -16,6 +16,8 @@ export type StoreMapInput = {
   }[];
   colors: string[];
   sizes: string[];
+  /** Edições de Belém ativas (no ar ou por vir), com a contagem de peças vendáveis. */
+  editions?: { name: string; slug: string; productCount: number; current: boolean; daysUntil: number | null }[];
 };
 
 const MAX_VALUES = 24;
@@ -47,6 +49,20 @@ export function renderStoreMap(input: StoreMapInput): string | null {
   }
   if (input.sizes.length > 0) {
     linhas.push(`Tamanhos com estoque: ${limited(input.sizes)}.`);
+  }
+  const editions = input.editions ?? [];
+  if (editions.length > 0) {
+    linhas.push("Edições de Belém (curadoria por ocasião; filtre com edicao em listar_produtos):");
+    for (const edition of editions) {
+      const when = edition.current
+        ? "NO AR"
+        : edition.daysUntil === null
+          ? "fora do horário"
+          : edition.daysUntil === 0
+            ? "começa hoje"
+            : `começa em ${edition.daysUntil} ${edition.daysUntil === 1 ? "dia" : "dias"}`;
+      linhas.push(`• ${edition.name} (edicao: ${edition.slug}) — ${edition.productCount} ${edition.productCount === 1 ? "peça" : "peças"}, ${when}`);
+    }
   }
   return linhas.join("\n");
 }

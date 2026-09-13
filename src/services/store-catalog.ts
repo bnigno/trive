@@ -30,6 +30,8 @@ import {
   type ShippingKind,
 } from "@/core/shipping/delivery-windows";
 import { cepDigits } from "@/lib/cep";
+import type { DbOrTx } from "@/queue/enqueue";
+import { listStoreMapEditions, type StoreMapEdition } from "@/services/city-editions";
 import { parseWindows } from "@/services/shipping";
 
 /**
@@ -804,6 +806,8 @@ export interface StoreMap {
   colors: string[];
   /** Valores do eixo "tamanho" com estoque em alguma peça ativa. */
   sizes: string[];
+  /** Edições de Belém ativas (no ar ou por vir) com peças vendáveis. */
+  editions: StoreMapEdition[];
 }
 
 /** Resumo estável do catálogo vendável (categorias, faixas, cores e tamanhos). */
@@ -853,11 +857,15 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
     priceToCents: Number(row.priceToCents),
   }));
 
+  // PGlite (testes) e postgres (produção) divergem só no tipo de execute(); a API drizzle é a mesma.
+  const editions = await listStoreMapEditions(db as unknown as DbOrTx);
+
   return {
     totalProducts: mapped.reduce((sum, row) => sum + row.productCount, 0),
     categories: mapped,
     colors: [...colors].sort((a, b) => a.localeCompare(b, "pt-BR")),
     sizes: [...sizes].sort(compareSizes),
+    editions,
   };
 }
 

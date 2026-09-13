@@ -288,8 +288,9 @@ export const initialWaTemplates: Array<{
       "Bom dia! ☕ Seu resumo de {{dia}}, {{data}}:\n" +
       "Vendas: {{vendas}} em {{pedidos}} pedido(s) · ticket {{ticket}}\n" +
       "Aguardando você: {{a_pagar}} a pagar · {{a_embalar}} a embalar · {{a_enviar}} a enviar\n" +
-      "Data marcada: {{sair_hoje}} pedido(s) precisam sair hoje\n" +
-      "A Lia atendeu {{lia_conversas}} conversa(s) e fechou {{lia_pedidos}} pedido(s) 🤎",
+      "Data marcada: {{sair_hoje}} pedido(s) precisam sair hoje
+" +
+      "A Lia atendeu {{lia_conversas}} conversa(s) e fechou {{lia_pedidos}} pedido(s) 🤎{{edicoes}}",
     variables: [
       "dia",
       "data",
@@ -304,6 +305,7 @@ export const initialWaTemplates: Array<{
       "lia_pedidos",
       "lia_custo",
       "loja",
+      "edicoes",
     ],
   },
 ];
