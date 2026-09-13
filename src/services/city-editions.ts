@@ -199,6 +199,7 @@ export interface StoreMapEdition {
   productCount: number;
   current: boolean;
   daysUntil: number | null;
+  kind: EditionKind;
 }
 
 /**
@@ -229,22 +230,30 @@ export async function listStoreMapEditions(db: DbOrTx, input: { now?: Date } = {
     )
     .groupBy(cityEditionProducts.cityEditionId);
   const countById = new Map(counts.map((row) => [row.editionId, Number(row.count)]));
-  return list.map((e) => ({ name: e.name, slug: e.slug, productCount: countById.get(e.id) ?? 0, current: e.isCurrent, daysUntil: e.daysUntil }));
+  // Sem peça vendável a Lia não tem o que mostrar: fica fora da planta.
+  return list
+    .map((e) => ({ name: e.name, slug: e.slug, productCount: countById.get(e.id) ?? 0, current: e.isCurrent, daysUntil: e.daysUntil, kind: e.kind }))
+    .filter((e) => e.productCount > 0);
 }
 
 /** A edição que o "Bom dia" comenta: peças escolhidas e quantas ainda sem foto. */
 export async function summarizeCityEditionsForDigest(
   db: DbOrTx,
   input: { now?: Date } = {},
-): Promise<{ name: string; isCurrent: boolean; daysUntil: number | null; products: number; missingPhoto: number }[]> {
+): Promise<{ name: string; isCurrent: boolean; daysUntil: number | null; kind: EditionKind; hours: { start: number; end: number } | null; products: number; missingPhoto: number }[]> {
   const list = await listPublicCityEditions(db, input);
+  const rules = await db.select({ id: cityEditions.id, hourStart: cityEditions.hourStart, hourEnd: cityEditions.hourEnd }).from(cityEditions).where(inArray(cityEditions.id, list.map((e) => e.id)));
+  const hoursById = new Map(rules.map((r) => [r.id, r.hourStart !== null && r.hourEnd !== null ? { start: r.hourStart, end: r.hourEnd } : null]));
   const result = [];
   for (const edition of list) {
-    const items = await loadEditionProducts(db, edition.id);
+    // Peça arquivada não conta como escolhida (nem como "sem foto").
+    const items = (await loadEditionProducts(db, edition.id)).filter((item) => item.status !== "archived");
     result.push({
       name: edition.name,
       isCurrent: edition.isCurrent,
       daysUntil: edition.daysUntil,
+      kind: edition.kind,
+      hours: hoursById.get(edition.id) ?? null,
       products: items.length,
       missingPhoto: items.filter((item) => item.imagePath === null).length,
     });
@@ -254,15 +263,25 @@ export async function summarizeCityEditionsForDigest(
 
 /** Nome ou slug (sem caixa) → slug de uma edição ativa e não encerrada; null se não existir. */
 export async function resolveCityEditionSlug(db: DbOrTx, term: string, input: { now?: Date } = {}): Promise<{ slug: string; name: string } | null> {
-  const trimmed = term.trim();
-  if (trimmed === "") return null;
   const list = await listPublicCityEditions(db, input);
-  const norm = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const wanted = norm(trimmed);
+  const STOP = new Set(["edicao", "edicoes", "de", "do", "da", "dos", "das", "a", "o", "as", "os", "para", "pro", "pra"]);
+  // "edição do Círio" → "cirio"; "Círio de Nazaré" → "cirio nazare": compara o que sobra sem as palavras vazias.
+  const core = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter((word) => word && !STOP.has(word))
+      .join(" ");
+  const wanted = core(term);
+  if (wanted.length < 3) return null;
   const found =
-    list.find((e) => e.slug === wanted) ??
-    list.find((e) => norm(e.name) === wanted) ??
-    list.find((e) => norm(e.name).includes(wanted) || wanted.includes(norm(e.name)));
+    list.find((e) => e.slug === term.trim().toLowerCase()) ??
+    list.find((e) => core(e.name) === wanted) ??
+    list.find((e) => core(e.name).includes(wanted)) ??
+    list.find((e) => wanted.includes(core(e.name)) && core(e.name).length >= 3);
   return found ? { slug: found.slug, name: found.name } : null;
 }
 

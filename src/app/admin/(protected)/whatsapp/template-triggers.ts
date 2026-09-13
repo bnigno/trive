@@ -61,5 +61,5 @@ export const PREVIEW_VARIABLES: Record<string, string> = {
   lia_conversas: "6",
   lia_pedidos: "2",
   lia_custo: "US$ 0,42",
-  edicoes: "Faltam 28 dias para a Edição Círio — 12 peças escolhidas, 2 ainda sem foto",
+  edicoes: "\nFaltam 28 dias para a Edição Círio — 12 peças escolhidas, 2 ainda sem foto",
 };

@@ -102,7 +102,8 @@ export async function execListarProdutos(
       };
     }
     editionSlug = edition.slug;
-    filtros.push(`edição ${edition.name}`);
+    // "Edição Círio" já traz a palavra; "Círio" ganha o prefixo.
+    filtros.push(/^edi[cç][aã]o\b/i.test(edition.name) ? edition.name : `edição ${edition.name}`);
   }
   if (busca) filtros.push(`"${busca}"`);
 

@@ -17,7 +17,7 @@ export type StoreMapInput = {
   colors: string[];
   sizes: string[];
   /** Edições de Belém ativas (no ar ou por vir), com a contagem de peças vendáveis. */
-  editions?: { name: string; slug: string; productCount: number; current: boolean; daysUntil: number | null }[];
+  editions?: { name: string; slug: string; productCount: number; current: boolean; daysUntil: number | null; kind?: "always" | "period" | "hours" | "period_hours" }[];
 };
 
 const MAX_VALUES = 24;
@@ -54,10 +54,11 @@ export function renderStoreMap(input: StoreMapInput): string | null {
   if (editions.length > 0) {
     linhas.push("Edições de Belém (curadoria por ocasião; filtre com edicao em listar_produtos):");
     for (const edition of editions) {
+      const byHour = edition.kind === "hours" || edition.kind === "period_hours";
       const when = edition.current
         ? "NO AR"
-        : edition.daysUntil === null
-          ? "fora do horário"
+        : edition.daysUntil === null || (byHour && edition.daysUntil === 0)
+          ? "fora do horário agora"
           : edition.daysUntil === 0
             ? "começa hoje"
             : `começa em ${edition.daysUntil} ${edition.daysUntil === 1 ? "dia" : "dias"}`;

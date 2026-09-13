@@ -197,7 +197,11 @@ export function buildDigestVars(data: DailyDigestData): Record<string, string> {
     lia_pedidos: String(data.bot.orders),
     lia_custo: formatUsdCents(data.bot.costUsdCents),
     loja: data.storeName,
-    edicoes: editionDigestLine(data.editions) ?? "",
+    // Traz a própria quebra de linha: sem edição, a legenda termina no 🤎 sem linha vazia.
+    edicoes: (() => {
+      const line = editionDigestLine(data.editions);
+      return line ? `\n${line}` : "";
+    })(),
   };
 }
 

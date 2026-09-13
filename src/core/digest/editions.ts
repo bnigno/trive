@@ -11,6 +11,27 @@ export interface EditionDigestInput {
   products: number;
   /** Dessas, quantas ainda não têm foto. */
   missingPhoto: number;
+  /** Tipo da vigência (padrão: por período). */
+  kind?: "always" | "period" | "hours" | "period_hours";
+  /** Faixa de hora, quando a edição vale só numa parte do dia. */
+  hours?: { start: number; end: number } | null;
+}
+
+/** A edição que o Bom dia comenta: a datada (no ar, ou a próxima) vence a permanente. */
+function pickForDigest(editions: readonly EditionDigestInput[]): { kind: "current" | "today" | "upcoming" | "permanent"; edition: EditionDigestInput } | null {
+  const dated = editions.filter((e) => e.kind !== "always");
+  const current = dated.find((e) => e.isCurrent);
+  if (current) return { kind: "current", edition: current };
+  const upcoming = dated
+    .filter((e): e is EditionDigestInput & { daysUntil: number } => e.daysUntil !== null && e.daysUntil >= 0)
+    .sort((a, b) => a.daysUntil - b.daysUntil)[0];
+  if (upcoming) return { kind: upcoming.daysUntil === 0 ? "today" : "upcoming", edition: upcoming };
+  const permanent = editions.find((e) => e.isCurrent);
+  return permanent ? { kind: "permanent", edition: permanent } : null;
+}
+
+function hoursLabel(edition: EditionDigestInput): string {
+  return edition.hours ? `, das ${edition.hours.start}h às ${edition.hours.end}h` : "";
 }
 
 function pieces(n: number): string {
@@ -29,15 +50,14 @@ function missing(n: number): string {
  * A vigente vence a futura; entre futuras, a mais próxima.
  */
 export function editionDigestLine(editions: readonly EditionDigestInput[]): string | null {
-  const current = editions.find((e) => e.isCurrent);
-  if (current) return `A ${current.name} está no ar com ${pieces(current.products)}${missing(current.missingPhoto)}`;
-  const upcoming = editions
-    .filter((e): e is EditionDigestInput & { daysUntil: number } => e.daysUntil !== null && e.daysUntil >= 0)
-    .sort((a, b) => a.daysUntil - b.daysUntil)[0];
-  if (!upcoming) return null;
-  if (upcoming.daysUntil === 0) return `A ${upcoming.name} começa hoje com ${pieces(upcoming.products)}${missing(upcoming.missingPhoto)}`;
-  const days = upcoming.daysUntil === 1 ? "Falta 1 dia" : `Faltam ${upcoming.daysUntil} dias`;
-  return `${days} para a ${upcoming.name} — ${pieces(upcoming.products)} ${upcoming.products === 1 ? "escolhida" : "escolhidas"}${missing(upcoming.missingPhoto)}`;
+  const picked = pickForDigest(editions);
+  if (!picked) return null;
+  const e = picked.edition;
+  const chosen = `${pieces(e.products)} ${e.products === 1 ? "escolhida" : "escolhidas"}${missing(e.missingPhoto)}`;
+  if (picked.kind === "current" || picked.kind === "permanent") return `A ${e.name} está no ar com ${pieces(e.products)}${missing(e.missingPhoto)}`;
+  if (picked.kind === "today") return `A ${e.name} é hoje${hoursLabel(e)} — ${chosen}`;
+  const days = e.daysUntil === 1 ? "Falta 1 dia" : `Faltam ${e.daysUntil} dias`;
+  return `${days} para a ${e.name} — ${chosen}`;
 }
 
 /**
@@ -45,12 +65,10 @@ export function editionDigestLine(editions: readonly EditionDigestInput[]): stri
  * "Faltam 28 dias para a Edição Círio" / "A Edição Círio está no ar".
  */
 export function editionHeadline(editions: readonly EditionDigestInput[]): string | null {
-  const current = editions.find((e) => e.isCurrent);
-  if (current) return `A ${current.name} está no ar`;
-  const upcoming = editions
-    .filter((e): e is EditionDigestInput & { daysUntil: number } => e.daysUntil !== null && e.daysUntil >= 0)
-    .sort((a, b) => a.daysUntil - b.daysUntil)[0];
-  if (!upcoming) return null;
-  if (upcoming.daysUntil === 0) return `A ${upcoming.name} começa hoje`;
-  return upcoming.daysUntil === 1 ? `Falta 1 dia para a ${upcoming.name}` : `Faltam ${upcoming.daysUntil} dias para a ${upcoming.name}`;
+  const picked = pickForDigest(editions);
+  if (!picked) return null;
+  const e = picked.edition;
+  if (picked.kind === "current" || picked.kind === "permanent") return `A ${e.name} está no ar`;
+  if (picked.kind === "today") return `A ${e.name} é hoje${hoursLabel(e)}`;
+  return e.daysUntil === 1 ? `Falta 1 dia para a ${e.name}` : `Faltam ${e.daysUntil} dias para a ${e.name}`;
 }

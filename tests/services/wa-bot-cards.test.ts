@@ -136,12 +136,12 @@ describe("listar_produtos + cartão editorial", () => {
     await setCityEditionProducts(sdb, { editionId, productIds: [byName.get("Boné Bordado")!, byName.get("LONGO DUNAS")!], userId: FIXED_USER_ID });
 
     const { executeTool, attachments } = executor();
-    const result = await executeTool("listar_produtos", { edicao: "círio" });
+    const result = await executeTool("listar_produtos", { edicao: "edição do Círio" });
     expect(result.ok).toBe(true);
-    expect(result.text).toContain("2 peças encontradas (edição Edição Círio)");
+    expect(result.text).toContain("2 peças encontradas (Edição Círio)");
     const list = attachments[0];
     expect(list.kind === "option_list" ? list.options.map((o) => o.title) : []).toEqual(["Boné Bordado", "LONGO DUNAS"]);
-    expect(render.mock.calls[0][0].eyebrow).toBe("EDIÇÃO EDIÇÃO CÍRIO".replace("EDIÇÃO EDIÇÃO", "EDIÇÃO EDIÇÃO"));
+    expect(render.mock.calls[0][0].eyebrow).toBe("EDIÇÃO CÍRIO");
 
     const unknown = await executor().executeTool("listar_produtos", { edicao: "carnaval" });
     expect(unknown.ok).toBe(false);

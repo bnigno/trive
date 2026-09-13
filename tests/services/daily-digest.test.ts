@@ -206,8 +206,8 @@ describe("buildDailyDigestData", () => {
     await setCityEditionProducts(sdb, { editionId, productIds: [productId], userId: FIXED_USER_ID });
     // O Bom dia de 10/09 chega na manhã de 10/09: faltam 21 dias para 1/10.
     const data = await buildDailyDigestData(sdb, { date: DAY });
-    expect(data.editions).toEqual([{ name: "Edição Círio", isCurrent: false, daysUntil: 21, products: 1, missingPhoto: 1 }]);
-    expect(buildDigestVars(data).edicoes).toBe("Faltam 21 dias para a Edição Círio — 1 peça escolhida, 1 ainda sem foto");
+    expect(data.editions).toEqual([{ name: "Edição Círio", isCurrent: false, daysUntil: 21, kind: "period", hours: null, products: 1, missingPhoto: 1 }]);
+    expect(buildDigestVars(data).edicoes).toBe("\nFaltam 21 dias para a Edição Círio — 1 peça escolhida, 1 ainda sem foto");
   });
 });
 

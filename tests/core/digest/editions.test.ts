@@ -20,7 +20,17 @@ describe("editionDigestLine", () => {
       ]),
     ).toBe("Faltam 28 dias para a Edição Círio — 12 peças escolhidas, 1 ainda sem foto");
     expect(editionDigestLine([{ name: "Edição Círio", isCurrent: false, daysUntil: 1, products: 1, missingPhoto: 0 }])).toBe("Falta 1 dia para a Edição Círio — 1 peça escolhida");
-    expect(editionDigestLine([{ name: "Edição Círio", isCurrent: false, daysUntil: 0, products: 5, missingPhoto: 0 }])).toBe("A Edição Círio começa hoje com 5 peças");
+    expect(editionDigestLine([{ name: "Edição Círio", isCurrent: false, daysUntil: 0, products: 5, missingPhoto: 0 }])).toBe("A Edição Círio é hoje — 5 peças escolhidas");
+    // Período + hora, fora da hora às 8h: "é hoje, das 14h às 16h" (não "começa hoje" todo dia do período).
+    expect(editionDigestLine([{ name: "Chuva do Círio", isCurrent: false, daysUntil: 0, products: 5, missingPhoto: 0, kind: "period_hours", hours: { start: 14, end: 16 } }])).toBe("A Chuva do Círio é hoje, das 14h às 16h — 5 peças escolhidas");
+    // Permanente no ar não esconde a contagem da datada.
+    expect(
+      editionDigestLine([
+        { name: "Sempre Belém", isCurrent: true, daysUntil: null, products: 9, missingPhoto: 0, kind: "always" },
+        { name: "Edição Círio", isCurrent: false, daysUntil: 28, products: 12, missingPhoto: 2, kind: "period" },
+      ]),
+    ).toBe("Faltam 28 dias para a Edição Círio — 12 peças escolhidas, 2 ainda sem foto");
+    expect(editionDigestLine([{ name: "Sempre Belém", isCurrent: true, daysUntil: null, products: 9, missingPhoto: 0, kind: "always" }])).toBe("A Sempre Belém está no ar com 9 peças");
     expect(editionDigestLine([{ name: "Chuva das 14h", isCurrent: false, daysUntil: null, products: 5, missingPhoto: 0 }])).toBeNull();
     expect(editionDigestLine([])).toBeNull();
   });
@@ -34,7 +44,7 @@ describe("editionDigestLine", () => {
 describe("editionHeadline", () => {
   it("curta para o topo da imagem: no ar > hoje > faltam N dias; sem edição, nada", () => {
     expect(editionHeadline([{ name: "Edição Círio", isCurrent: true, daysUntil: 0, products: 1, missingPhoto: 0 }])).toBe("A Edição Círio está no ar");
-    expect(editionHeadline([{ name: "Edição Círio", isCurrent: false, daysUntil: 0, products: 1, missingPhoto: 0 }])).toBe("A Edição Círio começa hoje");
+    expect(editionHeadline([{ name: "Edição Círio", isCurrent: false, daysUntil: 0, products: 1, missingPhoto: 0 }])).toBe("A Edição Círio é hoje");
     expect(editionHeadline([{ name: "Edição Círio", isCurrent: false, daysUntil: 1, products: 1, missingPhoto: 0 }])).toBe("Falta 1 dia para a Edição Círio");
     expect(editionHeadline([{ name: "Edição Círio", isCurrent: false, daysUntil: 28, products: 1, missingPhoto: 0 }])).toBe("Faltam 28 dias para a Edição Círio");
     expect(editionHeadline([])).toBeNull();

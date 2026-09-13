@@ -161,7 +161,9 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
         </div>
         {/* Edições de Belém: na faixa do topo, para não roubar altura do papel (1350 px). */}
         {editionLine ? (
-          <div style={{ marginTop: 10, fontSize: 20, letterSpacing: 2, color: C.gold400 }}>{editionLine.toUpperCase()}</div>
+          <div style={{ marginTop: 10, fontSize: 20, letterSpacing: 2, color: C.gold400, whiteSpace: "nowrap" }}>
+            {(editionLine.length > 52 ? `${editionLine.slice(0, 51)}…` : editionLine).toUpperCase()}
+          </div>
         ) : null}
       </div>
 
