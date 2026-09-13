@@ -5,6 +5,7 @@ import {
   addNote,
   cartAdd,
   cartRemove,
+  CART_MAX_QTY,
   cartSubtotalCents,
   formatCartLines,
   NOTES_MAX,
@@ -65,6 +66,12 @@ describe("sacola", () => {
     expect(cart).toEqual([]);
   });
 
+  it("linha nova acima do teto é cortada (a ponte do site pode trazer 24; o caderninho aceita até 20)", () => {
+    const cart = cartAdd(undefined, { ...VESTIDO, quantidade: 24 });
+    expect(cart[0].quantidade).toBe(CART_MAX_QTY);
+    expect(parseBotState({ cart })).toEqual({ cart });
+  });
+
   it("formata linhas com variação e subtotal, e avisa sacola vazia", () => {
     expect(formatCartLines(undefined)).toEqual(["Sacola vazia."]);
     expect(formatCartLines([VESTIDO])).toEqual([
@@ -75,6 +82,19 @@ describe("sacola", () => {
 });
 
 describe("renderContextNote", () => {
+  it("a ponte do site vem primeiro: 'Veio do site' antes de tudo", () => {
+    const note = renderContextNote(
+      {
+        displayName: "Ana",
+        bridge: { siteCartId: "x", code: "K7F2", source: "pdp", at: "2026-09-12T14:59:30Z", productName: "Longo Dunas", variation: "Areia · M" },
+      },
+      { now: new Date("2026-09-12T15:00:00Z") },
+    )!;
+    const lines = note.split("\n");
+    expect(lines[1]).toBe("• Nome no WhatsApp: Ana");
+    expect(lines[2]).toBe("• Veio do site agora (página da peça): Longo Dunas (Areia · M)");
+  });
+
   it("null quando não há nada a lembrar", () => {
     expect(renderContextNote({})).toBeNull();
   });

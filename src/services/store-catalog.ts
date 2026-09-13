@@ -2,7 +2,7 @@
 // Fase 2: vitrine sem autenticação. Nada aqui muta estado — sem audit/outbox.
 // Regra central: só é visível o que está ativo E tem preço ativo (price_versions
 // status 'active'); preço exibido é sempre o do banco, nunca o do cliente.
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   compareSizeLabels,
@@ -590,6 +590,94 @@ export async function listPublicVariantFacts(
     sizesAvailable: [...(sizes.get(product.id) ?? [])].sort(compareSizes),
     colorsAvailable: [...(colors.get(product.id) ?? [])].sort((a, b) => a.localeCompare(b, "pt-BR")),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// 4b. getSellableVariantBySku — uma variação vendável pelo código (a ponte
+// do site, a Lia e a sacola parada falam em SKU). Produto ativo e não
+// excluído, variação ativa com preço vigente; null quando não existe.
+// ---------------------------------------------------------------------------
+
+export type SellableVariant = {
+  variantId: string;
+  productId: string;
+  sku: string;
+  name: string;
+  slug: string;
+  attributes: Record<string, string>;
+  attributesSchema: string[];
+  weightGrams: number | null;
+  priceCents: number;
+  /** Disponível agora (on_hand − reserved), nunca negativo. */
+  availableQty: number;
+};
+
+/**
+ * Pelo SKU (comparação exata sem diferenciar maiúsculas — nunca ILIKE: "%"
+ * vindo da internet não é curinga). SKU é adivinhável, então só peça já
+ * visível ao público: a ponte anônima não pode revelar lançamento escondido.
+ */
+export async function getSellableVariantBySku(db: ServiceDb, sku: string): Promise<SellableVariant | null> {
+  const clean = z.string().trim().min(1).parse(sku);
+  return findSellableVariant(db, sql`lower(${productVariants.sku}) = lower(${clean})`, { publicOnly: true });
+}
+
+/**
+ * Pelo id da variação (a sacola do site guarda o id; o SKU é rótulo editável).
+ * O id é um UUID não enumerável: quem o tem já viu a peça — inclusive a
+ * convidada da janela VIP, cuja sacola precisa chegar inteira à Lia.
+ */
+export async function getSellableVariantById(db: ServiceDb, variantId: string): Promise<SellableVariant | null> {
+  const parsed = z.uuid().safeParse(variantId);
+  if (!parsed.success) return null;
+  return findSellableVariant(db, eq(productVariants.id, parsed.data), { publicOnly: false });
+}
+
+/**
+ * Variação vendável AGORA: peça ativa (e, com `publicOnly`, já visível —
+ * janela VIP respeitada), variação ativa, com preço ativo; estoque pode ser zero.
+ */
+async function findSellableVariant(db: ServiceDb, match: SQL, opts: { publicOnly: boolean }): Promise<SellableVariant | null> {
+  const [row] = await db
+    .select({
+      variantId: productVariants.id,
+      productId: products.id,
+      sku: productVariants.sku,
+      name: products.name,
+      slug: products.slug,
+      attributes: productVariants.attributes,
+      attributesSchema: products.attributesSchema,
+      weightGrams: productVariants.weightGrams,
+      priceCents: priceVersions.priceCents,
+      available: sql<string>`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0)`,
+    })
+    .from(productVariants)
+    .innerJoin(
+      products,
+      and(
+        eq(products.id, productVariants.productId),
+        eq(products.status, "active"),
+        isNull(products.deletedAt),
+        ...(opts.publicOnly ? [publiclyVisible()] : []),
+      ),
+    )
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
+    .where(and(match, eq(productVariants.isActive, true), isNull(productVariants.deletedAt)))
+    .limit(1);
+  if (!row) return null;
+  return {
+    variantId: row.variantId,
+    productId: row.productId,
+    sku: row.sku,
+    name: row.name,
+    slug: row.slug,
+    attributes: (row.attributes ?? {}) as Record<string, string>,
+    attributesSchema: (row.attributesSchema ?? []) as string[],
+    weightGrams: row.weightGrams,
+    priceCents: Number(row.priceCents),
+    availableQty: Math.max(0, Number(row.available)),
+  };
 }
 
 // ---------------------------------------------------------------------------

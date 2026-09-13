@@ -14,6 +14,7 @@ import {
   findMatchedVariant,
   initialAxisSelection,
 } from "@/core/catalog/variant-selection";
+import { LiaLink } from "@/components/store/lia-link";
 import type { PublicVariant } from "@/services/store-catalog";
 
 import { BuyBar } from "./buy-bar";
@@ -31,6 +32,7 @@ export function ProductDetailClient({
   axes,
   variants,
   images,
+  lia,
   heading,
   children,
 }: {
@@ -39,6 +41,8 @@ export function ProductDetailClient({
   axes: string[];
   variants: PublicVariant[];
   images: ProductDetailImage[];
+  /** "Falar com a Lia" com a variação escolhida; null = loja sem WhatsApp. */
+  lia?: { sellerName: string; fallbackUrl: string | null } | null;
   heading: ReactNode;
   children?: ReactNode;
 }) {
@@ -109,6 +113,21 @@ export function ProductDetailClient({
           }
         />
         <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
+        {lia?.fallbackUrl ? (
+          <div className="flex flex-col gap-1">
+            <LiaLink
+              source="pdp"
+              sellerName={lia.sellerName}
+              fallbackUrl={lia.fallbackUrl}
+              productSlug={slug}
+              variantSku={matched?.sku}
+              className="w-full sm:w-auto"
+            />
+            <p className="font-store text-[13px] text-ink-500">
+              Dúvida de tamanho, tecido ou prazo? A {lia.sellerName} responde no WhatsApp, já sabendo qual peça você está vendo.
+            </p>
+          </div>
+        ) : null}
         {children}
       </div>
 

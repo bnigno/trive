@@ -16,6 +16,7 @@ import { getDb } from "@/db/client";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { getSettingsMap } from "@/services/settings";
+import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
 
 // Cada peso × estilo vira um arquivo que disputa banda com a imagem LCP:
 // 400 (hero, manifesto, itálicos) e 600 (títulos) bastam. Sem preload: os 4
@@ -50,6 +51,7 @@ const STORE_SETTING_KEYS = [
   "store_address",
   "store_email",
   "store_whatsapp",
+  "bot_seller_name",
 ] as const;
 
 function asText(value: unknown): string {
@@ -111,6 +113,7 @@ export default async function StoreLayout({
           address={asText(settings.store_address)}
           email={asText(settings.store_email)}
           whatsapp={asText(settings.store_whatsapp)}
+          sellerName={asText(settings.bot_seller_name) || DEFAULT_SELLER_NAME}
         />
       </div>
     </CartProvider>

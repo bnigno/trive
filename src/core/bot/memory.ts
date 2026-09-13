@@ -10,14 +10,17 @@
 import { z } from "zod";
 
 import { formatCentsBRL } from "@/lib/money";
+import { bridgeContextLine, bridgeStateSchema } from "@/core/bot/site-bridge";
 
 export const NOTE_MAX_CHARS = 140;
 export const NOTES_MAX = 10;
 export const CART_MAX_ITEMS = 12;
+/** Teto por linha na sacola da conversa (a ponte do site pode trazer mais: cartAdd corta). */
+export const CART_MAX_QTY = 20;
 
 const cartItemSchema = z.object({
   sku: z.string().min(1),
-  quantidade: z.number().int().min(1).max(20),
+  quantidade: z.number().int().min(1).max(CART_MAX_QTY),
   nome: z.string().min(1),
   /** Rótulo da combinação (ex.: "Preto · M"); vazio para peça sem variação. */
   variacao: z.string().default(""),
@@ -85,6 +88,9 @@ export const botStateSchema = z
         at: z.string(),
       })
       .optional(),
+    /** A ponte do site: o que a cliente estava vendo quando tocou "Falar com a Lia". */
+    // Ponte torta não derruba o caderninho inteiro (sacola, CEP, cupom): só ela some.
+  bridge: bridgeStateSchema.optional().catch(undefined),
   })
   .loose();
 
@@ -120,11 +126,13 @@ export function cartAdd(
     atual[indice] = {
       ...existente,
       ...item,
-      quantidade: Math.min(20, existente.quantidade + item.quantidade),
+      quantidade: Math.min(CART_MAX_QTY, existente.quantidade + item.quantidade),
     };
     return atual;
   }
-  return [...atual, item].slice(-CART_MAX_ITEMS);
+  // Linha nova também respeita o teto: uma sacola do site com 24 unidades não
+  // pode deixar o caderninho inválido (parseBotState devolveria {}).
+  return [...atual, { ...item, quantidade: Math.min(CART_MAX_QTY, item.quantidade) }].slice(-CART_MAX_ITEMS);
 }
 
 export function cartRemove(
@@ -176,12 +184,16 @@ function formatDays(min: number, max: number): string {
  */
 export function renderContextNote(
   state: BotState,
-  extras: { lines?: readonly string[] } = {},
+  extras: { lines?: readonly string[]; now?: Date } = {},
 ): string | null {
   const linhas: string[] = [];
 
   if (state.displayName?.trim()) {
     linhas.push(`• Nome no WhatsApp: ${state.displayName.trim()}`);
+  }
+  // A ponte vem antes de tudo: é o motivo de a conversa existir.
+  if (state.bridge) {
+    linhas.push(`• ${bridgeContextLine(state.bridge, extras.now ?? new Date())}`);
   }
   if (state.notes && state.notes.length > 0) {
     linhas.push(`• Anotações: ${state.notes.join("; ")}`);
