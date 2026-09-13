@@ -6,6 +6,7 @@
 // display:flex, texto misto vira uma string só, nada vem da rede.
 import { ImageResponse } from "next/og";
 
+import { editionHeadline } from "@/core/digest/editions";
 import type { DailyDigestData } from "@/core/digest/types";
 import type { ReceiptAssets } from "@/core/receipts/types";
 import { formatCentsBRL, formatUsdCents } from "@/lib/money";
@@ -117,6 +118,7 @@ function plural(n: number, one: string, many: string): string {
 
 function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
   const { sales, waiting, bot } = data;
+  const editionLine = editionHeadline(data.editions);
   const hadSales = sales.paidOrders > 0;
 
   return (
@@ -139,10 +141,10 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: C.noir950,
-          padding: "26px 72px 22px",
+          padding: "20px 72px 18px",
         }}
       >
-        <img src={lockup} width={270} height={120} alt="" />
+        <img src={lockup} width={250} height={111} alt="" />
         <div
           style={{
             marginTop: 14,
@@ -157,6 +159,12 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
         <div style={{ marginTop: 8, fontSize: 22, color: C.ivory300 }}>
           {data.dayLabel}
         </div>
+        {/* Edições de Belém: na faixa do topo, para não roubar altura do papel (1350 px). */}
+        {editionLine ? (
+          <div style={{ marginTop: 10, fontSize: 20, letterSpacing: 2, color: C.gold400, whiteSpace: "nowrap" }}>
+            {(editionLine.length > 52 ? `${editionLine.slice(0, 51)}…` : editionLine).toUpperCase()}
+          </div>
+        ) : null}
       </div>
 
       {/* O papel */}
@@ -165,7 +173,7 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
-          padding: "26px 72px 24px",
+          padding: "20px 72px 18px",
         }}
       >
         <div

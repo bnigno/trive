@@ -41,6 +41,8 @@ export type BotToolInputs = {
   listar_produtos: {
     busca?: string;
     categoria?: string;
+    /** Nome ou slug de uma Edição de Belém (ex.: 'cirio'): só as peças da edição. */
+    edicao?: string;
     cor?: string;
     tamanho?: string;
     /** Teto de preço em reais inteiros; o executor converte para centavos. */
@@ -136,6 +138,11 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           type: "string",
           description:
             "Nome ou slug de uma categoria da PLANTA DA LOJA (ex.: 'vestidos'). Omita para todas.",
+        },
+        edicao: {
+          type: "string",
+          description:
+            "Nome ou slug de uma Edição de Belém da PLANTA DA LOJA (ex.: 'edicao-cirio'): só as peças escolhidas para aquela ocasião. Use quando a cliente citar a ocasião (Círio, Natal…). Omita para todas.",
         },
         cor: {
           type: "string",
@@ -602,6 +609,7 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   listar_produtos: z.strictObject({
     busca: z.string().optional(),
     categoria: z.string().optional(),
+    edicao: z.string().optional(),
     cor: z.string().optional(),
     tamanho: z.string().optional(),
     preco_maximo_reais: z.number().int().min(1).optional(),

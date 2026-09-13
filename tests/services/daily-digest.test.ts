@@ -20,7 +20,8 @@ import {
   yesterdaySpDayKey,
   type DigestRenderer,
 } from "@/services/daily-digest";
-import { createTestDb, createTestCustomer, createTestVariant, type TestDb } from "../helpers/db";
+import { createCityEdition, setCityEditionProducts } from "@/services/city-editions";
+import { createTestDb, createTestCustomer, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -195,6 +196,18 @@ describe("buildDailyDigestData", () => {
     expect(data.sales).toEqual({ paidOrders: 0, revenueCents: 0, averageTicketCents: 0, newOrders: 0 });
     expect(data.bestSeller).toBeNull();
     expect(data.opening).toContain("Hoje a gente muda isso");
+    expect(data.editions).toEqual([]);
+    expect(buildDigestVars(data).edicoes).toBe("");
+  });
+
+  it("Edições de Belém: a próxima a começar entra com peças e fotos faltando; a linha vira {{edicoes}}", async () => {
+    const { editionId } = await createCityEdition(sdb, { isActive: true, fields: { name: "Edição Círio", startsOn: "2026-10-01", endsOn: "2026-10-12" }, userId: FIXED_USER_ID });
+    const { productId } = await createTestVariant(db, { sku: "DUNAS", costCents: 1000, onHand: 1, name: "Longo Dunas" });
+    await setCityEditionProducts(sdb, { editionId, productIds: [productId], userId: FIXED_USER_ID });
+    // O Bom dia de 10/09 chega na manhã de 10/09: faltam 21 dias para 1/10.
+    const data = await buildDailyDigestData(sdb, { date: DAY });
+    expect(data.editions).toEqual([{ name: "Edição Círio", isCurrent: false, daysUntil: 21, kind: "period", hours: null, products: 1, missingPhoto: 1 }]);
+    expect(buildDigestVars(data).edicoes).toBe("\nFaltam 21 dias para a Edição Círio — 1 peça escolhida, 1 ainda sem foto");
   });
 });
 

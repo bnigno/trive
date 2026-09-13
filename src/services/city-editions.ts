@@ -192,6 +192,99 @@ export async function getPublicCityEditionBySlug(db: DbOrTx, slug: string, input
   return isEditionPast(edition, now) ? null : toPublic(edition, now);
 }
 
+/** Edição na planta da loja da Lia: nome, slug, peças vendáveis e vigência. */
+export interface StoreMapEdition {
+  name: string;
+  slug: string;
+  productCount: number;
+  current: boolean;
+  daysUntil: number | null;
+  kind: EditionKind;
+}
+
+/**
+ * As edições ativas e não encerradas, com a contagem de peças VENDÁVEIS
+ * (ativa, com preço e visível) — o que a Lia pode mostrar de verdade.
+ */
+export async function listStoreMapEditions(db: DbOrTx, input: { now?: Date } = {}): Promise<StoreMapEdition[]> {
+  const list = await listPublicCityEditions(db, input);
+  if (list.length === 0) return [];
+  const counts = await db
+    .select({
+      editionId: cityEditionProducts.cityEditionId,
+      count: sql<string>`count(distinct ${products.id})`,
+    })
+    .from(cityEditionProducts)
+    .innerJoin(products, eq(products.id, cityEditionProducts.productId))
+    .where(
+      and(
+        inArray(cityEditionProducts.cityEditionId, list.map((e) => e.id)),
+        eq(products.status, "active"),
+        isNull(products.deletedAt),
+        sql`(${products.visibleFrom} IS NULL OR ${products.visibleFrom} <= now())`,
+        sql`exists (
+          select 1 from product_variants pv join price_versions pr on pr.product_variant_id = pv.id
+          where pv.product_id = ${products.id} and pv.deleted_at is null and pv.is_active = true and pr.status = 'active'
+        )`,
+      ),
+    )
+    .groupBy(cityEditionProducts.cityEditionId);
+  const countById = new Map(counts.map((row) => [row.editionId, Number(row.count)]));
+  // Sem peça vendável a Lia não tem o que mostrar: fica fora da planta.
+  return list
+    .map((e) => ({ name: e.name, slug: e.slug, productCount: countById.get(e.id) ?? 0, current: e.isCurrent, daysUntil: e.daysUntil, kind: e.kind }))
+    .filter((e) => e.productCount > 0);
+}
+
+/** A edição que o "Bom dia" comenta: peças escolhidas e quantas ainda sem foto. */
+export async function summarizeCityEditionsForDigest(
+  db: DbOrTx,
+  input: { now?: Date } = {},
+): Promise<{ name: string; isCurrent: boolean; daysUntil: number | null; kind: EditionKind; hours: { start: number; end: number } | null; products: number; missingPhoto: number }[]> {
+  const list = await listPublicCityEditions(db, input);
+  const rules = await db.select({ id: cityEditions.id, hourStart: cityEditions.hourStart, hourEnd: cityEditions.hourEnd }).from(cityEditions).where(inArray(cityEditions.id, list.map((e) => e.id)));
+  const hoursById = new Map(rules.map((r) => [r.id, r.hourStart !== null && r.hourEnd !== null ? { start: r.hourStart, end: r.hourEnd } : null]));
+  const result = [];
+  for (const edition of list) {
+    // Peça arquivada não conta como escolhida (nem como "sem foto").
+    const items = (await loadEditionProducts(db, edition.id)).filter((item) => item.status !== "archived");
+    result.push({
+      name: edition.name,
+      isCurrent: edition.isCurrent,
+      daysUntil: edition.daysUntil,
+      kind: edition.kind,
+      hours: hoursById.get(edition.id) ?? null,
+      products: items.length,
+      missingPhoto: items.filter((item) => item.imagePath === null).length,
+    });
+  }
+  return result;
+}
+
+/** Nome ou slug (sem caixa) → slug de uma edição ativa e não encerrada; null se não existir. */
+export async function resolveCityEditionSlug(db: DbOrTx, term: string, input: { now?: Date } = {}): Promise<{ slug: string; name: string } | null> {
+  const list = await listPublicCityEditions(db, input);
+  const STOP = new Set(["edicao", "edicoes", "de", "do", "da", "dos", "das", "a", "o", "as", "os", "para", "pro", "pra"]);
+  // "edição do Círio" → "cirio"; "Círio de Nazaré" → "cirio nazare": compara o que sobra sem as palavras vazias.
+  const core = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter((word) => word && !STOP.has(word))
+      .join(" ");
+  const wanted = core(term);
+  if (wanted.length < 3) return null;
+  const found =
+    list.find((e) => e.slug === term.trim().toLowerCase()) ??
+    list.find((e) => core(e.name) === wanted) ??
+    list.find((e) => core(e.name).includes(wanted)) ??
+    list.find((e) => wanted.includes(core(e.name)) && core(e.name).length >= 3);
+  return found ? { slug: found.slug, name: found.name } : null;
+}
+
 // ---------------------------------------------------------------------------
 // Escrita (painel, só o dono)
 // ---------------------------------------------------------------------------

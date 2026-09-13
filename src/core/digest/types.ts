@@ -1,3 +1,5 @@
+import type { EditionDigestInput } from "@/core/digest/editions";
+
 // "Bom dia da maison": os números do dia anterior que a imagem apresenta ao
 // dono. Puro: quem monta é services/daily-digest, quem desenha é
 // src/receipts/render-digest. Nenhum dado de cliente entra aqui (a imagem
@@ -39,6 +41,8 @@ export interface DailyDigestData {
   lowStock: { name: string; sku: string; available: number }[];
   /** Mais vendida dos últimos 7 dias, ou null sem venda. */
   bestSeller: { name: string; quantity: number; revenueCents: number } | null;
+  /** Edições de Belém ativas (no ar ou por vir) — a linha do Bom dia sai de editionDigestLine. */
+  editions: EditionDigestInput[];
   storeName: string;
   generatedAt: Date;
 }
