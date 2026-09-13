@@ -55,7 +55,7 @@ export function CampaignLinkCreateForm({ siteUrl, products }: { siteUrl: string;
         <Field label="Rótulo" hint="Como a origem aparece para você e para a Lia. Ex.: Dunas no story do Círio.">
           <Input name="label" required maxLength={60} placeholder="Dunas no story" autoComplete="off" />
         </Field>
-        <Field label="Peça do story" hint="A cliente chega à Lia já falando dessa peça; o preview do link mostra o cartão dela. Peça em rascunho ou sem preço entra sem foto/preço na mensagem — publique antes do story.">
+        <Field label="Peça do story" hint="A cliente chega à Lia já falando dessa peça; o preview do link mostra o cartão dela. Peça em rascunho, arquivada ou sem preço NÃO entra na mensagem (vira “vim pelo story”) — publique a peça antes de colar o link.">
           <ProductSelect name="productId" options={products} />
         </Field>
       </div>
