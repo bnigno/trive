@@ -4,7 +4,7 @@ import { useActionState } from "react";
 
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { ConfirmButton } from "@/components/ui/confirm-button";
-import { DispatchForm } from "../rota/forms";
+import { DeliveredForm, DispatchForm } from "../rota/forms";
 import {
   Field,
   FormError,
@@ -221,11 +221,14 @@ export function OrderActions({
         />
       ) : null}
 
-      {motoboy && motoboy.dispatchedLabel && status !== "shipped" && status !== "delivered" ? (
-        <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          🛵 Saiu com o motoboy {motoboy.dispatchedLabel}.{" "}
-          {status === "pending_payment" ? "Ao receber o dinheiro, marque como pago e depois como entregue." : ""}
-        </p>
+      {motoboy && motoboy.dispatchedLabel && status !== "delivered" ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+            🛵 Saiu com o motoboy {motoboy.dispatchedLabel}.{" "}
+            {status === "pending_payment" ? "Ao receber o dinheiro, marque como pago e depois como entregue." : "Quando ele voltar, marque como entregue."}
+          </p>
+          {status === "paid" || status === "preparing" || status === "shipped" ? <DeliveredForm orderId={orderId} /> : null}
+        </div>
       ) : null}
       {motoboy &&
       !motoboy.dispatchedLabel &&
@@ -238,7 +241,7 @@ export function OrderActions({
         </div>
       ) : null}
 
-      {status === "paid" ? (
+      {status === "paid" && !motoboy?.dispatchedLabel ? (
         <>
           <AdvanceForm
             orderId={orderId}
@@ -261,7 +264,7 @@ export function OrderActions({
         <ShipForm orderId={orderId} currentTrackingCode={trackingCode} />
       ) : null}
 
-      {status === "shipped" ? (
+      {status === "shipped" && !motoboy?.dispatchedLabel ? (
         <AdvanceForm
           orderId={orderId}
           action={markDeliveredAction}

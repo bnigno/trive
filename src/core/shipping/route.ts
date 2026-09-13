@@ -60,17 +60,18 @@ function groupByWindow<T extends RouteOrderLike>(orders: readonly T[]): RouteWin
 
 /**
  * Agrupa os pedidos (todos ainda por sair) em atrasados / hoje / próximos.
- * A ordem dentro de cada janela é a de chegada na lista (o service manda
- * por hora do pagamento).
+ * Atrasado = janela em dia anterior, ou janela de hoje cujo fim já passou
+ * (`nowMinutes`, minutos de parede em SP). A ordem dentro de cada janela é
+ * a de chegada na lista (o service manda por hora do pagamento).
  */
-export function groupRouteOrders<T extends RouteOrderLike>(orders: readonly T[], todayKey: string): RouteOfDay<T> {
+export function groupRouteOrders<T extends RouteOrderLike>(orders: readonly T[], todayKey: string, nowMinutes = 0): RouteOfDay<T> {
   const out: T[] = [];
   const late: T[] = [];
   const today: T[] = [];
   const upcomingByDay = new Map<string, T[]>();
   for (const order of orders) {
     if (order.dispatchedAt) out.push(order);
-    else if (order.window.dayKey < todayKey) late.push(order);
+    else if (order.window.dayKey < todayKey || (order.window.dayKey === todayKey && minutesOf(order.window.end) <= nowMinutes)) late.push(order);
     else if (order.window.dayKey === todayKey) today.push(order);
     else {
       const list = upcomingByDay.get(order.window.dayKey) ?? [];

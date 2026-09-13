@@ -8,7 +8,7 @@ import { useActionState } from "react";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { FormError, FormSuccess, Select, SubmitButton } from "@/components/ui/form";
 
-import { dispatchOrderAction, rescheduleWindowAction, type FormState } from "./actions";
+import { completeDispatchedOrderAction, dispatchOrderAction, rescheduleWindowAction, type FormState } from "./actions";
 
 const initialState: FormState = {};
 
@@ -61,6 +61,18 @@ export function RescheduleForm({ orderId, choices }: { orderId: string; choices:
           Reagendar
         </SubmitButton>
       </div>
+    </form>
+  );
+}
+
+export function DeliveredForm({ orderId }: { orderId: string }) {
+  const [state, formAction] = useActionState(completeDispatchedOrderAction, initialState);
+  return (
+    <form action={formAction} className="flex flex-col gap-2">
+      <input type="hidden" name="orderId" value={orderId} />
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <SubmitButton pendingLabel="Marcando…">Entregue — o motoboy voltou</SubmitButton>
     </form>
   );
 }

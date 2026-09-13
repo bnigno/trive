@@ -4,7 +4,7 @@
 // sobrescreve o mesmo path e NÃO reenvia (dedupe). O upload acontece antes
 // da transação (como addProductImage): recusa nunca deixa a linha torta, e
 // um arquivo órfão no path determinístico é inofensivo.
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
@@ -227,7 +227,12 @@ export async function listOrdersAwaitingPacking(
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
     .where(
-      and(inArray(orders.status, ["paid", "preparing"]), isNull(orders.packagePhotoPath)),
+      and(
+        inArray(orders.status, ["paid", "preparing"]),
+        isNull(orders.packagePhotoPath),
+        // Motoboy que já saiu: a peça não está mais na mesa.
+        sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
+      ),
     )
     .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
   if (rows.length === 0) return [];
@@ -265,7 +270,12 @@ export async function countOrdersAwaitingPacking(db: DbOrTx): Promise<number> {
     .select({ id: orders.id })
     .from(orders)
     .where(
-      and(inArray(orders.status, ["paid", "preparing"]), isNull(orders.packagePhotoPath)),
+      and(
+        inArray(orders.status, ["paid", "preparing"]),
+        isNull(orders.packagePhotoPath),
+        // Motoboy que já saiu: a peça não está mais na mesa.
+        sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
+      ),
     );
   return rows.length;
 }

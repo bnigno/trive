@@ -9,7 +9,7 @@ import { InvalidTransitionError } from "@/core/orders/state-machine";
 import { deliveryWindowSchema } from "@/core/shipping/delivery-windows";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
-import { dispatchOrder, rescheduleOrderWindow } from "@/services/delivery-routes";
+import { completeDispatchedOrder, dispatchOrder, rescheduleOrderWindow } from "@/services/delivery-routes";
 import { ServiceError } from "@/services/orders";
 
 export type FormState = { error?: string; success?: string };
@@ -65,6 +65,19 @@ export async function rescheduleWindowAction(_prev: FormState, formData: FormDat
     await rescheduleOrderWindow(getDb(), { orderId, userId: user.id, dayKey, window });
     revalidateRoute(orderId);
     return { success: "Janela reagendada. Avise a cliente pelo WhatsApp." };
+  } catch (error) {
+    return friendlyError(error);
+  }
+}
+
+/** O motoboy voltou: pedido que saiu vira entregue (paid/preparing/shipped → delivered). */
+export async function completeDispatchedOrderAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const { orderId } = dispatchSchema.parse({ orderId: formData.get("orderId") });
+    const result = await completeDispatchedOrder(getDb(), { orderId, userId: user.id });
+    revalidateRoute(orderId);
+    return { success: result.idempotent ? `Pedido #${result.orderNumber} já estava entregue.` : `Pedido #${result.orderNumber} entregue.` };
   } catch (error) {
     return friendlyError(error);
   }

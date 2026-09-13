@@ -17,7 +17,7 @@ import {
 } from "@/core/shipping/delivery-windows";
 import { groupRouteOrders, isPaidAfterCutoff, type RouteOfDay } from "@/core/shipping/route";
 import { auditLog, customers, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
-import { spDayKey } from "@/lib/sp-day";
+import { isSpDayKey, spDayKey, spMinutesOfDay } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { parseWindows } from "@/services/shipping";
@@ -152,7 +152,7 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
       itemsSummary: itemsByOrder.get(row.id)?.lines ?? [],
       totalCents: row.totalCents,
       paymentMethod,
-      collectCashCents: paymentMethod === "cash" ? row.totalCents : null,
+      collectCashCents: paymentMethod === "cash" && row.status === "pending_payment" ? row.totalCents : null,
       isGift: row.isGift,
       packagePhotoPath: row.packagePhotoPath,
       paidAt: row.paidAt,
@@ -165,8 +165,9 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
 
 /** A rota como a tela mostra. `now` injetável (o "hoje" é o de São Paulo). */
 export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOrder> & { todayKey: string }> {
-  const todayKey = spDayKey(input.now ?? new Date());
-  const grouped = groupRouteOrders(await listRouteOrders(db), todayKey);
+  const now = input.now ?? new Date();
+  const todayKey = spDayKey(now);
+  const grouped = groupRouteOrders(await listRouteOrders(db), todayKey, spMinutesOfDay(now));
   return { ...grouped, todayKey };
 }
 
@@ -230,7 +231,11 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     }
     const from = order.status as OrderStatus;
     const base = { orderId: order.id, orderNumber: order.orderNumber, from };
-    if (from === "shipped" || order.deliveryWindow.dispatchedAt) return { ...base, to: from, idempotent: true };
+    if (from === "shipped" || from === "delivered" || order.deliveryWindow.dispatchedAt) return { ...base, to: from, idempotent: true };
+    // A janela já passou: primeiro reagendar, senão a cliente recebe "chega sexta 18/09" ontem.
+    if (order.deliveryWindow.dayKey < spDayKey(now)) {
+      throw new ServiceError("WINDOW_PAST", "A janela deste pedido já passou — reagende antes de marcar que saiu.");
+    }
 
     const snapshot = { ...order.deliveryWindow, dispatchedAt: now.toISOString() };
     if (from === "pending_payment" && order.paymentMethod === "cash") {
@@ -264,14 +269,59 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
   });
 }
 
+/**
+ * O motoboy voltou: pedido que já saiu vira "entregue". Cobre os três
+ * pontos em que ele pode estar (a máquina não tem atalho): paid → delivered
+ * (dinheiro na entrega recém-baixado), preparing → shipped → delivered
+ * (a dona passou pelo "Embalei"), shipped → delivered. O aviso "saiu" não
+ * repete: shipped e out_for_delivery dividem a mesma chave de dedupe.
+ */
+export async function completeDispatchedOrder(
+  db: DbOrTx,
+  input: { orderId: string; userId: string },
+): Promise<{ orderId: string; orderNumber: number; from: OrderStatus; idempotent: boolean }> {
+  const parsed = dispatchSchema.parse(input);
+  return db.transaction(async (tx) => {
+    const [order] = await tx
+      .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, deliveryWindow: orders.deliveryWindow })
+      .from(orders)
+      .where(eq(orders.id, parsed.orderId))
+      .for("update");
+    if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
+    if (!order.deliveryWindow) throw new ServiceError("NOT_MOTOBOY", "Este pedido não é de motoboy.");
+    const from = order.status as OrderStatus;
+    const base = { orderId: order.id, orderNumber: order.orderNumber, from };
+    if (from === "delivered") return { ...base, idempotent: true };
+    if (!order.deliveryWindow.dispatchedAt && from !== "shipped") {
+      throw new ServiceError("NOT_DISPATCHED", "Marque primeiro que o pedido saiu com o motoboy.");
+    }
+    if (from === "pending_payment") {
+      throw new ServiceError("PAYMENT_PENDING", "Registre o pagamento em dinheiro antes de marcar como entregue.");
+    }
+    if (from === "preparing") {
+      await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
+    }
+    await transitionOrder(tx, { orderId: order.id, to: "delivered", userId: parsed.userId });
+    return { ...base, idempotent: false };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reagendar a janela (pagamento caiu depois do limite, ou a janela passou)
 // ---------------------------------------------------------------------------
 
+/** 'AAAA-MM-DD' que existe de verdade (31/02 não passa). */
+function isRealDay(key: string): boolean {
+  if (!isSpDayKey(key)) return false;
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 const rescheduleSchema = z.object({
   orderId: z.uuid(),
   userId: z.uuid(),
-  dayKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dia inválido."),
+  dayKey: z.string().refine(isRealDay, "Dia inválido."),
   window: deliveryWindowSchema,
   now: z.date().optional(),
 });

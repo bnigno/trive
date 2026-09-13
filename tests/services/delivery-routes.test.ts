@@ -9,6 +9,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { loadOrderWaContext } from "@/queue/handlers/wa-helpers";
 import {
   addressLineOf,
+  completeDispatchedOrder,
   countRouteOfDay,
   dispatchOrder,
   listMotoboyWindows,
@@ -16,6 +17,7 @@ import {
   rescheduleOrderWindow,
 } from "@/services/delivery-routes";
 import { transitionOrder } from "@/services/orders";
+import { listOrdersAwaitingPacking } from "@/services/packing";
 import { createStoreOrder, type CreateStoreOrderInput } from "@/services/store-orders";
 import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
@@ -129,11 +131,18 @@ describe("listRouteOfDay", () => {
       itemsCount: 1,
       itemsSummary: ["Longo Dunas MOTO"],
       paymentMethod: "cash",
-      collectCashCents: 15900 + 1500,
+      // Já pago (baixa manual): o motoboy NÃO recebe de novo.
+      collectCashCents: null,
       paidAfterCutoff: true,
       windowLabel: "sexta 18/09, 16h–19h",
     });
     expect(route.today[1].orders[0]).toMatchObject({ collectCashCents: null, paidAfterCutoff: false });
+
+    // Às 19h30 a janela 16h–19h já terminou: atrasado no mesmo dia; a 19h–21h ainda não.
+    const evening = await listRouteOfDay(sdb, { now: new Date("2026-09-18T22:30:00Z") });
+    expect(evening.late.map((o) => o.orderNumber)).toEqual([cash.orderNumber]);
+    expect(evening.today.map((g) => g.label)).toEqual(["19h–21h"]);
+    expect(evening.todayCount).toBe(1);
 
     // No dia seguinte o pedido de hoje que não saiu vira atrasado; o de amanhã vira hoje.
     const nextDay = await listRouteOfDay(sdb, { now: new Date("2026-09-19T12:00:00Z") });
@@ -228,6 +237,66 @@ describe("dispatchOrder ('Saiu')", () => {
     ).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
   });
 
+  it("janela que já passou não sai: reagende primeiro (WINDOW_PAST); depois de reagendar, sai e {{dia}} segue a hora da saída", async () => {
+    const { variantId, rateId } = await setup();
+    const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
+    const saturday = new Date("2026-09-19T12:00:00Z");
+    await expect(dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, now: saturday })).rejects.toMatchObject({ code: "WINDOW_PAST" });
+    expect(await outboxTypes(created.orderId)).not.toContain("order.shipped");
+
+    await rescheduleOrderWindow(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[1], now: saturday });
+    const result = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, now: new Date("2026-09-19T20:00:00Z") });
+    expect(result.to).toBe("shipped");
+    // O contexto do WhatsApp usa a hora da saída, mesmo se a fila rodar no dia seguinte.
+    const ctx = await loadOrderWaContext(sdb, created.orderId);
+    expect(ctx?.vars.dia).toBe("hoje");
+    expect(ctx?.vars.janela).toBe("19h e 21h");
+  });
+
+  it("completeDispatchedOrder: o motoboy voltou — paid → delivered, preparing → shipped → delivered; sem sair antes ou sem pagar, recusa", async () => {
+    const { variantId, rateId } = await setup();
+    // Dinheiro na entrega: saiu → pago → entregue.
+    const cash = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
+      { now: MORNING },
+    );
+    await expect(completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "NOT_DISPATCHED" });
+    await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: MORNING });
+    await expect(completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "PAYMENT_PENDING" });
+    await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
+    expect(await completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).toMatchObject({ from: "paid", idempotent: false });
+    expect((await db.select({ s: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, cash.orderId)))[0].s).toBe("delivered");
+    expect((await completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).idempotent).toBe(true);
+    expect((await outboxTypes(cash.orderId)).filter((t) => t === "order.shipped")).toEqual([]);
+
+    // Saiu, pagou, e a dona passou pelo "Embalei" (preparing) — ainda tem saída.
+    const cash2 = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
+      { now: MORNING },
+    );
+    await dispatchOrder(sdb, { orderId: cash2.orderId, userId: FIXED_USER_ID, now: MORNING });
+    await transitionOrder(sdb, { orderId: cash2.orderId, to: "paid", userId: FIXED_USER_ID });
+    await transitionOrder(sdb, { orderId: cash2.orderId, to: "preparing", userId: FIXED_USER_ID });
+    expect(await completeDispatchedOrder(sdb, { orderId: cash2.orderId, userId: FIXED_USER_ID })).toMatchObject({ from: "preparing" });
+    expect((await db.select({ s: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, cash2.orderId)))[0].s).toBe("delivered");
+  });
+
+  it("pedido que já saiu com o motoboy não aparece na mesa de embalagem", async () => {
+    const { variantId, rateId } = await setup();
+    const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
+    expect((await listOrdersAwaitingPacking(sdb)).map((o) => o.orderNumber)).toEqual([created.orderNumber]);
+    const cash = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
+      { now: MORNING },
+    );
+    await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: MORNING });
+    await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
+    expect((await listOrdersAwaitingPacking(sdb)).map((o) => o.orderNumber)).toEqual([created.orderNumber]);
+  });
+
   it("em separação (já embalado) também sai; pedido Correios ou online não pago é recusado", async () => {
     const { variantId, rateId } = await setup();
     const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
@@ -288,6 +357,9 @@ describe("rescheduleOrderWindow", () => {
     await expect(
       rescheduleOrderWindow(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-18", window: WINDOWS[0], now }),
     ).rejects.toMatchObject({ code: "PAST_DAY" });
+    await expect(
+      rescheduleOrderWindow(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, dayKey: "2026-02-31", window: WINDOWS[0], now }),
+    ).rejects.toThrow(/Dia inválido/);
     await expect(
       rescheduleOrderWindow(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-20", window: { start: "08:00", end: "10:00", cutoff: "07:00" }, now }),
     ).rejects.toMatchObject({ code: "WINDOW_UNKNOWN" });

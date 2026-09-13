@@ -114,7 +114,9 @@ export function ProductDetailClient({
             setSelected((previous) => ({ ...previous, [axis]: value }))
           }
         />
-        <SameDayPromiseBadge weightGrams={matched?.weightGrams ?? null} quote={sameDayPromiseAction} />
+        {matched && matched.availableQty > 0 ? (
+          <SameDayPromiseBadge weightGrams={matched.weightGrams} quote={sameDayPromiseAction} />
+        ) : null}
         <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
         {lia?.fallbackUrl ? (
           <div className="flex flex-col gap-1">

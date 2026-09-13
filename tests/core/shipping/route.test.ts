@@ -40,6 +40,13 @@ describe("groupRouteOrders", () => {
     ]);
   });
 
+  it("janela de hoje que já terminou conta como atrasada (minutos de parede de SP)", () => {
+    const route = groupRouteOrders([order("a", TODAY, W1), order("b", TODAY, W3)], TODAY, 12 * 60 + 30);
+    expect(route.late.map((o) => o.id)).toEqual(["a"]);
+    expect(route.today[0].orders.map((o) => o.id)).toEqual(["b"]);
+    expect(route.todayCount).toBe(1);
+  });
+
   it("quem já saiu com o motoboy vai para 'na rua' (por hora de saída), fora de atrasados/hoje", () => {
     const route = groupRouteOrders(
       [

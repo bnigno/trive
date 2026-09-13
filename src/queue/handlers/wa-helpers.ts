@@ -82,6 +82,9 @@ export async function loadOrderWaContext(
       paymentMethod: row.paymentMethod,
       isGift: row.isGift,
       deliveryWindow: row.deliveryWindow,
+      // {{dia}} vale pela hora em que a peça SAIU, não pela hora em que a
+      // fila rodou (retry depois da meia-noite não vira "ontem").
+      now: row.deliveryWindow?.dispatchedAt ? new Date(row.deliveryWindow.dispatchedAt) : undefined,
     }),
   };
 }

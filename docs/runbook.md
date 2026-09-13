@@ -108,9 +108,10 @@ Motoboy em **/admin/frete**) — pagos e os de **dinheiro na entrega** (que
 ficam "aguardando pagamento" até o motoboy voltar) — por horário, com
 endereço, telefone e o que receber. **Saiu** marca o pedido pago como
 enviado; o de dinheiro só ganha a marca de saída e vai para **Na rua** até
-você registrar o pagamento e a entrega no pedido. Nos dois casos a cliente
-recebe "Saiu da maison, chega hoje entre 19h e 21h" (template
-`order_out_for_delivery`). Pedido que **pagou depois da hora-limite** ou com
+você registrar o pagamento no pedido e clicar **Entregue — o motoboy
+voltou**. Nos dois casos a cliente recebe "Saiu da maison, chega hoje entre
+19h e 21h" (template `order_out_for_delivery`), uma vez só. Janela que já
+passou não sai: reagende antes. Pedido que **pagou depois da hora-limite** ou com
 janela de ontem aparece marcado com **Reagendar** — a nova janela não avisa a
 cliente sozinha: combine pelo link do WhatsApp do card. Template novo em
 produção entra com `scripts/sync-seed.ts --templates order_out_for_delivery`.
