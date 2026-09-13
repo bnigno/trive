@@ -91,7 +91,7 @@ describe("siteBridgeFunnel", () => {
     const paid = await order("+5591988880001", true);
     await db.update(schema.siteCarts).set({ orderId: paid }).where(eq(schema.siteCarts.id, pdp1.id));
 
-    // Story «dunas»: 3 toques, 2 conversas, 1 pedido sem pagar.
+    // Story «dunas»: 3 toques, 2 códigos na MESMA conversa (= 1 conversa), 1 pedido sem pagar.
     const s1 = (await tapCampaignLink(sdb, { slug: "dunas" }))!;
     const s2 = (await tapCampaignLink(sdb, { slug: "dunas" }))!;
     await tapCampaignLink(sdb, { slug: "dunas" });
@@ -100,6 +100,15 @@ describe("siteBridgeFunnel", () => {
     await bridgeInto(c2, s2.code, now);
     const unpaid = await order("+5591988880002", false);
     await db.update(schema.siteCarts).set({ orderId: unpaid }).where(eq(schema.siteCarts.id, s1.id));
+    // A cliente da página da peça também tocou no story: no total é UMA conversa a mais, não duas.
+    const s3 = (await tapCampaignLink(sdb, { slug: "dunas" }))!;
+    await bridgeInto(c1, s3.code, now);
+    // Pedido pago e depois reembolsado não é venda (regra dos Relatórios).
+    const refunded = await order("+5591988880009", true);
+    await db.update(schema.orders).set({ status: "refunded" }).where(eq(schema.orders.id, refunded));
+    const s4 = (await tapCampaignLink(sdb, { slug: "dunas" }))!;
+    await bridgeInto(c2, s4.code, now);
+    await db.update(schema.siteCarts).set({ orderId: refunded }).where(eq(schema.siteCarts.id, s4.id));
 
     // Rodapé: 1 toque, nada mais. Sacola: 1 toque, fora do período (40 dias atrás).
     await createSiteCart(sdb, { source: "footer" });
@@ -108,22 +117,24 @@ describe("siteBridgeFunnel", () => {
 
     const funnel = await siteBridgeFunnel(sdb, { from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), to: new Date(now.getTime() + 60_000) });
     expect(funnel.rows).toEqual([
-      { source: "campaign", campaignSlug: "dunas", label: "story «Dunas no story»", taps: 3, conversations: 2, orders: 1, paidOrders: 0, paidCents: 0 },
+      { source: "campaign", campaignSlug: "dunas", label: "story «Dunas no story»", taps: 5, conversations: 2, orders: 2, paidOrders: 0, paidCents: 0 },
       { source: "pdp", campaignSlug: null, label: "página da peça", taps: 2, conversations: 1, orders: 1, paidOrders: 1, paidCents: 28900 },
       { source: "footer", campaignSlug: null, label: "rodapé do site", taps: 1, conversations: 0, orders: 0, paidOrders: 0, paidCents: 0 },
     ]);
-    expect(funnel.totals).toEqual({ taps: 6, conversations: 3, orders: 2, paidOrders: 1, paidCents: 28900 });
+    // Totais sobre o período inteiro: c1 aparece em duas origens e conta uma vez.
+    expect(funnel.totals).toEqual({ taps: 8, conversations: 2, orders: 3, paidOrders: 1, paidCents: 28900 });
 
     // Janela de 90 dias pega a sacola velha também.
     const wide = await siteBridgeFunnel(sdb, { from: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000), to: new Date(now.getTime() + 60_000) });
     expect(wide.rows.map((r) => [r.label, r.taps])).toContainEqual(["sacola", 1]);
-    expect(wide.totals.taps).toBe(7);
+    expect(wide.totals.taps).toBe(9);
 
     // A lista de conversas ganha a etiqueta de origem; conversa sem ponte fica sem.
     await conversation("+5591988880003");
     const list = await listWaConversations(sdb);
     const byPhone = new Map(list.map((item) => [item.phoneE164, item.originLabel]));
-    expect(byPhone.get("+5591988880001")).toBe("página da peça");
+    // c1 tocou depois no story: a etiqueta é a da última ponte.
+    expect(byPhone.get("+5591988880001")).toBe("story «Dunas no story»");
     expect(byPhone.get("+5591988880002")).toBe("story «Dunas no story»");
     expect(byPhone.get("+5591988880003")).toBeNull();
   });

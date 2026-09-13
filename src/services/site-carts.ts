@@ -294,30 +294,47 @@ export type BridgeFunnel = {
   totals: Omit<BridgeFunnelRow, "source" | "campaignSlug" | "label">;
 };
 
+/** Pedido "pago" como nos relatórios: paid_at preenchido E não cancelado/reembolsado (paid_at nunca é apagado). */
+const paidOrder = () => sql`${orders.paidAt} is not null and ${orders.status} not in ('canceled', 'refunded')`;
+
+const funnelAggregates = {
+  taps: sql<number>`count(*)::int`,
+  // Toques = pontes; conversas = conversas DISTINTAS (a mesma cliente pode
+  // mandar dois códigos no mesmo chat) — a mesma régua da Central de links.
+  conversations: sql<number>`count(distinct ${siteCarts.conversationId})::int`,
+  orders: sql<number>`count(distinct ${siteCarts.orderId})::int`,
+  paidOrders: sql<number>`count(distinct case when ${paidOrder()} then ${orders.id} end)::int`,
+  paidCents: sql<number>`coalesce(sum(case when ${paidOrder()} then ${orders.totalCents} else 0 end), 0)::int`,
+};
+
 /**
  * "De onde vieram": por origem (e por link de story), no período [from, to):
- * quantas tocaram, quantas chegaram à conversa, quantas fecharam pedido e
- * quantas pagaram. Conta PONTES, não clientes distintas (uma cliente pode
- * tocar duas vezes). Pedido cancelado continua em "pedidos"; "pagos" é a
- * coluna que importa. Ordenado por toques.
+ * quantas tocaram (pontes), quantas conversas chegaram, quantos pedidos e
+ * quantos pagos (regra dos relatórios: cancelado/reembolsado não é venda).
+ * Os totais são calculados sobre o período inteiro (uma conversa com pontes
+ * de duas origens conta uma vez no total). Ordenado por toques.
  */
 export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date }): Promise<BridgeFunnel> {
-  const rows = await db
-    .select({
-      source: siteCarts.source,
-      campaignSlug: siteCarts.campaignSlug,
-      campaignLabel: campaignLinks.label,
-      taps: sql<number>`count(*)::int`,
-      conversations: sql<number>`count(${siteCarts.consumedAt})::int`,
-      orders: sql<number>`count(${siteCarts.orderId})::int`,
-      paidOrders: sql<number>`count(${orders.paidAt})::int`,
-      paidCents: sql<number>`coalesce(sum(case when ${orders.paidAt} is not null then ${orders.totalCents} else 0 end), 0)::int`,
-    })
-    .from(siteCarts)
-    .leftJoin(campaignLinks, and(eq(siteCarts.source, "campaign"), eq(campaignLinks.slug, siteCarts.campaignSlug)))
-    .leftJoin(orders, eq(orders.id, siteCarts.orderId))
-    .where(and(gte(siteCarts.createdAt, input.from), lt(siteCarts.createdAt, input.to)))
-    .groupBy(siteCarts.source, siteCarts.campaignSlug, campaignLinks.label);
+  const period = and(gte(siteCarts.createdAt, input.from), lt(siteCarts.createdAt, input.to));
+  const [rows, [overall]] = await Promise.all([
+    db
+      .select({
+        source: siteCarts.source,
+        campaignSlug: siteCarts.campaignSlug,
+        campaignLabel: campaignLinks.label,
+        ...funnelAggregates,
+      })
+      .from(siteCarts)
+      .leftJoin(campaignLinks, and(eq(siteCarts.source, "campaign"), eq(campaignLinks.slug, siteCarts.campaignSlug)))
+      .leftJoin(orders, eq(orders.id, siteCarts.orderId))
+      .where(period)
+      .groupBy(siteCarts.source, siteCarts.campaignSlug, campaignLinks.label),
+    db
+      .select(funnelAggregates)
+      .from(siteCarts)
+      .leftJoin(orders, eq(orders.id, siteCarts.orderId))
+      .where(period),
+  ]);
   const list: BridgeFunnelRow[] = rows
     .map((row) => {
       const source = row.source as BridgeSource;
@@ -333,16 +350,13 @@ export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date
       };
     })
     .sort((a, b) => b.taps - a.taps || a.label.localeCompare(b.label, "pt-BR"));
-  const totals = list.reduce(
-    (sum, row) => ({
-      taps: sum.taps + row.taps,
-      conversations: sum.conversations + row.conversations,
-      orders: sum.orders + row.orders,
-      paidOrders: sum.paidOrders + row.paidOrders,
-      paidCents: sum.paidCents + row.paidCents,
-    }),
-    { taps: 0, conversations: 0, orders: 0, paidOrders: 0, paidCents: 0 },
-  );
+  const totals = {
+    taps: Number(overall?.taps ?? 0),
+    conversations: Number(overall?.conversations ?? 0),
+    orders: Number(overall?.orders ?? 0),
+    paidOrders: Number(overall?.paidOrders ?? 0),
+    paidCents: Number(overall?.paidCents ?? 0),
+  };
   return { rows: list, totals };
 }
 

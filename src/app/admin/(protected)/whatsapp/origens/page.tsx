@@ -142,7 +142,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
               ))}
             </Table>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Toques contam cada vez que alguém abriu o WhatsApp pelo site (a mesma cliente pode contar duas vezes). Conversas = toques cuja mensagem chegou com o código. Pedidos = fechados nessas conversas, pagos ou não; <strong>Pagos</strong> é o que virou venda.
+              Toques contam cada vez que alguém abriu o WhatsApp pelo site (a mesma cliente pode contar duas vezes). Conversas = conversas em que chegou uma mensagem com o código (a mesma régua dos links de story). Pedidos = fechados nessas conversas, pagos ou não; <strong>Pagos</strong> é o que virou venda — cancelado ou reembolsado não conta, como nos Relatórios.
             </p>
             <div>
               <Link href="/admin/whatsapp/links" className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
