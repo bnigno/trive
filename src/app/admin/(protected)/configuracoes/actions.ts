@@ -374,3 +374,25 @@ export async function updateStorefrontAction(
     return { error: toErrorMessage(error) };
   }
 }
+
+/** Datas da cidade: linhas nome + dia; em branco é ignorada; a ordem é a das datas. */
+export async function updateCityDatesAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("configuracoes");
+  try {
+    const dates: { name: string; date: string }[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      const name = String(formData.get(`city_date_${index}_name`) ?? "").trim();
+      const date = String(formData.get(`city_date_${index}_date`) ?? "").trim();
+      if (!name && !date) continue;
+      if (!name || !date) throw new ServiceError("data_incompleta", `Linha ${index + 1}: informe o nome e o dia.`);
+      dates.push({ name, date });
+    }
+    dates.sort((a, b) => a.date.localeCompare(b.date));
+    await updateSetting(getDb(), { key: "city_dates", value: dates, userId: user.id });
+    revalidatePath("/admin/configuracoes");
+    revalidatePath("/", "layout");
+    return { success: dates.length === 0 ? "Sem datas da cidade: o selo da vitrine fica desligado." : `${dates.length} ${dates.length === 1 ? "data salva" : "datas salvas"}. A vitrine mostra a próxima.` };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}

@@ -4,7 +4,9 @@ import {
   MP_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
 } from "@/core/orders/payment-methods";
+import { cityDatesSchema, type CityDate } from "@/core/shipping/needed-by";
 import { getDb } from "@/db/client";
+import { spDayKey } from "@/lib/sp-day";
 import { requireOwner } from "@/services/auth";
 import {
   getDefaultPolicy,
@@ -22,6 +24,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { getSiteUrl } from "@/services/store-payments";
 import {
   ApprovalRulesForm,
+  CityDatesForm,
   DebutLetterForm,
   FeeRuleForm,
   MercadoPagoForm,
@@ -81,6 +84,7 @@ type SettingsData = {
     text: string;
     signature: string;
   };
+  cityDates: CityDate[];
   mpEnabled: boolean;
 };
 
@@ -110,6 +114,7 @@ async function loadSettings(): Promise<SettingsData | null> {
         "edition_name",
         "debut_letter_text",
         "debut_letter_signature",
+        "city_dates",
         "mp_enabled",
       ]),
     ]);
@@ -130,6 +135,8 @@ async function loadSettings(): Promise<SettingsData | null> {
         manifesto: asString(map.store_manifesto),
         editionName: asString(map.edition_name),
       },
+      // Datas que já passaram somem do formulário (e, ao salvar, do setting).
+      cityDates: (cityDatesSchema.safeParse(map.city_dates).success ? (map.city_dates as CityDate[]) : []).filter((d) => d.date >= spDayKey(new Date())),
       debutLetter: {
         text: asString(map.debut_letter_text),
         signature: asString(map.debut_letter_signature),
@@ -241,6 +248,17 @@ export default async function ConfiguracoesPage() {
             Em branco, nenhuma carta sai.
           </p>
           <DebutLetterForm defaults={{ text: data.debutLetter.text, signature: data.debutLetter.signature }} />
+        </div>
+      </Card>
+
+      <Card title="Datas da cidade">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Círio, Natal, Dia das Mães… A vitrine mostra “Círio em 28 dias · peça até 29/09 para chegar pelos Correios” (o
+            prazo é o da faixa mais lenta em Frete) e o Bom dia conta os pedidos com data marcada que precisam sair. Até 12
+            datas; as que passaram somem sozinhas.
+          </p>
+          <CityDatesForm defaults={data.cityDates} />
         </div>
       </Card>
 

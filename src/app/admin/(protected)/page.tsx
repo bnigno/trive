@@ -6,6 +6,7 @@ import { orders, outboxEvents, priceVersions } from "@/db/schema";
 import { isOwner, requireUser } from "@/services/auth";
 import { listOrders } from "@/services/orders";
 import { countRouteOfDay } from "@/services/delivery-routes";
+import { countOrdersMustShipToday } from "@/services/needed-by";
 import { countOrdersAwaitingPacking } from "@/services/packing";
 import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
@@ -91,7 +92,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route] =
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday] =
     await Promise.all([
       safe(async () => {
         const db = getDb();
@@ -109,9 +110,10 @@ async function loadSharedDashboard() {
       safe(() => countOrdersAwaitingPacking(getDb())),
       safe(() => getReadinessSummary(getDb())),
       safe(() => countRouteOfDay(getDb())),
+      safe(() => countOrdersMustShipToday(getDb())),
     ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday };
 }
 
 /**
@@ -337,6 +339,16 @@ export default async function AdminDashboardPage() {
               />
             </Link>
           </>
+        ) : null}
+        {data.mustShipToday ? (
+          <Link href="/admin/pedidos/data-marcada" className="block">
+            <StatCard
+              label="Precisam sair hoje"
+              value={String(data.mustShipToday)}
+              tone="warning"
+              hint="Pedidos com data marcada no limite. Abra a lista."
+            />
+          </Link>
         ) : null}
         {data.route && (data.route.today > 0 || data.route.late > 0) ? (
           <Link href="/admin/pedidos/rota" className="block">

@@ -85,6 +85,12 @@ export const orders = pgTable(
       label: string;
       dispatchedAt?: string;
     }>(),
+    /** Data marcada: dia em que a peça precisa estar com a cliente (o presente com data também grava aqui). */
+    neededBy: date("needed_by"),
+    /** "aniversário da mãe", "Círio" — ≤ 60 caracteres. */
+    occasion: text("occasion"),
+    /** Dia-limite para a peça sair (needed_by − prazo máximo em dias úteis; motoboy = dia da janela). */
+    shipBy: date("ship_by"),
     note: text("note"),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     // Comprovante de pagamento em imagem (receipts/<id>/comprovante.jpg),
@@ -133,6 +139,8 @@ export const orders = pgTable(
     index("orders_created_at_idx").on(table.createdAt),
     index("orders_payment_due_at_idx").on(table.paymentDueAt),
     // Rota do dia: pedidos com entrega por motoboy num dia (SP).
+    index("orders_ship_by_idx").on(table.shipBy).where(sql`${table.shipBy} IS NOT NULL`),
+    check("orders_occasion_length_check", sql`${table.occasion} IS NULL OR char_length(${table.occasion}) <= 60`),
     index("orders_delivery_window_day_idx")
       .on(sql`(${table.deliveryWindow}->>'dayKey')`)
       .where(sql`${table.deliveryWindow} IS NOT NULL`),

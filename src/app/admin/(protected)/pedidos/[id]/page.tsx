@@ -9,6 +9,8 @@ import {
 } from "@/core/orders/state-machine";
 import { getFileStorage } from "@/adapters/storage";
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
+import { neededByLabel, shipByLabel, trafficLight, type TrafficLight } from "@/core/shipping/needed-by";
+import { spDayKey } from "@/lib/sp-day";
 import { getDb } from "@/db/client";
 import { isOwner, requireUser } from "@/services/auth";
 import { getOrderDetail } from "@/services/orders";
@@ -49,6 +51,8 @@ function formatIsoDateBR(iso: string): string {
   return `${day}/${month}/${year}`;
 }
 
+const LIGHT_TONE: Record<TrafficLight, "danger" | "warning" | "success"> = { red: "danger", amber: "warning", green: "success" };
+
 export default async function PedidoDetalhePage({
   params,
 }: {
@@ -78,6 +82,9 @@ export default async function PedidoDetalhePage({
   // Reembolso mexe no financeiro (lançamento de saída): só o dono. A action
   // também barra pelo servidor — isto aqui é só para não mostrar botão morto.
   const owner = await isOwner();
+  // Data marcada: o semáforo só faz sentido enquanto a peça não saiu.
+  const todayKey = spDayKey(new Date());
+  const isClosed = status === "shipped" || status === "delivered" || status === "canceled" || status === "refunded" || Boolean(order.deliveryWindow?.dispatchedAt);
 
   return (
     <div className="flex flex-col gap-6">
@@ -273,6 +280,19 @@ export default async function PedidoDetalhePage({
                   <span className="text-right font-medium text-zinc-900 dark:text-zinc-100">
                     {order.deliveryWindow.rateName} — {order.deliveryWindow.label}
                     <span className="block text-xs font-normal text-zinc-500">pague até {order.deliveryWindow.cutoff.replace(/^0/, "").replace(":00", "h").replace(":", "h")}</span>
+                  </span>
+                </div>
+              ) : null}
+              {order.neededBy ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-zinc-500 dark:text-zinc-400">Data marcada</span>
+                  <span className="text-right font-medium text-zinc-900 dark:text-zinc-100">
+                    {neededByLabel(order.neededBy, order.occasion)}
+                    {order.shipBy && !isClosed ? (
+                      <span className="block text-xs font-normal">
+                        <Badge tone={LIGHT_TONE[trafficLight(order.shipBy, todayKey)]}>{shipByLabel(order.shipBy, todayKey)}</Badge>
+                      </span>
+                    ) : null}
                   </span>
                 </div>
               ) : null}

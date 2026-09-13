@@ -116,6 +116,19 @@ janela de ontem aparece marcado com **Reagendar** — a nova janela não avisa a
 cliente sozinha: combine pelo link do WhatsApp do card. Template novo em
 produção entra com `scripts/sync-seed.ts --templates order_out_for_delivery`.
 
+## Data marcada e Datas da cidade
+
+No checkout a cliente marca **"É para uma data?"** (dia + ocasião) e cada
+opção de entrega diz se chega a tempo (Correios em dias úteis, sem os
+feriados nacionais fixos; motoboy no dia da janela). O pedido guarda
+`needed_by`/`ship_by`; **/admin/pedidos/data-marcada** lista do mais urgente
+ao mais folgado com semáforo (vermelho = sai hoje ou atrasou), o dashboard
+e o Bom dia contam "precisam sair hoje". **Datas da cidade** (Configurações)
+alimenta o selo da home "Círio em N dias · peça até X pelos Correios" — o
+prazo é o da faixa de Correios mais lenta em Frete. Template do Bom dia em
+produção: `scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
+(confira antes se a dona editou o texto).
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

@@ -256,6 +256,11 @@ export default async function OrderPage({
                   Entrega por motoboy: <span className="font-medium text-ink-900">{order.deliveryWindowLabel}</span>.
                 </p>
               ) : null}
+              {order.neededByLabel ? (
+                <p className="mb-4 font-store text-sm text-ink-700">
+                  Data marcada: <span className="font-medium text-ink-900">{order.neededByLabel}</span>. A maison prioriza a saída.
+                </p>
+              ) : null}
               {journey ? (
                 <OrderJourney
                   steps={journey}

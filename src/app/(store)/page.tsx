@@ -12,6 +12,7 @@ import { Monogram, markSrcSet } from "@/components/store/brand/monogram";
 import { Tagline } from "@/components/store/brand/tagline";
 import { Wordmark } from "@/components/store/brand/wordmark";
 import { CategoryCover } from "@/components/store/category-cover";
+import { CityDateSeal } from "@/components/store/city-date-seal";
 import { CityEditionSection } from "@/components/store/city-edition-section";
 import { EditionForYou } from "@/components/store/edition-for-you";
 import { HeroSentinel } from "@/components/store/hero-sentinel";
@@ -38,6 +39,7 @@ import { STORE_NAME_DEFAULT, VEIL_SEEN_KEY } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { waMeUrl } from "@/lib/phone";
 import { getCurrentCityEdition } from "@/services/city-editions";
+import { getCitySeal } from "@/services/needed-by";
 import { getSettingsMap } from "@/services/settings";
 import {
   listPublicCategories,
@@ -122,8 +124,8 @@ export default async function HomePage() {
     imageSizes: HERO_MARK_SIZES,
   });
 
-  const [products, categories, settings, edition] = await tryOrBuildFallback(
-    [[], [], {}, null],
+  const [products, categories, settings, edition, citySeal] = await tryOrBuildFallback(
+    [[], [], {}, null, null],
     () => {
       const db = getDb();
       return Promise.all([
@@ -136,6 +138,7 @@ export default async function HomePage() {
           "store_manifesto",
         ]),
         getCurrentCityEdition(db),
+        getCitySeal(db),
       ]);
     },
   );
@@ -272,6 +275,9 @@ export default async function HomePage() {
                     </Reveal>
                   </div>
                 </section>
+
+                {/* 2a. Datas da cidade — o selo com o dia-limite para pedir pelos Correios */}
+                <CityDateSeal seal={citySeal} />
 
                 {/* 2b. Edições de Belém — a vigente (hora > período > sempre), quando existe */}
                 {edition ? <CityEditionSection edition={edition} products={editionProducts} /> : null}

@@ -57,6 +57,7 @@ export const PREVIEW_VARIABLES: Record<string, string> = {
   a_pagar: "2",
   a_embalar: "1",
   a_enviar: "3",
+  sair_hoje: "1",
   lia_conversas: "6",
   lia_pedidos: "2",
   lia_custo: "US$ 0,42",

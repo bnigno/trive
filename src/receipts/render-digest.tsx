@@ -100,13 +100,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       style={{
         display: "flex",
         flexDirection: "column",
-        marginTop: 26,
-        paddingTop: 22,
+        marginTop: 14,
+        paddingTop: 12,
         borderTop: `1px solid ${C.ivory300}`,
       }}
     >
       <Eyebrow>{title}</Eyebrow>
-      <div style={{ display: "flex", marginTop: 14 }}>{children}</div>
+      <div style={{ display: "flex", marginTop: 12 }}>{children}</div>
     </div>
   );
 }
@@ -139,10 +139,10 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: C.noir950,
-          padding: "40px 72px 34px",
+          padding: "26px 72px 22px",
         }}
       >
-        <img src={lockup} width={340} height={151} alt="" />
+        <img src={lockup} width={270} height={120} alt="" />
         <div
           style={{
             marginTop: 14,
@@ -165,7 +165,7 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
-          padding: "36px 72px 30px",
+          padding: "26px 72px 24px",
         }}
       >
         <div
@@ -230,6 +230,11 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
             tone={waiting.toShip > 0 ? "gold" : "ink"}
           />
         </Section>
+        {waiting.mustShipToday > 0 ? (
+          <div style={{ marginTop: 10, fontSize: 22, color: C.claret600 }}>
+            {`${waiting.mustShipToday} ${plural(waiting.mustShipToday, "pedido com data marcada precisa", "pedidos com data marcada precisam")} sair hoje`}
+          </div>
+        ) : null}
         {waiting.conversationsAwaitingOwner > 0 ? (
           <div style={{ marginTop: 10, fontSize: 22, color: C.claret600 }}>
             {`${waiting.conversationsAwaitingOwner} ${plural(waiting.conversationsAwaitingOwner, "conversa espera", "conversas esperam")} a sua resposta no WhatsApp`}

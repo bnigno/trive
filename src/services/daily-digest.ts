@@ -30,6 +30,7 @@ import {
 import type { DbOrTx } from "@/queue/enqueue";
 import { topProducts } from "@/services/reports";
 import { getStockOverview } from "@/services/stock";
+import { countOrdersMustShipToday } from "@/services/needed-by";
 import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
 import { summarizeBotActivity } from "@/services/wa-insights";
 import { isWaEnabled, sendToOwner, type SendWaMessageResult } from "@/services/wa-messaging";
@@ -79,6 +80,8 @@ export async function buildDailyDigestData(
   const { date } = dateSchema.parse(input);
   const from = spDayStart(date);
   const to = spDayEnd(date);
+  // "Precisam sair hoje" é o dia em que o Bom dia chega: o seguinte ao relatado.
+  const now = new Date(to.getTime() + 8 * 3_600_000);
 
   const [sales] = await db
     .select({
@@ -120,12 +123,13 @@ export async function buildDailyDigestData(
     }
   }
 
-  const [conversationsAwaitingOwner, bot, stock, top, storeName] = await Promise.all([
+  const [conversationsAwaitingOwner, bot, stock, top, storeName, mustShipToday] = await Promise.all([
     countConversationsAwaitingOwner(db),
     summarizeBotActivity(db, { from, to }),
     getStockOverview(db),
     topProducts(db, { days: BEST_SELLER_DAYS, limit: 1 }),
     loadStoreName(db),
+    countOrdersMustShipToday(db, { now }),
   ]);
 
   const lowStock = stock
@@ -156,7 +160,7 @@ export async function buildDailyDigestData(
       averageTicketCents: paidOrders > 0 ? Math.round(revenueCents / paidOrders) : 0,
       newOrders: Number(created?.value ?? 0),
     },
-    waiting: { pendingPayment, toPack, toShip, conversationsAwaitingOwner },
+    waiting: { pendingPayment, toPack, toShip, conversationsAwaitingOwner, mustShipToday },
     bot,
     lowStock,
     bestSeller: best
@@ -183,6 +187,7 @@ export function buildDigestVars(data: DailyDigestData): Record<string, string> {
     a_pagar: String(data.waiting.pendingPayment),
     a_embalar: String(data.waiting.toPack),
     a_enviar: String(data.waiting.toShip),
+    sair_hoje: String(data.waiting.mustShipToday),
     lia_conversas: String(data.bot.conversations),
     lia_pedidos: String(data.bot.orders),
     lia_custo: formatUsdCents(data.bot.costUsdCents),
