@@ -33,10 +33,10 @@ export const metadata: Metadata = {
 };
 
 async function loadTeaser(): Promise<{ teaser: DropTeaser | null; sellerName: string }> {
-  const db = getDb();
+  // getDb() dentro do fallback: no build do CI não há DATABASE_URL.
   const [teaser, settings] = await Promise.all([
-    tryOrBuildFallback(null, () => getUpcomingDropTeaser(db)),
-    tryOrBuildFallback({}, () => getSettingsMap(db, ["bot_seller_name"])),
+    tryOrBuildFallback(null, () => getUpcomingDropTeaser(getDb())),
+    tryOrBuildFallback({}, () => getSettingsMap(getDb(), ["bot_seller_name"])),
   ]);
   const sellerName = (typeof settings.bot_seller_name === "string" && settings.bot_seller_name.trim()) || DEFAULT_SELLER_NAME;
   return { teaser, sellerName };
