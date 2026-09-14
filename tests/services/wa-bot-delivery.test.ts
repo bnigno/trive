@@ -82,4 +82,14 @@ describe("confirmar_entrega", () => {
     expect(denied.ok).toBe(false);
     expect(denied.text).toContain("não \"enviado\"");
   });
+
+  it("no ensaio do painel (dryRun) não marca pedido de verdade", async () => {
+    const { orderId, customerId } = await seedShippedOrder();
+    const [conversation] = await db.insert(schema.waConversations).values({ phoneE164: PHONE, customerId }).returning({ id: schema.waConversations.id });
+    const executor = buildToolExecutor(sdb, { conversationId: conversation.id, phoneE164: PHONE, customerId, lastInboundId: DUMMY_INBOUND_ID, dryRun: true });
+    const result = await executor("confirmar_entrega", {});
+    expect(result.ok).toBe(true);
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId));
+    expect(order.status).toBe("shipped");
+  });
 });

@@ -444,6 +444,7 @@ export async function execConfirmarEntrega(
   ctx: BotExecutorContext,
   input: BotToolInputs["confirmar_entrega"],
 ): Promise<ToolResult> {
+  if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
   const customerId = await resolveConversationCustomerId(db, ctx);
   if (!customerId) {
     return { ok: false, text: "Ainda não encontrei pedidos para este número de WhatsApp. Se o pedido foi feito com outro telefone, posso chamar a equipe." };

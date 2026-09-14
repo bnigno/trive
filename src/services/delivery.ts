@@ -17,6 +17,7 @@ import { type OrderStatus } from "@/core/orders/state-machine";
 import { renderTemplate } from "@/core/whatsapp/render";
 import { auditLog, customers, orders, waMessages, waTemplates } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
+import { spDayKey } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { PACKAGE_PHOTO_JPEG_QUALITY, PACKAGE_PHOTO_MAX_BYTES, PACKAGE_PHOTO_MAX_EDGE } from "@/services/packing";
@@ -482,6 +483,6 @@ export async function lastShipmentMemoryLine(db: DbOrTx, customerId: string): Pr
     .orderBy(desc(orders.shippedAt))
     .limit(1);
   if (!row || !row.shippedAt) return null;
-  const [, m, d] = row.shippedAt.toISOString().slice(0, 10).split("-");
+  const [, m, d] = spDayKey(row.shippedAt).split("-");
   return `Último pedido: #${row.orderNumber} enviado em ${d}/${m}${row.trackingCode ? ` (rastreio ${row.trackingCode})` : ""} — se ela disser que chegou, chame confirmar_entrega.`;
 }
