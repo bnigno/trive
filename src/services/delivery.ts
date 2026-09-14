@@ -6,7 +6,7 @@
 // "Entregue" da página pública. Uma foto por pedido — refazer sobrescreve
 // o mesmo path e NÃO reenvia (dedupe). O upload acontece antes da
 // transação (como o pacote): recusa nunca deixa a linha torta.
-import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
@@ -35,7 +35,7 @@ export function deliveredDedupeKey(orderId: string): string {
   return `wa.delivered:${orderId}`;
 }
 
-/** URL pública com ?v= para furar o cache da CDN quando a foto é refeita. */
+/** URL pública com ?v= para furar o cache da CDN quando a foto é refeita (use o updated_at do pedido: muda a cada foto). */
 export function deliveryPhotoUrl(storage: FileStorage, path: string, at: Date): string {
   return `${storage.publicUrl(path)}?v=${at.getTime()}`;
 }
@@ -54,12 +54,16 @@ const deliverSchema = z.object({
 
 export type DeliverOrderInput = z.input<typeof deliverSchema>;
 
-/** Status em que a dona pode registrar a entrega em mãos (motoboy, retirada, dinheiro na entrega). */
-export function canDeliverWithPhoto(status: OrderStatus, dispatched: boolean): boolean {
+/**
+ * Onde a câmera faz sentido: enviado; pago em dinheiro na entrega (entrega
+ * em mãos) ou motoboy que já saiu. Pago pelos Correios ainda na prateleira,
+ * não — esse embala primeiro.
+ */
+export function canDeliverWithPhoto(status: OrderStatus, input: { dispatched: boolean; paymentMethod: string | null }): boolean {
   if (status === "shipped") return true;
-  if (status === "paid") return true;
+  if (status === "paid") return input.paymentMethod === "cash" || input.dispatched;
   // Em separação: só o motoboy que já saiu (a máquina passa por 'shipped').
-  return status === "preparing" && dispatched;
+  return status === "preparing" && input.dispatched;
 }
 
 /**
@@ -72,7 +76,7 @@ export async function deliverOrderWithPhoto(
   db: DbOrTx,
   storage: FileStorage,
   input: DeliverOrderInput,
-): Promise<{ orderId: string; orderNumber: number; status: OrderStatus; deliveredPhotoPath: string | null; receivedBy: string | null; rephoto: boolean }> {
+): Promise<{ orderId: string; orderNumber: number; status: OrderStatus; deliveredPhotoPath: string | null; receivedBy: string | null; rephoto: boolean; alreadyDelivered: boolean }> {
   const parsed = deliverSchema.parse(input);
   if (parsed.photo && !parsed.photo.contentType.startsWith("image/")) {
     throw new ServiceError("imagem_invalida", "O arquivo enviado não é uma imagem.");
@@ -82,33 +86,42 @@ export async function deliverOrderWithPhoto(
   }
   const receivedBy = normalizeReceivedBy(parsed.receivedBy ?? null);
 
-  const [order] = await db
-    .select({
-      id: orders.id,
-      orderNumber: orders.orderNumber,
-      status: orders.status,
-      deliveredPhotoPath: orders.deliveredPhotoPath,
-      deliveryWindow: orders.deliveryWindow,
-    })
-    .from(orders)
-    .where(eq(orders.id, parsed.orderId))
-    .limit(1);
-  if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
-  const status = order.status as OrderStatus;
-  const dispatched = Boolean(order.deliveryWindow?.dispatchedAt);
-  if (status !== "delivered" && !canDeliverWithPhoto(status, dispatched)) {
-    throw new ServiceError(
-      "STATUS_INVALIDO",
-      status === "pending_payment"
-        ? "Registre o pagamento antes de marcar como entregue."
-        : "Só dá para registrar a entrega de um pedido enviado ou pago.",
-    );
-  }
-  if (!parsed.photo && status === "delivered") {
+  const selectOrder = (tx: DbOrTx) =>
+    tx
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        deliveredPhotoPath: orders.deliveredPhotoPath,
+        deliveryWindow: orders.deliveryWindow,
+        paymentMethod: orders.paymentMethod,
+      })
+      .from(orders)
+      .where(eq(orders.id, parsed.orderId));
+  const assertAllowed = (order: { status: string; deliveryWindow: { dispatchedAt?: string } | null; paymentMethod: string | null }): OrderStatus => {
+    const status = order.status as OrderStatus;
+    const dispatched = Boolean(order.deliveryWindow?.dispatchedAt);
+    if (status !== "delivered" && !canDeliverWithPhoto(status, { dispatched, paymentMethod: order.paymentMethod })) {
+      throw new ServiceError(
+        "STATUS_INVALIDO",
+        status === "pending_payment"
+          ? "Registre o pagamento antes de marcar como entregue."
+          : status === "paid" || status === "preparing"
+            ? "Este pedido ainda não saiu: embale e envie (ou marque a saída com o motoboy) antes de registrar a entrega."
+            : "Só dá para registrar a entrega de um pedido enviado ou pago para entrega em mãos.",
+      );
+    }
+    return status;
+  };
+
+  const [preview] = await selectOrder(db).limit(1);
+  if (!preview) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
+  assertAllowed(preview);
+  if (!parsed.photo && preview.status === "delivered") {
     throw new ServiceError("SEM_FOTO", "Este pedido já está entregue: mande a foto para registrar.");
   }
 
-  let path: string | null = order.deliveredPhotoPath;
+  let path: string | null = preview.deliveredPhotoPath;
   if (parsed.photo) {
     let jpeg: Buffer;
     try {
@@ -120,12 +133,17 @@ export async function deliverOrderWithPhoto(
     } catch {
       throw new ServiceError("imagem_invalida", "Não foi possível processar a foto. Tire a foto direto pela câmera ou escolha um JPG/PNG.");
     }
-    path = deliveryPhotoStoragePath(order.id);
+    path = deliveryPhotoStoragePath(preview.id);
     await storage.upload({ path, data: jpeg, contentType: "image/jpeg" });
   }
 
   return db.transaction(async (tx) => {
-    const rephoto = status === "delivered";
+    // Decide com a linha trancada: dois toques ao mesmo tempo (ficha + mesa)
+    // não encadeiam duas transições — o segundo vira "refazer".
+    const [order] = await selectOrder(tx).for("update");
+    if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
+    const status = assertAllowed(order);
+    const rephoto = order.deliveredPhotoPath !== null;
     const now = new Date();
     // A foto e o nome entram ANTES da transição: o evento order.delivered
     // (na mesma transação) já encontra tudo quando for entregue.
@@ -155,16 +173,16 @@ export async function deliverOrderWithPhoto(
       entityType: "order",
       entityId: order.id,
       before: { status, deliveredPhotoPath: order.deliveredPhotoPath },
-      after: { status: finalStatus, deliveredPhotoPath: path, receivedBy, rephoto },
+      after: { status: finalStatus, deliveredPhotoPath: path, receivedBy, rephoto, photoAt: now.toISOString() },
     });
 
-    return { orderId: order.id, orderNumber: order.orderNumber, status: finalStatus, deliveredPhotoPath: path, receivedBy, rephoto };
+    return { orderId: order.id, orderNumber: order.orderNumber, status: finalStatus, deliveredPhotoPath: path, receivedBy, rephoto, alreadyDelivered: status === "delivered" };
   });
 }
 
 export type SendDeliveredResult =
   | { sent: true; waMessageId: string; withPhoto: boolean }
-  | { skipped: WaSkipReason | "nao_entregue" | "sem_telefone" };
+  | { skipped: WaSkipReason | "nao_entregue" | "sem_telefone" | "sem_foto" };
 
 /**
  * A mensagem de entrega (evento order.delivered): com foto, a imagem com a
@@ -192,6 +210,8 @@ export async function sendDeliveredWa(
       deliveredAt: orders.deliveredAt,
       deliveredPhotoPath: orders.deliveredPhotoPath,
       receivedBy: orders.receivedBy,
+      deliveryConfirmedBy: orders.deliveryConfirmedBy,
+      updatedAt: orders.updatedAt,
       isGift: orders.isGift,
       customerId: customers.id,
       customerName: customers.fullName,
@@ -204,6 +224,11 @@ export async function sendDeliveredWa(
     .limit(1);
   if (!row) throw new ServiceError("ORDER_NOT_FOUND", `Pedido ${orderId} não encontrado.`);
   if (row.status !== "delivered" || !row.deliveredAt) return { skipped: "nao_entregue" };
+  // Sem foto, só quando foi a própria cliente que confirmou (página ou Lia):
+  // "marcar entregue" pelo rastreio dos Correios não sabe a hora real e
+  // não manda nada, como antes.
+  const customerConfirmed = row.deliveryConfirmedBy === "customer" || row.deliveryConfirmedBy === "lia";
+  if (!row.deliveredPhotoPath && !customerConfirmed) return { skipped: "sem_foto" };
   if (!row.phoneE164) return { skipped: "sem_telefone" };
   if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
 
@@ -227,6 +252,8 @@ export async function sendDeliveredWa(
   const storeName =
     typeof settings["store_name"] === "string" && settings["store_name"].trim() !== "" ? settings["store_name"].trim() : STORE_NAME_DEFAULT;
   const now = input.now ?? new Date();
+  // Com a foto, a hora é a da entrega de verdade; confirmada pela cliente,
+  // a frase fica sem hora ("foi entregue 🤎").
   const body = renderTemplate(template.bodyTemplate, {
     ...buildOrderVars({
       orderNumber: row.orderNumber,
@@ -239,14 +266,14 @@ export async function sendDeliveredWa(
       paymentMethod: row.paymentMethod,
       isGift: row.isGift,
     }),
-    entrega: deliveryLine({ deliveredAt: row.deliveredAt, receivedBy: row.receivedBy, now }),
+    entrega: row.deliveredPhotoPath ? deliveryLine({ deliveredAt: row.deliveredAt, receivedBy: row.receivedBy, now }) : "",
     recebido_por: row.receivedBy ?? "",
-  });
+  }).replace(/[ \t]{2,}/g, " ");
 
   if (row.deliveredPhotoPath) {
     const result = await sendMediaMessage(db, provider, {
       kind: "image",
-      imageUrl: deliveryPhotoUrl(storage, row.deliveredPhotoPath, row.deliveredAt),
+      imageUrl: deliveryPhotoUrl(storage, row.deliveredPhotoPath, row.updatedAt),
       body,
       phoneE164: row.phoneE164,
       customerId: row.customerId,
@@ -271,6 +298,8 @@ export interface OrderAwaitingDelivery {
   id: string;
   orderNumber: number;
   status: string;
+  /** Dinheiro na entrega que saiu com o motoboy: primeiro o pagamento, depois a foto. */
+  awaitingPayment: boolean;
   totalCents: number;
   customerName: string;
   shippedAt: Date | null;
@@ -283,8 +312,9 @@ export interface OrderAwaitingDelivery {
 
 /**
  * A mesa de entrega: pedidos enviados (Correios com rastreio, motoboy que
- * saiu) e os pagos para entrega em mãos (dinheiro na entrega / retirada),
- * os mais antigos primeiro.
+ * saiu), os pagos em dinheiro na entrega (entrega em mãos) e o motoboy que
+ * saiu — inclusive o de dinheiro ainda por receber (sem câmera: primeiro o
+ * pagamento). Motoboy pago que ainda não saiu é da Rota do dia, não daqui.
  */
 export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwaitingDelivery[]> {
   const rows = await db
@@ -307,8 +337,8 @@ export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwait
         isNull(orders.deliveredPhotoPath),
         or(
           eq(orders.status, "shipped"),
-          and(eq(orders.status, "paid"), or(eq(orders.paymentMethod, "cash"), isNotNull(orders.deliveryWindow))),
-          and(eq(orders.status, "preparing"), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`),
+          and(eq(orders.status, "paid"), or(eq(orders.paymentMethod, "cash"), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`)),
+          and(inArray(orders.status, ["preparing", "pending_payment"]), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`),
         ),
       ),
     )
@@ -317,6 +347,7 @@ export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwait
     id: row.id,
     orderNumber: row.orderNumber,
     status: row.status,
+    awaitingPayment: row.status === "pending_payment",
     totalCents: row.totalCents,
     customerName: row.customerName,
     shippedAt: row.shippedAt,

@@ -15,6 +15,13 @@ describe("normalizeReceivedBy", () => {
     expect(normalizeReceivedBy("***")).toBeNull();
     expect(normalizeReceivedBy(null)).toBeNull();
     expect(normalizeReceivedBy("x".repeat(100))?.length).toBe(60);
+    // Tratamentos e partículas não são nome; documento e telefone nunca.
+    expect(normalizeReceivedBy("Sr. João da portaria")).toBe("João");
+    expect(normalizeReceivedBy("dona Maria")).toBe("Maria");
+    expect(normalizeReceivedBy("a própria")).toBeNull();
+    expect(normalizeReceivedBy("123.456.789-00 Maria")).toBe("Maria");
+    expect(normalizeReceivedBy("11999998888")).toBeNull();
+    expect(normalizeReceivedBy("Ana2")).toBe("Ana2");
   });
 });
 

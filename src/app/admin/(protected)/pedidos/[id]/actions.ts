@@ -145,7 +145,9 @@ export async function deliverWithPhotoAction(_prev: FormState, formData: FormDat
     return {
       success: result.rephoto
         ? "Foto trocada. A cliente não recebe uma segunda mensagem — a nova foto fica na página do pedido."
-        : `Pedido #${result.orderNumber} entregue${result.receivedBy ? ` — recebido por ${result.receivedBy}` : ""}. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.`,
+        : result.alreadyDelivered
+          ? "Foto registrada na página do pedido. A cliente já tinha o aviso de entrega — ela não recebe outro."
+          : `Pedido #${result.orderNumber} entregue${result.receivedBy ? ` — recebido por ${result.receivedBy}` : ""}. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.`,
     };
   } catch (error) {
     return friendlyError(error);

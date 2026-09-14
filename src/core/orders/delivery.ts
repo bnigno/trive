@@ -5,13 +5,29 @@ import { spDayKey } from "@/lib/sp-day";
 
 export const RECEIVED_BY_MAX_CHARS = 60;
 
-/** "Maria Aparecida da Silva" → "Maria"; vazio/só símbolos → null. */
+/** Tratamentos e partículas que não são nome ("a própria", "Sr. João", "dona Maria"). */
+const NOT_A_NAME = new Set(["a", "o", "as", "os", "sr", "sr.", "sra", "sra.", "dona", "dono", "seu", "senhor", "senhora", "de", "da", "do", "e", "própria", "propria", "próprio", "proprio"]);
+
+/**
+ * "Maria Aparecida da Silva" → "Maria"; "Sr. João" → "João"; "a própria" →
+ * null; CPF/telefone (3+ dígitos) nunca vira nome — é o que vai para a
+ * cliente e para a página pública.
+ */
 export function normalizeReceivedBy(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const cleaned = raw.replace(/\s+/g, " ").trim();
-  if (cleaned === "") return null;
-  const first = cleaned.split(" ")[0].replace(/[^\p{L}\p{N}'’.-]/gu, "");
-  if (first.replace(/[^\p{L}\p{N}]/gu, "") === "") return null;
+  const tokens = raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((token) => token.replace(/[^\p{L}\p{N}'’.-]/gu, ""))
+    .filter((token) => token !== "");
+  const first = tokens.find((token) => {
+    if (NOT_A_NAME.has(token.toLowerCase())) return false;
+    if (!/\p{L}/u.test(token)) return false;
+    if ((token.match(/\p{N}/gu) ?? []).length >= 3) return false;
+    return token.replace(/[^\p{L}\p{N}]/gu, "").length >= 2;
+  });
+  if (!first) return null;
   const name = first.charAt(0).toUpperCase() + first.slice(1);
   return name.slice(0, RECEIVED_BY_MAX_CHARS);
 }

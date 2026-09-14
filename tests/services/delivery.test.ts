@@ -136,10 +136,14 @@ describe("deliverOrderWithPhoto", () => {
     expect(history.map((row) => row.toStatus).slice(-2)).toEqual(["shipped", "delivered"]);
   });
 
-  it("recusa: em separação sem motoboy, pagamento pendente, arquivo que não é imagem — sem tocar no storage", async () => {
+  it("recusa: em separação sem motoboy, pago pelos Correios na prateleira, pagamento pendente, arquivo que não é imagem — sem tocar no storage", async () => {
     const preparing = await createOrder({ status: "preparing" });
     await expect(deliverOrderWithPhoto(sdb, storage, { orderId: preparing.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId })).rejects.toThrow(
-      "Só dá para registrar a entrega",
+      "ainda não saiu",
+    );
+    const paidCorreios = await createOrder({ status: "paid" });
+    await expect(deliverOrderWithPhoto(sdb, storage, { orderId: paidCorreios.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId })).rejects.toThrow(
+      "ainda não saiu",
     );
     const pending = await createOrder({ status: "pending_payment" });
     await expect(deliverOrderWithPhoto(sdb, storage, { orderId: pending.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId })).rejects.toThrow(
@@ -152,13 +156,24 @@ describe("deliverOrderWithPhoto", () => {
     expect(storage.list()).toEqual([]);
   });
 
-  it("refazer a foto de um pedido entregue: troca o arquivo e o nome, sem segundo evento", async () => {
-    const { orderId } = await createOrder();
+  it("refazer a foto de um pedido entregue: troca o arquivo e o nome, sem segundo evento; o ?v= muda", async () => {
+    const { orderId, publicToken } = await createOrder();
     await deliverOrderWithPhoto(sdb, storage, { orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, receivedBy: "Maria", userId });
+    const before = (await getPublicOrder(sdb, publicToken))?.deliveredPhotoAt?.getTime();
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const again = await deliverOrderWithPhoto(sdb, storage, { orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, receivedBy: "Portaria", userId });
-    expect(again).toMatchObject({ rephoto: true, receivedBy: "Portaria", status: "delivered" });
+    expect(again).toMatchObject({ rephoto: true, alreadyDelivered: true, receivedBy: "Portaria", status: "delivered" });
     const events = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "order.delivered"));
     expect(events).toHaveLength(1);
+    const after = (await getPublicOrder(sdb, publicToken))?.deliveredPhotoAt?.getTime();
+    expect(after).toBeGreaterThan(before as number);
+  });
+
+  it("primeira foto depois do 'marcar entregue' simples: não é 'refazer', mas o pedido já estava entregue", async () => {
+    const { orderId } = await createOrder();
+    await db.update(schema.orders).set({ status: "delivered", deliveredAt: new Date() }).where(eq(schema.orders.id, orderId));
+    const result = await deliverOrderWithPhoto(sdb, storage, { orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, receivedBy: "Maria", userId });
+    expect(result).toMatchObject({ rephoto: false, alreadyDelivered: true, status: "delivered" });
   });
 });
 
@@ -177,13 +192,16 @@ describe("sendDeliveredWa", () => {
     expect(provider.sentImages).toHaveLength(1);
   });
 
-  it("entregue sem foto (botão simples): só o texto; não entregue, sem opt-in ou sem template: pula", async () => {
+  it("sem foto: 'marcar entregue' pelo rastreio não manda nada; confirmado pela cliente manda o texto sem hora; não entregue, sem opt-in ou sem template: pula", async () => {
     const { orderId } = await createOrder();
     await db.update(schema.orders).set({ status: "delivered", deliveredAt: new Date() }).where(eq(schema.orders.id, orderId));
+    expect(await sendDeliveredWa(sdb, provider, storage, { orderId })).toEqual({ skipped: "sem_foto" });
+    await db.update(schema.orders).set({ deliveryConfirmedBy: "customer" }).where(eq(schema.orders.id, orderId));
     const text = await sendDeliveredWa(sdb, provider, storage, { orderId });
     expect(text).toMatchObject({ sent: true, withPhoto: false });
     expect(provider.sentMessages).toHaveLength(1);
-    expect(provider.sentMessages[0].body).toMatch(/foi entregue hoje às \d{2}:\d{2} 🤎/);
+    expect(provider.sentMessages[0].body).toContain("foi entregue 🤎");
+    expect(provider.sentMessages[0].body).not.toMatch(/às \d{2}:\d{2}/);
 
     const shipped = await createOrder();
     expect(await sendDeliveredWa(sdb, provider, storage, { orderId: shipped.orderId })).toEqual({ skipped: "nao_entregue" });
@@ -202,17 +220,24 @@ describe("sendDeliveredWa", () => {
 });
 
 describe("listOrdersAwaitingDelivery", () => {
-  it("enviados, pagos em dinheiro/motoboy e motoboy que saiu — os mais antigos primeiro; entregues com foto somem", async () => {
+  it("enviados, pagos em dinheiro, motoboy que saiu (inclusive dinheiro a receber) — os mais antigos primeiro; motoboy pago que não saiu e Correios na prateleira ficam de fora", async () => {
     const shipped = await createOrder();
     const cash = await createOrder({ status: "paid", paymentMethod: "cash" });
     const moto = await createOrder({ status: "preparing", dispatched: true });
+    const cashOut = await createOrder({ status: "pending_payment", paymentMethod: "cash", dispatched: true });
     await createOrder({ status: "preparing" });
     await createOrder({ status: "paid" });
+    const motoNotOut = await createOrder({ status: "paid" });
+    await db
+      .update(schema.orders)
+      .set({ deliveryWindow: { dayKey: "2026-09-20", start: "19:00", end: "21:00", cutoff: "13:00", rateName: "Motoboy", label: "sábado, 19h–21h" } })
+      .where(eq(schema.orders.id, motoNotOut.orderId));
     const rows = await listOrdersAwaitingDelivery(sdb);
-    expect(rows.map((row) => row.id).sort()).toEqual([shipped.orderId, cash.orderId, moto.orderId].sort());
-    expect(rows.find((row) => row.id === moto.orderId)).toMatchObject({ isMotoboy: true, status: "preparing" });
-    expect(await countOrdersAwaitingDelivery(sdb)).toBe(3);
+    expect(rows.map((row) => row.id).sort()).toEqual([shipped.orderId, cash.orderId, moto.orderId, cashOut.orderId].sort());
+    expect(rows.find((row) => row.id === moto.orderId)).toMatchObject({ isMotoboy: true, status: "preparing", awaitingPayment: false });
+    expect(rows.find((row) => row.id === cashOut.orderId)).toMatchObject({ awaitingPayment: true });
+    expect(await countOrdersAwaitingDelivery(sdb)).toBe(4);
     await deliverOrderWithPhoto(sdb, storage, { orderId: shipped.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
-    expect(await countOrdersAwaitingDelivery(sdb)).toBe(2);
+    expect(await countOrdersAwaitingDelivery(sdb)).toBe(3);
   });
 });

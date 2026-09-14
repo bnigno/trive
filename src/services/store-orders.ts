@@ -878,6 +878,8 @@ export interface PublicOrder {
   shippedAt: Date | null;
   deliveredAt: Date | null;
   deliveredPhotoPath: string | null;
+  /** Muda a cada foto refeita (é o updated_at do pedido): serve de ?v= da imagem. */
+  deliveredPhotoAt: Date | null;
   receivedBy: string | null;
   /** Foto do pacote (path no Storage); a página resolve a URL pública. */
   packagePhotoPath: string | null;
@@ -924,6 +926,7 @@ export async function getPublicOrder(
         shippedAt: orders.shippedAt,
         deliveredAt: orders.deliveredAt,
         deliveredPhotoPath: orders.deliveredPhotoPath,
+        deliveredPhotoAt: orders.updatedAt,
         receivedBy: orders.receivedBy,
         packagePhotoPath: orders.packagePhotoPath,
         isGift: orders.isGift,
@@ -990,6 +993,7 @@ export async function getPublicOrder(
     preparingAt: preparing?.createdAt ?? null,
     packedAt: order.packedAt,
     deliveredPhotoPath: order.deliveredPhotoPath,
+    deliveredPhotoAt: order.deliveredPhotoPath ? order.deliveredPhotoAt : null,
     receivedBy: order.receivedBy,
     shippedAt: order.shippedAt,
     deliveredAt: order.deliveredAt,

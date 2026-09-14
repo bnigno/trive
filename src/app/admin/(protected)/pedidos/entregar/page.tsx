@@ -36,7 +36,7 @@ export default async function EntregarPage() {
       />
 
       {rows.length === 0 ? (
-        <EmptyState title="Nada para entregar agora." hint="Quando um pedido sair (Correios ou motoboy) ou for pago para entrega em mãos, ele aparece aqui com a câmera pronta." />
+        <EmptyState title="Nada para entregar agora." hint="Quando um pedido sair (Correios ou motoboy que já saiu) ou for pago em dinheiro na entrega, ele aparece aqui com a câmera pronta." />
       ) : (
         <ul className="flex flex-col gap-4">
           {rows.map((row) => (
@@ -48,8 +48,14 @@ export default async function EntregarPage() {
                   </Link>
                   <span className="ml-2 text-sm text-zinc-700 dark:text-zinc-300">{row.customerName}</span>
                   <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                    <Badge tone={row.status === "shipped" ? "info" : "neutral"}>
-                      {row.status === "shipped" ? "Enviado" : row.status === "preparing" ? "Saiu com o motoboy" : "Pago — entrega em mãos"}
+                    <Badge tone={row.status === "shipped" ? "info" : row.awaitingPayment ? "warning" : "neutral"}>
+                      {row.status === "shipped"
+                        ? "Enviado"
+                        : row.awaitingPayment
+                          ? "Saiu — dinheiro a receber"
+                          : row.status === "preparing" || row.dispatchedAt
+                            ? "Saiu com o motoboy"
+                            : "Pago — entrega em mãos"}
                     </Badge>
                     {row.isMotoboy ? <span>🛵 motoboy{row.dispatchedAt ? ` · saiu ${formatDateTimeSP(row.dispatchedAt)}` : ""}</span> : null}
                     {row.trackingCode ? <span>rastreio {row.trackingCode}</span> : null}
@@ -60,7 +66,17 @@ export default async function EntregarPage() {
                 <Money cents={row.totalCents} />
               </div>
               <div className="mt-3">
-                <DeliverForm orderId={row.id} photoUrl={null} receivedBy={null} deliveredAtLabel={null} compact />
+                {row.awaitingPayment ? (
+                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                    Receba o dinheiro e{" "}
+                    <Link href={`/admin/pedidos/${row.id}`} className="underline">
+                      marque como pago na ficha
+                    </Link>
+                    ; a câmera aparece em seguida.
+                  </p>
+                ) : (
+                  <DeliverForm orderId={row.id} photoUrl={null} receivedBy={null} deliveredAtLabel={null} compact />
+                )}
               </div>
             </li>
           ))}

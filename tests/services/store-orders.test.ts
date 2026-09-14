@@ -597,6 +597,7 @@ describe("getPublicOrder", () => {
         "shippedAt",
         "deliveredAt",
         "deliveredPhotoPath",
+        "deliveredPhotoAt",
         "receivedBy",
         "packagePhotoPath",
         "isGift",

@@ -165,8 +165,8 @@ export default async function OrderPage({
     receivedBy: order.receivedBy,
   });
   const deliveredPhotoUrl =
-    order.deliveredPhotoPath && order.deliveredAt
-      ? `${getFileStorage().publicUrl(order.deliveredPhotoPath)}?v=${order.deliveredAt.getTime()}`
+    order.deliveredPhotoPath && order.deliveredPhotoAt
+      ? `${getFileStorage().publicUrl(order.deliveredPhotoPath)}?v=${order.deliveredPhotoAt.getTime()}`
       : null;
   const packagePhotoUrl =
     order.packagePhotoPath && order.packedAt

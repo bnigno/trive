@@ -421,11 +421,12 @@ export default async function PedidoDetalhePage({
             )}
           </Card>
 
-          {canDeliverWithPhoto(status, Boolean(order.deliveryWindow?.dispatchedAt)) || (status === "delivered" && order.deliveredAt) ? (
+          {canDeliverWithPhoto(status, { dispatched: Boolean(order.deliveryWindow?.dispatchedAt), paymentMethod: order.paymentMethod }) ||
+          (status === "delivered" && order.deliveredAt) ? (
             <Card title="Entrega">
               <DeliverForm
                 orderId={order.id}
-                photoUrl={order.deliveredPhotoPath && order.deliveredAt ? deliveryPhotoUrl(getFileStorage(), order.deliveredPhotoPath, order.deliveredAt) : null}
+                photoUrl={order.deliveredPhotoPath ? deliveryPhotoUrl(getFileStorage(), order.deliveredPhotoPath, order.updatedAt) : null}
                 receivedBy={order.receivedBy ?? null}
                 deliveredAtLabel={order.deliveredAt ? formatDateTimeSP(order.deliveredAt) : null}
               />
