@@ -18,7 +18,7 @@ import {
   isIdleForHours,
   lastActivityAt,
 } from "@/core/whatsapp/handoff";
-import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
+import { auditLog, customers, orders, waConversations, waMessages, waFollowups } from "@/db/schema";
 import { sameE164 } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
@@ -321,6 +321,8 @@ export interface WaThreadSuggestion {
   /** A mensagem dela que gerou a sugestão (null: retorno combinado). */
   inboundPreview: string | null;
   fromFollowup: boolean;
+  /** customer (retorno combinado) | idle_cart (retomada da sacola) | null. */
+  followupKind: string | null;
 }
 
 export interface WaThreadTail {
@@ -549,6 +551,7 @@ export async function getWaThreadTail(
         createdAt: pending.createdAt,
         inboundPreview: await getInboundPreview(db, pending.inboundMessageId),
         fromFollowup: pending.followupId !== null,
+        followupKind: pending.followupId ? ((await db.select({ kind: waFollowups.kind }).from(waFollowups).where(eq(waFollowups.id, pending.followupId)).limit(1))[0]?.kind ?? null) : null,
       }
     : null;
 

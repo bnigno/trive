@@ -205,6 +205,7 @@ export function BotSettingsForm({
   quickReplies,
   handoffSilenceHours,
   handoffAutoReturnHours,
+  idleCartFollowupHours,
 }: {
   sellerName: string;
   botModel: string;
@@ -213,6 +214,7 @@ export function BotSettingsForm({
   botExtraInstructions: string;
   quickReplies: string;
   handoffSilenceHours: number;
+  idleCartFollowupHours: number;
   handoffAutoReturnHours: number;
 }) {
   const [state, formAction] = useActionState(
@@ -302,6 +304,20 @@ export function BotSettingsForm({
             step={1}
             required
             defaultValue={String(handoffAutoReturnHours)}
+          />
+        </Field>
+        <Field
+          label="Retomar sacola parada após (horas)"
+          hint="Cliente com peças na sacola que sumiu depois de a vendedora responder recebe UMA mensagem leve dela, entre 9h e 21h, só com opt-in — uma vez por conversa, para sempre. 0 = desligado; até 168. Em copiloto vira sugestão."
+        >
+          <Input
+            name="idleCartFollowupHours"
+            type="number"
+            min={0}
+            max={168}
+            step={1}
+            required
+            defaultValue={String(idleCartFollowupHours)}
           />
         </Field>
       </div>

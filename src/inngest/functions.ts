@@ -13,6 +13,7 @@ import { dispatchDueDrops } from "@/services/drops";
 import { expireOverdueHolds, remindExpiringHolds } from "@/services/stock-holds";
 import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
+import { scheduleIdleCartFollowups } from "@/services/wa-followups";
 import { checkSessionAndAlert } from "@/services/wa-session";
 import { autoReturnIdleHumanConversations } from "@/services/wa-conversations";
 
@@ -125,6 +126,16 @@ export const waSessionMonitor = inngest.createFunction(
 // Recuperação de pedido não pago (Fase 4): UMA única mensagem por pedido,
 // para sempre (dedupe 'wa.recovery:<orderId>' UNIQUE em wa_messages) —
 // jamais uma segunda cobrança. Só com opt-in e com a reserva ainda válida.
+// Sacola parada: a cada hora, quem sumiu com peças na sacola (opt-in, a
+// Lia respondeu por último, sem pedido depois) ganha UMA retomada agendada
+// para a janela. 0 horas na ficha da vendedora = a função só devolve "desligado".
+export const waIdleCartFollowup = inngest.createFunction(
+  { id: "wa-idle-cart-followup", triggers: [{ cron: "7 * * * *" }] },
+  async () => {
+    return scheduleIdleCartFollowups(getDb());
+  },
+);
+
 export const waRecovery = inngest.createFunction(
   { id: "wa-recovery", triggers: [{ cron: "*/15 * * * *" }] },
   async () => {
@@ -183,6 +194,7 @@ export const functions = [
   mpReconciliation,
   waSessionMonitor,
   waRecovery,
+  waIdleCartFollowup,
   waAutoReturn,
   emailPoll,
 ];

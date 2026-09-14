@@ -108,6 +108,7 @@ const chatSuggestionSchema = z.object({
   createdAt: z.string(),
   inboundPreview: z.string().nullable().default(null),
   fromFollowup: z.boolean().default(false),
+  followupKind: z.string().nullable().default(null),
 });
 
 const chatThreadSchema = z.object({

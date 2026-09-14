@@ -85,7 +85,7 @@ import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { followupMemoryLines } from "./wa-followups";
 import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, isFollowupTooLate, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
 import { getRetryPolicy } from "@/core/queue/retry-policy";
-import { BOT_FOLLOWUP_EVENT } from "./wa-followups";
+import { BOT_FOLLOWUP_EVENT, idleCartStillValid } from "./wa-followups";
 import { waFollowups } from "@/db/schema";
 import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-window";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
@@ -810,7 +810,13 @@ export async function runScheduledBotTurn(
       .where(and(eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
       .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
       .limit(1);
-    if (isFollowupSuperseded({ createdAt: followup.createdAt, lastInboundAt: lastInbound?.createdAt ?? null })) {
+    if (followup.kind === "idle_cart") {
+      // Sacola parada: na hora de mandar, tudo de novo (zero carência,
+      // sacola, pedido, opt-in, recurso ligado) — nada de "ficou parada" para
+      // quem comprou ontem à noite.
+      const invalid = await idleCartStillValid(tx, { conversation, followupCreatedAt: followup.createdAt, lastInboundAt: lastInbound?.createdAt ?? null });
+      if (invalid) return finish(invalid === "superada" ? "superseded" : "canceled", invalid);
+    } else if (isFollowupSuperseded({ createdAt: followup.createdAt, lastInboundAt: lastInbound?.createdAt ?? null })) {
       return finish("superseded", "superada");
     }
     const loaded = await loadTurnHistory(tx, provider, { conversation, now });

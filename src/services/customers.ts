@@ -10,6 +10,8 @@ import {
 } from "@/db/schema";
 import { normalizeDocument } from "@/lib/document";
 import { toE164BR } from "@/lib/phone";
+import type { DbOrTx } from "@/queue/enqueue";
+import { cancelScheduledIdleCartFollowups } from "@/services/wa-followups";
 import { ServiceError, type ServiceDb } from "./catalog";
 
 // ---------------------------------------------------------------------------
@@ -251,6 +253,10 @@ export async function updateCustomer(db: ServiceDb, input: UpdateCustomerInput) 
         patch.marketingOptIn = parsed.marketingOptIn;
       }
       if (Object.keys(patch).length === 0) return current;
+      // Tirou o opt-in: a retomada de sacola já agendada para esse telefone cai.
+      if (patch.marketingOptIn === false && current.phoneE164) {
+        await cancelScheduledIdleCartFollowups(tx as unknown as DbOrTx, { phoneE164: current.phoneE164, reason: "sem_opt_in" });
+      }
 
       const [updated] = await tx
         .update(customers)

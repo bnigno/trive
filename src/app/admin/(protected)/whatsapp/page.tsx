@@ -69,6 +69,7 @@ interface PageData {
   customerLooksEnabled: boolean;
   handoffSilenceHours: number;
   handoffAutoReturnHours: number;
+  idleCartFollowupHours: number;
   botModel: string;
   botMode: string;
   sellerName: string;
@@ -106,6 +107,7 @@ async function loadPageData(): Promise<PageData | null> {
         "bot_enabled",
         "bot_model",
         "bot_mode",
+        "bot_idle_cart_followup_hours",
         "bot_seller_name",
         "store_exchange_policy",
         "bot_extra_instructions",
@@ -162,6 +164,7 @@ async function loadPageData(): Promise<PageData | null> {
     customerLooksEnabled: settingsMap["customer_looks_enabled"] !== false,
     handoffSilenceHours: hours("handoff_silence_hours", 24),
     handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
+    idleCartFollowupHours: hours("bot_idle_cart_followup_hours", 0),
     botModel: text("bot_model") || "claude-sonnet-5",
     botMode: text("bot_mode") === "copilot" ? "copilot" : "autonomous",
     sellerName: text("bot_seller_name").trim() || DEFAULT_SELLER_NAME,
@@ -437,6 +440,7 @@ export default async function WhatsappPage() {
             quickReplies={quickReplies}
             handoffSilenceHours={data.handoffSilenceHours}
             handoffAutoReturnHours={data.handoffAutoReturnHours}
+            idleCartFollowupHours={data.idleCartFollowupHours}
           />
         </Card>
         <div className="flex flex-col gap-6">
