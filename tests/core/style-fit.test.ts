@@ -17,6 +17,9 @@ describe("easeOf", () => {
     expect(easeOf(94, 88)).toEqual({ ease: "certo", cm: 6 });
     expect(easeOf(100, 88)).toEqual({ ease: "fluido", cm: 12 });
     expect(easeOf(110, 88)).toEqual({ ease: "folgado", cm: 22 });
+    // Tabela "a meio" (largura da peça deitada): 47 contra um busto de 88 é 94 de circunferência.
+    expect(easeOf(47, 88)).toEqual({ ease: "certo", cm: 6 });
+    expect(easeOf(44, 88)).toEqual({ ease: "marca", cm: 0 });
   });
 });
 

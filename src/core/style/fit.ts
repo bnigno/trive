@@ -42,8 +42,18 @@ export const EASE_LABELS: Record<Ease, string> = {
   folgado: "fica folgado",
 };
 
+/**
+ * "Peça deitada" ora é a circunferência (busto 92), ora a largura de lado a
+ * lado (busto 46). Abaixo de 65% do corpo só pode ser a largura: dobra.
+ */
+export const HALF_WIDTH_RATIO = 0.65;
+
+export function garmentCircumference(garmentCm: number, bodyCm: number): { cm: number; halfWidth: boolean } {
+  return garmentCm < bodyCm * HALF_WIDTH_RATIO ? { cm: garmentCm * 2, halfWidth: true } : { cm: garmentCm, halfWidth: false };
+}
+
 export function easeOf(garmentCm: number, bodyCm: number): { ease: Ease; cm: number } {
-  const cm = Math.round(garmentCm - bodyCm);
+  const cm = Math.round(garmentCircumference(garmentCm, bodyCm).cm - bodyCm);
   if (cm < 0) return { ease: "aperta", cm };
   if (cm < 4) return { ease: "marca", cm };
   if (cm <= 10) return { ease: "certo", cm };
