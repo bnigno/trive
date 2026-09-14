@@ -70,6 +70,7 @@ interface PageData {
   handoffSilenceHours: number;
   handoffAutoReturnHours: number;
   botModel: string;
+  botMode: string;
   sellerName: string;
   exchangePolicy: string;
   botExtraInstructions: string;
@@ -104,6 +105,7 @@ async function loadPageData(): Promise<PageData | null> {
         "wa_recovery_after_minutes",
         "bot_enabled",
         "bot_model",
+        "bot_mode",
         "bot_seller_name",
         "store_exchange_policy",
         "bot_extra_instructions",
@@ -161,6 +163,7 @@ async function loadPageData(): Promise<PageData | null> {
     handoffSilenceHours: hours("handoff_silence_hours", 24),
     handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
     botModel: text("bot_model") || "claude-sonnet-5",
+    botMode: text("bot_mode") === "copilot" ? "copilot" : "autonomous",
     sellerName: text("bot_seller_name").trim() || DEFAULT_SELLER_NAME,
     exchangePolicy: text("store_exchange_policy"),
     botExtraInstructions: text("bot_extra_instructions"),
@@ -230,6 +233,7 @@ export default async function WhatsappPage() {
     recoveryAfterMinutes,
     botEnabledSetting,
     botModel,
+    botMode,
     sellerName,
     exchangePolicy,
     botExtraInstructions,
@@ -427,6 +431,7 @@ export default async function WhatsappPage() {
           <BotSettingsForm
             sellerName={sellerName}
             botModel={botModel}
+            botMode={botMode}
             exchangePolicy={exchangePolicy}
             botExtraInstructions={botExtraInstructions}
             quickReplies={quickReplies}

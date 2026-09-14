@@ -199,6 +199,7 @@ export function SendDigestNowForm() {
 export function BotSettingsForm({
   sellerName,
   botModel,
+  botMode,
   exchangePolicy,
   botExtraInstructions,
   quickReplies,
@@ -207,6 +208,7 @@ export function BotSettingsForm({
 }: {
   sellerName: string;
   botModel: string;
+  botMode: string;
   exchangePolicy: string;
   botExtraInstructions: string;
   quickReplies: string;
@@ -234,6 +236,15 @@ export function BotSettingsForm({
           <Select name="botModel" defaultValue={botModel}>
             <option value="claude-sonnet-5">Recomendada (Claude Sonnet)</option>
             <option value="claude-haiku-4-5">Econômica (Claude Haiku)</option>
+          </Select>
+        </Field>
+        <Field
+          label="Modo da vendedora"
+          hint="Sozinha: ela responde na hora. Copiloto: cada mensagem da cliente vira uma sugestão na Central (Enviar / Editar e enviar / Descartar) — nada sai sem você; pedido, Pix, reserva e transferência ficam com você. Dá para escolher só para uma conversa, no menu dela."
+        >
+          <Select name="botMode" defaultValue={botMode}>
+            <option value="autonomous">Sozinha (responde na hora)</option>
+            <option value="copilot">Copiloto (sugere; você envia)</option>
           </Select>
         </Field>
       </div>

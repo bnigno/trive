@@ -13,6 +13,8 @@ type LightPollResponse = {
   serverTime: string;
   humanCount: number;
   awaiting: Array<{ id: string; label: string }>;
+  suggestionCount: number;
+  suggestions: Array<{ id: string; label: string }>;
 };
 
 function parseLightResponse(data: unknown): LightPollResponse | null {
@@ -29,16 +31,28 @@ function parseLightResponse(data: unknown): LightPollResponse | null {
     }
     awaiting.push({ id: entry.id, label: entry.label });
   }
+  const suggestions: LightPollResponse["suggestions"] = [];
+  if (Array.isArray(record.suggestions)) {
+    for (const item of record.suggestions) {
+      if (typeof item !== "object" || item === null) continue;
+      const entry = item as Record<string, unknown>;
+      if (typeof entry.id !== "string" || typeof entry.label !== "string") continue;
+      suggestions.push({ id: entry.id, label: entry.label });
+    }
+  }
   return {
     serverTime: typeof record.serverTime === "string" ? record.serverTime : "",
     humanCount: record.humanCount,
     awaiting,
+    suggestionCount: typeof record.suggestionCount === "number" ? record.suggestionCount : suggestions.length,
+    suggestions,
   };
 }
 
 export function WaNavBadge() {
   const pathname = usePathname();
   const [humanCount, setHumanCount] = useState(0);
+  const [suggestionCount, setSuggestionCount] = useState(0);
   const { toasts, pushToast, dismissToast } = useHandoffToasts();
   const { notify } = useNotify();
 
@@ -51,6 +65,7 @@ export function WaNavBadge() {
 
   useEffect(() => {
     const knownAwaitingIds = new Set<string>();
+    const knownSuggestionIds = new Set<string>();
     let firstPollDone = false;
     let delay = BASE_DELAY_MS;
     let timer: number | undefined;
@@ -83,6 +98,16 @@ export function WaNavBadge() {
               conversationId: item.id,
             });
           }
+        }
+      }
+      // Copiloto: sugestão nova numa conversa → toast (fora da página de conversas).
+      setSuggestionCount(result.suggestionCount);
+      const freshSuggestions = result.suggestions.filter((item) => !knownSuggestionIds.has(item.id));
+      knownSuggestionIds.clear();
+      for (const item of result.suggestions) knownSuggestionIds.add(item.id);
+      if (firstPollDone && freshSuggestions.length > 0 && !pathnameRef.current.startsWith("/admin/whatsapp/conversas")) {
+        for (const item of freshSuggestions) {
+          pushToast({ conversationId: item.id, label: item.label, title: "A vendedora sugeriu uma resposta" });
         }
       }
       firstPollDone = true;
@@ -143,9 +168,12 @@ export function WaNavBadge() {
 
   return (
     <>
-      {humanCount > 0 ? (
-        <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-gold-600 px-1.5 text-[11px] font-semibold text-white">
-          {humanCount}
+      {humanCount + suggestionCount > 0 ? (
+        <span
+          title={suggestionCount > 0 ? `${suggestionCount} ${suggestionCount === 1 ? "sugestão" : "sugestões"} da vendedora` : undefined}
+          className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-gold-600 px-1.5 text-[11px] font-semibold text-white"
+        >
+          {humanCount + suggestionCount}
         </span>
       ) : null}
       <HandoffToastViewport toasts={toasts} onDismiss={dismissToast} />

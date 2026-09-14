@@ -29,6 +29,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   // Fase 5 — Bot de vendas com IA. Desligado até o dono ativar no admin.
   { key: "bot_enabled", value: false },
   { key: "bot_model", value: "claude-sonnet-5" },
+  // Modo da vendedora: sozinha (autonomous) ou copiloto (sugere, a dona aprova).
+  { key: "bot_mode", value: "autonomous" },
   { key: "bot_extra_instructions", value: "" },
   // Fase 6 — chave Pix da LOJA para Pix manual (plano B do robô).
   // Vazia = recurso desligado; o dono cadastra em /admin/configuracoes.

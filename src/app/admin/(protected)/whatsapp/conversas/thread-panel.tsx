@@ -5,8 +5,9 @@ import { Composer } from "./composer";
 import { ContextPanel } from "./context-panel";
 import { attendantBadge, isSellerTyping } from "./format";
 import { MessageList, type OptimisticDisplay } from "./message-list";
+import { SuggestionCard } from "./suggestion-card";
 import { ThreadHeader } from "./thread-header";
-import type { ChatActivity, ChatContext, ChatMessage } from "./use-chat-poll";
+import type { ChatActivity, ChatContext, ChatMessage, ChatSuggestion } from "./use-chat-poll";
 
 function ThreadSkeleton() {
   return (
@@ -44,6 +45,9 @@ export function ThreadPanel({
   optimistic,
   context,
   activity,
+  suggestion,
+  botMode,
+  effectiveBotMode,
   quickReplies,
   scrollSignal,
   contextOpen,
@@ -71,6 +75,9 @@ export function ThreadPanel({
   optimistic: OptimisticDisplay[];
   context: ChatContext | null;
   activity: ChatActivity[];
+  suggestion: ChatSuggestion | null;
+  botMode: string | null;
+  effectiveBotMode: "autonomous" | "copilot";
   quickReplies: string[];
   scrollSignal: number;
   contextOpen: boolean;
@@ -129,7 +136,7 @@ export function ThreadPanel({
   const badge = attendantBadge(
     status,
     botDisabledUntil ? new Date(botDisabledUntil) : null,
-    { botEnabled, sellerName },
+    { botEnabled, sellerName, botMode: effectiveBotMode },
   );
   const last = messages[messages.length - 1] ?? null;
   const sellerTyping =
@@ -154,6 +161,8 @@ export function ThreadPanel({
         botDisabledUntil={botDisabledUntil}
         botEnabled={botEnabled}
         sellerName={sellerName}
+        botMode={botMode}
+        effectiveBotMode={effectiveBotMode}
         contextOpen={contextOpen}
         onToggleContext={onToggleContext}
         onBack={onBack}
@@ -189,13 +198,19 @@ export function ThreadPanel({
               nova aparece na lista.
             </p>
           ) : (
-            <Composer
-              key={`composer-${selectedId}`}
-              attendant={badge.attendant}
-              sellerName={sellerName}
-              quickReplies={quickReplies}
-              onSend={onSend}
-            />
+            <>
+              {suggestion && status !== "human" ? (
+                <SuggestionCard key={suggestion.id} suggestion={suggestion} sellerName={sellerName} pollNow={pollNow} />
+              ) : null}
+              <Composer
+                key={`composer-${selectedId}`}
+                attendant={badge.attendant}
+                sellerName={sellerName}
+                copilot={effectiveBotMode === "copilot" && status !== "human"}
+                quickReplies={quickReplies}
+                onSend={onSend}
+              />
+            </>
           )}
         </div>
         <aside

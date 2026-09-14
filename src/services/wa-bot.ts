@@ -19,6 +19,7 @@ import {
 import { getCepLookup } from "@/adapters/cep";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memory";
+import { copilotBlockedText, isToolBlockedInCopilot } from "@/core/bot/copilot";
 import { BOT_TOOL_INPUT_SCHEMAS, type BotToolInputs, type ToolExecutor } from "@/core/bot/tools";
 import { buildBotSystemPrompt, DEFAULT_SELLER_NAME, truncateForWhatsApp } from "@/core/bot/prompt";
 import { splitBotReply } from "@/core/bot/reply";
@@ -90,6 +91,8 @@ import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-wi
 import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
+import { customers } from "@/db/schema";
+import { createSuggestion, enqueueSuggestionNotice, resolveConversationBotMode } from "./wa-suggestions";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -185,6 +188,8 @@ export function buildToolExecutor(
     emitCard: makeCardEmitter(db, baseCtx),
   };
   return async (name, rawInput) => {
+    // Copiloto: o que tem efeito fora da conversa espera a dona.
+    if (ctx.copilot && isToolBlockedInCopilot(name)) return { ok: false, text: copilotBlockedText(name) };
     const schema = BOT_TOOL_INPUT_SCHEMAS[name];
     const parsed = schema.safeParse(rawInput);
     if (!parsed.success) {
@@ -595,11 +600,14 @@ export async function runBotTurn(
       .limit(1);
     if (!lastInbound) return { skipped: "sem_mensagem_inbound" };
 
-    const loaded = await loadTurnHistory(tx, provider, { conversation, now: new Date() });
+    const now = new Date();
+    const loaded = await loadTurnHistory(tx, provider, { conversation, now });
     if ("skipped" in loaded) return loaded;
     const { history, recentImages, media } = loaded;
 
     const { system, model } = await buildBotPromptBundle(tx);
+    // Copiloto (loja ou só esta conversa): a Lia pensa, a dona manda.
+    const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
 
     // Mídia emitida pelas ferramentas do turno (lista tocável, foto).
     const attachments: BotAttachment[] = [];
@@ -611,6 +619,7 @@ export async function runBotTurn(
       onAttachment: (attachment) => attachments.push(attachment),
       cepLookup: getCepLookup(),
       recentImages,
+      copilot,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 
@@ -627,13 +636,16 @@ export async function runBotTurn(
       if (error instanceof AssistantUnavailableError) {
         // Plano B: avisa o cliente, transfere para humano (audit + aviso ao
         // dono) e encerra o turno sem propagar — o evento da fila conclui.
-        await sendTemplateMessage(tx, provider, {
-          bodyOverride: BOT_UNAVAILABLE_REPLY,
-          phoneE164: conversation.phoneE164,
-          ...customerRef,
-          dedupeKey: replyDedupeKey,
-          requireOptIn: false,
-        });
+        // Em copiloto nada sai para a cliente por conta própria: só a transferência.
+        if (!copilot) {
+          await sendTemplateMessage(tx, provider, {
+            bodyOverride: BOT_UNAVAILABLE_REPLY,
+            phoneE164: conversation.phoneE164,
+            ...customerRef,
+            dedupeKey: replyDedupeKey,
+            requireOptIn: false,
+          });
+        }
         await handOffToHuman(
           tx,
           {
@@ -660,6 +672,7 @@ export async function runBotTurn(
       entityId: conversationId,
       after: {
         inboundId: lastInbound.id,
+        mode: copilot ? "copilot" : "autonomous",
         model,
         toolCalls: turn.toolCalls,
         usage: turn.usage,
@@ -671,6 +684,23 @@ export async function runBotTurn(
         media,
       },
     });
+
+    if (copilot) {
+      if (bubbles.length === 0 && attachments.length === 0) return { replied: false, handedOff: false };
+      const { suggestionId } = await createSuggestion(tx, {
+        conversationId,
+        inboundMessageId: lastInbound.id,
+        bubbles,
+        attachments,
+        toolCalls: turn.toolCalls,
+        now,
+      });
+      const [customer] = conversation.customerId
+        ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
+        : [];
+      await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
+      return { suggested: true, suggestionId };
+    }
 
     const { replied } = await deliverBotTurn(tx, provider, {
       conversation,
@@ -693,7 +723,7 @@ export async function runBotTurn(
 // ---------------------------------------------------------------------------
 
 export type RunScheduledBotTurnResult =
-  | { sent: true; followupId: string; replied: boolean }
+  | { sent: true; followupId: string; replied: boolean; suggestionId?: string }
   | { skipped: string; followupId: string };
 
 export async function runScheduledBotTurn(
@@ -779,6 +809,7 @@ export async function runScheduledBotTurn(
     const history: BotChatMessage[] = [...loaded.history, { role: "user", text: synthetic }];
     const { system, model } = await buildBotPromptBundle(tx);
 
+    const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
     const attachments: BotAttachment[] = [];
     const executeTool = buildToolExecutor(tx, {
       conversationId: conversation.id,
@@ -791,6 +822,7 @@ export async function runScheduledBotTurn(
       recentImages: loaded.recentImages,
       now,
       proactive: true,
+      copilot,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 
@@ -830,6 +862,17 @@ export async function runScheduledBotTurn(
         media: loaded.media,
       },
     });
+
+    if (copilot) {
+      // O retorno vira sugestão: a dona manda (ou não) — o combinado está cumprido pela Lia.
+      const { suggestionId } = await createSuggestion(tx, { conversationId: conversation.id, followupId, bubbles, attachments, toolCalls: turn.toolCalls, now });
+      const [customer] = conversation.customerId
+        ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
+        : [];
+      await enqueueSuggestionNotice(tx, { conversationId: conversation.id, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
+      await tx.update(waFollowups).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(waFollowups.id, followupId));
+      return { sent: true, followupId, replied: false, suggestionId };
+    }
 
     const delivered = await deliverBotTurn(tx, provider, {
       conversation,

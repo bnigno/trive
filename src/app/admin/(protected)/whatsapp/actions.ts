@@ -111,6 +111,7 @@ export async function saveBotSettingsAction(
     const text = (name: string) => String(formData.get(name) ?? "");
     await updateSetting(db, { key: "bot_seller_name", value: text("botSellerName"), userId: user.id });
     await updateSetting(db, { key: "bot_model", value: text("botModel"), userId: user.id });
+    await updateSetting(db, { key: "bot_mode", value: text("botMode") || "autonomous", userId: user.id });
     await updateSetting(db, {
       key: "store_exchange_policy",
       value: text("storeExchangePolicy"),

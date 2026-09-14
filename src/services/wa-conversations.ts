@@ -25,6 +25,7 @@ import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
 import { FOLLOWUP_CANCEL_LABELS, listFollowupHistory, type FollowupCancelReason } from "@/services/wa-followups";
+import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, resolveConversationBotMode } from "@/services/wa-suggestions";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import { originLabel } from "@/core/bot/site-bridge";
 
@@ -64,6 +65,8 @@ export interface WaConversationListItem {
   isOwnerNotices: boolean;
   /** De onde a cliente veio (ponte do site): "página da peça", "story «Dunas»"…; null sem ponte. */
   originLabel: string | null;
+  /** Copiloto: a Lia sugeriu e a dona ainda não decidiu. */
+  pendingSuggestion: boolean;
 }
 
 export async function listWaConversations(
@@ -131,6 +134,7 @@ export async function listWaConversations(
   const unreadByConversation = new Map(
     unreadRows.map((row) => [row.conversationId, row.unreadCount]),
   );
+  const withSuggestion = await conversationIdsWithPendingSuggestion(db, ids);
 
   return rows.map((row) => {
     const last = byConversation.get(row.id) ?? null;
@@ -158,6 +162,7 @@ export async function listWaConversations(
       unreadCount: unreadByConversation.get(row.id) ?? 0,
       isOwnerNotices: sameE164(ownerPhone, row.phoneE164),
       originLabel: state.bridge ? (state.bridge.sourceLabel ?? originLabel(state.bridge.source)) : null,
+      pendingSuggestion: withSuggestion.has(row.id),
     };
   });
 }
@@ -300,16 +305,34 @@ export interface WaBotTurnActivity {
   createdAt: Date;
 }
 
+export interface WaThreadSuggestion {
+  id: string;
+  bubbles: string[];
+  /** Só o tipo de cada anexo ("lista", "foto") — o painel mostra chips. */
+  attachments: string[];
+  toolCalls: string[];
+  createdAt: Date;
+  /** A mensagem dela que gerou a sugestão (null: retorno combinado). */
+  inboundPreview: string | null;
+  fromFollowup: boolean;
+}
+
 export interface WaThreadTail {
   conversation: {
     id: string;
     status: string;
     botDisabledUntil: Date | null;
     ownerLastSeenAt: Date | null;
+    /** Override do modo nesta conversa (null = o da loja). */
+    botMode: string | null;
+    /** O modo efetivo (loja + override). */
+    effectiveBotMode: "autonomous" | "copilot";
   };
   messages: WaThreadTailMessage[];
   context: WaConversationContext;
   activity: WaBotTurnActivity[];
+  /** Copiloto: a sugestão pendente da Lia, se houver. */
+  suggestion: WaThreadSuggestion | null;
 }
 
 async function loadConversationContext(
@@ -457,6 +480,7 @@ export async function getWaThreadTail(
       status: waConversations.status,
       botDisabledUntil: waConversations.botDisabledUntil,
       ownerLastSeenAt: waConversations.ownerLastSeenAt,
+      botMode: waConversations.botMode,
       phoneE164: waConversations.phoneE164,
       customerId: waConversations.customerId,
       customerName: customers.fullName,
@@ -487,10 +511,23 @@ export async function getWaThreadTail(
     .limit(parsed.limit);
   rows.reverse();
 
-  const [context, activity] = await Promise.all([
+  const [context, activity, pending, effectiveBotMode] = await Promise.all([
     loadConversationContext(db, conversation),
     loadBotActivity(db, conversation.id, parsed.limit),
+    getPendingSuggestion(db, conversation.id),
+    resolveConversationBotMode(db, conversation),
   ]);
+  const suggestion: WaThreadSuggestion | null = pending
+    ? {
+        id: pending.id,
+        bubbles: pending.bubbles,
+        attachments: pending.attachments.map((attachment) => (attachment.kind === "option_list" ? "lista" : "foto")),
+        toolCalls: pending.toolCalls.map((call) => call.name),
+        createdAt: pending.createdAt,
+        inboundPreview: await getInboundPreview(db, pending.inboundMessageId),
+        fromFollowup: pending.followupId !== null,
+      }
+    : null;
 
   return {
     conversation: {
@@ -498,6 +535,8 @@ export async function getWaThreadTail(
       status: conversation.status,
       botDisabledUntil: conversation.botDisabledUntil,
       ownerLastSeenAt: conversation.ownerLastSeenAt,
+      botMode: conversation.botMode,
+      effectiveBotMode,
     },
     messages: rows.map((row) => ({
       id: row.id,
@@ -513,6 +552,7 @@ export async function getWaThreadTail(
     })),
     context,
     activity,
+    suggestion,
   };
 }
 
@@ -609,6 +649,7 @@ async function loadConversationForAction(db: DbOrTx, conversationId: string) {
       phoneE164: waConversations.phoneE164,
       customerId: waConversations.customerId,
       status: waConversations.status,
+      botMode: waConversations.botMode,
     })
     .from(waConversations)
     .where(eq(waConversations.id, conversationId))
@@ -791,7 +832,8 @@ export async function sendManualWaReply(
     parsed.conversationId,
   );
 
-  if (conversation.status !== "human") {
+  // Em copiloto responder é o normal — a conversa continua com a Lia (sugerindo).
+  if (conversation.status !== "human" && (await resolveConversationBotMode(db, conversation)) !== "copilot") {
     await takeOverWaConversation(db, {
       conversationId: parsed.conversationId,
       userId: parsed.userId,

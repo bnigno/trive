@@ -132,3 +132,12 @@ describe("isSellerTyping", () => {
     ).toBe(false);
   });
 });
+
+describe("attendantBadge em copiloto", () => {
+  it("com a Lia ligada e a conversa aberta, o modo copiloto muda o rótulo e quem responde", () => {
+    const badge = attendantBadge("open", null, { botEnabled: true, sellerName: "Lia", botMode: "copilot" });
+    expect(badge).toEqual({ label: "Lia sugere · você envia", tone: "info", attendant: "copilot" });
+    expect(attendantBadge("human", null, { botEnabled: true, sellerName: "Lia", botMode: "copilot" }).attendant).toBe("you");
+    expect(attendantBadge("open", null, { botEnabled: false, sellerName: "Lia", botMode: "copilot" }).attendant).toBe("you");
+  });
+});

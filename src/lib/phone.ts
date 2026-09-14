@@ -73,3 +73,13 @@ export function sameE164(a: string | null | undefined, b: string | null | undefi
   const right = toE164BR(b) ?? `+${b.replace(/\D/g, "")}`;
   return left.length > 1 && left === right;
 }
+
+/** '+5511999991234' -> '(11) •••••-1234' — nunca expõe o número inteiro. */
+export function maskPhone(phoneE164: string): string {
+  const last4 = phoneE164.slice(-4);
+  if (phoneE164.startsWith("+55") && phoneE164.length >= 12) {
+    const ddd = phoneE164.slice(3, 5);
+    return `(${ddd}) •••••-${last4}`;
+  }
+  return `•••• ${last4}`;
+}

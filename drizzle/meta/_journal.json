@@ -288,6 +288,13 @@
       "when": 1789381400072,
       "tag": "0040_retorno_combinado",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789384736164,
+      "tag": "0041_copiloto",
+      "breakpoints": true
     }
   ]
 }

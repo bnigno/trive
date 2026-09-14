@@ -30,6 +30,8 @@ export type HandoffToastItem = {
   id: string;
   conversationId: string;
   label: string;
+  /** Título do aviso; padrão: a transferência do robô. */
+  title?: string;
 };
 
 const MAX_TOASTS = 3;
@@ -37,14 +39,14 @@ const AUTO_DISMISS_MS = 10_000;
 
 export function useHandoffToasts(): {
   toasts: HandoffToastItem[];
-  pushToast(input: { conversationId: string; label: string }): void;
+  pushToast(input: { conversationId: string; label: string; title?: string }): void;
   dismissToast(id: string): void;
 } {
   const [toasts, setToasts] = useState<HandoffToastItem[]>([]);
   const nextIdRef = useRef(0);
 
   const pushToast = useCallback(
-    (input: { conversationId: string; label: string }) => {
+    (input: { conversationId: string; label: string; title?: string }) => {
       nextIdRef.current += 1;
       const id = `handoff-${nextIdRef.current}`;
       setToasts((prev) => [...prev, { id, ...input }].slice(-MAX_TOASTS));
@@ -141,7 +143,7 @@ function HandoffToastCard({
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Robô transferiu uma conversa
+            {toast.title ?? "Robô transferiu uma conversa"}
           </p>
           <p className="truncate text-sm text-zinc-600 dark:text-zinc-400">
             {toast.label}

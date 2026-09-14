@@ -103,10 +103,14 @@ export type BotExecutorContext = {
   recentImages?: Array<{ waMessageId: string; mediaUrl: string }>;
   /** Turno iniciado pela Lia (retorno combinado): sem inbound novo, nada de agendar outro retorno. */
   proactive?: boolean;
+  /** Copiloto: ferramentas com efeito não rodam (a dona decide) e nenhum cartão sai pela fila. */
+  copilot?: boolean;
 };
 
 export type RunBotTurnResult =
   | { replied: boolean; handedOff: boolean }
+  /** Copiloto: o turno virou uma sugestão na Central; nada saiu para a cliente. */
+  | { suggested: true; suggestionId: string }
   | { skipped: string };
 
 export type CardRequest = {
@@ -150,6 +154,8 @@ export function makeCardEmitter(db: DbOrTx, ctx: BotExecutorContext): CardEmitte
         ctx.onAttachment({ kind: "image", imageUrl: cached.url, caption: request.caption });
         return "sent";
       }
+      // Copiloto: um cartão pela fila sairia antes de a dona aprovar — sem cache, sem cartão.
+      if (ctx.copilot) return false;
       if (!ctx.dryRun) {
         await enqueueOutboxEvent(db, {
           eventType: "wa.card_render",

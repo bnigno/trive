@@ -31,12 +31,15 @@ function BoltIcon() {
 export function Composer({
   attendant,
   sellerName,
+  copilot = false,
   quickReplies,
   onSend,
 }: {
   /** Quem responde a próxima mensagem — muda o aviso acima da caixa. */
-  attendant: "seller" | "you" | "nobody";
+  attendant: "seller" | "you" | "nobody" | "copilot";
   sellerName: string;
+  /** Copiloto: responder por aqui NÃO assume a conversa — a Lia continua sugerindo. */
+  copilot?: boolean;
   quickReplies: string[];
   onSend: (body: string) => void;
 }) {
@@ -91,7 +94,12 @@ export function Composer({
 
   return (
     <div className="shrink-0 border-t border-ivory-300 bg-ivory-100 dark:border-ink-800 dark:bg-ink-900">
-      {attendant === "seller" ? (
+      {attendant === "copilot" ? (
+        <p className="px-4 py-1.5 text-center text-[11px] text-ink-500 dark:text-ink-300">
+          Copiloto: a {sellerName} sugere e você decide. Responder por aqui não
+          assume a conversa — ela continua sugerindo.
+        </p>
+      ) : attendant === "seller" && !copilot ? (
         <p className="px-4 py-1.5 text-center text-[11px] text-ink-500 dark:text-ink-300">
           A {sellerName} está atendendo. Responder por aqui assume a conversa
           para você — ela para de responder nesta cliente.
