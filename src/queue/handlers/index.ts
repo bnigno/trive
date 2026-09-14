@@ -14,6 +14,7 @@ import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropStoryToOwner } from "@/services/drop-story";
+import { atelierHelpPayloadSchema, atelierIntakePayloadSchema, processAtelierIntake, sendAtelierHelp } from "@/services/atelier";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -373,6 +374,17 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       { waMessageId, attempt: event.attempts },
     );
     console.info(`[wa.transcribe] ${waMessageId} → ${JSON.stringify(result)}`);
+  },
+  // Ateliê: fotos + recado do dono → rascunho com as fotos → "Rascunho
+  // pronto" no WhatsApp dele. Skips não lançam; foto expirada e recado sem
+  // fotos viram orientação ao dono; erro real relança até a política esgotar.
+  "wa.atelier_intake": async (event) => {
+    const payload = atelierIntakePayloadSchema.parse({ ...event.payload, attempt: event.attempts });
+    const result = await processAtelierIntake(getDb(), getMessagingProvider(), getFileStorage(), payload);
+    console.info(`[wa.atelier_intake] ${payload.triggerWaMessageId} → ${JSON.stringify(result)}`);
+  },
+  "wa.atelier_help": async (event) => {
+    await sendAtelierHelp(getDb(), getMessagingProvider(), atelierHelpPayloadSchema.parse(event.payload));
   },
   // "Bom dia da maison": o cron das 8h só enfileira; aqui a imagem é
   // montada, desenhada e enviada ao dono (retry e DLQ da fila). Skips

@@ -41,6 +41,10 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
     baseDelayMs: 5_000,
     maxDelayMs: 20_000,
   },
+  // Chegada pelo Ateliê (fotos + recado → rascunho): a dona espera a
+  // resposta no WhatsApp; foto que não baixa não melhora com o tempo, então
+  // poucas tentativas e curtas — na última, o serviço avisa a dona.
+  "wa.atelier_intake": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
 };
 
 export function getRetryPolicy(eventType: string): RetryPolicy {

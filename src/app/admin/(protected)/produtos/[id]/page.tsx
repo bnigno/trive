@@ -9,6 +9,8 @@ import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
+import { getAtelierIntakeForProduct } from "@/services/atelier";
+import { formatDateTimeSP } from "@/emails/templates";
 import { axisValues } from "@/core/catalog/attributes";
 import { buildSizeChart, compareSizeLabels, findSizeAxis } from "@/core/catalog/measurements";
 import { suggestSkuForVariant } from "@/core/catalog/sku";
@@ -99,12 +101,13 @@ export default async function ProdutoDetalhePage({
     notFound();
   }
 
-  const [categoryRows, readiness] = await Promise.all([
+  const [categoryRows, readiness, atelierIntake] = await Promise.all([
     db
       .select({ id: categories.id, name: categories.name })
       .from(categories)
       .orderBy(asc(categories.name)),
     listProductReadiness(db, { productIds: [detail.id] }).then((map) => map.get(detail.id)),
+    getAtelierIntakeForProduct(db, id),
   ]);
   // Vindo do selo "sem peso": abre e foca a primeira variação ativa sem peso.
   const focusWeightVariantId =
@@ -213,6 +216,13 @@ export default async function ProdutoDetalhePage({
               {STATUS_HINTS[status]}
             </p>
           </div>
+          {atelierIntake ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              <Badge tone="info">Chegou pelo WhatsApp</Badge>{" "}
+              {formatDateTimeSP(atelierIntake.createdAt)}
+              {atelierIntake.note ? ` · recado: “${atelierIntake.note.slice(0, 160)}${atelierIntake.note.length > 160 ? "…" : ""}”` : ""}
+            </p>
+          ) : null}
           <OwnerOnly>
             <div className="flex flex-wrap gap-2">
               {status !== "active" ? (

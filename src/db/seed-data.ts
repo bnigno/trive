@@ -45,6 +45,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "handoff_auto_return_hours", value: 12 },
   { key: "drop_audience_limit", value: 60 },
   { key: "catalog_draft_enabled", value: true },
+  // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.
+  { key: "atelier_enabled", value: true },
   { key: "edition_name", value: "" },
   // Datas da cidade (Círio, Natal…): a dona cadastra em Configurações.
   { key: "city_dates", value: [] },
@@ -271,6 +273,21 @@ export const initialWaTemplates: Array<{
       "Quer que eu guarde alguma por 24 h? É só me responder.\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "lancamento", "pecas", "link"],
+  },
+  {
+    key: "owner_atelier_draft",
+    label: "[interno] Ateliê: rascunho pronto",
+    bodyTemplate:
+      "🧵 Rascunho pronto · {{peca}} · {{fotos}}\n" +
+      "Revise a ficha e publique quando quiser: {{link}}",
+    variables: ["peca", "fotos", "link"],
+  },
+  {
+    key: "owner_atelier_help",
+    label: "[interno] Ateliê: como cadastrar",
+    bodyTemplate:
+      "Para cadastrar uma peça por aqui: mande as fotos primeiro (pela galeria) e, em seguida, um recado com o nome dela — texto ou áudio. {{motivo}}",
+    variables: ["motivo"],
   },
   {
     key: "owner_queue_dead",

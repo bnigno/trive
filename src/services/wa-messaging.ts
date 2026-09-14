@@ -24,7 +24,7 @@ import {
 import { formatDateTimeSP } from "@/emails/templates";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
-import { isValidE164 } from "@/lib/phone";
+import { isValidE164, sameE164 } from "@/lib/phone";
 import { spDayKey, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
@@ -608,6 +608,17 @@ export async function sendMediaMessage(
 // ---------------------------------------------------------------------------
 // sendToOwner — avisos internos ao dono (sem opt-in, sem cliente/pedido).
 // ---------------------------------------------------------------------------
+
+/**
+ * Esta mensagem veio do celular do dono? (setting owner_whatsapp_phone —
+ * o número DELE, nunca o da linha da Z-API, que chega como fromMe.) É a
+ * mesma pergunta para o Ateliê, os comandos do dono e a Central.
+ */
+export async function isOwnerPhone(db: DbOrTx, phoneE164: string): Promise<boolean> {
+  const map = await getSettingsMap(db, ["owner_whatsapp_phone"]);
+  const phone = map["owner_whatsapp_phone"];
+  return typeof phone === "string" && sameE164(phone, phoneE164);
+}
 
 const sendToOwnerSchema = z
   .object({

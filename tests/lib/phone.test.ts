@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidE164, toE164BR, waMeUrl } from "../../src/lib/phone";
+import { isValidE164, sameE164, toE164BR, waMeUrl } from "../../src/lib/phone";
+
+describe("sameE164", () => {
+  it("compara o setting do dono (formato livre) com o telefone da Z-API", () => {
+    expect(sameE164("(91) 98103-7536", "5591981037536")).toBe(true);
+    expect(sameE164("+5591981037536", "+5591981037536")).toBe(true);
+    // Conta antiga sem o nono dígito, como o WhatsApp entrega.
+    expect(sameE164("+559181037536", "5591981037536")).toBe(true);
+  });
+
+  it("números diferentes, vazios ou nulos nunca são o mesmo", () => {
+    expect(sameE164("+5591981037536", "+5591981037537")).toBe(false);
+    expect(sameE164("", "+5591981037536")).toBe(false);
+    expect(sameE164(null, "+5591981037536")).toBe(false);
+    expect(sameE164("abc", "abc")).toBe(false);
+  });
+});
 
 describe("toE164BR", () => {
   it("normalizes common mobile formats to +55 E.164", () => {

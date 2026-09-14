@@ -64,6 +64,7 @@ interface PageData {
   recoveryAfterMinutes: number;
   botEnabledSetting: boolean;
   catalogDraftEnabled: boolean;
+  atelierEnabled: boolean;
   handoffSilenceHours: number;
   handoffAutoReturnHours: number;
   botModel: string;
@@ -111,6 +112,7 @@ async function loadPageData(): Promise<PageData | null> {
         "handoff_silence_hours",
         "handoff_auto_return_hours",
         "catalog_draft_enabled",
+        "atelier_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -149,6 +151,7 @@ async function loadPageData(): Promise<PageData | null> {
         : 60,
     botEnabledSetting: settingsMap["bot_enabled"] === true,
     catalogDraftEnabled: settingsMap["catalog_draft_enabled"] !== false,
+    atelierEnabled: settingsMap["atelier_enabled"] !== false,
     handoffSilenceHours: hours("handoff_silence_hours", 24),
     handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
     botModel: text("bot_model") || "claude-sonnet-5",
@@ -348,6 +351,12 @@ export default async function WhatsappPage() {
             checked={data.catalogDraftEnabled}
             label="Começar pela foto no cadastro"
             hint="Em Novo produto, você fotografa a peça e a etiqueta e a ficha volta preenchida para revisar (nome, descrição, composição, cuidados, cores, tamanhos, peso e preço sugerido). Centavos por peça; nada é salvo sem a sua revisão."
+          />
+          <ToggleSwitch
+            settingKey="atelier_enabled"
+            checked={data.atelierEnabled}
+            label="Ateliê pelo WhatsApp"
+            hint="Do SEU celular (o número cadastrado em Conexão), mande as fotos da peça para o número da maison e depois um recado com o nome dela — texto ou áudio. A peça nasce em rascunho, com as fotos, e você recebe o link. Texto solto seu continua indo para a Lia, como cliente."
           />
           <ToggleSwitch
             settingKey="bot_cards_enabled"

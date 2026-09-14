@@ -541,6 +541,7 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   drop_audience_limit: z.number().int().min(1).max(500),
   /** "Começar pela foto" no cadastro de peça (ausente = ligado). */
   catalog_draft_enabled: z.boolean(),
+  atelier_enabled: z.boolean(),
   /** Datas da cidade (Círio, Natal…): o selo da vitrine e o "faltam N dias" do Bom dia. */
   city_dates: cityDatesSchema,
   /** Nome da edição em cartaz (ex.: "Edição Círio"): entra no post e na legenda. */

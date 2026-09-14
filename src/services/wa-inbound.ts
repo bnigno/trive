@@ -3,7 +3,10 @@
 // devolve 404 num mismatch — não revelamos que o endpoint existe); quando a
 // Z-API manda o header Client-Token, ele também precisa bater. Idempotência
 // por inbound_events (source 'zapi' + messageId). Comando SAIR/PARAR desliga
-// o opt-in (LGPD) e confirma — SEMPRE antes de qualquer bot. Outro texto:
+// o opt-in (LGPD) e confirma — SEMPRE antes de qualquer bot. Antes ainda,
+// a mensagem do celular do DONO: foto, áudio ou recado com fotos recentes é
+// o Ateliê (rascunho de peça), nunca a Lia; texto solto dele segue o fluxo
+// normal, para ele poder testar a Lia como cliente. Outro texto:
 // se a conversa está 'open', o bot não está silenciado (bot_disabled_until)
 // e o bot de vendas está habilitado, enfileira 'wa.bot_turn'; senão o texto
 // é encaminhado ao DONO via outbox — humano responde.
@@ -21,8 +24,15 @@ import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { INBOUND_MEDIA_MARKERS, type WaMediaMeta } from "@/core/whatsapp/media";
 import { isValidE164, toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import {
+  enqueueAtelierHelp,
+  isAtelierEnabled,
+  openAtelierIntake,
+  routeOwnerInbound,
+} from "@/services/atelier";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
+import { isOwnerPhone } from "@/services/wa-messaging";
 import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
 import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
 import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
@@ -117,7 +127,14 @@ export type ProcessZapiInboundResult =
     }
   | { action: "forwarded"; conversationId: string; waMessageId: string }
   | { action: "bot_queued"; conversationId: string; waMessageId: string }
-  | { action: "transcribe_queued"; conversationId: string; waMessageId: string };
+  | { action: "transcribe_queued"; conversationId: string; waMessageId: string }
+  // Ateliê (mensagem do dono): chegada aberta, foto guardada no lote ou
+  // orientação de como mandar.
+  | { action: "atelier_queued"; conversationId: string; waMessageId: string }
+  | { action: "atelier_photo"; conversationId: string; waMessageId: string }
+  | { action: "atelier_help"; conversationId: string; waMessageId: string };
+
+export type InboundRoute = "bot_queued" | "forwarded" | "atelier_queued" | "atelier_help";
 
 /** trim + maiúsculas + sem acento, para comparar comandos como SAIR/PARAR. */
 function normalizeKeyword(text: string): string {
@@ -236,9 +253,51 @@ export async function routeInboundMessage(
     forwardText?: string;
     customerName?: string;
     now: Date;
+    /** A mensagem já gravada, quando a rota vem depois (transcrição): o Ateliê precisa dela. */
+    waMessageId?: string;
+    kind?: "audio";
   },
-): Promise<"bot_queued" | "forwarded"> {
+): Promise<InboundRoute> {
   const { conversation } = input;
+
+  // Áudio do dono transcrito: recado com fotos recentes vira chegada; sem
+  // fotos, ele recebe a orientação (áudio dele ao número da maison é sempre
+  // Ateliê — o webhook já decidiu isso antes de transcrever).
+  if (
+    input.waMessageId &&
+    input.kind === "audio" &&
+    (await isOwnerPhone(tx, input.phoneE164)) &&
+    (await isAtelierEnabled(tx))
+  ) {
+    const decision = await routeOwnerInbound(tx, {
+      phoneE164: input.phoneE164,
+      kind: "note",
+      body: input.text,
+      mediaUrl: null,
+      now: input.now,
+    });
+    if (decision.kind === "intake") {
+      await openAtelierIntake(tx, {
+        conversationId: conversation.id,
+        phoneE164: input.phoneE164,
+        triggerWaMessageId: input.waMessageId,
+        zapiMessageId: input.zapiMessageId,
+        kind: "audio",
+        body: input.text,
+        now: input.now,
+      });
+      return "atelier_queued";
+    }
+    if (decision.kind === "help") {
+      await enqueueAtelierHelp(tx, {
+        conversationId: conversation.id,
+        zapiMessageId: input.zapiMessageId,
+        reason: decision.reason,
+      });
+      return "atelier_help";
+    }
+  }
+
   const botEligible =
     conversation.status === "open" &&
     (conversation.botDisabledUntil === null ||
@@ -486,8 +545,66 @@ export async function processZapiInbound(
         .set({ status: "done", processedAt: new Date() })
         .where(eq(inboundEvents.id, inboundId));
 
+    const queueTranscription = async () => {
+      await tx
+        .update(waMessages)
+        .set({
+          mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || '{"transcript":{"status":"pending"}}'::jsonb`,
+        })
+        .where(eq(waMessages.id, message.id));
+      await enqueueOutboxEvent(tx, {
+        eventType: "wa.transcribe",
+        dedupeKey: `wa.transcribe:${messageId}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: { waMessageId: message.id },
+      });
+    };
+
     const keyword = normalizeKeyword(text);
-    if (keyword === "SAIR" || keyword === "PARAR") {
+    const isOptOut = keyword === "SAIR" || keyword === "PARAR";
+
+    // O celular do dono no número da maison: Ateliê antes de tudo. Foto
+    // abre o lote; áudio vai transcrever (a rota volta ao Ateliê depois);
+    // recado com fotos recentes abre a chegada; documento pede a foto.
+    // Texto solto dele cai no fluxo normal (testar a Lia como cliente);
+    // SAIR/PARAR continua sendo o comando, mesmo com lote aberto.
+    if (!isOptOut && (await isOwnerPhone(tx, phoneE164)) && (await isAtelierEnabled(tx))) {
+      const decision = await routeOwnerInbound(tx, {
+        phoneE164,
+        kind: media?.kind ?? "text",
+        body: text,
+        mediaUrl: media?.mediaUrl ?? null,
+        now,
+      });
+      const done = async (action: "atelier_queued" | "atelier_photo" | "atelier_help" | "transcribe_queued") => {
+        await markDone();
+        return { action, conversationId: conversation.id, waMessageId: message.id } as const;
+      };
+      if (decision.kind === "intake") {
+        await openAtelierIntake(tx, {
+          conversationId: conversation.id,
+          phoneE164,
+          triggerWaMessageId: message.id,
+          zapiMessageId: messageId,
+          kind: media?.kind ?? "text",
+          body: text,
+          now,
+        });
+        return done("atelier_queued");
+      }
+      if (decision.kind === "photo") return done("atelier_photo");
+      if (decision.kind === "transcribe") {
+        await queueTranscription();
+        return done("transcribe_queued");
+      }
+      if (decision.kind === "help") {
+        await enqueueAtelierHelp(tx, { conversationId: conversation.id, zapiMessageId: messageId, reason: decision.reason });
+        return done("atelier_help");
+      }
+    }
+
+    if (isOptOut) {
       // Com ou sem cadastro: o que esse telefone pediu para receber é cancelado
       // (lista da estreia e avisos de "voltou") — a /estreia é sem login.
       await cancelDropWaitlistByPhone(tx, phoneE164, now);
@@ -568,19 +685,7 @@ export async function processZapiInbound(
       (await isBotMediaEnabled(tx)) &&
       isTranscriptionConfigured()
     ) {
-      await tx
-        .update(waMessages)
-        .set({
-          mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || '{"transcript":{"status":"pending"}}'::jsonb`,
-        })
-        .where(eq(waMessages.id, message.id));
-      await enqueueOutboxEvent(tx, {
-        eventType: "wa.transcribe",
-        dedupeKey: `wa.transcribe:${messageId}`,
-        aggregateType: "wa_conversation",
-        aggregateId: conversation.id,
-        payload: { waMessageId: message.id },
-      });
+      await queueTranscription();
       await markDone();
       return {
         action: "transcribe_queued",

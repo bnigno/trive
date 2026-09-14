@@ -18,6 +18,7 @@ import {
   lastActivityAt,
 } from "@/core/whatsapp/handoff";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
+import { sameE164 } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
@@ -153,7 +154,7 @@ export async function listWaConversations(
         : null,
       lastMessagePreview: last?.body ?? null,
       unreadCount: unreadByConversation.get(row.id) ?? 0,
-      isOwnerNotices: ownerPhone !== "" && row.phoneE164 === ownerPhone,
+      isOwnerNotices: sameE164(ownerPhone, row.phoneE164),
       originLabel: state.bridge ? (state.bridge.sourceLabel ?? originLabel(state.bridge.source)) : null,
     };
   });

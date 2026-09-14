@@ -27,3 +27,4 @@ export { shippingRates } from "./shipping";
 export { botCards, waConversations, waMessages, waTemplates } from "./whatsapp";
 export { siteCarts } from "./site-carts";
 export { campaignLinks } from "./campaign-links";
+export { atelierIntakes } from "./atelier";

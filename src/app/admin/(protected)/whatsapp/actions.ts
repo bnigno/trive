@@ -39,6 +39,7 @@ const toggleKeySchema = z.enum([
   "bot_media_enabled",
   "bot_cards_enabled",
   "catalog_draft_enabled",
+  "atelier_enabled",
 ]);
 
 export async function setToggleAction(
