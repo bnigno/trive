@@ -39,6 +39,8 @@ const chatConversationSchema = z.object({
   unreadCount: z.number(),
   isOwnerNotices: z.boolean(),
   originLabel: z.string().nullable().default(null),
+  pendingSuggestion: z.boolean().default(false),
+  botMode: z.enum(["autonomous", "copilot"]).default("autonomous"),
 });
 
 const chatContextSchema = z.object({
@@ -96,16 +98,31 @@ const chatActivitySchema = z.object({
   createdAt: z.string(),
 });
 
+const chatSuggestionSchema = z.object({
+  id: z.string(),
+  bubbles: z.array(z.string()),
+  attachments: z
+    .array(z.object({ kind: z.enum(["lista", "foto"]), title: z.string(), lines: z.array(z.string()), url: z.string().nullable() }))
+    .default([]),
+  toolCalls: z.array(z.string()).default([]),
+  createdAt: z.string(),
+  inboundPreview: z.string().nullable().default(null),
+  fromFollowup: z.boolean().default(false),
+});
+
 const chatThreadSchema = z.object({
   conversation: z.object({
     id: z.string(),
     status: z.string(),
     botDisabledUntil: z.string().nullable(),
     ownerLastSeenAt: z.string().nullable(),
+    botMode: z.string().nullable().default(null),
+    effectiveBotMode: z.enum(["autonomous", "copilot"]).default("autonomous"),
   }),
   messages: z.array(chatMessageSchema),
   context: chatContextSchema,
   activity: z.array(chatActivitySchema),
+  suggestion: chatSuggestionSchema.nullable().default(null),
 });
 
 const pollResponseSchema = z.object({
@@ -121,6 +138,7 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>;
 export type ChatConversation = z.infer<typeof chatConversationSchema>;
 export type ChatContext = z.infer<typeof chatContextSchema>;
 export type ChatActivity = z.infer<typeof chatActivitySchema>;
+export type ChatSuggestion = z.infer<typeof chatSuggestionSchema>;
 export type ChatThread = z.infer<typeof chatThreadSchema>;
 export type ChatPollResponse = z.infer<typeof pollResponseSchema>;
 

@@ -55,6 +55,7 @@ import { sendPackedWa } from "@/services/packing";
 import { sendReceiptWa } from "@/services/receipts";
 import { runBotTurn, runScheduledBotTurn } from "@/services/wa-bot";
 import { botFollowupPayloadSchema } from "@/services/wa-followups";
+import { sendApprovedSuggestion, suggestionSendPayloadSchema } from "@/services/wa-suggestions";
 import {
   isWaEnabled,
   sendTemplateMessage,
@@ -514,6 +515,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       },
     );
     console.info(`[wa.bot_followup] ${followupId} → ${JSON.stringify(result)}`);
+  },
+  // Copiloto: a sugestão que a dona aprovou sai como mensagem da Lia (dedupe
+  // por sugestão; reentrada não duplica).
+  "wa.suggestion_send": async (event) => {
+    const { suggestionId } = suggestionSendPayloadSchema.parse(event.payload);
+    const result = await sendApprovedSuggestion(getDb(), getMessagingProvider(), { suggestionId });
+    console.info(`[wa.suggestion_send] ${suggestionId} → ${JSON.stringify(result)}`);
   },
   "wa.bot_turn": async (event) => {
     const payload = waBotTurnPayloadSchema.parse(event.payload);

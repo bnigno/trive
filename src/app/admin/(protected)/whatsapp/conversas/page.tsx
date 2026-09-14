@@ -96,6 +96,8 @@ export default async function WaConversationsPage({
             status: tail.conversation.status,
             botDisabledUntil: iso(tail.conversation.botDisabledUntil),
             ownerLastSeenAt: null,
+            botMode: tail.conversation.botMode,
+            effectiveBotMode: tail.conversation.effectiveBotMode,
           },
           messages: tail.messages.map((message) => ({
             id: message.id,
@@ -127,6 +129,7 @@ export default async function WaConversationsPage({
             ...turn,
             createdAt: turn.createdAt.toISOString(),
           })),
+          suggestion: tail.suggestion ? { ...tail.suggestion, createdAt: tail.suggestion.createdAt.toISOString() } : null,
         };
       }
     }

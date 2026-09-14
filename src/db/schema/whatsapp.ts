@@ -31,6 +31,8 @@ export const waConversations = pgTable(
     botState: jsonb("bot_state"),
     // Silêncio do bot após transferir para atendente humano.
     botDisabledUntil: timestamp("bot_disabled_until", { withTimezone: true }),
+    // Modo da vendedora SÓ nesta conversa (autonomous | copilot); null = o da loja (setting bot_mode).
+    botMode: text("bot_mode"),
     lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
     lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
     // Telemetria de leitura do painel: última vez que o dono viu esta thread.
@@ -52,6 +54,7 @@ export const waConversations = pgTable(
       "wa_conversations_status_check",
       sql`${table.status} IN ('open', 'human', 'closed')`,
     ),
+    check("wa_conversations_bot_mode_check", sql`${table.botMode} IS NULL OR ${table.botMode} IN ('autonomous', 'copilot')`),
   ],
 );
 

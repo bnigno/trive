@@ -5,6 +5,7 @@ import { DEFAULT_HANDOFF_SILENCE_HOURS, hoursSetting, silenceUntil } from "@/cor
 import { auditLog, waConversations } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
+import { supersedePendingSuggestions } from "@/services/wa-suggestions";
 
 import { DRY_RUN_TEXT, loadBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
@@ -45,6 +46,9 @@ export async function handOffToHuman(
       },
     })
     .where(eq(waConversations.id, ctx.conversationId));
+
+  // A sugestão pendente do copiloto perde o sentido quando a dona assume.
+  await supersedePendingSuggestions(db, ctx.conversationId, now);
 
   await db.insert(auditLog).values({
     actorType: "system",

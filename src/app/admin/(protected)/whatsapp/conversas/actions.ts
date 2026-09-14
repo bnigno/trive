@@ -16,6 +16,7 @@ import {
   takeOverWaConversation,
 } from "@/services/wa-conversations";
 import { cancelBotFollowup } from "@/services/wa-followups";
+import { approveSuggestion, discardSuggestion, setConversationBotMode } from "@/services/wa-suggestions";
 
 export type ActionResult = { ok: true } | { error: string };
 
@@ -84,6 +85,39 @@ export async function sendManualReplyAction(
  * então o erro vira `{ ok: false }` silencioso (sem mensagem para a UI).
  * O requireUser fica FORA do try para o redirect de sessão expirada propagar.
  */
+/** Copiloto: enviar a sugestão como está ou editada. */
+export async function approveSuggestionAction(suggestionId: string, body?: string | null): Promise<ActionResult> {
+  const user = await requireUser();
+  try {
+    await approveSuggestion(getDb(), { suggestionId, userId: user.id, body: body ?? null });
+    return { ok: true };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+export async function discardSuggestionAction(suggestionId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  try {
+    const { discarded } = await discardSuggestion(getDb(), { suggestionId, userId: user.id });
+    if (!discarded) return { error: "Esta sugestão já foi enviada, descartada ou superada." };
+    return { ok: true };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+/** "Só sugerir nesta conversa" / "deixar responder sozinha" / voltar ao modo da loja. */
+export async function setConversationBotModeAction(conversationId: string, mode: "autonomous" | "copilot" | null): Promise<ActionResult> {
+  const user = await requireUser();
+  try {
+    await setConversationBotMode(getDb(), { conversationId, mode: z.enum(["autonomous", "copilot"]).nullable().parse(mode), userId: user.id });
+    return { ok: true };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
 /** "Cancelar retorno": a Lia não vai chamar; a fila encontra o status e não manda nada. */
 export async function cancelFollowupAction(followupId: string): Promise<ActionResult> {
   const user = await requireUser();

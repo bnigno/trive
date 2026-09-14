@@ -477,6 +477,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   bot_model: z.enum(["claude-sonnet-5", "claude-haiku-4-5"], {
     error: "Modelo inválido. Escolha entre claude-sonnet-5 e claude-haiku-4-5.",
   }),
+  /** autonomous = a Lia responde sozinha; copilot = ela sugere e a dona aprova na Central. */
+  bot_mode: z.enum(["autonomous", "copilot"], { error: "Modo inválido. Escolha entre autonomous e copilot." }),
   /** Instruções extras do dono anexadas ao prompt do bot (pode ficar vazio). */
   bot_extra_instructions: z
     .string()

@@ -2,15 +2,9 @@ import type { BadgeTone } from "@/components/ui/badge";
 import type { BotToolName } from "@/core/bot/tools";
 import type { WaMessageOrigin } from "@/core/whatsapp/origin";
 
-/** '+5511999991234' -> '(11) •••••-1234' — nunca expõe o número inteiro. */
-export function maskPhone(phoneE164: string): string {
-  const last4 = phoneE164.slice(-4);
-  if (phoneE164.startsWith("+55") && phoneE164.length >= 12) {
-    const ddd = phoneE164.slice(3, 5);
-    return `(${ddd}) •••••-${last4}`;
-  }
-  return `•••• ${last4}`;
-}
+import { maskPhone } from "@/lib/phone";
+
+export { maskPhone };
 
 /** '+5511999991234' -> '(11) 99999-1234' — só no painel do cliente. */
 export function formatPhoneBR(phoneE164: string): string {
@@ -42,8 +36,8 @@ export function conversationLabel(item: {
 export type AttendantBadge = {
   label: string;
   tone: BadgeTone;
-  /** Quem responde a próxima mensagem: a vendedora, você ou ninguém. */
-  attendant: "seller" | "you" | "nobody";
+  /** Quem responde a próxima mensagem: a vendedora, você, ninguém — ou ela sugere e você envia. */
+  attendant: "seller" | "you" | "nobody" | "copilot";
 };
 
 /**
@@ -56,7 +50,7 @@ export type AttendantBadge = {
 export function attendantBadge(
   status: string,
   botDisabledUntil: Date | null,
-  options: { botEnabled: boolean; sellerName: string },
+  options: { botEnabled: boolean; sellerName: string; botMode?: "autonomous" | "copilot" },
 ): AttendantBadge {
   const seller = options.sellerName.trim() || "vendedora";
   if (status === "closed") {
@@ -70,6 +64,9 @@ export function attendantBadge(
   }
   if (!options.botEnabled) {
     return { label: `${seller} desligada`, tone: "danger", attendant: "you" };
+  }
+  if (options.botMode === "copilot") {
+    return { label: `${seller} sugere · você envia`, tone: "info", attendant: "copilot" };
   }
   return { label: `Com a ${seller}`, tone: "success", attendant: "seller" };
 }

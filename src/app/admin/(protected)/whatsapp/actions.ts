@@ -9,6 +9,7 @@ import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
+import { supersedeAllPendingSuggestions } from "@/services/wa-suggestions";
 import { sendToOwner, type WaSkipReason } from "@/services/wa-messaging";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
@@ -111,6 +112,9 @@ export async function saveBotSettingsAction(
     const text = (name: string) => String(formData.get(name) ?? "");
     await updateSetting(db, { key: "bot_seller_name", value: text("botSellerName"), userId: user.id });
     await updateSetting(db, { key: "bot_model", value: text("botModel"), userId: user.id });
+    const botMode = text("botMode") || "autonomous";
+    await updateSetting(db, { key: "bot_mode", value: botMode, userId: user.id });
+    if (botMode === "autonomous") await supersedeAllPendingSuggestions(db);
     await updateSetting(db, {
       key: "store_exchange_policy",
       value: text("storeExchangePolicy"),

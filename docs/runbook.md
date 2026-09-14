@@ -189,6 +189,24 @@ como combinado]". O painel da conversa mostra **Retorno combinado** com
 substitui o anterior. Produção:
 migração 0040; sem template nem setting novos.
 
+**Modo copiloto** — em **Vendedora & WhatsApp › Modo da vendedora** (ou
+no menu de uma conversa: *Só sugerir nesta conversa* / *Deixar responder
+sozinha aqui* / *Voltar ao modo da loja*), cada mensagem da cliente vira um
+cartão de sugestão na conversa (balões da Lia, chips de lista/foto, o que
+ela consultou) com **Enviar**, **Editar e enviar** e **Descartar**. Nada sai
+sem você; a sugestão editada vai sem os anexos da Lia. O badge do menu e o
+toast avisam "A vendedora sugeriu uma resposta"; no seu WhatsApp chega um
+aviso por conversa a cada meia hora, no máximo. Ferramentas com efeito
+(pedido, Pix, reserva, aviso, transferência, retorno, foto, entrega) não
+rodam em copiloto — a Lia diz que a equipe cuida; para fechar a venda,
+volte a conversa para *sozinha* ou faça pelo painel. Consultas e caderninho
+(sacola, cartela, nota) continuam. Responder à mão em copiloto NÃO assume a
+conversa (ela continua sugerindo); a nova mensagem da cliente, a sua resposta à mão, assumir a conversa ou
+voltar para "sozinha" superam a sugestão pendente (o cartão mostra "há X
+min"); o aviso no seu WhatsApp é por balde de meia hora do relógio. O retorno combinado em
+copiloto também vira sugestão. Produção: migração 0041 e
+`scripts/sync-seed.ts --settings bot_mode`.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

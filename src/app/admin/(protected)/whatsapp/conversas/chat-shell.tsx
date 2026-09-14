@@ -24,6 +24,7 @@ import {
   type ChatConversation,
   type ChatMessage,
   type ChatPollResponse,
+  type ChatSuggestion,
   type ChatThread,
 } from "./use-chat-poll";
 
@@ -88,6 +89,9 @@ export function ChatShell({
   );
   const [threadActivity, setThreadActivity] = useState<ChatActivity[]>(
     initialThread?.activity ?? [],
+  );
+  const [threadSuggestion, setThreadSuggestion] = useState<ChatSuggestion | null>(
+    initialThread?.suggestion ?? null,
   );
   const [threadLoaded, setThreadLoaded] = useState(initialThread !== null);
   const [threadMissing, setThreadMissing] = useState(false);
@@ -211,6 +215,7 @@ export function ChatShell({
         setThreadConversation(null);
         setThreadContext(null);
         setThreadActivity([]);
+        setThreadSuggestion(null);
         return;
       }
       setThreadMissing(false);
@@ -218,6 +223,7 @@ export function ChatShell({
       setThreadConversation(thread.conversation);
       setThreadContext(thread.context);
       setThreadActivity(thread.activity);
+      setThreadSuggestion(thread.suggestion);
 
       const prevMap = messagesMapRef.current;
       const newInbound = thread.messages.filter(
@@ -299,6 +305,7 @@ export function ChatShell({
     setThreadConversation(null);
     setThreadContext(null);
     setThreadActivity([]);
+    setThreadSuggestion(null);
     setThreadLoaded(false);
     setThreadMissing(false);
     setContextOpen(false);
@@ -616,6 +623,9 @@ export function ChatShell({
             optimistic={optimisticForSelected}
             context={threadContext}
             activity={threadActivity}
+            suggestion={threadSuggestion}
+            botMode={threadConversation?.botMode ?? null}
+            effectiveBotMode={threadConversation?.effectiveBotMode ?? "autonomous"}
             quickReplies={quickReplies}
             scrollSignal={scrollSignal}
             contextOpen={contextOpen}

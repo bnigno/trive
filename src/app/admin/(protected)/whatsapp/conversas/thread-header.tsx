@@ -9,6 +9,7 @@ import {
   returnConversationToBotAction,
   takeOverConversationAction,
   type ActionResult,
+  setConversationBotModeAction,
 } from "./actions";
 import { initialsFor } from "./chat-format";
 import { attendantBadge, maskPhone } from "./format";
@@ -142,6 +143,8 @@ export function ThreadHeader({
   botDisabledUntil,
   botEnabled,
   sellerName,
+  botMode,
+  effectiveBotMode,
   contextOpen,
   onToggleContext,
   onBack,
@@ -157,6 +160,9 @@ export function ThreadHeader({
   botDisabledUntil: string | null;
   botEnabled: boolean;
   sellerName: string;
+  /** Override do modo nesta conversa (null = o da loja). */
+  botMode: string | null;
+  effectiveBotMode: "autonomous" | "copilot";
   contextOpen: boolean;
   onToggleContext: () => void;
   onBack: () => void;
@@ -171,8 +177,9 @@ export function ThreadHeader({
   const badge = attendantBadge(
     status,
     botDisabledUntil ? new Date(botDisabledUntil) : null,
-    { botEnabled, sellerName },
+    { botEnabled, sellerName, botMode: effectiveBotMode },
   );
+  const setMode = (mode: "autonomous" | "copilot" | null) => runAction((id) => setConversationBotModeAction(id, mode));
   const name = isOwnerNotices
     ? "Avisos internos"
     : (customerName ?? displayName ?? maskPhone(phoneE164));
@@ -199,7 +206,9 @@ export function ThreadHeader({
   const returnToSeller = () => {
     if (
       !window.confirm(
-        `Devolver a conversa para a ${sellerName}? Ela volta a responder a partir da PRÓXIMA mensagem da cliente — quem já recebeu "a equipe vai responder" não é avisada de novo.`,
+        effectiveBotMode === "copilot"
+          ? `Devolver a conversa para a ${sellerName}? Ela volta a SUGERIR respostas a partir da próxima mensagem da cliente (copiloto) — nada sai sem você.`
+          : `Devolver a conversa para a ${sellerName}? Ela volta a responder a partir da PRÓXIMA mensagem da cliente — quem já recebeu "a equipe vai responder" não é avisada de novo.`,
       )
     ) {
       return;
@@ -334,6 +343,29 @@ export function ThreadHeader({
                     Assumir a conversa
                   </button>
                 )}
+                {status !== "human" ? (
+                  botMode === null ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => setMode(effectiveBotMode === "copilot" ? "autonomous" : "copilot")}
+                      disabled={isPending || !botEnabled}
+                      className="rounded-md px-3 py-2 text-left text-ink-700 hover:bg-ivory-100 disabled:opacity-50 dark:text-ink-300 dark:hover:bg-ink-800"
+                    >
+                      {effectiveBotMode === "copilot" ? `Deixar a ${sellerName} responder sozinha aqui` : "Só sugerir nesta conversa"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => setMode(null)}
+                      disabled={isPending}
+                      className="rounded-md px-3 py-2 text-left text-ink-700 hover:bg-ivory-100 disabled:opacity-50 dark:text-ink-300 dark:hover:bg-ink-800"
+                    >
+                      Voltar ao modo da loja
+                    </button>
+                  )
+                ) : null}
                 <button
                   type="button"
                   role="menuitem"

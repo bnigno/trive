@@ -14,6 +14,7 @@ import {
   listConversationsAwaitingOwner,
   listWaConversations,
 } from "@/services/wa-conversations";
+import { listPendingSuggestions } from "@/services/wa-suggestions";
 import { maskPhone } from "../format";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +59,7 @@ export async function GET(request: Request): Promise<Response> {
   const humanCount = await countConversationsAwaitingOwner(db);
 
   if (parsed.data.light === "1") {
-    const awaiting = await listConversationsAwaitingOwner(db);
+    const [awaiting, suggestions] = await Promise.all([listConversationsAwaitingOwner(db), listPendingSuggestions(db)]);
     return Response.json(
       {
         serverTime,
@@ -68,6 +69,8 @@ export async function GET(request: Request): Promise<Response> {
           label:
             conversation.customerName ?? maskPhone(conversation.phoneE164),
         })),
+        suggestionCount: suggestions.length,
+        suggestions: suggestions.map((suggestion) => ({ id: suggestion.conversationId, label: suggestion.label })),
       },
       { headers: NO_STORE },
     );

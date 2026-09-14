@@ -67,7 +67,7 @@ export function ConversationItem({
   const badge = attendantBadge(
     item.status,
     item.botDisabledUntil ? new Date(item.botDisabledUntil) : null,
-    { botEnabled, sellerName },
+    { botEnabled, sellerName, botMode: item.botMode },
   );
   const label = conversationLabel(item);
   const hasUnread = item.unreadCount > 0;
@@ -112,6 +112,14 @@ export function ConversationItem({
               >
                 {label}
               </span>
+              {item.pendingSuggestion ? (
+                <span
+                  title="A vendedora sugeriu uma resposta — abra para enviar"
+                  className="shrink-0 rounded-full border border-sky-500/50 px-1.5 py-px text-[10px] font-medium text-sky-800 dark:border-sky-600/50 dark:text-sky-300"
+                >
+                  sugestão
+                </span>
+              ) : null}
               {item.originLabel ? (
                 <span
                   title={`Veio do site: ${item.originLabel}`}
