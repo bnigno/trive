@@ -144,6 +144,8 @@ export function followupMinutesOfDay(dueAt: Date): number {
 
 /** "Retomar sacola parada após N horas": 0 = desligado; teto de 7 dias. */
 export const IDLE_CART_MAX_HOURS = 168;
+/** Sacola parada há mais de N horas + 7 dias é passado, não pendência: ligar o recurso não varre o histórico. */
+export const IDLE_CART_MAX_AGE_MS = 7 * 86_400_000;
 
 export type IdleCartCandidateInput = {
   status: string;
@@ -175,7 +177,9 @@ export function isIdleCartCandidate(input: IdleCartCandidateInput): boolean {
   if (!input.lastInboundAt) return false;
   // A Lia respondeu por último (senão a bola está com ela, não com a cliente).
   if (!input.lastOutboundAt || input.lastOutboundAt.getTime() < input.lastInboundAt.getTime()) return false;
-  return input.now.getTime() - input.lastInboundAt.getTime() >= input.hours * 3_600_000;
+  const silence = input.now.getTime() - input.lastInboundAt.getTime();
+  if (silence < input.hours * 3_600_000) return false;
+  return silence <= input.hours * 3_600_000 + IDLE_CART_MAX_AGE_MS;
 }
 
 /** O motivo que vai para wa_followups e para a fala sintética. */

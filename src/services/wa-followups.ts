@@ -6,10 +6,13 @@ import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { FollowupKind } from "@/core/bot/followup";
-import { followupMemoryLine, idleCartReason, isIdleCartCandidate } from "@/core/bot/followup";
+import { followupMemoryLine, IDLE_CART_MAX_AGE_MS, idleCartReason, isIdleCartCandidate } from "@/core/bot/followup";
 import { parseBotState } from "@/core/bot/memory";
 import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-window";
-import { auditLog, customers, orders, settings, waConversations, waFollowups, waSuggestions } from "@/db/schema";
+import { deriveWaMessageOrigin } from "@/core/whatsapp/origin";
+import { auditLog, customers, orders, settings, waConversations, waFollowups, waMessages, waSuggestions } from "@/db/schema";
+import { isBotEnabled } from "@/services/wa-bot";
+import { isWaEnabled } from "@/services/wa-messaging";
 import { loadSendPolicy } from "@/services/wa-send-policy";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 
@@ -17,6 +20,10 @@ export const BOT_FOLLOWUP_EVENT = "wa.bot_followup";
 export const botFollowupPayloadSchema = z.object({ followupId: z.uuid() });
 
 export type FollowupCancelReason =
+  | "desligado"
+  | "sacola_vazia"
+  | "sem_opt_in"
+  | "comprou"
   | "dono"
   | "cliente"
   | "substituido"
@@ -34,6 +41,10 @@ export type FollowupCancelReason =
 
 /** O que o painel mostra para cada motivo. */
 export const FOLLOWUP_CANCEL_LABELS: Record<FollowupCancelReason, string> = {
+  desligado: "a retomada de sacola foi desligada",
+  sacola_vazia: "a sacola já estava vazia",
+  sem_opt_in: "ela não aceita mais avisos",
+  comprou: "ela comprou antes",
   dono: "cancelado por você",
   cliente: "cancelado pela cliente",
   substituido: "substituído por outro horário",
@@ -261,7 +272,12 @@ export async function scheduleIdleCartFollowups(db: DbOrTx, input: { now?: Date 
   const now = input.now ?? new Date();
   const hours = await loadIdleCartHours(db);
   if (hours <= 0) return { hours, checked: 0, scheduled: 0 };
+  // Lia ou WhatsApp desligados: agendar agora queimaria a única chance da conversa.
+  if (!(await isBotEnabled(db)) || !(await isWaEnabled(db))) return { hours, checked: 0, scheduled: 0 };
   const cutoff = new Date(now.getTime() - hours * 3_600_000);
+  const floor = new Date(cutoff.getTime() - IDLE_CART_MAX_AGE_MS);
+  // Os filtros baratos vão no SQL (o lote nunca fica preso em não-candidatas
+  // eternas) e o core reconfere; opt-in pelo TELEFONE, como o SAIR.
   const rows = await db
     .select({
       id: waConversations.id,
@@ -273,19 +289,24 @@ export async function scheduleIdleCartFollowups(db: DbOrTx, input: { now?: Date 
       lastInboundAt: waConversations.lastInboundAt,
       lastOutboundAt: waConversations.lastOutboundAt,
       marketingOptIn: customers.marketingOptIn,
+      optInCustomerId: customers.id,
     })
     .from(waConversations)
-    .leftJoin(customers, eq(customers.id, waConversations.customerId))
+    .innerJoin(customers, and(eq(customers.phoneE164, waConversations.phoneE164), isNull(customers.deletedAt)))
     .where(
       and(
         eq(waConversations.status, "open"),
+        eq(customers.marketingOptIn, true),
         lt(waConversations.lastInboundAt, cutoff),
+        gt(waConversations.lastInboundAt, floor),
+        sql`${waConversations.lastOutboundAt} >= ${waConversations.lastInboundAt}`,
         sql`jsonb_array_length(coalesce(${waConversations.botState} -> 'cart', '[]'::jsonb)) > 0`,
         // Nunca duas retomadas: a linha idle_cart existe uma vez por conversa.
         sql`NOT EXISTS (SELECT 1 FROM ${waFollowups} WHERE ${waFollowups.conversationId} = ${waConversations.id} AND ${waFollowups.kind} = 'idle_cart')`,
         or(isNull(waConversations.botDisabledUntil), lt(waConversations.botDisabledUntil, now)),
       ),
     )
+    .orderBy(desc(waConversations.lastInboundAt))
     .limit(200);
   const policy = await loadSendPolicy(db);
   const dueAt = isWithinSendWindow(now, policy.window) ? now : nextSendWindowStart(now, policy.window);
@@ -293,20 +314,28 @@ export async function scheduleIdleCartFollowups(db: DbOrTx, input: { now?: Date 
   for (const row of rows) {
     const cart = parseBotState(row.botState).cart ?? [];
     let orderedAfter = false;
-    if (row.customerId && row.lastInboundAt) {
+    if (row.lastInboundAt) {
       const [order] = await db
         .select({ id: orders.id })
         .from(orders)
-        .where(and(eq(orders.customerId, row.customerId), gt(orders.createdAt, row.lastInboundAt)))
+        .where(and(or(eq(orders.customerId, row.optInCustomerId), row.customerId ? eq(orders.customerId, row.customerId) : sql`false`), gt(orders.createdAt, row.lastInboundAt)))
         .limit(1);
       orderedAfter = order !== undefined;
     }
+    // "A Lia respondeu por último" de verdade: a última mensagem é dela (não um aviso automático).
+    const [last] = await db
+      .select({ direction: waMessages.direction, dedupeKey: waMessages.dedupeKey })
+      .from(waMessages)
+      .where(eq(waMessages.conversationId, row.id))
+      .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+      .limit(1);
+    const liaLast = last !== undefined && last.direction === "outbound" && deriveWaMessageOrigin({ direction: "outbound", dedupeKey: last.dedupeKey, templateKey: null }) === "bot";
     const candidate = isIdleCartCandidate({
       status: row.status,
       botDisabledUntil: row.botDisabledUntil,
       cartCount: cart.length,
       lastInboundAt: row.lastInboundAt,
-      lastOutboundAt: row.lastOutboundAt,
+      lastOutboundAt: liaLast ? row.lastOutboundAt : null,
       hasOptIn: row.marketingOptIn === true,
       orderedAfterLastInbound: orderedAfter,
       hours,
@@ -317,7 +346,7 @@ export async function scheduleIdleCartFollowups(db: DbOrTx, input: { now?: Date 
       await scheduleBotFollowup(db, {
         conversationId: row.id,
         phoneE164: row.phoneE164,
-        customerId: row.customerId,
+        customerId: row.customerId ?? row.optInCustomerId,
         kind: "idle_cart",
         reason: idleCartReason(cart.length),
         dueAt,
@@ -326,9 +355,53 @@ export async function scheduleIdleCartFollowups(db: DbOrTx, input: { now?: Date 
       });
       scheduled += 1;
     } catch (error) {
-      // Corrida entre duas rodadas: o UNIQUE recusou a segunda — a primeira já agendou.
-      console.warn(`[idle-cart] conversa ${row.id} não agendada:`, error instanceof Error ? error.message : error);
+      // Corrida entre duas rodadas: o UNIQUE recusou a segunda — a primeira já agendou. Qualquer outro erro sobe (o Inngest tenta de novo).
+      if (!isUniqueViolation(error)) throw error;
     }
   }
   return { hours, checked: rows.length, scheduled };
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  const code = (error as { code?: string; cause?: { code?: string } } | null)?.code ?? (error as { cause?: { code?: string } } | null)?.cause?.code;
+  return code === "23505" || /unique|duplicate key/i.test(error instanceof Error ? error.message : String(error));
+}
+
+/** Desligar o recurso (0 h) ou tirar o opt-in: as retomadas ainda agendadas caem. */
+export async function cancelScheduledIdleCartFollowups(db: DbOrTx, input: { phoneE164?: string; reason: FollowupCancelReason; now?: Date }): Promise<{ canceled: number }> {
+  const now = input.now ?? new Date();
+  const updated = await db
+    .update(waFollowups)
+    .set({ status: "canceled", canceledAt: now, canceledReason: input.reason, updatedAt: now })
+    .where(and(eq(waFollowups.kind, "idle_cart"), eq(waFollowups.status, "scheduled"), ...(input.phoneE164 ? [eq(waFollowups.phoneE164, input.phoneE164)] : [])))
+    .returning({ id: waFollowups.id });
+  return { canceled: updated.length };
+}
+
+/**
+ * Na hora de mandar (turno proativo): a sacola parada ainda é uma sacola
+ * parada? Zero carência (qualquer mensagem dela depois do agendamento é
+ * "ela voltou"), a sacola ainda tem peças, nenhum pedido depois, opt-in de
+ * pé e o recurso ainda ligado. Devolve o motivo para não mandar, ou null.
+ */
+export async function idleCartStillValid(
+  db: DbOrTx,
+  input: { conversation: { id: string; phoneE164: string; customerId: string | null; botState: unknown }; followupCreatedAt: Date; lastInboundAt: Date | null },
+): Promise<FollowupCancelReason | null> {
+  if ((await loadIdleCartHours(db)) <= 0) return "desligado";
+  if (input.lastInboundAt && input.lastInboundAt.getTime() > input.followupCreatedAt.getTime()) return "superada";
+  if ((parseBotState(input.conversation.botState).cart ?? []).length === 0) return "sacola_vazia";
+  const [customer] = await db
+    .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
+    .from(customers)
+    .where(and(eq(customers.phoneE164, input.conversation.phoneE164), isNull(customers.deletedAt)))
+    .limit(1);
+  if (!customer || customer.marketingOptIn !== true) return "sem_opt_in";
+  const [order] = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(and(or(eq(orders.customerId, customer.id), input.conversation.customerId ? eq(orders.customerId, input.conversation.customerId) : sql`false`), gt(orders.createdAt, input.followupCreatedAt)))
+    .limit(1);
+  if (order) return "comprou";
+  return null;
 }

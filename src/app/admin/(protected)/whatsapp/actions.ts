@@ -9,6 +9,7 @@ import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
+import { cancelScheduledIdleCartFollowups } from "@/services/wa-followups";
 import { supersedeAllPendingSuggestions } from "@/services/wa-suggestions";
 import { sendToOwner, type WaSkipReason } from "@/services/wa-messaging";
 import { getFileStorage } from "@/adapters/storage";
@@ -144,11 +145,14 @@ export async function saveBotSettingsAction(
       value: hours("handoffAutoReturnHours"),
       userId: user.id,
     });
+    const idleCartHours = hours("idleCartFollowupHours");
     await updateSetting(db, {
       key: "bot_idle_cart_followup_hours",
-      value: hours("idleCartFollowupHours"),
+      value: idleCartHours,
       userId: user.id,
     });
+    // Desligou: o que já estava agendado para a abertura da janela cai junto.
+    if (idleCartHours === 0) await cancelScheduledIdleCartFollowups(db, { reason: "desligado" });
 
     revalidatePath("/admin/whatsapp");
     revalidatePath("/admin/whatsapp/conversas");

@@ -109,6 +109,9 @@ describe("isIdleCartCandidate", () => {
     // A bola está com a Lia (ela não respondeu): não é a cliente que sumiu.
     expect(isIdleCartCandidate({ ...base, lastOutboundAt: new Date(NOW.getTime() - 6 * 3_600_000) })).toBe(false);
     expect(isIdleCartCandidate({ ...base, lastOutboundAt: null })).toBe(false);
+    // Sacola parada há 30 dias com 24 h configuradas é passado, não pendência.
+    expect(isIdleCartCandidate({ ...base, hours: 24, lastInboundAt: new Date(NOW.getTime() - 30 * 86_400_000), lastOutboundAt: new Date(NOW.getTime() - 30 * 86_400_000 + 60_000) })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, hours: 24, lastInboundAt: new Date(NOW.getTime() - 3 * 86_400_000), lastOutboundAt: new Date(NOW.getTime() - 3 * 86_400_000 + 60_000) })).toBe(true);
     expect(idleCartReason(1)).toBe("1 peça parada na sacola");
     expect(idleCartReason(3)).toBe("3 peças paradas na sacola");
   });

@@ -212,8 +212,14 @@ parada após (horas)** (0 = desligado). A cada hora (`wa-idle-cart-followup`,
 `7 * * * *`), quem tem peças na sacola da Lia, sumiu há N horas depois de
 ela responder, tem cadastro com opt-in e não fez pedido depois ganha UMA
 retomada (`wa_followups` kind `idle_cart`, uma vez por conversa, para
-sempre), agendada para agora na janela (fora dela, para a abertura). No
-horário a Lia manda uma mensagem leve retomando a sacola — sem desconto
+sempre), agendada para agora na janela (fora dela, para a abertura). Só
+sacolas paradas há no máximo N horas + 7 dias (ligar o recurso não varre o
+histórico); "a Lia respondeu por último" precisa ser a Lia de verdade
+(aviso automático não conta); com a Lia ou o WhatsApp desligados a varredura
+não agenda. **Na hora de mandar tudo é reconferido**: qualquer mensagem
+dela depois do agendamento, sacola esvaziada, pedido feito (site ou Lia),
+opt-in retirado ou recurso desligado (0 h) cancelam com o motivo no painel.
+No horário a Lia manda uma mensagem leve retomando a sacola — sem desconto
 inventado; em copiloto vira sugestão "(retomada da sacola)". Só a sacola da
 Lia (a sacola do site não passa pelo caderninho). Depois do deploy, registrar
 a função nova no Inngest: `curl -X PUT https://trivemaison.com.br/api/inngest`.
