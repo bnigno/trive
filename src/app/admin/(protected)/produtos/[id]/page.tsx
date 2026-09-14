@@ -10,6 +10,8 @@ import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { getAtelierIntakeForProduct } from "@/services/atelier";
+import { getFitSignalsForProduct } from "@/services/delivery-feedback";
+import { FIT_SIGNAL_LABELS } from "@/core/catalog/fit-signal";
 import { careLabels } from "@/core/atelier/proposal";
 import { errorDetailLabel, interpretationFailedLabel } from "@/core/atelier/reply";
 import { formatUsdCents } from "@/core/ai/model-cost";
@@ -105,13 +107,14 @@ export default async function ProdutoDetalhePage({
     notFound();
   }
 
-  const [categoryRows, readiness, atelierIntake] = await Promise.all([
+  const [categoryRows, readiness, atelierIntake, fitSignals] = await Promise.all([
     db
       .select({ id: categories.id, name: categories.name })
       .from(categories)
       .orderBy(asc(categories.name)),
     listProductReadiness(db, { productIds: [detail.id] }).then((map) => map.get(detail.id)),
     getAtelierIntakeForProduct(db, id),
+    getFitSignalsForProduct(db, id),
   ]);
   // Vindo do selo "sem peso": abre e foca a primeira variação ativa sem peso.
   const focusWeightVariantId =
@@ -586,6 +589,24 @@ export default async function ProdutoDetalhePage({
       </Card>
 
       <OwnerOnly>
+        {fitSignals.length > 0 ? (
+          <Card title="Caimento pelas clientes">
+            <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Respostas ao “Chegou bem?” por tamanho. A partir de 3 respostas, 60% na mesma direção viram o aviso na vitrine.
+            </p>
+            <ul className="flex flex-col gap-1 text-sm">
+              {fitSignals.map((row) => (
+                <li key={row.size} className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.size}</span>
+                  <span className="text-zinc-600 dark:text-zinc-400">
+                    amei {row.amei} · ficou grande {row.grande} · ficou pequeno {row.pequeno}
+                  </span>
+                  {row.signal ? <Badge tone="warning">{FIT_SIGNAL_LABELS[row.signal]}</Badge> : null}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
         <Card id="fita-metrica" title="Fita métrica">
           {sizeAxis && sizeOptions.length > 0 ? (
             <MeasurementsForm productId={detail.id} sizes={sizeOptions} chart={sizeChart} />

@@ -32,6 +32,8 @@ import { OrderActions } from "./order-actions";
 import { PackForm } from "./pack-form";
 import { DeliverForm } from "./deliver-form";
 import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
+import { getFeedbackForOrder } from "@/services/delivery-feedback";
+import { FEEDBACK_LABELS } from "@/core/orders/feedback";
 import { giftNoteUrl } from "@/services/gifts";
 import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { packagePhotoUrl } from "@/services/packing";
@@ -67,6 +69,7 @@ export default async function PedidoDetalhePage({
   const db = getDb();
   const order = await getOrderDetail(db, id);
   if (!order) notFound();
+  const feedback = order.status === "delivered" || order.status === "refunded" ? await getFeedbackForOrder(db, id) : null;
   const status = order.status as OrderStatus;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
@@ -220,6 +223,23 @@ export default async function PedidoDetalhePage({
           <OrderMarginCard order={order} />
 
           <OrderFinancialCard orderId={order.id} />
+
+          {order.status === "delivered" ? (
+            <Card title="Chegou bem?">
+              {!feedback ? (
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">Ainda não perguntado — a lista sai um dia depois da entrega, das 9h às 21h, se a cliente aceita avisos.</p>
+              ) : feedback.answer ? (
+                <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                  <Badge tone={feedback.answer === "amei" ? "success" : feedback.answer === "defeito" || feedback.answer === "falar" ? "danger" : "warning"}>
+                    {FEEDBACK_LABELS[feedback.answer]}
+                  </Badge>{" "}
+                  {feedback.answeredAt ? `respondido em ${formatDateTimeSP(feedback.answeredAt)}` : ""}
+                </p>
+              ) : (
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">Perguntado em {formatDateTimeSP(feedback.askedAt)} — sem resposta ainda.</p>
+              )}
+            </Card>
+          ) : null}
 
           <Card title="Linha do tempo">
             <OrderTimeline

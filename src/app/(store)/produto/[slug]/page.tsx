@@ -15,6 +15,8 @@ import { notFound } from "next/navigation";
 import { IconChevron } from "@/components/store/icons";
 import { ProductCard } from "@/components/store/product-card";
 import { SectionHeading } from "@/components/store/section-heading";
+import { fitSignalStoreLine, type FitSignal } from "@/core/catalog/fit-signal";
+import { getFitSignalsForProduct } from "@/services/delivery-feedback";
 import { getDb } from "@/db/client";
 import {
   getPublicProductBySlug,
@@ -92,6 +94,7 @@ export default async function ProdutoPage({ params }: Props) {
   const { slug } = await params;
   const db = getDb();
   const product = await getPublicProductBySlug(db, slug);
+  const fitSignals = product ? (await getFitSignalsForProduct(db, product.id)).filter((row) => row.signal !== null) : [];
   if (!product) notFound();
 
   // Ficha da peça (placa de museu) e fita métrica, quando a maison cadastrou.
@@ -199,9 +202,16 @@ export default async function ProdutoPage({ params }: Props) {
               <MuseumPlaque data={plaque} />
             </DetailsSheet>
           ) : null}
-          {!isSizeChartEmpty(sizeChart) ? (
+          {!isSizeChartEmpty(sizeChart) || fitSignals.length > 0 ? (
             <DetailsSheet title="Medidas (cm)">
-              <SizeChartTable chart={sizeChart} />
+              {!isSizeChartEmpty(sizeChart) ? <SizeChartTable chart={sizeChart} /> : null}
+              {fitSignals.length > 0 ? (
+                <ul className="mt-3 flex flex-col gap-1 font-store text-sm text-ink-700">
+                  {fitSignals.map((row) => (
+                    <li key={row.size}>{fitSignalStoreLine(row.size, row.signal as FitSignal)}</li>
+                  ))}
+                </ul>
+              ) : null}
             </DetailsSheet>
           ) : null}
           <DetailsSheet title="Envio e trocas">

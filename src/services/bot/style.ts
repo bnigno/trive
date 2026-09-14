@@ -5,6 +5,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { renderProfileNote } from "@/core/style/profile";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getStyleProfileByPhone, saveStyleProfile } from "@/services/style-profiles";
+import { listFeedbackByPhone } from "@/services/delivery-feedback";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
 
 import { DRY_RUN_TEXT, updateBotState } from "./shared";
@@ -35,10 +36,11 @@ export async function execAtualizarCartela(
 
 /** Linhas do caderninho que moram em tabela própria (cartela, reserva, avisos). */
 export async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<string[]> {
-  const [profile, hold, alerts] = await Promise.all([
+  const [profile, hold, alerts, feedback] = await Promise.all([
     getStyleProfileByPhone(db, phoneE164),
     getActiveHoldByPhone(db, phoneE164),
     listOpenAlertsByPhone(db, phoneE164),
+    listFeedbackByPhone(db, phoneE164),
   ]);
   const lines: string[] = [];
   if (profile) lines.push(...renderProfileNote(profile.profile, profile.paletteName));
@@ -50,6 +52,7 @@ export async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<st
         .join(", ")}`,
     );
   }
+  lines.push(...feedback);
   return lines;
 }
 
