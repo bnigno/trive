@@ -93,7 +93,7 @@ import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
 import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode, supersedePendingSuggestions } from "./wa-suggestions";
-import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
+import { execAnotar, execAtualizarCartela, execSugerirTamanho, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
 // executores moram em src/services/bot/* por família.
@@ -272,6 +272,8 @@ export function buildToolExecutor(
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
+      case "sugerir_tamanho":
+        return execSugerirTamanho(db, ctx, parsed.data as BotToolInputs["sugerir_tamanho"]);
       case "registrar_foto_com_a_peca":
         return execRegistrarFotoComAPeca(db, ctx, parsed.data as BotToolInputs["registrar_foto_com_a_peca"]);
       case "retirar_minha_foto":
