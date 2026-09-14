@@ -247,8 +247,11 @@ Lia ou pelo painel gira a credencial do site (quem tivesse semeado medidas
 com o telefone dela perde o acesso). Contornos abaixo de 60/50/60 cm são
 recusados (numeração de roupa não é medida). Atenção (decisão do dono
 pendente): quem sabe o telefone pode gravar as PRIMEIRAS medidas de uma
-cartela sem medidas pelo quiz/site — a cliente apaga pela Lia. Produção:
-migração 0042; sem setting.
+cartela sem medidas pelo quiz/site — a cliente apaga pela Lia. No quiz
+`/estilo`, o sétimo passo "Suas medidas (opcional)" guarda as três medidas
+junto com a cartela ("Pular" em destaque); a tela "A sua cartela" mostra
+"Medidas guardadas · Apagar minhas medidas" (só no aparelho que gravou).
+Produção: migração 0042; sem setting.
 
 ## Entrega por motoboy: rota do dia e "Saiu"
 
