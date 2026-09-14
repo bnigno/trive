@@ -197,6 +197,17 @@ link — template `owner_atelier_card`, evento `wa.atelier_card` (2 tentativas;
 sem foto na ficha, não há cartão). Produção: migração 0035 e
 `scripts/sync-seed.ts --templates owner_atelier_card`.
 
+**/admin/produtos/chegadas** lista cada chegada (fotos, recado, o que foi
+entendido, rascunho, fornecedor, conta, cartão, o que deu errado). **Refazer**
+(só o dono) arquiva o rascunho antigo (nunca apaga — edição manual fica
+arquivada junto), cancela a conta a pagar pendente e põe a montagem de novo na
+fila com as mesmas fotos e o mesmo recado; chegada que **já lançou estoque**
+não se refaz por aqui (estoque é histórico) — ajuste pelo painel. Fotos sem
+recado: **3 minutos** depois da primeira foto do lote a dona recebe "Recebi
+2 fotos 📸 Me conta o nome, cores, tamanhos e custo" (template
+`owner_atelier_nudge`, evento `wa.atelier_nudge`, só se o recado ainda não
+chegou). Produção: `scripts/sync-seed.ts --templates owner_atelier_nudge`.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

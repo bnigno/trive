@@ -9,6 +9,8 @@ import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
 export const INTAKE_WINDOW_MS = 15 * 60_000;
 export const INTAKE_MAX_PHOTOS = 3;
 export const INTAKE_GRACE_MS = 45_000;
+/** Fotos sem recado há isto: a dona ganha um lembrete ("me conta nome, cores, tamanhos e custo?"). */
+export const INTAKE_NUDGE_AFTER_MS = 180_000;
 /** Foto que chega até isto depois do recado ainda é da mesma chegada. */
 export const INTAKE_LATE_PHOTO_MS = 60_000;
 
@@ -53,6 +55,32 @@ export function hasOpenBatch(
   options: IntakeBatchOptions = {},
 ): boolean {
   return openPhotos(messages, now, options).length > 0;
+}
+
+/**
+ * A foto que acabou de chegar abre um lote novo? (é a única sem dona na
+ * janela) — só ela agenda o lembrete; as seguintes do mesmo lote, não.
+ */
+export function isBatchStart(
+  messages: readonly IntakeMessage[],
+  photoId: string,
+  now: Date,
+  options: IntakeBatchOptions = {},
+): boolean {
+  const open = openPhotos(messages, now, options);
+  return open.length === 1 && open[0].id === photoId;
+}
+
+/** Na hora do lembrete: as fotos continuam sem recado? (nenhuma reivindicada, a primeira ainda na janela). */
+export function nudgeDue(
+  messages: readonly IntakeMessage[],
+  photoId: string,
+  now: Date,
+  options: IntakeBatchOptions = {},
+): { due: boolean; photos: number } {
+  const open = openPhotos(messages, now, options);
+  const stillOpen = open.some((photo) => photo.id === photoId);
+  return { due: stillOpen, photos: open.length };
 }
 
 /**

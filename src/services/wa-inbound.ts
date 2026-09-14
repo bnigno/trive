@@ -26,6 +26,7 @@ import { isValidE164, toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import {
   enqueueAtelierHelp,
+  enqueueAtelierNudge,
   isAtelierEnabled,
   openAtelierIntake,
   routeOwnerInbound,
@@ -576,6 +577,7 @@ export async function processZapiInbound(
         body: text,
         mediaUrl: media?.mediaUrl ?? null,
         now,
+        waMessageId: message.id,
       });
       const done = async (action: "atelier_queued" | "atelier_photo" | "atelier_help" | "transcribe_queued") => {
         await markDone();
@@ -593,7 +595,13 @@ export async function processZapiInbound(
         });
         return done("atelier_queued");
       }
-      if (decision.kind === "photo") return done("atelier_photo");
+      if (decision.kind === "photo") {
+        // A primeira foto do lote agenda o lembrete "faltou o recado" (+3 min).
+        if (decision.batchStart) {
+          await enqueueAtelierNudge(tx, { conversationId: conversation.id, phoneE164, photoWaMessageId: message.id, now });
+        }
+        return done("atelier_photo");
+      }
       if (decision.kind === "transcribe") {
         await queueTranscription();
         return done("transcribe_queued");

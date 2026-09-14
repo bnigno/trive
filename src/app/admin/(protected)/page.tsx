@@ -7,6 +7,7 @@ import { isOwner, requireUser } from "@/services/auth";
 import { listOrders } from "@/services/orders";
 import { countRouteOfDay } from "@/services/delivery-routes";
 import { countOrdersMustShipToday } from "@/services/needed-by";
+import { countAtelierIntakesFailed } from "@/services/atelier";
 import { countOrdersAwaitingPacking } from "@/services/packing";
 import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
@@ -92,7 +93,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday] =
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, atelierFailed] =
     await Promise.all([
       safe(async () => {
         const db = getDb();
@@ -111,9 +112,10 @@ async function loadSharedDashboard() {
       safe(() => getReadinessSummary(getDb())),
       safe(() => countRouteOfDay(getDb())),
       safe(() => countOrdersMustShipToday(getDb())),
+      safe(() => countAtelierIntakesFailed(getDb())),
     ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, atelierFailed };
 }
 
 /**
@@ -339,6 +341,16 @@ export default async function AdminDashboardPage() {
               />
             </Link>
           </>
+        ) : null}
+        {data.atelierFailed ? (
+          <Link href="/admin/produtos/chegadas" className="block">
+            <StatCard
+              label="Chegadas com problema"
+              value={String(data.atelierFailed)}
+              tone="warning"
+              hint="Fotos + recado pelo WhatsApp que não viraram rascunho. Abra e refaça."
+            />
+          </Link>
         ) : null}
         {data.mustShipToday ? (
           <Link href="/admin/pedidos/data-marcada" className="block">

@@ -27,19 +27,24 @@ import { arrivalUserText, buildArrivalPrompt } from "@/core/atelier/prompt";
 import {
   INTAKE_GRACE_MS,
   INTAKE_LATE_PHOTO_MS,
+  INTAKE_NUDGE_AFTER_MS,
   INTAKE_WINDOW_MS,
   hasOpenBatch,
+  isBatchStart,
   noteFromMessage,
+  nudgeDue,
   selectIntakeBatch,
   selectLatePhotos,
   type IntakeMessage,
   type NoteKind,
 } from "@/core/atelier/batch";
+import { canRedoIntake, type RedoCheck } from "@/core/atelier/redo";
 import { draftNameFromNote } from "@/core/atelier/name";
 import {
   arrivalDetailsLine,
   atelierDraftVars,
   atelierHelpReasonText,
+  atelierNudgeVars,
   isAtelierHelpReason,
   type AtelierHelpReason,
 } from "@/core/atelier/reply";
@@ -54,6 +59,7 @@ import {
   auditLog,
   categories,
   financialEntries,
+  products,
   productVariants,
   settings,
   suppliers,
@@ -64,7 +70,8 @@ import {
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { enqueueAtelierCard } from "@/services/atelier-card";
 import { receiveArrivalPurchase, type ArrivalPurchaseResult } from "@/services/atelier-purchase";
-import { addProductImage, createProduct, type ServiceDb } from "@/services/catalog";
+import { addProductImage, createProduct, updateProduct, type ServiceDb } from "@/services/catalog";
+import { cancelEntry } from "@/services/financial";
 import { suggestPriceForCost, type PricingDb } from "@/services/pricing";
 import { getSettingsMap } from "@/services/settings";
 import { getStoreMap } from "@/services/store-catalog";
@@ -85,6 +92,8 @@ export const ARRIVAL_MODEL_MIN_BUDGET_MS = 6_000;
 const DEFAULT_ARRIVAL_MODEL = "claude-sonnet-5";
 export const ATELIER_DRAFT_TEMPLATE = "owner_atelier_draft";
 export const ATELIER_HELP_TEMPLATE = "owner_atelier_help";
+export const ATELIER_NUDGE_TEMPLATE = "owner_atelier_nudge";
+export const ATELIER_NUDGE_EVENT = "wa.atelier_nudge";
 
 /** Setting atelier_enabled: ausente = ligado. */
 export async function isAtelierEnabled(db: DbOrTx): Promise<boolean> {
@@ -160,13 +169,23 @@ export async function hasOpenAtelierBatch(db: DbOrTx, phoneE164: string, now: Da
   return hasOpenBatch(messages, now);
 }
 
+/** Esta foto abre um lote (é a única sem recado na janela)? */
+export async function isAtelierBatchStart(db: DbOrTx, phoneE164: string, photoWaMessageId: string, now: Date): Promise<boolean> {
+  const messages = await loadIntakeMessages(db, {
+    phoneE164,
+    from: new Date(now.getTime() - INTAKE_WINDOW_MS),
+    to: new Date(now.getTime() + 60_000),
+  });
+  return isBatchStart(messages, photoWaMessageId, now);
+}
+
 // ---------------------------------------------------------------------------
 // A decisão no webhook: mensagem da dona no número da maison.
 // ---------------------------------------------------------------------------
 
 export type OwnerInboundRoute =
   | { kind: "intake" }
-  | { kind: "photo" }
+  | { kind: "photo"; batchStart: boolean }
   | { kind: "transcribe" }
   | { kind: "help"; reason: AtelierHelpReason }
   | { kind: "normal" };
@@ -185,11 +204,15 @@ export async function routeOwnerInbound(
     body: string;
     mediaUrl: string | null;
     now: Date;
+    /** A própria mensagem (já gravada), para saber se a foto abre um lote. */
+    waMessageId?: string;
   },
 ): Promise<OwnerInboundRoute> {
   if (input.kind === "image") {
     if (!input.mediaUrl) return { kind: "help", reason: "fotos_indisponiveis" };
-    return noteFromMessage({ kind: "image", body: input.body }).note ? { kind: "intake" } : { kind: "photo" };
+    if (noteFromMessage({ kind: "image", body: input.body }).note) return { kind: "intake" };
+    const batchStart = input.waMessageId ? await isAtelierBatchStart(db, input.phoneE164, input.waMessageId, input.now) : false;
+    return { kind: "photo", batchStart };
   }
   if (input.kind === "audio") {
     if (input.mediaUrl && (await isBotMediaEnabled(db)) && isTranscriptionConfigured()) {
@@ -281,6 +304,53 @@ export async function enqueueAtelierHelp(
     aggregateType: "wa_conversation",
     aggregateId: input.conversationId,
     payload: { reason: input.reason, dedupeKey: `wa.atelier_help:${input.zapiMessageId}` },
+  });
+}
+
+/**
+ * Foto sem recado: em 3 minutos a dona ganha um lembrete — só a PRIMEIRA
+ * foto do lote agenda (uma vez por lote), e a hora de mandar confere se as
+ * fotos continuam sem recado.
+ */
+export async function enqueueAtelierNudge(
+  tx: DbOrTx,
+  input: { conversationId: string; phoneE164: string; photoWaMessageId: string; now: Date },
+): Promise<void> {
+  await enqueueOutboxEvent(tx, {
+    eventType: ATELIER_NUDGE_EVENT,
+    dedupeKey: `wa.atelier_nudge:${input.photoWaMessageId}`,
+    aggregateType: "wa_conversation",
+    aggregateId: input.conversationId,
+    payload: { phoneE164: input.phoneE164, photoWaMessageId: input.photoWaMessageId },
+    nextAttemptAt: new Date(input.now.getTime() + INTAKE_NUDGE_AFTER_MS),
+  });
+}
+
+export const atelierNudgePayloadSchema = z.object({
+  phoneE164: z.string().min(1),
+  photoWaMessageId: z.uuid(),
+});
+
+export async function sendAtelierNudge(
+  db: DbOrTx,
+  provider: MessagingProvider,
+  input: z.input<typeof atelierNudgePayloadSchema>,
+  clock: { now?: () => Date } = {},
+): Promise<SendWaMessageResult | { skipped: "recado_chegou" | "desligado" }> {
+  const parsed = atelierNudgePayloadSchema.parse(input);
+  const now = (clock.now ?? (() => new Date()))();
+  if (!(await isAtelierEnabled(db))) return { skipped: "desligado" };
+  const messages = await loadIntakeMessages(db, {
+    phoneE164: parsed.phoneE164,
+    from: new Date(now.getTime() - INTAKE_WINDOW_MS),
+    to: new Date(now.getTime() + 60_000),
+  });
+  const check = nudgeDue(messages, parsed.photoWaMessageId, now);
+  if (!check.due) return { skipped: "recado_chegou" };
+  return sendToOwner(db, provider, {
+    templateKey: ATELIER_NUDGE_TEMPLATE,
+    vars: atelierNudgeVars(check.photos),
+    dedupeKey: `wa.atelier_nudge:${parsed.photoWaMessageId}`,
   });
 }
 
@@ -861,4 +931,154 @@ export async function getAtelierIntakeForProduct(
     payable: row.payableId && row.payableCents !== null && row.payableStatus ? { id: row.payableId, amountCents: row.payableCents, status: row.payableStatus } : null,
     cardPath: row.cardPath,
   };
+}
+
+// ---------------------------------------------------------------------------
+// O painel: as chegadas e o "Refazer".
+// ---------------------------------------------------------------------------
+
+export type AtelierIntakeRow = {
+  id: string;
+  createdAt: Date;
+  status: string;
+  note: string;
+  noteKind: string;
+  photosCount: number;
+  errorDetail: string | null;
+  parsed: AtelierParsed | null;
+  product: { id: string; name: string; status: string } | null;
+  supplier: { id: string; name: string } | null;
+  payable: { id: string; amountCents: number; status: string } | null;
+  cardPath: string | null;
+  redo: RedoCheck;
+};
+
+export async function listAtelierIntakes(db: DbOrTx, input: { limit?: number } = {}): Promise<AtelierIntakeRow[]> {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+  const rows = await db
+    .select({
+      id: atelierIntakes.id,
+      createdAt: atelierIntakes.createdAt,
+      status: atelierIntakes.status,
+      note: atelierIntakes.note,
+      noteKind: atelierIntakes.noteKind,
+      photosCount: atelierIntakes.photosCount,
+      errorDetail: atelierIntakes.errorDetail,
+      parsed: atelierIntakes.parsed,
+      cardPath: atelierIntakes.cardPath,
+      productId: products.id,
+      productName: products.name,
+      productStatus: products.status,
+      supplierId: suppliers.id,
+      supplierName: suppliers.name,
+      payableId: financialEntries.id,
+      payableCents: financialEntries.amountCents,
+      payableStatus: financialEntries.status,
+    })
+    .from(atelierIntakes)
+    .leftJoin(products, eq(products.id, atelierIntakes.productId))
+    .leftJoin(suppliers, eq(suppliers.id, atelierIntakes.supplierId))
+    .leftJoin(financialEntries, eq(financialEntries.id, atelierIntakes.financialEntryId))
+    .orderBy(desc(atelierIntakes.createdAt))
+    .limit(limit);
+  return rows.map((row) => {
+    const parsed = parseAtelierParsed(row.parsed);
+    return {
+      id: row.id,
+      createdAt: row.createdAt,
+      status: row.status,
+      note: row.note,
+      noteKind: row.noteKind,
+      photosCount: row.photosCount,
+      errorDetail: row.errorDetail,
+      parsed,
+      product: row.productId && row.productName && row.productStatus ? { id: row.productId, name: row.productName, status: row.productStatus } : null,
+      supplier: row.supplierId && row.supplierName ? { id: row.supplierId, name: row.supplierName } : null,
+      payable: row.payableId && row.payableCents !== null && row.payableStatus ? { id: row.payableId, amountCents: row.payableCents, status: row.payableStatus } : null,
+      cardPath: row.cardPath,
+      redo: canRedoIntake({ status: row.status, movements: parsed?.purchase?.movements ?? 0 }),
+    };
+  });
+}
+
+export async function countAtelierIntakesFailed(db: DbOrTx): Promise<number> {
+  const [row] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(atelierIntakes)
+    .where(eq(atelierIntakes.status, "failed"));
+  return row?.total ?? 0;
+}
+
+export type RedoAtelierIntakeResult =
+  | { ok: true; archivedProductId: string | null; canceledEntryId: string | null }
+  | { ok: false; reason: "chegada_inexistente" | "em_andamento" | "estoque_lancado" };
+
+/**
+ * A chegada nasce de novo com as mesmas fotos e o mesmo recado: o rascunho
+ * antigo é arquivado (nunca apagado — o que a dona editou fica lá), a
+ * conta a pagar pendente é cancelada e a montagem volta para a fila.
+ */
+export async function redoAtelierIntake(
+  db: DbOrTx,
+  input: { intakeId: string; userId: string; now?: Date },
+): Promise<RedoAtelierIntakeResult> {
+  const now = input.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const [intake] = await tx.select().from(atelierIntakes).where(eq(atelierIntakes.id, input.intakeId)).limit(1).for("update");
+    if (!intake) return { ok: false, reason: "chegada_inexistente" };
+    const parsed = parseAtelierParsed(intake.parsed);
+    const check = canRedoIntake({ status: intake.status, movements: parsed?.purchase?.movements ?? 0 });
+    if (!check.ok) return { ok: false, reason: check.reason };
+
+    let archivedProductId: string | null = null;
+    if (intake.productId) {
+      const [product] = await tx.select({ id: products.id, status: products.status }).from(products).where(eq(products.id, intake.productId)).limit(1);
+      if (product && product.status === "draft") {
+        await updateProduct(tx as unknown as ServiceDb, { productId: product.id, status: "archived", userId: input.userId });
+        archivedProductId = product.id;
+      }
+    }
+    let canceledEntryId: string | null = null;
+    if (intake.financialEntryId) {
+      const [entry] = await tx.select({ id: financialEntries.id, status: financialEntries.status }).from(financialEntries).where(eq(financialEntries.id, intake.financialEntryId)).limit(1);
+      if (entry && entry.status === "pending") {
+        await cancelEntry(tx, { entryId: entry.id, userId: input.userId, reason: "Chegada do Ateliê refeita pelo painel." });
+        canceledEntryId = entry.id;
+      }
+    }
+
+    const redoCount = ((intake.parsed as { redoCount?: number } | null)?.redoCount ?? 0) + 1;
+    await tx
+      .update(atelierIntakes)
+      .set({
+        status: "queued",
+        productId: null,
+        supplierId: null,
+        financialEntryId: null,
+        cardPath: null,
+        uploadedWaMessageIds: [],
+        parsed: { redoCount },
+        errorDetail: null,
+        processedAt: null,
+        updatedAt: now,
+      })
+      .where(eq(atelierIntakes.id, intake.id));
+    await enqueueOutboxEvent(tx, {
+      eventType: "wa.atelier_intake",
+      dedupeKey: `wa.atelier:redo:${intake.id}:${redoCount}`,
+      aggregateType: "wa_conversation",
+      aggregateId: intake.conversationId,
+      payload: { conversationId: intake.conversationId, triggerWaMessageId: intake.triggerWaMessageId },
+    });
+    await tx.insert(auditLog).values({
+      actorType: "user",
+      actorId: input.userId,
+      action: "atelier.redo",
+      entityType: "atelier_intake",
+      entityId: intake.id,
+      before: { status: intake.status, productId: intake.productId, financialEntryId: intake.financialEntryId },
+      after: { redoCount, archivedProductId, canceledEntryId },
+    });
+    return { ok: true, archivedProductId, canceledEntryId };
+  });
 }

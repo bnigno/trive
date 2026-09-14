@@ -7,9 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FakeTranscriber } from "@/adapters/transcription/fake";
 import { FakeMessagingProvider } from "@/adapters/zapi/fake";
-import { INTAKE_GRACE_MS } from "@/core/atelier/batch";
+import { INTAKE_GRACE_MS, INTAKE_NUDGE_AFTER_MS } from "@/core/atelier/batch";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
+import { sendAtelierNudge } from "@/services/atelier";
 import { processZapiInbound } from "@/services/wa-inbound";
 import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -69,14 +70,22 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
   const outbox = () => db.select().from(schema.outboxEvents);
   const intakes = () => db.select().from(schema.atelierIntakes);
 
-  it("foto sem legenda: fica no lote, sem turno da Lia nem encaminhamento", async () => {
+  it("foto sem legenda: fica no lote, sem turno da Lia nem encaminhamento; a primeira agenda o lembrete (+3 min), a segunda não", async () => {
+    const before = Date.now();
     const result = await send(photo("MSG-F1"));
     expect(result.action).toBe("atelier_photo");
-    expect(await outbox()).toHaveLength(0);
     expect(await intakes()).toHaveLength(0);
     const [message] = await db.select().from(schema.waMessages);
     expect(message.kind).toBe("image");
     expect(message.mediaUrl).toBe("https://cdn/MSG-F1.jpg");
+    const events = await outbox();
+    expect(events.map((event) => event.eventType)).toEqual(["wa.atelier_nudge"]);
+    expect(events[0].dedupeKey).toBe(`wa.atelier_nudge:${message.id}`);
+    expect(events[0].payload).toEqual({ phoneE164: "+5591981037536", photoWaMessageId: message.id });
+    expect(events[0].nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + INTAKE_NUDGE_AFTER_MS - 1000);
+
+    await send(photo("MSG-F2"));
+    expect((await outbox()).filter((event) => event.eventType === "wa.atelier_nudge")).toHaveLength(1);
   });
 
   it("duas fotos e o recado: a chegada abre com o recado e a fila espera o respiro", async () => {
@@ -92,8 +101,8 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
     const [note] = await db.select().from(schema.waMessages).where(eq(schema.waMessages.zapiMessageId, "MSG-NOTE"));
     expect(rows[0].triggerWaMessageId).toBe(note.id);
 
-    const events = await outbox();
-    expect(events.map((event) => event.eventType)).toEqual(["wa.atelier_intake"]);
+    const events = (await outbox()).filter((event) => event.eventType === "wa.atelier_intake");
+    expect(events).toHaveLength(1);
     expect(events[0].dedupeKey).toBe("wa.atelier:MSG-NOTE");
     expect(events[0].payload).toEqual({ conversationId: rows[0].conversationId, triggerWaMessageId: note.id });
     expect(events[0].nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + INTAKE_GRACE_MS - 1000);
@@ -102,7 +111,7 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
     const again = await send(text("MSG-NOTE", "chegou o Longo Dunas da Aurora, custou 120"));
     expect(again.action).toBe("duplicate");
     expect(await intakes()).toHaveLength(1);
-    expect(await outbox()).toHaveLength(1);
+    expect((await outbox()).filter((event) => event.eventType === "wa.atelier_intake")).toHaveLength(1);
   });
 
   it("legenda na foto já é o recado: a chegada abre na hora", async () => {
@@ -151,7 +160,7 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
     await send(photo("MSG-F1"));
     const result = await send({ ...base("MSG-AUDIO"), audio: { audioUrl: "https://cdn/nota.ogg", mimeType: "audio/ogg", seconds: 8 } });
     expect(result.action).toBe("transcribe_queued");
-    expect((await outbox()).map((event) => event.eventType)).toEqual(["wa.transcribe"]);
+    expect((await outbox()).map((event) => event.eventType).sort()).toEqual(["wa.atelier_nudge", "wa.transcribe"]);
 
     const provider = new FakeMessagingProvider();
     provider.setMediaFixture("https://cdn/nota.ogg", Buffer.from("OggS fake"), "audio/ogg");
@@ -163,7 +172,7 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
 
     const [intake] = await intakes();
     expect(intake).toMatchObject({ triggerWaMessageId: audio.id, note: "chegou o cropped canelado da Aurora", noteKind: "audio" });
-    expect((await outbox()).map((event) => event.eventType).sort()).toEqual(["wa.atelier_intake", "wa.transcribe"]);
+    expect((await outbox()).map((event) => event.eventType).sort()).toEqual(["wa.atelier_intake", "wa.atelier_nudge", "wa.transcribe"]);
   });
 
   it("áudio do dono sem foto recente: depois de transcrever, pede as fotos", async () => {
@@ -200,6 +209,28 @@ describe("processZapiInbound → Ateliê (mensagem do dono)", () => {
     expect(result.action).toBe("bot_queued");
     expect(await intakes()).toHaveLength(0);
     expect((await outbox()).map((event) => event.eventType)).toEqual(["wa.bot_turn", "wa.bot_turn"]);
+  });
+
+  it("o lembrete só sai se as fotos continuam sem recado", async () => {
+    await send(photo("MSG-F1"));
+    const [photoRow] = await db.select().from(schema.waMessages);
+    const provider = new FakeMessagingProvider();
+    await db.insert(schema.waTemplates).values({
+      key: "owner_atelier_nudge",
+      label: "x",
+      bodyTemplate: "Recebi {{fotos}} 📸 Me conta o nome da peça, as cores, os tamanhos e quanto custou.",
+      variables: ["fotos"],
+    });
+    const later = new Date(Date.now() + INTAKE_NUDGE_AFTER_MS);
+    const sent = await sendAtelierNudge(sdb, provider, { phoneE164: "+5591981037536", photoWaMessageId: photoRow.id }, { now: () => later });
+    expect("skipped" in sent).toBe(false);
+    expect(provider.sentMessages[0].body).toContain("Recebi 1 foto 📸");
+
+    // Com o recado (chegada aberta), o lembrete não sai.
+    await send(text("MSG-NOTE", "chegou o vestido"));
+    const provider2 = new FakeMessagingProvider();
+    expect(await sendAtelierNudge(sdb, provider2, { phoneE164: "+5591981037536", photoWaMessageId: photoRow.id }, { now: () => later })).toEqual({ skipped: "recado_chegou" });
+    expect(provider2.sentMessages).toHaveLength(0);
   });
 
   it("conversa da dona encerrada no painel entre a foto e o recado: a chegada acha a foto mesmo assim", async () => {

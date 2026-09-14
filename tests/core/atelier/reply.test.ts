@@ -6,6 +6,7 @@ import {
   ATELIER_HELP_REASONS,
   arrivalDetailsLine,
   atelierDraftVars,
+  atelierNudgeVars,
   atelierHelpReasonText,
   isAtelierHelpReason,
   photosLabel,
@@ -15,6 +16,7 @@ describe("resposta do Ateliê", () => {
   it("conta as fotos em português", () => {
     expect(photosLabel(1)).toBe("1 foto");
     expect(photosLabel(3)).toBe("3 fotos");
+    expect(atelierNudgeVars(2)).toEqual({ fotos: "2 fotos" });
   });
 
   it("monta as variáveis do template owner_atelier_draft", () => {

@@ -44,6 +44,11 @@ export function arrivalDetailsLine(
   return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
 }
 
+/** Variáveis do template owner_atelier_nudge ("Recebi 2 fotos 📸 …"). */
+export function atelierNudgeVars(photos: number): { fotos: string } {
+  return { fotos: photosLabel(photos) };
+}
+
 export const ATELIER_HELP_REASONS = {
   sem_fotos: "Não achei fotos suas dos últimos 15 minutos — mande as fotos e repita o recado.",
   documento: "Essa veio como documento: mande pela galeria, como foto.",
