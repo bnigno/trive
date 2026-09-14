@@ -34,7 +34,7 @@ export default async function EstiloPage() {
         align="left"
       />
       <p className="-mt-4 mb-8 max-w-2xl font-store text-base leading-relaxed text-ink-700">
-        Seis perguntas, nenhuma resposta errada. No fim, a maison dá um nome à sua cartela
+        Sete perguntas, nenhuma resposta errada — a última é opcional. No fim, a maison dá um nome à sua cartela
         e separa três peças da coleção que conversam com ela.
       </p>
       <StyleQuiz colors={map.colors} sizes={map.sizes} />

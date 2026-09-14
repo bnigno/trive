@@ -33,6 +33,7 @@ import {
   editionForTokenAction,
   forgetStyleProfileAction,
   saveStyleProfileAction,
+  forgetBodyMeasurementsFromQuizAction,
   type EditionItemView,
   type SavedStyleView,
 } from "./actions";
@@ -49,7 +50,8 @@ const BUYS_FOR_CARDS: { value: BuysFor; title: string }[] = [
   { value: "os_dois", title: "Os dois" },
 ];
 
-const STEPS = ["Ocasiões", "Caimento", "Tamanhos", "Cores que ama", "Cores que evita", "Para quem"] as const;
+const STEPS = ["Ocasiões", "Caimento", "Tamanhos", "Cores que ama", "Cores que evita", "Para quem", "Medidas"] as const;
+const EMPTY_BODY = { bustCm: "", waistCm: "", hipsCm: "" };
 
 function Chip({
   active,
@@ -150,6 +152,9 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
   const [edition, setEdition] = useState<EditionItemView[] | null>(null);
   const [phone, setPhone] = useState("");
   const [consent, setConsent] = useState(false);
+  // Último passo, opcional: nunca vai para o localStorage — só para o servidor, com a cartela.
+  const [body, setBody] = useState(EMPTY_BODY);
+  const [bodyNote, setBodyNote] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [redoing, setRedoing] = useState(false);
@@ -178,6 +183,24 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
     return list.includes(value) ? list.filter((item) => item !== value) : list.length >= max ? list : [...list, value];
   }
 
+  const BODY_MIN: Record<keyof typeof EMPTY_BODY, number> = { bustCm: 60, waistCm: 50, hipsCm: 60 };
+  const [bodyError, setBodyError] = useState<string | null>(null);
+
+  /** Passo 7: o que foi digitado precisa ser contorno em cm (42 é numeração) antes de seguir. */
+  function bodyIsValid(): boolean {
+    for (const key of Object.keys(EMPTY_BODY) as (keyof typeof EMPTY_BODY)[]) {
+      const raw = body[key].trim();
+      if (raw === "") continue;
+      const value = Number(raw.replace(",", "."));
+      if (!Number.isFinite(value) || value < BODY_MIN[key] || value > 200) {
+        setBodyError("Medidas em centímetros de contorno (busto a partir de 60, cintura de 50, quadril de 60; até 200) — 42 é numeração de roupa, não cm.");
+        return false;
+      }
+    }
+    setBodyError(null);
+    return true;
+  }
+
   function finish() {
     setStep(STEPS.length);
     startTransition(async () => {
@@ -190,12 +213,21 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     startTransition(async () => {
-      const result = await saveStyleProfileAction({ profile, phone, consent, website: String(form.get("website") ?? "") });
+      const result = await saveStyleProfileAction({ profile, phone, consent, website: String(form.get("website") ?? ""), body, bodyToken: stored?.bodyToken ?? null });
       if (!result.ok) {
         setMessage(result.message);
         return;
       }
-      writeStoredStyle({ token: result.token, paletteName: result.paletteName, savedAt: new Date().toISOString() });
+      // A credencial antiga só vale se a cartela guardada é a mesma (outro telefone = outra cartela).
+      const keepOld = stored?.bodyToken && stored.token === result.token ? { bodyToken: stored.bodyToken } : {};
+      writeStoredStyle({
+        token: result.token,
+        paletteName: result.paletteName,
+        savedAt: new Date().toISOString(),
+        ...(result.bodyToken ? { bodyToken: result.bodyToken } : keepOld),
+      });
+      setBodyNote(result.bodyNote);
+      setBody(EMPTY_BODY);
       trackStoreEvent("style_quiz_done", { palette: result.paletteName ?? "" });
       setRedoing(false);
       setMessage(null);
@@ -211,6 +243,17 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
       setStep(0);
       setProfile(EMPTY_PROFILE);
       setEdition(null);
+    });
+  }
+
+  function forgetBody() {
+    if (!stored?.bodyToken || saved === null || saved === "loading") return;
+    startTransition(async () => {
+      const result = await forgetBodyMeasurementsFromQuizAction({ token: stored.token, bodyToken: stored.bodyToken as string });
+      if (result.ok) {
+        writeStoredStyle({ ...stored, bodyToken: undefined });
+        setSaved({ ...saved, hasBody: false });
+      }
     });
   }
 
@@ -233,6 +276,19 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
             <EditionGrid items={saved.items} />
           </div>
         </div>
+        {saved.hasBody ? (
+          <p className="font-store text-sm text-ink-700">
+            Medidas guardadas — usadas só no “Vai me servir?” das peças.{" "}
+            {stored.bodyToken ? (
+              <button type="button" className="text-ink-500 underline-offset-4 hover:underline" onClick={forgetBody} disabled={pending}>
+                Apagar minhas medidas
+              </button>
+            ) : (
+              <span className="text-ink-500">Para trocar ou apagar, use o aparelho em que gravou ou peça à vendedora no WhatsApp.</span>
+            )}
+          </p>
+        ) : null}
+        {bodyNote ? <p className="font-store text-xs text-ink-500">{bodyNote}</p> : null}
         <div className="flex flex-wrap gap-3">
           <button type="button" className={btnOutline} onClick={() => { setRedoing(true); setStep(0); setProfile(saved.profile); }}>
             Refazer a cartela
@@ -372,6 +428,35 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
         </section>
       ) : null}
 
+      {step === 6 ? (
+        <section aria-labelledby="q-medidas">
+          <h2 id="q-medidas" className="font-display text-heading font-semibold text-espresso-900">Suas medidas (opcional)</h2>
+          <p className="mt-2 font-store text-sm text-ink-700">
+            Busto, cintura e quadril em centímetros — com elas, cada peça com tabela responde “vai me servir?”. Ficam na sua cartela, só este aparelho (e a vendedora, no seu WhatsApp) consegue lê-las, e você apaga quando quiser. Pode pular.
+          </p>
+          {bodyError ? <p className="mt-2 font-store text-xs text-claret-600" role="alert">{bodyError}</p> : null}
+          <div className="mt-5 grid grid-cols-3 gap-3">
+            {(["bustCm", "waistCm", "hipsCm"] as const).map((key) => (
+              <label key={key} className="flex flex-col gap-1">
+                <span className="font-store text-[11px] font-medium uppercase tracking-[0.14em] text-ink-700">{key === "bustCm" ? "Busto" : key === "waistCm" ? "Cintura" : "Quadril"}</span>
+                <input
+                  id={`quiz-${key}`}
+                  type="number"
+                  inputMode="numeric"
+                  min={key === "waistCm" ? 50 : 60}
+                  max={200}
+                  step={1}
+                  placeholder="cm"
+                  value={body[key]}
+                  onChange={(event) => setBody((current) => ({ ...current, [key]: event.target.value }))}
+                  className={inputBase}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {!finished ? (
         <div className="flex flex-wrap items-center gap-3">
           {step > 0 ? (
@@ -384,9 +469,27 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
               Próximo
             </button>
           ) : (
-            <button type="button" className={btnGold} onClick={finish}>
-              Ver a minha cartela
-            </button>
+            <>
+              <button
+                type="button"
+                className={btnGold}
+                onClick={() => {
+                  if (bodyIsValid()) finish();
+                }}
+              >
+                Ver a minha cartela
+              </button>
+              <button
+                type="button"
+                className={btnOutline}
+                onClick={() => {
+                  setBody(EMPTY_BODY);
+                  finish();
+                }}
+              >
+                Pular
+              </button>
+            </>
           )}
         </div>
       ) : (
