@@ -10,6 +10,7 @@ import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { getAtelierIntakeForProduct } from "@/services/atelier";
+import { countPublicLooksForProduct } from "@/services/customer-looks";
 import { getFitSignalsForProduct } from "@/services/delivery-feedback";
 import { FIT_SIGNAL_LABELS } from "@/core/catalog/fit-signal";
 import { careLabels } from "@/core/atelier/proposal";
@@ -107,7 +108,7 @@ export default async function ProdutoDetalhePage({
     notFound();
   }
 
-  const [categoryRows, readiness, atelierIntake, fitSignals] = await Promise.all([
+  const [categoryRows, readiness, atelierIntake, fitSignals, publicLooks] = await Promise.all([
     db
       .select({ id: categories.id, name: categories.name })
       .from(categories)
@@ -115,6 +116,7 @@ export default async function ProdutoDetalhePage({
     listProductReadiness(db, { productIds: [detail.id] }).then((map) => map.get(detail.id)),
     getAtelierIntakeForProduct(db, id),
     getFitSignalsForProduct(db, id),
+    countPublicLooksForProduct(db, id),
   ]);
   // Vindo do selo "sem peso": abre e foca a primeira variação ativa sem peso.
   const focusWeightVariantId =
@@ -589,6 +591,14 @@ export default async function ProdutoDetalhePage({
       </Card>
 
       <OwnerOnly>
+        <Card title="Quem já vestiu">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {publicLooks === 0 ? "Nenhuma foto de cliente na página desta peça ainda." : `${publicLooks} ${publicLooks === 1 ? "foto de cliente" : "fotos de clientes"} na página da peça.`}{" "}
+            <Link href="/admin/produtos/quem-vestiu" className="text-indigo-600 hover:underline dark:text-indigo-400">
+              Aprovar e retirar
+            </Link>
+          </p>
+        </Card>
         {fitSignals.length > 0 ? (
           <Card title="Caimento pelas clientes">
             <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">

@@ -44,6 +44,8 @@ const OWNER_ONLY_DIRS: Array<{ dir: string; skipDirs?: string[] }> = [
   { dir: path.join("produtos", "novo") },
   // Chegadas pelo WhatsApp mostram custo, preço sugerido e conta a pagar.
   { dir: path.join("produtos", "chegadas") },
+  // Fotos de clientes (dado pessoal) esperando aprovação: só o dono.
+  { dir: path.join("produtos", "quem-vestiu") },
 ];
 
 /**

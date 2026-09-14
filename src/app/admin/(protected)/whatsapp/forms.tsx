@@ -46,7 +46,8 @@ export function ToggleSwitch({
     | "bot_cards_enabled"
     | "catalog_draft_enabled"
     | "atelier_enabled"
-    | "feedback_ask_enabled";
+    | "feedback_ask_enabled"
+    | "customer_looks_enabled";
   checked: boolean;
   label: string;
   hint: string;

@@ -29,3 +29,4 @@ export { siteCarts } from "./site-carts";
 export { campaignLinks } from "./campaign-links";
 export { atelierIntakes } from "./atelier";
 export { deliveryFeedback } from "./feedback";
+export { customerLooks } from "./looks";

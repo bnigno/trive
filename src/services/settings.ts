@@ -543,6 +543,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   catalog_draft_enabled: z.boolean(),
   atelier_enabled: z.boolean(),
   feedback_ask_enabled: z.boolean(),
+  /** "Quem já vestiu": a Lia guarda a foto da cliente com a peça e pede consentimento. */
+  customer_looks_enabled: z.boolean(),
   /** Datas da cidade (Círio, Natal…): o selo da vitrine e o "faltam N dias" do Bom dia. */
   city_dates: cityDatesSchema,
   /** Nome da edição em cartaz (ex.: "Edição Círio"): entra no post e na legenda. */

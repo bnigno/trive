@@ -37,7 +37,9 @@ const render = vi.fn(async (data: CardData) => {
       ? data.items
       : data.kind === "look"
         ? [data.hero, ...data.complements]
-        : [data.hero];
+        : data.kind === "customer_look"
+          ? [{ slug: "", name: data.productName, priceLabel: "", imageDataUrl: data.photoDataUrl }]
+          : [data.hero];
   expect(items.every((item) => item.imageDataUrl.startsWith("data:image/jpeg;base64,"))).toBe(true);
   return sharp({ create: { width: 108, height: 135, channels: 3, background: "#faf7f0" } }).png().toBuffer();
 });

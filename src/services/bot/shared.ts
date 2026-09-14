@@ -94,6 +94,11 @@ export type BotExecutorContext = {
   stateOverlay?: { current: BotState | null };
   /** Consulta de CEP: cotar_frete devolve também rua/bairro/cidade/UF. */
   cepLookup?: CepLookup;
+  /**
+   * As fotos que a cliente mandou neste turno (depois da última resposta),
+   * na ordem: registrar_foto_com_a_peca guarda a última.
+   */
+  pendingImages?: Array<{ waMessageId: string; mediaUrl: string }>;
 };
 
 export type RunBotTurnResult =

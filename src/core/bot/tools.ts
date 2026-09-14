@@ -27,6 +27,8 @@ export const BOT_TOOL_NAMES = [
   "atualizar_cartela",
   "montar_look",
   "anotar",
+  "registrar_foto_com_a_peca",
+  "retirar_minha_foto",
   "transferir_para_atendente",
 ] as const;
 
@@ -110,6 +112,9 @@ export type BotToolInputs = {
   };
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
+  /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
+  registrar_foto_com_a_peca: { produto: string };
+  retirar_minha_foto: Record<string, never>;
   transferir_para_atendente: { motivo: string; resumo?: string };
 };
 
@@ -608,6 +613,33 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "registrar_foto_com_a_peca",
+    description:
+      "A cliente mandou NESTA mensagem uma foto dela USANDO uma peça da maison que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça. Nunca chame para print do Instagram, foto de outra marca, peça no cabide ou foto sem a peça.",
+    input_schema: {
+      type: "object",
+      properties: {
+        produto: {
+          type: "string",
+          description: "Slug ou nome exato da peça que aparece na foto (o mesmo de detalhar_produto).",
+        },
+      },
+      required: ["produto"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "retirar_minha_foto",
+    description:
+      "A cliente pediu para tirar a foto dela da página da peça ('tira minha foto', 'não quero mais aparecer'): retira todas as fotos dela da vitrine na hora. Confirme em 1 frase.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "transferir_para_atendente",
     description:
       "Passa a conversa para a equipe da loja e encerra a sua participação. Use quando a cliente pedir para falar com uma pessoa, quando você não conseguir ajudar após 2 tentativas, ou em reclamação, troca, defeito ou reembolso. Passe um resumo de 3 linhas para a equipe não perguntar nada de novo.",
@@ -816,6 +848,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   anotar: z.strictObject({
     nota: z.string().trim().min(3).max(140),
   }),
+  registrar_foto_com_a_peca: z.strictObject({
+    produto: z.string().trim().min(1).max(120),
+  }),
+  retirar_minha_foto: z.strictObject({}),
   transferir_para_atendente: z.strictObject({
     motivo: z.string().min(1),
     resumo: z.string().trim().max(600).optional(),

@@ -78,6 +78,7 @@ import type {
   RunBotTurnResult,
 } from "./bot/shared";
 import { execCotarFrete } from "./bot/shipping";
+import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -252,6 +253,10 @@ export function buildToolExecutor(
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
+      case "registrar_foto_com_a_peca":
+        return execRegistrarFotoComAPeca(db, ctx, parsed.data as BotToolInputs["registrar_foto_com_a_peca"]);
+      case "retirar_minha_foto":
+        return execRetirarMinhaFoto(db, ctx);
       case "transferir_para_atendente":
         return execTransferir(
           db,
@@ -397,10 +402,11 @@ export async function runBotTurn(
       // O turno enfileirado pela transcrição responde a tudo de uma vez.
       return { skipped: "aguardando_transcricao" };
     }
-    const imageUrls = pending
+    const pendingImages = pending
       .filter((row) => row.kind === "image" && row.mediaUrl)
       .slice(-MAX_IMAGES_PER_TURN)
-      .map((row) => row.mediaUrl as string);
+      .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }));
+    const imageUrls = pendingImages.map((row) => row.mediaUrl);
     const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
 
     const messages: BotChatMessage[] = rows.map((message) => {
@@ -458,6 +464,7 @@ export async function runBotTurn(
       lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
       cepLookup: getCepLookup(),
+      pendingImages,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 

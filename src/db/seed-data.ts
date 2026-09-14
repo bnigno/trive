@@ -47,6 +47,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "catalog_draft_enabled", value: true },
   // "Chegou bem?": a lista tocável um dia depois da entrega.
   { key: "feedback_ask_enabled", value: true },
+  // "Quem já vestiu": foto da cliente com a peça vira cartão + consentimento.
+  { key: "customer_looks_enabled", value: true },
   // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.
   { key: "atelier_enabled", value: true },
   { key: "edition_name", value: "" },
