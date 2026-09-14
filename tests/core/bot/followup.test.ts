@@ -5,6 +5,9 @@ import {
   followupMemoryLine,
   followupWhenLabel,
   isFollowupSuperseded,
+  isFollowupTooLate,
+  isReturnRequest,
+  askedToCallBack,
   looksLikeConsent,
   planFollowup,
   renderFollowupPrompt,
@@ -29,6 +32,8 @@ describe("planFollowup", () => {
     expect(planFollowup({ date: "2026-09-22", time: "10:00", now: NOW, window })).toEqual({ ok: false, reason: "muito_longe" });
     expect(planFollowup({ date: "2026-09-21", time: "14:00", now: NOW, window })).toMatchObject({ ok: true });
     expect(planFollowup({ date: "15/09/2026", time: "10:00", now: NOW, window })).toEqual({ ok: false, reason: "data_invalida" });
+    expect(planFollowup({ date: "2026-02-31", time: "10:00", now: NOW, window })).toEqual({ ok: false, reason: "data_invalida" });
+    expect(planFollowup({ date: "2026-13-01", time: "10:00", now: NOW, window })).toEqual({ ok: false, reason: "data_invalida" });
     expect(planFollowup({ date: "2026-09-15", time: "10h", now: NOW, window })).toEqual({ ok: false, reason: "hora_invalida" });
     expect(planFollowup({ date: "2026-09-15", time: "25:00", now: NOW, window })).toEqual({ ok: false, reason: "hora_invalida" });
   });
@@ -41,12 +46,23 @@ describe("planFollowup", () => {
 
 describe("looksLikeConsent", () => {
   it("reconhece o sim e recusa o não", () => {
-    for (const yes of ["sim", "Sim, pode", "pode ser", "claro!", "ok", "tá bom", "beleza", "combinado", "às 10 tá ótimo", "pode sim", "S", "isso", "quero"]) {
+    for (const yes of ["sim", "Sim, pode", "pode ser", "claro!", "ok", "tá bom", "beleza", "combinado", "às 10 tá ótimo", "pode sim", "S", "vamos", "fechou", "às 10 então"]) {
       expect(looksLikeConsent(yes), yes).toBe(true);
     }
-    for (const no of ["não", "não precisa", "deixa", "nem", "amanhã eu vejo", "vou pensar", "hoje não", "obrigada"]) {
+    for (const no of ["não", "não precisa", "deixa", "nem", "amanhã eu vejo", "vou pensar", "hoje não", "obrigada", "não me chama", "ok mas não me chama", "claro que não", "quero pensar mais", "manda a foto do vestido", "certo, vou pensar", "isso mesmo, a azul"]) {
       expect(looksLikeConsent(no), no).toBe(false);
     }
+    // Ela mesma pediu: consentimento sem pergunta da Lia.
+    for (const request of ["me chama amanhã às 10", "pode me chamar depois", "me liga amanhã", "me avisa quando puder"]) {
+      expect(isReturnRequest(request), request).toBe(true);
+    }
+    for (const notRequest of ["não me chama", "vou pensar", "manda a foto"]) {
+      expect(isReturnRequest(notRequest), notRequest).toBe(false);
+    }
+    expect(askedToCallBack("Posso te chamar amanhã às 10h?")).toBe(true);
+    expect(askedToCallBack("Te chamo amanhã às 10, pode ser?")).toBe(true);
+    expect(askedToCallBack("Que tal o Longo Dunas em M?")).toBe(false);
+    expect(askedToCallBack("Te chamo amanhã então.")).toBe(false);
   });
 });
 
@@ -61,5 +77,7 @@ describe("textos e carência", () => {
     expect(isFollowupSuperseded({ createdAt, lastInboundAt: null })).toBe(false);
     expect(isFollowupSuperseded({ createdAt, lastInboundAt: new Date(NOW.getTime() + (FOLLOWUP_GRACE_MINUTES - 1) * 60_000) })).toBe(false);
     expect(isFollowupSuperseded({ createdAt, lastInboundAt: new Date(NOW.getTime() + (FOLLOWUP_GRACE_MINUTES + 1) * 60_000) })).toBe(true);
+    expect(isFollowupTooLate({ dueAt, now: new Date(dueAt.getTime() + 5 * 3_600_000) })).toBe(false);
+    expect(isFollowupTooLate({ dueAt, now: new Date(dueAt.getTime() + 7 * 3_600_000) })).toBe(true);
   });
 });

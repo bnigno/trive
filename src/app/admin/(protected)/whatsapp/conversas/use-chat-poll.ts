@@ -76,7 +76,7 @@ const chatContextSchema = z.object({
   hold: z.string().nullable().default(null),
   alerts: z.array(z.string()).default([]),
   followups: z
-    .array(z.object({ id: z.string(), kind: z.string(), reason: z.string(), dueAt: z.string() }))
+    .array(z.object({ id: z.string(), kind: z.string(), reason: z.string(), dueAt: z.string(), status: z.string().default("scheduled"), note: z.string().nullable().default(null) }))
     .default([]),
   recentOrders: z.array(
     z.object({

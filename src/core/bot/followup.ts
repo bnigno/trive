@@ -12,8 +12,10 @@ export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
 
 export const FOLLOWUP_MAX_DAYS = 7;
 export const FOLLOWUP_MIN_MINUTES = 30;
-/** Mensagem dela logo depois do "sim" ("obrigada!") não cancela o combinado; uma volta de verdade, depois disso, cancela. */
-export const FOLLOWUP_GRACE_MINUTES = 10;
+/** Mensagens dela na hora seguinte ao "sim" ("obrigada!", "até amanhã") não cancelam o combinado; uma volta de verdade, depois disso, cancela. */
+export const FOLLOWUP_GRACE_MINUTES = 60;
+/** Chegou tarde demais (fila parada, modelo fora do ar): "como combinamos" horas depois soa errado — não chama. */
+export const FOLLOWUP_MAX_DELAY_MS = 6 * 3_600_000;
 
 export type FollowupPlan =
   | { ok: true; dueAt: Date; adjusted: "janela_inicio" | "dia_seguinte" | null }
@@ -45,6 +47,8 @@ export function planFollowup(input: { date: string; time: string; now: Date; win
     adjusted = "dia_seguinte";
   }
   const dueAt = spDateTime(day, minutesOfDay);
+  // "2026-02-31" passa no formato mas não existe: o instante não fecha a volta.
+  if (Number.isNaN(dueAt.getTime()) || spDayKey(dueAt) !== day) return { ok: false, reason: "data_invalida" };
   const delta = dueAt.getTime() - input.now.getTime();
   if (delta < 0) return { ok: false, reason: "passado" };
   if (delta < FOLLOWUP_MIN_MINUTES * 60_000) return { ok: false, reason: "muito_perto" };
@@ -61,17 +65,43 @@ export const FOLLOWUP_PLAN_ERRORS: Record<Exclude<FollowupPlan, { ok: true }>["r
   muito_longe: "Mais de 7 dias: combine algo mais perto (até uma semana) ou peça para ela chamar quando quiser.",
 };
 
-/**
- * A última mensagem dela parece um "sim"? Guarda extra além da regra do
- * prompt: sem um sim reconhecível, a Lia pergunta de novo em vez de agendar.
- */
-export function looksLikeConsent(text: string): boolean {
-  const normalized = text
+function normalize(text: string): string {
+  return text
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "");
-  if (/\b(nao|nunca|deixa|nem|para de|pare)\b/.test(normalized) && !/\bnao (tem|ha) problema\b/.test(normalized)) return false;
-  return /\b(sim|pode|claro|ok|okay|beleza|combinado|fechado|bora|isso|quero|manda|chama|ta bom|ta otimo|tabom|tudo bem|por favor|perfeito|otimo|show|top|blz|certo|positivo|uhum|aham|pode ser|pode sim|vai la)\b/.test(normalized) || /^(s|ss|sim+|k)$/.test(normalized.trim());
+}
+
+function hasNegation(normalized: string): boolean {
+  return /\b(nao|nunca|deixa|nem|para de|pare|jamais)\b/.test(normalized) && !/\bnao (tem|ha) problema\b/.test(normalized);
+}
+
+/**
+ * A mensagem dela é um "sim" curto? Só afirmativas — nada de verbos que
+ * aparecem em pedidos ("manda a foto", "quero pensar"). Vale quando a Lia
+ * acabou de perguntar "posso te chamar …?".
+ */
+export function looksLikeConsent(text: string): boolean {
+  const normalized = normalize(text);
+  if (hasNegation(normalized)) return false;
+  if (normalized.trim().split(/\s+/).length > 15) return false;
+  return (
+    /\b(sim|pode|claro|ok|okay|beleza|combinado|combina|fechado|fechou|bora|vamos|ta|tabom|tudo bem|por favor|perfeito|otimo|show|top|blz|positivo|uhum|aham|entao|pode ser|pode sim|vai la|ate la|ate amanha)\b/.test(normalized) ||
+    /^(s|ss|sim+|k|kk)$/.test(normalized.trim())
+  );
+}
+
+/** Ela mesma pediu ("me chama amanhã às 10", "pode me ligar depois"): é consentimento sem pergunta da Lia. */
+export function isReturnRequest(text: string): boolean {
+  const normalized = normalize(text);
+  if (hasNegation(normalized)) return false;
+  return /\b(me (chama|chame|liga|ligue|avisa|avise|lembra|lembre|procura|procure|manda (uma )?mensagem|fala)|pode(m)? me (chamar|ligar|avisar|lembrar|procurar)|chama eu|fala comigo|volta a falar comigo|me da um toque)\b/.test(normalized);
+}
+
+/** A última fala da Lia antes da resposta dela foi a pergunta de retorno? */
+export function askedToCallBack(outboundText: string): boolean {
+  const normalized = normalize(outboundText);
+  return normalized.includes("?") && /\b(te chamo|te chamar|chamar voce|te procuro|te procurar|te aviso|te avisar|te lembro|te lembrar|posso chamar|retomo|retomar)\b/.test(normalized);
 }
 
 /** "15/09 às 10:00". */
@@ -94,6 +124,11 @@ export function renderFollowupPrompt(input: { kind: FollowupKind; reason: string
     return `[retomada automática: a sacola dela ficou parada — ${input.reason}. Chegou a hora de você mandar UMA mensagem gentil retomando de onde parou, com o caderninho; se ela não quiser, deixe estar.]`;
   }
   return `[retorno combinado: ela pediu que você a chamasse em ${followupWhenLabel(input.dueAt)} (${input.reason}) e chegou a hora. Chame-a agora em 1–2 frases, no seu tom, retomando de onde parou com o caderninho — sem pedir desculpa por chamar (ela pediu) e sem repetir o que já disse.]`;
+}
+
+/** Passou da hora demais para dizer "como combinamos"? */
+export function isFollowupTooLate(input: { dueAt: Date; now: Date }): boolean {
+  return input.now.getTime() - input.dueAt.getTime() > FOLLOWUP_MAX_DELAY_MS;
 }
 
 /** A cliente voltou por conta depois do combinado (fora da carência)? Então o retorno perdeu o sentido. */

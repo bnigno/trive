@@ -82,12 +82,13 @@ import { execAgendarRetorno } from "./bot/followups";
 import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { followupMemoryLines } from "./wa-followups";
-import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
+import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, isFollowupTooLate, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
+import { getRetryPolicy } from "@/core/queue/retry-policy";
+import { BOT_FOLLOWUP_EVENT } from "./wa-followups";
 import { waFollowups } from "@/db/schema";
 import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-window";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
-import { customers } from "@/db/schema";
 import { spDayKey } from "@/lib/sp-day";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
@@ -699,13 +700,21 @@ export async function runScheduledBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { followupId: string; now?: Date },
+  input: { followupId: string; now?: Date; attempt?: number; deadlineAt?: Date | null },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunScheduledBotTurnResult> {
   const { followupId } = input;
   const now = input.now ?? new Date();
+  // `attempt` = tentativas ANTERIORES (0 na primeira), como no wa.transcribe.
+  const lastAttempt = (input.attempt ?? 0) + 1 >= getRetryPolicy(BOT_FOLLOWUP_EVENT).maxAttempts;
 
   return db.transaction(async (tx) => {
+    // Ordem dos locks igual à do turno reativo — a CONVERSA primeiro (o
+    // reativo trava a conversa e depois mexe em wa_followups); só então o
+    // retorno. Senão os dois turnos se travam em cruz e um deles cai.
+    const [pointer] = await tx.select({ conversationId: waFollowups.conversationId }).from(waFollowups).where(eq(waFollowups.id, followupId)).limit(1);
+    if (!pointer) return { skipped: "inexistente", followupId };
+    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, pointer.conversationId)).for("update");
     const [followup] = await tx.select().from(waFollowups).where(eq(waFollowups.id, followupId)).for("update");
     if (!followup) return { skipped: "inexistente", followupId };
     if (followup.status !== "scheduled") return { skipped: `status_${followup.status}`, followupId };
@@ -718,7 +727,6 @@ export async function runScheduledBotTurn(
       return { skipped: reason, followupId } as const;
     };
 
-    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, followup.conversationId)).for("update");
     if (!conversation) return finish("canceled", "conversa_inexistente");
     if (conversation.status === "human") return finish("canceled", "conversa_humana");
     if (conversation.status === "closed") return finish("canceled", "conversa_fechada");
@@ -726,14 +734,11 @@ export async function runScheduledBotTurn(
       return finish("canceled", "bot_silenciado");
     }
     if (!(await isBotEnabled(tx))) return finish("canceled", "bot_desligado");
-
-    // SAIR depois do combinado vale mais que o combinado.
-    const [customer] = await tx
-      .select({ marketingOptIn: customers.marketingOptIn })
-      .from(customers)
-      .where(eq(customers.phoneE164, conversation.phoneE164))
-      .limit(1);
-    if (customer && customer.marketingOptIn === false) return finish("canceled", "sair");
+    if (!(await isWaEnabled(tx))) return finish("canceled", "whatsapp_desligado");
+    // (SAIR cancela o combinado na hora, no webhook — com ou sem cadastro.)
+    // Chegou tarde demais (fila parada, modelo fora do ar por horas): "como
+    // combinamos" no dia seguinte soa errado — não chama.
+    if (isFollowupTooLate({ dueAt: followup.dueAt, now })) return finish("skipped", "atrasado");
 
     // Fora da janela (retry tardio, madrugada): volta para a abertura, uma
     // vez por dia; o status continua agendado.
@@ -750,10 +755,23 @@ export async function runScheduledBotTurn(
       return { skipped: "fora_da_janela", followupId };
     }
 
-    const loaded = await loadTurnHistory(tx, provider, { conversation, now });
-    if ("skipped" in loaded) return { skipped: loaded.skipped, followupId };
-    if (isFollowupSuperseded({ createdAt: followup.createdAt, lastInboundAt: loaded.lastInboundAt })) {
+    // Ela voltou por conta depois do combinado? Antes de qualquer custo.
+    const [lastInbound] = await tx
+      .select({ createdAt: waMessages.createdAt })
+      .from(waMessages)
+      .where(and(eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
+      .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+      .limit(1);
+    if (isFollowupSuperseded({ createdAt: followup.createdAt, lastInboundAt: lastInbound?.createdAt ?? null })) {
       return finish("superseded", "superada");
+    }
+    const loaded = await loadTurnHistory(tx, provider, { conversation, now });
+    if ("skipped" in loaded) {
+      // Áudio dela ainda transcrevendo: o turno da transcrição vai responder;
+      // tenta o retorno de novo daqui a pouco (política da fila) — na última
+      // tentativa desiste em vez de ficar agendado para sempre.
+      if (lastAttempt) return finish("skipped", "superada");
+      throw new Error(`Retorno ${followupId}: ${loaded.skipped} — tentando de novo.`);
     }
 
     const kind = followup.kind as FollowupKind;
@@ -772,13 +790,21 @@ export async function runScheduledBotTurn(
       cepLookup: getCepLookup(),
       recentImages: loaded.recentImages,
       now,
+      proactive: true,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 
     const startedAt = Date.now();
     // Modelo fora do ar: relança — a política da fila tenta de novo e o
-    // combinado continua agendado (nada de plano B proativo).
-    const turn = await assistant.respondTurn({ system, history, model, executeTool });
+    // combinado continua agendado (nada de plano B proativo). Na última
+    // tentativa, registra e desiste: nada de retorno "agendado" para sempre.
+    let turn: AssistantTurn;
+    try {
+      turn = await assistant.respondTurn({ system, history, model, executeTool });
+    } catch (error) {
+      if (lastAttempt) return finish("skipped", "modelo_indisponivel");
+      throw error;
+    }
     const bubbles = turn.reply === null ? [] : splitBotReply(turn.reply);
     if (bubbles.length === 0 && attachments.length === 0) return finish("skipped", "sem_resposta");
 
@@ -812,11 +838,14 @@ export async function runScheduledBotTurn(
       bubbles,
       handedOff: turn.handedOff,
     });
+    // Nada saiu de fato (número sem WhatsApp, só anexos que falharam): o
+    // combinado não foi cumprido e o painel diz por quê.
+    if (!delivered.replied) return finish("skipped", "nao_enviado");
     await tx
       .update(waFollowups)
       .set({ status: "sent", sentAt: now, sentWaMessageId: delivered.firstWaMessageId, updatedAt: now })
       .where(eq(waFollowups.id, followupId));
-    return { sent: true, followupId, replied: delivered.replied };
+    return { sent: true, followupId, replied: true };
   });
 }
 

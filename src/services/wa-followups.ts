@@ -13,7 +13,39 @@ import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 export const BOT_FOLLOWUP_EVENT = "wa.bot_followup";
 export const botFollowupPayloadSchema = z.object({ followupId: z.uuid() });
 
-export type FollowupCancelReason = "dono" | "cliente" | "substituido" | "sair" | "conversa_humana" | "conversa_fechada" | "bot_desligado" | "sem_resposta";
+export type FollowupCancelReason =
+  | "dono"
+  | "cliente"
+  | "substituido"
+  | "sair"
+  | "conversa_humana"
+  | "conversa_fechada"
+  | "bot_desligado"
+  | "bot_silenciado"
+  | "whatsapp_desligado"
+  | "sem_resposta"
+  | "nao_enviado"
+  | "atrasado"
+  | "modelo_indisponivel"
+  | "superada";
+
+/** O que o painel mostra para cada motivo. */
+export const FOLLOWUP_CANCEL_LABELS: Record<FollowupCancelReason, string> = {
+  dono: "cancelado por você",
+  cliente: "cancelado pela cliente",
+  substituido: "substituído por outro horário",
+  sair: "ela pediu SAIR",
+  conversa_humana: "a conversa estava com você",
+  conversa_fechada: "a conversa estava fechada",
+  bot_desligado: "a Lia estava desligada",
+  bot_silenciado: "a Lia estava silenciada",
+  whatsapp_desligado: "o WhatsApp estava desligado",
+  sem_resposta: "a Lia não tinha o que dizer",
+  nao_enviado: "a mensagem não saiu (número sem WhatsApp?)",
+  atrasado: "passou da hora (fila atrasada)",
+  modelo_indisponivel: "a inteligência ficou fora do ar",
+  superada: "ela voltou antes por conta",
+};
 
 export interface ScheduledFollowup {
   id: string;
@@ -102,6 +134,30 @@ export async function cancelBotFollowup(
     after: { followupId: input.followupId, reason: input.reason },
   });
   return { canceled: true };
+}
+
+/** SAIR: tudo que esse telefone tinha combinado é cancelado — com ou sem cadastro. */
+export async function cancelBotFollowupsByPhone(
+  db: DbOrTx,
+  input: { phoneE164: string; reason: FollowupCancelReason; now?: Date },
+): Promise<{ canceled: number }> {
+  const now = input.now ?? new Date();
+  const updated = await db
+    .update(waFollowups)
+    .set({ status: "canceled", canceledAt: now, canceledReason: input.reason, updatedAt: now })
+    .where(and(eq(waFollowups.phoneE164, input.phoneE164), eq(waFollowups.status, "scheduled")))
+    .returning({ id: waFollowups.id, conversationId: waFollowups.conversationId });
+  for (const row of updated) {
+    await db.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "wa.followup_canceled",
+      entityType: "wa_conversation",
+      entityId: row.conversationId,
+      after: { followupId: row.id, reason: input.reason },
+    });
+  }
+  return { canceled: updated.length };
 }
 
 /** Todos os retornos agendados de uma conversa (na prática, um por tipo). */

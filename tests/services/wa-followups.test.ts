@@ -11,7 +11,8 @@ import { FakeMessagingProvider } from "@/adapters/zapi/fake";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { buildToolExecutor, runBotTurn, runScheduledBotTurn } from "@/services/wa-bot";
-import { cancelBotFollowup, followupMemoryLines, listScheduledFollowups, scheduleBotFollowup } from "@/services/wa-followups";
+import { cancelBotFollowup, cancelBotFollowupsByPhone, followupMemoryLines, listFollowupHistory, listScheduledFollowups, scheduleBotFollowup } from "@/services/wa-followups";
+import { processZapiInbound } from "@/services/wa-inbound";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const PHONE = "+5511999990000";
@@ -67,7 +68,7 @@ describe("agendar_retorno (executor)", () => {
     const conversationId = await createConversation();
     await addInbound(conversationId, "vou pensar");
     await addOutbound(conversationId, "Posso te chamar amanhã às 10h?", new Date(NOW.getTime() - 30_000));
-    const yes = await addInbound(conversationId, "pode sim");
+    const yes = await addInbound(conversationId, "pode sim", new Date(NOW.getTime() - 10_000));
     const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: yes, now: NOW });
 
     const result = await executor("agendar_retorno", { data: "2026-09-15", hora: "10:00", motivo: "ver se decidiu o Longo Dunas", cliente_autorizou: true });
@@ -102,14 +103,30 @@ describe("agendar_retorno (executor)", () => {
     const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: last, now: NOW });
     const refused = await executor("agendar_retorno", { data: "2026-09-15", hora: "10:00", motivo: "ver se decidiu", cliente_autorizou: true });
     expect(refused.ok).toBe(false);
-    expect(refused.text).toContain("não é um sim claro");
+    expect(refused.text).toContain("Ainda não há um sim dela");
     expect(await db.select().from(schema.waFollowups)).toHaveLength(0);
+    // "sim" solto sem a Lia ter perguntado também não vale.
+    const loose = await addInbound(conversationId, "sim");
+    const looseExecutor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: loose, now: NOW });
+    expect((await looseExecutor("agendar_retorno", { data: "2026-09-15", hora: "10:00", motivo: "ver se decidiu", cliente_autorizou: true })).ok).toBe(false);
+    // Ela mesma pediu: vale sem pergunta.
+    const asked = await addInbound(conversationId, "me chama amanhã às 10");
+    const askedExecutor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: asked, now: NOW });
+    expect((await askedExecutor("agendar_retorno", { data: "2026-09-15", hora: "10:00", motivo: "ver se decidiu", cliente_autorizou: true })).ok).toBe(true);
+    await db.delete(schema.waFollowups);
+    await db.delete(schema.outboxEvents);
 
-    const yes = await addInbound(conversationId, "sim");
+    await addOutbound(conversationId, "Posso te chamar amanhã às 10h?", new Date(NOW.getTime() - 500));
+    const yes = await addInbound(conversationId, "sim", new Date(NOW.getTime() - 100));
     const ok = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: yes, now: NOW });
     expect((await ok("agendar_retorno", { data: "2026-09-14", hora: "14:00", motivo: "ver depois", cliente_autorizou: true })).text).toContain("já passou");
     expect((await ok("agendar_retorno", { data: "2026-09-14", hora: "15:10", motivo: "ver depois", cliente_autorizou: true })).text).toContain("Menos de 30 minutos");
     expect((await ok("agendar_retorno", { data: "2026-09-30", hora: "10:00", motivo: "ver depois", cliente_autorizou: true })).text).toContain("Mais de 7 dias");
+    // Foto como última mensagem não é consentimento.
+    const [photo] = await db.insert(schema.waMessages).values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: "https://x/y.jpg", status: "delivered", zapiMessageId: "IMG-Z", createdAt: new Date(NOW.getTime() - 50) }).returning({ id: schema.waMessages.id });
+    const withPhoto = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: photo.id, now: NOW });
+    expect((await withPhoto("agendar_retorno", { data: "2026-09-15", hora: "10:00", motivo: "ver depois", cliente_autorizou: true })).text).toContain("Ainda não há um sim dela");
+    await db.delete(schema.waMessages).where(eq(schema.waMessages.id, photo.id));
     // cliente_autorizou=false não passa no schema.
     expect((await ok("agendar_retorno", { data: "2026-09-15", hora: "10:00", motivo: "ver depois", cliente_autorizou: false })).ok).toBe(false);
     const dry = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: yes, now: NOW, dryRun: true });
@@ -172,12 +189,10 @@ describe("runScheduledBotTurn (turno proativo)", () => {
     expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: human.followupId, now: DUE })).toEqual({ skipped: "conversa_humana", followupId: human.followupId });
     expect((await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.id, human.followupId)))[0]).toMatchObject({ status: "canceled", canceledReason: "conversa_humana" });
 
-    const sair = await scheduled({ conversationId: await createConversation("+5511777770000") });
-    await db.insert(schema.customers).values({ fullName: "Bia", phoneE164: "+5511777770000", marketingOptIn: false });
-    expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: sair.followupId, now: DUE })).toEqual({ skipped: "sair", followupId: sair.followupId });
+    // SAIR é tratado no webhook (cancela na hora, com ou sem cadastro) — ver o teste próprio.
 
     const back = await scheduled({ conversationId: await createConversation("+5511666660000") });
-    await addInbound(back.conversationId, "oi, voltei — quero o M", new Date(NOW.getTime() + 3_600_000));
+    await addInbound(back.conversationId, "oi, voltei — quero o M", new Date(NOW.getTime() + 2 * 3_600_000));
     expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: back.followupId, now: DUE })).toEqual({ skipped: "superada", followupId: back.followupId });
     expect((await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.id, back.followupId)))[0].status).toBe("superseded");
 
@@ -188,6 +203,51 @@ describe("runScheduledBotTurn (turno proativo)", () => {
     expect(deferred?.nextAttemptAt).toEqual(new Date("2026-09-15T12:00:00Z"));
     expect((await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.id, late.followupId)))[0].status).toBe("scheduled");
     expect(provider.sentMessages).toHaveLength(0);
+  });
+
+  it("SAIR de quem NÃO tem cadastro cancela o combinado; cadastro sem opt-in de marketing NÃO cancela (o sim dela vale)", async () => {
+    process.env.ZAPI_WEBHOOK_SECRET = "segredo";
+    const { conversationId, followupId } = await scheduled();
+    const result = await processZapiInbound(sdb, {
+      providedSecret: "segredo",
+      body: { type: "ReceivedCallback", instanceId: "i", messageId: "MSG-SAIR", phone: "5511999990000", fromMe: false, isGroup: false, senderName: "Ana", momment: Date.now(), status: "RECEIVED", text: { message: "SAIR" } },
+    });
+    expect(result.action).toBe("opt_out");
+    expect((await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.id, followupId)))[0]).toMatchObject({ status: "canceled", canceledReason: "sair" });
+    expect(await listScheduledFollowups(sdb, conversationId)).toEqual([]);
+    expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId, now: DUE })).toEqual({ skipped: "status_canceled", followupId });
+    delete process.env.ZAPI_WEBHOOK_SECRET;
+
+    const noOptIn = await scheduled({ conversationId: await createConversation("+5511444440000") });
+    await db.insert(schema.customers).values({ fullName: "Carla", phoneE164: "+5511444440000", marketingOptIn: false });
+    assistant.enqueueScript({ replyTemplate: "Oi Carla, passando como combinamos 🤎" });
+    expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: noOptIn.followupId, now: DUE })).toMatchObject({ sent: true });
+    expect(await cancelBotFollowupsByPhone(sdb, { phoneE164: "+5511444440000", reason: "sair" })).toEqual({ canceled: 0 });
+  });
+
+  it("no turno proativo a Lia não agenda outro retorno com o sim antigo; tarde demais não chama; nada enviado não vira 'sent'; última tentativa com o modelo fora do ar desiste", async () => {
+    const { conversationId, followupId } = await scheduled();
+    assistant.enqueueScript({ toolCalls: [{ name: "agendar_retorno", input: { data: "2026-09-16", hora: "10:00", motivo: "de novo", cliente_autorizou: true } }], replyTemplate: (texts) => texts.join(" ") });
+    const result = await runScheduledBotTurn(sdb, assistant, provider, { followupId, now: DUE });
+    expect(result).toMatchObject({ sent: true });
+    expect(provider.sentMessages[0].body).toContain("não agende outro retorno agora");
+    expect(await listScheduledFollowups(sdb, conversationId)).toEqual([]);
+
+    const late = await scheduled({ conversationId: await createConversation("+5511333330000") });
+    expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: late.followupId, now: new Date(DUE.getTime() + 7 * 3_600_000) })).toEqual({ skipped: "atrasado", followupId: late.followupId });
+
+    const nowa = await scheduled({ conversationId: await createConversation("+5511222220000") });
+    provider.setPhoneExists("+5511222220000", false);
+    assistant.enqueueScript({ replyTemplate: "Oi!" });
+    expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: nowa.followupId, now: DUE })).toEqual({ skipped: "nao_enviado", followupId: nowa.followupId });
+
+    const down = await scheduled({ conversationId: await createConversation("+5511111110000") });
+    const broken = { respondTurn: async () => { throw new Error("modelo fora do ar"); }, extractFromPhotos: async () => { throw new Error("x"); } };
+    await expect(runScheduledBotTurn(sdb, broken, provider, { followupId: down.followupId, now: DUE, attempt: 0 })).rejects.toThrow("modelo fora do ar");
+    expect((await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.id, down.followupId)))[0].status).toBe("scheduled");
+    expect(await runScheduledBotTurn(sdb, broken, provider, { followupId: down.followupId, now: DUE, attempt: 2 })).toEqual({ skipped: "modelo_indisponivel", followupId: down.followupId });
+    const history = await listFollowupHistory(sdb, down.conversationId);
+    expect(history[0]).toMatchObject({ status: "skipped", canceledReason: "modelo_indisponivel" });
   });
 
   it("a Lia sem resposta no turno proativo: 'sem_resposta' e nada sai", async () => {

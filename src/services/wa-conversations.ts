@@ -24,7 +24,7 @@ import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
-import { listScheduledFollowups } from "@/services/wa-followups";
+import { FOLLOWUP_CANCEL_LABELS, listFollowupHistory, type FollowupCancelReason } from "@/services/wa-followups";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import { originLabel } from "@/core/bot/site-bridge";
 
@@ -272,8 +272,8 @@ export interface WaConversationContext {
   style: string | null;
   hold: string | null;
   alerts: string[];
-  /** Retornos combinados agendados (a Lia vai chamar). */
-  followups: { id: string; kind: string; reason: string; dueAt: Date }[];
+  /** Retornos combinados: o agendado (a Lia vai chamar) e os últimos encerrados, com o motivo. */
+  followups: { id: string; kind: string; reason: string; dueAt: Date; status: string; note: string | null }[];
   customerId: string | null;
   customerName: string | null;
   displayName: string | null;
@@ -341,7 +341,7 @@ async function loadConversationContext(
     getStyleProfileByPhone(db, conversation.phoneE164),
     getActiveHoldByPhone(db, conversation.phoneE164),
     listOpenAlertsByPhone(db, conversation.phoneE164),
-    listScheduledFollowups(db, conversation.id),
+    listFollowupHistory(db, conversation.id, 4),
   ]);
   return {
     style: styleProfile
@@ -356,7 +356,14 @@ async function loadConversationContext(
       : null,
     hold: hold?.description ?? null,
     alerts: alerts.map((alert) => `${alert.productName}${alert.variantLabel ? ` (${alert.variantLabel})` : ""}`),
-    followups: followups.map((row) => ({ id: row.id, kind: row.kind, reason: row.reason, dueAt: row.dueAt })),
+    followups: followups.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      reason: row.reason,
+      dueAt: row.dueAt,
+      status: row.status,
+      note: row.status === "sent" ? "chamou no horário" : row.canceledReason ? (FOLLOWUP_CANCEL_LABELS[row.canceledReason as FollowupCancelReason] ?? row.canceledReason) : null,
+    })),
     customerId: conversation.customerId,
     customerName: conversation.customerName,
     displayName: state.displayName?.trim() || null,

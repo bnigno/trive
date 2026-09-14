@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveWaMessageOrigin,
+  isProactiveBotReply,
   type DeriveWaMessageOriginInput,
   type WaMessageOrigin,
 } from "@/core/whatsapp/origin";
@@ -94,5 +95,16 @@ describe("deriveWaMessageOrigin", () => {
         dedupeKey: "wa.bot_reply:m9",
       }),
     ).toBe("bot");
+  });
+});
+
+describe("isProactiveBotReply", () => {
+  it("só o dedupe do turno proativo (wa.bot_reply:followup:<id>) conta — e ele continua com origem 'bot'", () => {
+    expect(isProactiveBotReply("wa.bot_reply:followup:0b16429e-72de-49d4-bd55-c9d4b87df002")).toBe(true);
+    expect(isProactiveBotReply("wa.bot_reply:followup:0b16429e-72de-49d4-bd55-c9d4b87df002:1")).toBe(true);
+    expect(isProactiveBotReply("wa.bot_reply:0b16429e-72de-49d4-bd55-c9d4b87df002")).toBe(false);
+    expect(isProactiveBotReply("wa.bot_media:followup:x:0")).toBe(false);
+    expect(isProactiveBotReply(null)).toBe(false);
+    expect(deriveWaMessageOrigin({ direction: "outbound", templateKey: null, dedupeKey: "wa.bot_reply:followup:x" })).toBe("bot");
   });
 });

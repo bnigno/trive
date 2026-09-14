@@ -32,6 +32,11 @@ describe("RETRY_POLICIES", () => {
 });
 
 describe("nextAttemptDelayMs", () => {
+  it("retorno combinado: 3 tentativas espaçadas (o modelo pode estar fora do ar um instante)", () => {
+    expect(getRetryPolicy("wa.bot_followup")).toEqual({ maxAttempts: 3, baseDelayMs: 60_000, maxDelayMs: 600_000 });
+    expect(getRetryPolicy("store.revalidate")).toEqual({ maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 });
+  });
+
   it("doubles per attempt when random=0.5 (jitter factor 1.0)", () => {
     expect(nextAttemptDelayMs(policy, 1, noJitter)).toBe(5_000);
     expect(nextAttemptDelayMs(policy, 2, noJitter)).toBe(10_000);
