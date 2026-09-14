@@ -6,7 +6,7 @@
 // "Entregue" da página pública. Uma foto por pedido — refazer sobrescreve
 // o mesmo path e NÃO reenvia (dedupe). O upload acontece antes da
 // transação (como o pacote): recusa nunca deixa a linha torta.
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
