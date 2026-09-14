@@ -24,7 +24,7 @@ import {
 import { formatDateTimeSP } from "@/emails/templates";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
-import { isValidE164, sameE164 } from "@/lib/phone";
+import { isValidE164, sameE164, toE164BR } from "@/lib/phone";
 import { spDayKey, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
@@ -645,9 +645,11 @@ export async function sendToOwner(
 ): Promise<SendWaMessageResult> {
   const parsed = sendToOwnerSchema.parse(input);
 
+  // O dono digita como quiser ("(91) 98103-7536"): normaliza antes de recusar.
   const map = await getSettingsMap(db, ["owner_whatsapp_phone"]);
-  const phone = map["owner_whatsapp_phone"];
-  if (typeof phone !== "string" || !isValidE164(phone)) {
+  const raw = map["owner_whatsapp_phone"];
+  const phone = typeof raw === "string" ? (toE164BR(raw) ?? raw.trim()) : "";
+  if (!isValidE164(phone)) {
     return { skipped: "sem_telefone_dono" };
   }
 

@@ -289,6 +289,12 @@ export const initialWaTemplates: Array<{
     variables: ["peca", "detalhes", "link"],
   },
   {
+    key: "owner_atelier_nudge",
+    label: "[interno] Ateliê: faltou o recado",
+    bodyTemplate: "Recebi {{fotos}} 📸 Me conta o nome da peça, as cores, os tamanhos e quanto custou — texto ou áudio — que eu monto a ficha.",
+    variables: ["fotos"],
+  },
+  {
     key: "owner_atelier_help",
     label: "[interno] Ateliê: como cadastrar",
     bodyTemplate:

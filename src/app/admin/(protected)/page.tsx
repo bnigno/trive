@@ -7,6 +7,7 @@ import { isOwner, requireUser } from "@/services/auth";
 import { listOrders } from "@/services/orders";
 import { countRouteOfDay } from "@/services/delivery-routes";
 import { countOrdersMustShipToday } from "@/services/needed-by";
+import { countAtelierIntakesFailed } from "@/services/atelier";
 import { countOrdersAwaitingPacking } from "@/services/packing";
 import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
@@ -213,6 +214,7 @@ async function loadOwnerDashboard() {
     top,
     margin,
     recovery,
+    atelierFailed,
   ] = await Promise.all([
     safe(async () => {
       const db = getDb();
@@ -245,9 +247,11 @@ async function loadOwnerDashboard() {
     safe(() => topProducts(getDb(), { days: 30, limit: 5 })),
     safe(() => marginSummary(getDb(), { days: 30 })),
     safe(() => recoveryStats(getDb())),
+    safe(() => countAtelierIntakesFailed(getDb())),
   ]);
 
   return {
+    atelierFailed,
     ordersTodaySumCents,
     month,
     pendingApprovals,
@@ -339,6 +343,16 @@ export default async function AdminDashboardPage() {
               />
             </Link>
           </>
+        ) : null}
+        {ownerData?.atelierFailed ? (
+          <Link href="/admin/produtos/chegadas" className="block">
+            <StatCard
+              label="Chegadas com problema"
+              value={String(ownerData.atelierFailed)}
+              tone="warning"
+              hint="Fotos + recado pelo WhatsApp que não viraram rascunho. Abra e refaça."
+            />
+          </Link>
         ) : null}
         {data.mustShipToday ? (
           <Link href="/admin/pedidos/data-marcada" className="block">

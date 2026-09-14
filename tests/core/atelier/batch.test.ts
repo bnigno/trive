@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   INTAKE_LATE_PHOTO_MS,
   INTAKE_MAX_PHOTOS,
+  INTAKE_NUDGE_AFTER_MS,
   INTAKE_WINDOW_MS,
   hasOpenBatch,
+  isBatchStart,
   noteFromMessage,
+  nudgeDue,
   openPhotos,
   selectIntakeBatch,
   selectLatePhotos,
@@ -51,6 +54,24 @@ describe("hasOpenBatch / openPhotos", () => {
   it("openPhotos devolve em ordem de chegada", () => {
     const list = openPhotos([photo("f2", -30), photo("f1", -90)], T0);
     expect(list.map((item) => item.id)).toEqual(["f1", "f2"]);
+  });
+});
+
+describe("isBatchStart / nudgeDue", () => {
+  it("só a primeira foto sem dona abre o lote; a segunda não", () => {
+    expect(isBatchStart([photo("f1", -5)], "f1", T0)).toBe(true);
+    expect(isBatchStart([photo("f1", -60), photo("f2", -5)], "f2", T0)).toBe(false);
+    // Foto anterior já reivindicada: a nova abre um lote novo.
+    expect(isBatchStart([photo("f1", -60, { consumed: true }), photo("f2", -5)], "f2", T0)).toBe(true);
+    expect(INTAKE_NUDGE_AFTER_MS).toBe(180_000);
+  });
+
+  it("o lembrete vale enquanto a foto está sem recado — mesmo atrasado; reivindicada, não", () => {
+    expect(nudgeDue([photo("f1", -180), photo("f2", -100)], "f1")).toEqual({ due: true, photos: 2, reason: null });
+    expect(nudgeDue([photo("f1", -180, { consumed: true })], "f1")).toEqual({ due: false, photos: 0, reason: "recado_chegou" });
+    // Lembrete que a fila atrasou além da janela: a dona ainda é lembrada.
+    expect(nudgeDue([photo("f1", -20 * 60)], "f1")).toEqual({ due: true, photos: 1, reason: null });
+    expect(nudgeDue([], "f1")).toEqual({ due: false, photos: 0, reason: "foto_sumiu" });
   });
 });
 

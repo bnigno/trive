@@ -1,0 +1,3 @@
+ALTER TABLE "atelier_intakes" ADD COLUMN "redo_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "atelier_intakes" ADD COLUMN "previous_product_id" uuid;--> statement-breakpoint
+ALTER TABLE "atelier_intakes" ADD CONSTRAINT "atelier_intakes_previous_product_id_products_id_fk" FOREIGN KEY ("previous_product_id") REFERENCES "public"."products"("id") ON DELETE set null ON UPDATE no action;

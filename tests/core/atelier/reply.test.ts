@@ -6,6 +6,9 @@ import {
   ATELIER_HELP_REASONS,
   arrivalDetailsLine,
   atelierDraftVars,
+  atelierNudgeVars,
+  errorDetailLabel,
+  interpretationFailedLabel,
   atelierHelpReasonText,
   isAtelierHelpReason,
   photosLabel,
@@ -15,6 +18,7 @@ describe("resposta do Ateliê", () => {
   it("conta as fotos em português", () => {
     expect(photosLabel(1)).toBe("1 foto");
     expect(photosLabel(3)).toBe("3 fotos");
+    expect(atelierNudgeVars(2)).toEqual({ fotos: "2 fotos" });
   });
 
   it("monta as variáveis do template owner_atelier_draft", () => {
@@ -58,5 +62,12 @@ describe("resposta do Ateliê", () => {
     }
     expect(isAtelierHelpReason("qualquer")).toBe(false);
     expect(atelierHelpReasonText("documento")).toContain("documento");
+  });
+
+  it("códigos viram português no painel; texto livre passa como está", () => {
+    expect(interpretationFailedLabel("ia_demorou")).toBe("a inteligência demorou demais");
+    expect(interpretationFailedLabel("xyz")).toBe("xyz");
+    expect(errorDetailLabel("fotos_indisponiveis")).toContain("não estão mais disponíveis");
+    expect(errorDetailLabel("compra não lançada — x")).toBe("compra não lançada — x");
   });
 });

@@ -335,7 +335,8 @@ describe("processAtelierIntake", () => {
       processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock),
     ).rejects.toThrow();
     let [intake] = await db.select().from(schema.atelierIntakes);
-    expect(intake.status).toBe("failed");
+    // Ainda há tentativas: a chegada continua "montando" (o Refazer não se libera à toa).
+    expect(intake.status).toBe("queued");
     expect(intake.productId).not.toBeNull();
     expect(intake.uploadedWaMessageIds).toHaveLength(2);
     expect(await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "atelier.intake"))).toHaveLength(0);
@@ -649,5 +650,42 @@ describe("processAtelierIntake", () => {
     const [intake] = await db.select().from(schema.atelierIntakes);
     expect(intake.financialEntryId).toBe(entries[0].id);
     expect(assistant.extractions).toHaveLength(1);
+  });
+
+  it("na última tentativa a chegada vira 'deu errado' e a dona é avisada", async () => {
+    const { conversationId, noteId } = await seedArrival();
+    provider.simulateDisconnect();
+    await expect(
+      processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId, attempt: 2 }, clock),
+    ).rejects.toThrow();
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.status).toBe("failed");
+  });
+
+  it("chegada refeita: as fotos vêm do rascunho arquivado (a Z-API já expirou) e o aviso sai de novo com chave da rodada", async () => {
+    const { conversationId, noteId } = await seedArrival();
+    const first = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in first)) throw new Error("esperava created");
+    // Refazer: rascunho arquivado, chegada zerada com previousProductId e rodada 1.
+    await db.update(schema.products).set({ status: "archived" }).where(eq(schema.products.id, first.productId));
+    await db
+      .update(schema.atelierIntakes)
+      .set({ status: "queued", productId: null, previousProductId: first.productId, uploadedWaMessageIds: [], parsed: null, cardPath: null, redoCount: 1 })
+      .where(eq(schema.atelierIntakes.triggerWaMessageId, noteId));
+    provider.reset(); // sem fixtures: a URL da Z-API "expirou"
+    const again = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    expect(again).toMatchObject({ created: true, photos: 2, failedPhotos: 0 });
+    if (!("created" in again)) throw new Error("esperava created");
+    expect(again.productId).not.toBe(first.productId);
+    const images = await db.select().from(schema.productImages).where(eq(schema.productImages.productId, again.productId));
+    expect(images).toHaveLength(2);
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(provider.sentMessages[0].body).toContain("Rascunho pronto");
+    const [sent] = await db.select().from(schema.waMessages).where(eq(schema.waMessages.direction, "outbound")).orderBy(schema.waMessages.createdAt);
+    const keys = (await db.select().from(schema.waMessages).where(eq(schema.waMessages.direction, "outbound"))).map((row) => row.dedupeKey).sort();
+    expect(sent).toBeDefined();
+    expect(keys.some((key) => key?.endsWith(":r1"))).toBe(true);
+    const card = (await db.select().from(schema.outboxEvents)).find((event) => event.dedupeKey?.startsWith("wa.atelier_card:") && event.dedupeKey.endsWith(":r1"));
+    expect(card).toBeDefined();
   });
 });

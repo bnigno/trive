@@ -14,7 +14,14 @@ import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropStoryToOwner } from "@/services/drop-story";
-import { atelierHelpPayloadSchema, atelierIntakePayloadSchema, processAtelierIntake, sendAtelierHelp } from "@/services/atelier";
+import {
+  atelierHelpPayloadSchema,
+  atelierIntakePayloadSchema,
+  atelierNudgePayloadSchema,
+  processAtelierIntake,
+  sendAtelierHelp,
+  sendAtelierNudge,
+} from "@/services/atelier";
 import { atelierCardPayloadSchema, renderAndSendAtelierCard } from "@/services/atelier-card";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
@@ -388,6 +395,11 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "wa.atelier_help": async (event) => {
     await sendAtelierHelp(getDb(), getMessagingProvider(), atelierHelpPayloadSchema.parse(event.payload));
+  },
+  // Fotos sem recado há 3 min: lembrete à dona (só se continuarem sem recado).
+  "wa.atelier_nudge": async (event) => {
+    const result = await sendAtelierNudge(getDb(), getMessagingProvider(), atelierNudgePayloadSchema.parse(event.payload));
+    console.info(`[wa.atelier_nudge] ${JSON.stringify(result)}`);
   },
   // O cartão do rascunho para a dona: melhor esforço (sem foto na ficha,
   // nada sai; o texto "Rascunho pronto" já foi).
