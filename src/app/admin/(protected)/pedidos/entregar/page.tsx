@@ -43,7 +43,7 @@ export default async function EntregarPage() {
             Enviados há {STALE_SHIPMENT_DAYS}+ dias sem confirmação · {stale.length}
           </h2>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            A cliente ainda não tocou em “Chegou!” nem disse à Lia que recebeu. Vale conferir o rastreio ou chamar no WhatsApp.
+            Correios: a cliente ainda não tocou em “Chegou!” nem disse à Lia que recebeu — confira o rastreio ou chame no WhatsApp. Motoboy: saiu e ficou sem a foto da entrega — registre abaixo.
           </p>
           <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
             {stale.map((row) => (
@@ -52,7 +52,7 @@ export default async function EntregarPage() {
                   #{row.orderNumber}
                 </Link>{" "}
                 <span className="text-zinc-600 dark:text-zinc-400">
-                  {row.customerName} · há {row.days} dias{row.trackingCode ? ` · ${row.trackingCode}` : ""}
+                  {row.customerName} · {row.isMotoboy ? "🛵 saiu" : "enviado"} há {row.days} dias{row.trackingCode ? ` · ${row.trackingCode}` : ""}
                 </span>
               </li>
             ))}

@@ -17,8 +17,8 @@ import {
 
 /**
  * "Chegou!": quem tem o link do pedido enviado confirma que recebeu — o
- * pedido vira entregue pela máquina de estados (sem foto). Efeito é só o
- * status; token inválido volta para a home.
+ * pedido vira entregue pela máquina de estados (sem foto) e a cliente recebe
+ * o texto de order_delivered pela fila. Token inválido volta para a home.
  */
 export async function confirmDeliveryAction(token: string): Promise<void> {
   const parsedToken = z.uuid().safeParse(token);

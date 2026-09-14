@@ -166,7 +166,7 @@ export const initialWaTemplates: Array<{
     label: "Pedido entregue (legenda da foto)",
     bodyTemplate:
       "{{nome}}, seu pedido #{{pedido}} foi entregue {{entrega}} 🤎\n" +
-      "Esperamos que a peça chegue bem — se precisar de qualquer coisa, é só chamar.\n" +
+      "Se precisar de qualquer coisa com a peça, é só chamar.\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "pedido", "entrega", "recebido_por"],
   },

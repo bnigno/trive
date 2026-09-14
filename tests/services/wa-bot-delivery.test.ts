@@ -50,7 +50,7 @@ describe("confirmar_entrega", () => {
     const { orderId, orderNumber, customerId } = await seedShippedOrder();
     const [conversation] = await db.insert(schema.waConversations).values({ phoneE164: PHONE, customerId }).returning({ id: schema.waConversations.id });
     const before = await shipmentMemoryLineFor(sdb, { customerId, phoneE164: PHONE });
-    expect(before).toContain(`#${orderNumber} enviado em 05/09 (rastreio AA123456789BR)`);
+    expect(before).toContain(`#${orderNumber} (enviado em 05/09, rastreio AA123456789BR)`);
 
     const executor = buildToolExecutor(sdb, { conversationId: conversation.id, phoneE164: PHONE, customerId, lastInboundId: DUMMY_INBOUND_ID });
     const result = await executor("confirmar_entrega", {});

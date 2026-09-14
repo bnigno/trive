@@ -451,6 +451,12 @@ export async function execConfirmarEntrega(
   }
   const result = await confirmDeliveryForCustomer(db, { customerId, orderNumber: input.numero_do_pedido, source: "lia" });
   if (!result.ok) {
+    if (result.reason === "ambiguo") {
+      return {
+        ok: false,
+        text: `Ela tem ${result.orderNumbers.length} pedidos enviados (${result.orderNumbers.map((n) => `#${n}`).join(", ")}): pergunte QUAL chegou e chame confirmar_entrega de novo com numero_do_pedido.`,
+      };
+    }
     if (result.reason === "nao_encontrado") {
       return {
         ok: false,

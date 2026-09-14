@@ -134,6 +134,7 @@ export default async function OrderPage({
     (query.collection_status === "approved" || query.status === "approved");
   const mpUnavailable = isPendingPayment && query.pagamento === "indisponivel";
   const justConfirmed = order.status === "delivered" && query.chegou === "1";
+  const confirmFailed = query.chegou === "0";
   const confirmAction = confirmDeliveryAction.bind(null, token);
 
   // Variante do bloco "Como pagar" pela forma de pagamento do pedido:
@@ -433,6 +434,7 @@ export default async function OrderPage({
                     Chegou!
                   </button>
                   <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a maison.</p>
+                  {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
                 </form>
               ) : null}
               {justConfirmed ? (
@@ -447,6 +449,7 @@ export default async function OrderPage({
                   Chegou!
                 </button>
                 <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a maison.</p>
+                {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
               </form>
             </Sheet>
           ) : justConfirmed ? (
