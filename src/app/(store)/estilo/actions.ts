@@ -5,6 +5,7 @@
 import { z } from "zod";
 
 import { getDb } from "@/db/client";
+import { BODY_MAX_CM, BODY_MIN_CM } from "@/core/style/fit";
 import { paletteName, styleProfileSchema, type StyleProfile } from "@/core/style/profile";
 import { toE164BR } from "@/lib/phone";
 import { publicMdUrl } from "@/services/store-catalog";
@@ -59,14 +60,17 @@ export async function curateEditionAction(input: unknown): Promise<{ items: Edit
   }
 }
 
-const bodyCm = z.coerce.number().min(40, "Medida em cm, entre 40 e 200.").max(200, "Medida em cm, entre 40 e 200.");
+const BODY_MSG = "Medidas em centímetros de contorno (busto a partir de 60, cintura de 50, quadril de 60; até 200).";
+const bodyCm = (min: number) => z.coerce.number({ error: BODY_MSG }).min(min, BODY_MSG).max(BODY_MAX_CM, BODY_MSG);
 const saveSchema = z.object({
   profile: styleProfileSchema,
   phone: z.string().trim().min(8, "Informe o seu WhatsApp."),
   consent: z.literal(true, { error: "Marque a caixinha para guardar a cartela." }),
   website: z.string().max(0).optional(),
   /** Último passo do quiz, opcional: busto/cintura/quadril em cm (strings vazias já removidas). */
-  body: z.object({ bustCm: bodyCm.optional(), waistCm: bodyCm.optional(), hipsCm: bodyCm.optional() }).optional(),
+  body: z.object({ bustCm: bodyCm(BODY_MIN_CM.bustCm).optional(), waistCm: bodyCm(BODY_MIN_CM.waistCm).optional(), hipsCm: bodyCm(BODY_MIN_CM.hipsCm).optional() }).optional(),
+  /** A credencial das medidas deste navegador (refazer a cartela no mesmo aparelho troca as medidas). */
+  bodyToken: z.uuid().nullable().optional(),
 });
 
 export type SaveStyleResult =
@@ -97,9 +101,15 @@ export async function saveStyleProfileAction(input: unknown): Promise<SaveStyleR
     let bodyNote: string | null = null;
     const body = parsed.data.body ?? {};
     if (Object.keys(body).length > 0) {
-      const result = await saveBodyMeasurements(db, { siteToken: saved.siteToken, body });
-      if (result.saved) bodyToken = result.bodyToken;
-      else if (result.reason === "sem_credencial") bodyNote = "Suas medidas já estavam guardadas em outro aparelho e ficaram como estão — para trocar, peça à vendedora no WhatsApp.";
+      try {
+        const result = await saveBodyMeasurements(db, { siteToken: saved.siteToken, bodyToken: parsed.data.bodyToken ?? null, body });
+        if (result.saved) bodyToken = result.bodyToken;
+        else if (result.reason === "sem_credencial") bodyNote = "Suas medidas já estavam guardadas em outro aparelho e ficaram como estão — para trocar, peça à vendedora no WhatsApp.";
+      } catch (error) {
+        // A cartela já foi guardada: não esconda isso por causa das medidas.
+        console.error("saveStyleProfileAction:body", error instanceof Error ? error.name : "erro");
+        bodyNote = "A cartela foi guardada, mas as medidas não — tente de novo pela página de uma peça (Vai me servir?).";
+      }
     }
     return { ok: true, token: saved.siteToken, paletteName: saved.paletteName, bodyToken, bodyNote };
   } catch (error) {
