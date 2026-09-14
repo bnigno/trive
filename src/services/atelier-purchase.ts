@@ -61,7 +61,9 @@ export async function receiveArrivalPurchase(
   if (!result.supplierId && proposal.supplierName) {
     try {
       const supplier = await findOrCreateSupplierByName(db as unknown as ServiceDb, { name: proposal.supplierName, userId: input.userId });
-      if (supplier) {
+      if (supplier && "ambiguous" in supplier) {
+        result.error = `fornecedor "${proposal.supplierName}" é ambíguo (${supplier.ambiguous.join(", ")}): escolha na ficha`;
+      } else if (supplier) {
         result.supplierId = supplier.id;
         result.supplierName = supplier.name;
         result.supplierCreated = supplier.created;

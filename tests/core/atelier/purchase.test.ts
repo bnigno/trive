@@ -65,5 +65,9 @@ describe("purchaseDescription / atelierCardLines", () => {
     ]);
     expect(atelierCardLines({ colors: 0, sizes: 0, totalQuantity: null, unitCostCents: null, supplierName: null, payableCents: null })).toEqual([]);
     expect(atelierCardLines({ colors: 1, sizes: 0, totalQuantity: 1, unitCostCents: null, supplierName: null, payableCents: null })).toEqual(["1 cor", "1 peça"]);
+    const long = atelierCardLines({ colors: 0, sizes: 0, totalQuantity: null, unitCostCents: null, supplierName: "Aurora Confecções e Tecidos do Norte Ltda", payableCents: 288000 });
+    expect(long).toHaveLength(1);
+    expect(long[0].length).toBeLessThanOrEqual(44);
+    expect(long[0]).toContain("a pagar");
   });
 });

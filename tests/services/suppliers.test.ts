@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
-import { createSupplier, deactivateSupplier, findOrCreateSupplierByName, findSupplierByName, getSupplierDetail, listSuppliers, updateSupplier } from "@/services/suppliers";
+import { createSupplier, deactivateSupplier, findOrCreateSupplierByName, findSupplierByName, getSupplierDetail, listSuppliers, matchSupplierByName, updateSupplier } from "@/services/suppliers";
 import {
   createTestDb,
   createTestSupplier,
@@ -269,6 +269,10 @@ describe("findSupplierByName (Ateliê)", () => {
     await createTestSupplier(db, { name: "Maria Modas" });
     expect(await findSupplierByName(db, "aurora confeccoes")).toMatchObject({ id: aurora });
     expect(await findSupplierByName(db, "Aurora")).toBeNull();
+    expect(await matchSupplierByName(db, "Aurora")).toMatchObject({ status: "ambiguous" });
+    // Ambíguo não cria um terceiro "Aurora".
+    expect(await findOrCreateSupplierByName(db, { name: "Aurora", userId: FIXED_USER_ID })).toEqual({ ambiguous: ["Aurora Tecidos", "Áurora Confecções"] });
+    expect(await db.select().from(schema.suppliers)).toHaveLength(3);
     expect((await findSupplierByName(db, "maria"))?.name).toBe("Maria Modas");
     expect(await findSupplierByName(db, "x")).toBeNull();
     expect(await findSupplierByName(db, "Zé")).toBeNull();
@@ -278,7 +282,7 @@ describe("findSupplierByName (Ateliê)", () => {
     const created = await findOrCreateSupplierByName(db, { name: "  Nova  Aurora ", userId: FIXED_USER_ID });
     expect(created).toMatchObject({ name: "Nova Aurora", created: true });
     const again = await findOrCreateSupplierByName(db, { name: "nova aurora", userId: FIXED_USER_ID });
-    expect(again).toMatchObject({ id: created?.id, created: false });
+    expect(again).toMatchObject({ id: created && "id" in created ? created.id : "?", created: false });
     expect(await findOrCreateSupplierByName(db, { name: "ok", userId: FIXED_USER_ID })).toBeNull();
     const rows = await db.select().from(schema.suppliers);
     expect(rows.filter((row) => row.name === "Nova Aurora")).toHaveLength(1);

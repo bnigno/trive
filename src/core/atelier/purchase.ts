@@ -51,6 +51,13 @@ export function purchaseDescription(input: { productName: string; totalQuantity:
   return `Compra: ${pieces} de ${input.productName}${input.supplierName ? ` — ${input.supplierName}` : ""} (Ateliê pelo WhatsApp)`;
 }
 
+/** Linha do cartão além disto estoura a arte (Satori não quebra sozinho no rodapé). */
+export const ATELIER_CARD_LINE_MAX_CHARS = 44;
+
+function clampLine(line: string): string {
+  return line.length > ATELIER_CARD_LINE_MAX_CHARS ? `${line.slice(0, ATELIER_CARD_LINE_MAX_CHARS - 1).trimEnd()}…` : line;
+}
+
 /** As linhas do cartão: "2 cores × 4 tamanhos", "24 peças · custo R$ 120,00", "Aurora · a pagar R$ 2.880,00". */
 export function atelierCardLines(input: {
   colors: number;
@@ -70,8 +77,8 @@ export function atelierCardLines(input: {
   if (input.unitCostCents !== null) pieces.push(`custo ${formatCentsBRL(input.unitCostCents)}`);
   if (pieces.length > 0) lines.push(pieces.join(" · "));
   const money: string[] = [];
-  if (input.supplierName) money.push(input.supplierName);
+  if (input.supplierName) money.push(input.supplierName.length > 24 ? `${input.supplierName.slice(0, 23).trimEnd()}…` : input.supplierName);
   if (input.payableCents !== null) money.push(`a pagar ${formatCentsBRL(input.payableCents)}`);
   if (money.length > 0) lines.push(money.join(" · "));
-  return lines.slice(0, 3);
+  return lines.slice(0, 3).map(clampLine);
 }

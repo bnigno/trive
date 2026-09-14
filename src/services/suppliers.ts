@@ -407,35 +407,53 @@ function normalizeName(value: string): string {
     .trim();
 }
 
+export type SupplierNameMatch =
+  | { status: "found"; supplier: { id: string; name: string } }
+  | { status: "ambiguous"; candidates: { id: string; name: string }[] }
+  | { status: "none" };
+
 /**
  * "da Aurora" → o fornecedor Aurora: igual sem acento/caixa primeiro; senão
  * um único que comece (ou seja começo) do nome dito. Dois candidatos
- * ("Aurora" e "Aurora Confecções" para "Aurora Conf") = null: não chuta.
+ * ("Aurora Confecções" e "Aurora Tecidos" para "Aurora") = ambíguo: não
+ * chuta nem cria um terceiro.
  */
-export async function findSupplierByName(db: ServiceDb, name: string): Promise<{ id: string; name: string } | null> {
+export async function matchSupplierByName(db: ServiceDb, name: string): Promise<SupplierNameMatch> {
   const target = normalizeName(name);
-  if (target.length < 2) return null;
+  if (target.length < 2) return { status: "none" };
   const rows = await db
     .select({ id: suppliers.id, name: suppliers.name })
     .from(suppliers)
     .where(isNull(suppliers.deletedAt))
     .orderBy(suppliers.name);
   const exact = rows.find((row) => normalizeName(row.name) === target);
-  if (exact) return exact;
+  if (exact) return { status: "found", supplier: exact };
   const partial = rows.filter((row) => {
     const candidate = normalizeName(row.name);
     return candidate.startsWith(target) || target.startsWith(candidate);
   });
-  return partial.length === 1 ? partial[0] : null;
+  if (partial.length === 1) return { status: "found", supplier: partial[0] };
+  if (partial.length > 1) return { status: "ambiguous", candidates: partial };
+  return { status: "none" };
 }
 
-/** O fornecedor do recado, criado na hora quando não existe (nome com 3+ letras). */
+export async function findSupplierByName(db: ServiceDb, name: string): Promise<{ id: string; name: string } | null> {
+  const match = await matchSupplierByName(db, name);
+  return match.status === "found" ? match.supplier : null;
+}
+
+/**
+ * O fornecedor do recado: o achado; ou criado na hora quando não existe
+ * (nome com 3+ letras). Nome ambíguo NÃO cria: devolve os candidatos para
+ * a dona escolher na ficha.
+ */
 export async function findOrCreateSupplierByName(
   db: ServiceDb,
   input: { name: string; userId: string },
-): Promise<{ id: string; name: string; created: boolean } | null> {
-  const found = await findSupplierByName(db, input.name);
-  if (found) return { ...found, created: false };
+): Promise<{ id: string; name: string; created: boolean } | { ambiguous: string[] } | null> {
+  const match = await matchSupplierByName(db, input.name);
+  if (match.status === "found") return { ...match.supplier, created: false };
+  if (match.status === "ambiguous") return { ambiguous: match.candidates.map((candidate) => candidate.name) };
   const name = input.name.trim().replace(/\s+/g, " ").slice(0, 120);
   if (name.replace(/[^\p{L}]/gu, "").length < 3) return null;
   const supplier = await createSupplier(db, { name, notes: "Criado pelo Ateliê pelo WhatsApp.", userId: input.userId });

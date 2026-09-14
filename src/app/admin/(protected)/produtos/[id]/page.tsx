@@ -236,7 +236,11 @@ export default async function ProdutoDetalhePage({
                       : atelierIntake.parsed.proposal.totalQuantity !== null
                         ? `${atelierIntake.parsed.proposal.totalQuantity} peças`
                         : "não disse"}{" "}
-                    {atelierIntake.payable || atelierIntake.parsed.proposal.quantityPerVariant !== null ? " — estoque lançado na chegada" : " — sem quantidade, o estoque fica para o painel"}
+                    {atelierIntake.payable || (atelierIntake.parsed.proposal.quantityPerVariant !== null && !atelierIntake.errorDetail?.includes("compra não lançada"))
+                      ? " — estoque lançado na chegada"
+                      : atelierIntake.parsed.proposal.quantityPerVariant !== null
+                        ? " — a compra não foi lançada (veja abaixo)"
+                        : " — sem quantidade, o estoque fica para o painel"}
                   </li>
                   <li>
                     Custo:{" "}
