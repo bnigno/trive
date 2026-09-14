@@ -141,3 +141,44 @@ export function isFollowupSuperseded(input: { createdAt: Date; lastInboundAt: Da
 export function followupMinutesOfDay(dueAt: Date): number {
   return spMinutesOfDay(dueAt);
 }
+
+/** "Retomar sacola parada após N horas": 0 = desligado; teto de 7 dias. */
+export const IDLE_CART_MAX_HOURS = 168;
+
+export type IdleCartCandidateInput = {
+  status: string;
+  botDisabledUntil: Date | null;
+  cartCount: number;
+  lastInboundAt: Date | null;
+  lastOutboundAt: Date | null;
+  /** Ela tem cadastro com opt-in de avisos? Sem cadastro ou sem opt-in, nada de mensagem comercial. */
+  hasOptIn: boolean;
+  /** Fez um pedido depois da última mensagem (pelo site ou pela Lia)? Então a sacola virou compra. */
+  orderedAfterLastInbound: boolean;
+  hours: number;
+  now: Date;
+};
+
+/**
+ * A sacola parada que merece UMA retomada: conversa aberta com a Lia,
+ * sacola com peças, opt-in, a cliente sumiu há N horas depois de a Lia ter
+ * respondido, e nenhum pedido depois disso. (Uma vez por conversa, para
+ * sempre: quem garante é o UNIQUE de wa_followups.)
+ */
+export function isIdleCartCandidate(input: IdleCartCandidateInput): boolean {
+  if (input.hours <= 0) return false;
+  if (input.status !== "open") return false;
+  if (input.botDisabledUntil && input.botDisabledUntil.getTime() > input.now.getTime()) return false;
+  if (input.cartCount <= 0) return false;
+  if (!input.hasOptIn) return false;
+  if (input.orderedAfterLastInbound) return false;
+  if (!input.lastInboundAt) return false;
+  // A Lia respondeu por último (senão a bola está com ela, não com a cliente).
+  if (!input.lastOutboundAt || input.lastOutboundAt.getTime() < input.lastInboundAt.getTime()) return false;
+  return input.now.getTime() - input.lastInboundAt.getTime() >= input.hours * 3_600_000;
+}
+
+/** O motivo que vai para wa_followups e para a fala sintética. */
+export function idleCartReason(cartCount: number): string {
+  return cartCount === 1 ? "1 peça parada na sacola" : `${cartCount} peças paradas na sacola`;
+}

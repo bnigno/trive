@@ -207,6 +207,18 @@ min"); o aviso no seu WhatsApp é por balde de meia hora do relógio. O retorno 
 copiloto também vira sugestão. Produção: migração 0041 e
 `scripts/sync-seed.ts --settings bot_mode`.
 
+**Retomada de sacola parada** — na ficha da vendedora, **Retomar sacola
+parada após (horas)** (0 = desligado). A cada hora (`wa-idle-cart-followup`,
+`7 * * * *`), quem tem peças na sacola da Lia, sumiu há N horas depois de
+ela responder, tem cadastro com opt-in e não fez pedido depois ganha UMA
+retomada (`wa_followups` kind `idle_cart`, uma vez por conversa, para
+sempre), agendada para agora na janela (fora dela, para a abertura). No
+horário a Lia manda uma mensagem leve retomando a sacola — sem desconto
+inventado; em copiloto vira sugestão "(retomada da sacola)". Só a sacola da
+Lia (a sacola do site não passa pelo caderninho). Depois do deploy, registrar
+a função nova no Inngest: `curl -X PUT https://trivemaison.com.br/api/inngest`.
+Produção: `scripts/sync-seed.ts --settings bot_idle_cart_followup_hours`.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

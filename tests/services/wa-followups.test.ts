@@ -11,7 +11,7 @@ import { FakeMessagingProvider } from "@/adapters/zapi/fake";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { buildToolExecutor, runBotTurn, runScheduledBotTurn } from "@/services/wa-bot";
-import { cancelBotFollowup, cancelBotFollowupsByPhone, followupMemoryLines, listFollowupHistory, listScheduledFollowups, scheduleBotFollowup } from "@/services/wa-followups";
+import { cancelBotFollowup, cancelBotFollowupsByPhone, followupMemoryLines, listFollowupHistory, listScheduledFollowups, scheduleBotFollowup, scheduleIdleCartFollowups } from "@/services/wa-followups";
 import { processZapiInbound } from "@/services/wa-inbound";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -255,5 +255,70 @@ describe("runScheduledBotTurn (turno proativo)", () => {
     assistant.enqueueScript({ replyTemplate: () => "" });
     expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId, now: DUE })).toEqual({ skipped: "sem_resposta", followupId });
     expect(provider.sentMessages).toHaveLength(0);
+  });
+});
+
+describe("scheduleIdleCartFollowups (sacola parada)", () => {
+  async function idleConversation(input: { phone: string; optIn?: boolean; cart?: number; hoursAgo?: number; liaLast?: boolean; withCustomer?: boolean }): Promise<string> {
+    const lastInboundAt = new Date(NOW.getTime() - (input.hoursAgo ?? 5) * 3_600_000);
+    let customerId: string | null = null;
+    if (input.withCustomer !== false) {
+      const [customer] = await db.insert(schema.customers).values({ fullName: "Ana", phoneE164: input.phone, marketingOptIn: input.optIn ?? true }).returning({ id: schema.customers.id });
+      customerId = customer.id;
+    }
+    const cart = Array.from({ length: input.cart ?? 2 }, (_, index) => ({ sku: `SKU-${index}`, quantidade: 1, nome: "Peça", variacao: "M", precoCents: 1000 }));
+    const [conversation] = await db
+      .insert(schema.waConversations)
+      .values({
+        phoneE164: input.phone,
+        customerId,
+        status: "open",
+        botState: { cart },
+        lastInboundAt,
+        lastOutboundAt: input.liaLast === false ? new Date(lastInboundAt.getTime() - 60_000) : new Date(lastInboundAt.getTime() + 60_000),
+      })
+      .returning({ id: schema.waConversations.id });
+    return conversation.id;
+  }
+
+  it("desligado (0 h) não agenda; ligado agenda UMA retomada para agora na janela — e a segunda rodada não repete", async () => {
+    const conversationId = await idleConversation({ phone: PHONE });
+    expect(await scheduleIdleCartFollowups(sdb, { now: NOW })).toEqual({ hours: 0, checked: 0, scheduled: 0 });
+    await db.insert(schema.settings).values({ key: "bot_idle_cart_followup_hours", value: 4 });
+    expect(await scheduleIdleCartFollowups(sdb, { now: NOW })).toEqual({ hours: 4, checked: 1, scheduled: 1 });
+    const [row] = await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.conversationId, conversationId));
+    expect(row).toMatchObject({ kind: "idle_cart", reason: "2 peças paradas na sacola", requestedBy: "system", status: "scheduled" });
+    expect(row.dueAt).toEqual(NOW);
+    expect(await scheduleIdleCartFollowups(sdb, { now: NOW })).toEqual({ hours: 4, checked: 0, scheduled: 0 });
+    // Depois de enviada/cancelada, nunca mais: a linha idle_cart existe.
+    await cancelBotFollowup(sdb, { followupId: row.id, reason: "dono" });
+    expect(await scheduleIdleCartFollowups(sdb, { now: new Date(NOW.getTime() + 86_400_000) })).toMatchObject({ scheduled: 0 });
+  });
+
+  it("sem opt-in, sem cadastro, sacola vazia, ainda cedo, a Lia sem responder ou pedido feito depois: nada", async () => {
+    await db.insert(schema.settings).values({ key: "bot_idle_cart_followup_hours", value: 4 });
+    await idleConversation({ phone: "+5511111110001", optIn: false });
+    await idleConversation({ phone: "+5511111110002", withCustomer: false });
+    await idleConversation({ phone: "+5511111110003", cart: 0 });
+    await idleConversation({ phone: "+5511111110004", hoursAgo: 2 });
+    await idleConversation({ phone: "+5511111110005", liaLast: false });
+    const ordered = await idleConversation({ phone: "+5511111110006" });
+    const [conv] = await db.select({ customerId: schema.waConversations.customerId }).from(schema.waConversations).where(eq(schema.waConversations.id, ordered));
+    await db.insert(schema.orders).values({ customerId: conv.customerId, status: "paid", channel: "store", subtotalCents: 1000, shippingCents: 0, totalCents: 1000, createdAt: new Date(NOW.getTime() - 3_600_000) });
+    expect(await scheduleIdleCartFollowups(sdb, { now: NOW })).toMatchObject({ scheduled: 0 });
+    expect(await db.select().from(schema.waFollowups)).toHaveLength(0);
+  });
+
+  it("fora da janela agenda para a abertura; no horário a Lia manda a retomada com a fala de sacola parada", async () => {
+    await db.insert(schema.settings).values({ key: "bot_idle_cart_followup_hours", value: 4 });
+    const conversationId = await idleConversation({ phone: PHONE });
+    const night = new Date("2026-09-15T02:00:00Z"); // 23:00 SP
+    expect(await scheduleIdleCartFollowups(sdb, { now: night })).toMatchObject({ scheduled: 1 });
+    const [row] = await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.conversationId, conversationId));
+    expect(row.dueAt).toEqual(new Date("2026-09-15T12:00:00Z"));
+    assistant.enqueueScript({ replyTemplate: "Oi, Ana! Deixei as duas peças guardadas na sua sacola — quer que eu feche? 🤎" });
+    expect(await runScheduledBotTurn(sdb, assistant, provider, { followupId: row.id, now: row.dueAt })).toMatchObject({ sent: true, replied: true });
+    expect(assistant.inputs.at(-1)!.history.at(-1)!.text).toContain("[retomada automática: a sacola dela ficou parada — 2 peças paradas na sacola");
+    expect(provider.sentMessages).toHaveLength(1);
   });
 });

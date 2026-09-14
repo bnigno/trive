@@ -51,7 +51,7 @@ export function SuggestionCard({ suggestion, sellerName, pollNow }: { suggestion
     <div className="shrink-0 border-t border-sky-200 bg-sky-50 px-4 py-3 text-sm text-ink-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-ivory-100">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold text-sky-900 dark:text-sky-200">
-          💡 {sellerName} sugere {suggestion.fromFollowup ? "(retorno combinado)" : ""}
+          💡 {sellerName} sugere {suggestion.fromFollowup ? (suggestion.followupKind === "idle_cart" ? "(retomada da sacola)" : "(retorno combinado)") : ""}
           <span className="ml-2 font-normal text-sky-800/70 dark:text-sky-300/70">{suggestionAgeLabel(new Date(suggestion.createdAt), now)}</span>
         </p>
       </div>

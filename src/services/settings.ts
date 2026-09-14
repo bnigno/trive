@@ -479,6 +479,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   }),
   /** autonomous = a Lia responde sozinha; copilot = ela sugere e a dona aprova na Central. */
   bot_mode: z.enum(["autonomous", "copilot"], { error: "Modo inválido. Escolha entre autonomous e copilot." }),
+  /** Retomar sacola parada após N horas (0 = desligado; até 168). */
+  bot_idle_cart_followup_hours: z.number().int().min(0).max(168, { error: "No máximo 168 horas (7 dias)." }),
   /** Instruções extras do dono anexadas ao prompt do bot (pode ficar vazio). */
   bot_extra_instructions: z
     .string()

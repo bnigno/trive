@@ -31,6 +31,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "bot_model", value: "claude-sonnet-5" },
   // Modo da vendedora: sozinha (autonomous) ou copiloto (sugere, a dona aprova).
   { key: "bot_mode", value: "autonomous" },
+  // Retomada de sacola parada após N horas (0 = desligado).
+  { key: "bot_idle_cart_followup_hours", value: 0 },
   { key: "bot_extra_instructions", value: "" },
   // Fase 6 — chave Pix da LOJA para Pix manual (plano B do robô).
   // Vazia = recurso desligado; o dono cadastra em /admin/configuracoes.

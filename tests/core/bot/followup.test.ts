@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   FOLLOWUP_GRACE_MINUTES,
   followupMemoryLine,
+  idleCartReason,
+  isIdleCartCandidate,
   followupWhenLabel,
   isFollowupSuperseded,
   isFollowupTooLate,
@@ -79,5 +81,35 @@ describe("textos e carência", () => {
     expect(isFollowupSuperseded({ createdAt, lastInboundAt: new Date(NOW.getTime() + (FOLLOWUP_GRACE_MINUTES + 1) * 60_000) })).toBe(true);
     expect(isFollowupTooLate({ dueAt, now: new Date(dueAt.getTime() + 5 * 3_600_000) })).toBe(false);
     expect(isFollowupTooLate({ dueAt, now: new Date(dueAt.getTime() + 7 * 3_600_000) })).toBe(true);
+  });
+});
+
+describe("isIdleCartCandidate", () => {
+  const base = {
+    status: "open",
+    botDisabledUntil: null,
+    cartCount: 2,
+    lastInboundAt: new Date(NOW.getTime() - 5 * 3_600_000),
+    lastOutboundAt: new Date(NOW.getTime() - 5 * 3_600_000 + 60_000),
+    hasOptIn: true,
+    orderedAfterLastInbound: false,
+    hours: 4,
+    now: NOW,
+  };
+  it("só a sacola parada de verdade: aberta, com peças, opt-in, a Lia respondeu por último, N horas de silêncio, sem pedido depois", () => {
+    expect(isIdleCartCandidate(base)).toBe(true);
+    expect(isIdleCartCandidate({ ...base, hours: 0 })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, hours: 6 })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, status: "human" })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, botDisabledUntil: new Date(NOW.getTime() + 60_000) })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, cartCount: 0 })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, hasOptIn: false })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, orderedAfterLastInbound: true })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, lastInboundAt: null })).toBe(false);
+    // A bola está com a Lia (ela não respondeu): não é a cliente que sumiu.
+    expect(isIdleCartCandidate({ ...base, lastOutboundAt: new Date(NOW.getTime() - 6 * 3_600_000) })).toBe(false);
+    expect(isIdleCartCandidate({ ...base, lastOutboundAt: null })).toBe(false);
+    expect(idleCartReason(1)).toBe("1 peça parada na sacola");
+    expect(idleCartReason(3)).toBe("3 peças paradas na sacola");
   });
 });

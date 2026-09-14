@@ -144,6 +144,11 @@ export async function saveBotSettingsAction(
       value: hours("handoffAutoReturnHours"),
       userId: user.id,
     });
+    await updateSetting(db, {
+      key: "bot_idle_cart_followup_hours",
+      value: hours("idleCartFollowupHours"),
+      userId: user.id,
+    });
 
     revalidatePath("/admin/whatsapp");
     revalidatePath("/admin/whatsapp/conversas");

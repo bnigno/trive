@@ -2,12 +2,15 @@
 // para o horário), cancelar (dona, cliente, sistema), listar para o painel e
 // para o caderninho, e as marcações que o turno proativo faz. Quem decide o
 // quê é o core (core/bot/followup.ts); aqui é banco + fila.
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { FollowupKind } from "@/core/bot/followup";
-import { followupMemoryLine } from "@/core/bot/followup";
-import { auditLog, waFollowups, waSuggestions } from "@/db/schema";
+import { followupMemoryLine, idleCartReason, isIdleCartCandidate } from "@/core/bot/followup";
+import { parseBotState } from "@/core/bot/memory";
+import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-window";
+import { auditLog, customers, orders, settings, waConversations, waFollowups, waSuggestions } from "@/db/schema";
+import { loadSendPolicy } from "@/services/wa-send-policy";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 
 export const BOT_FOLLOWUP_EVENT = "wa.bot_followup";
@@ -209,4 +212,99 @@ export async function listFollowupHistory(db: DbOrTx, conversationId: string, li
     .orderBy(desc(waFollowups.createdAt))
     .limit(limit);
   return rows.map((row) => ({ ...row, kind: row.kind as FollowupKind }));
+}
+
+export interface IdleCartSweepResult {
+  hours: number;
+  checked: number;
+  scheduled: number;
+}
+
+/** Setting bot_idle_cart_followup_hours: 0/ausente = desligado. */
+export async function loadIdleCartHours(db: DbOrTx): Promise<number> {
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "bot_idle_cart_followup_hours")).limit(1);
+  const value = Number(row?.value);
+  return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Cron (a cada hora): a sacola parada há N horas vira UMA retomada da Lia —
+ * agendada para agora (na janela; fora dela, para a abertura). O core
+ * decide quem é candidata; o UNIQUE de wa_followups garante "uma vez por
+ * conversa, para sempre" mesmo entre rodadas concorrentes.
+ */
+export async function scheduleIdleCartFollowups(db: DbOrTx, input: { now?: Date } = {}): Promise<IdleCartSweepResult> {
+  const now = input.now ?? new Date();
+  const hours = await loadIdleCartHours(db);
+  if (hours <= 0) return { hours, checked: 0, scheduled: 0 };
+  const cutoff = new Date(now.getTime() - hours * 3_600_000);
+  const rows = await db
+    .select({
+      id: waConversations.id,
+      phoneE164: waConversations.phoneE164,
+      customerId: waConversations.customerId,
+      status: waConversations.status,
+      botDisabledUntil: waConversations.botDisabledUntil,
+      botState: waConversations.botState,
+      lastInboundAt: waConversations.lastInboundAt,
+      lastOutboundAt: waConversations.lastOutboundAt,
+      marketingOptIn: customers.marketingOptIn,
+    })
+    .from(waConversations)
+    .leftJoin(customers, eq(customers.id, waConversations.customerId))
+    .where(
+      and(
+        eq(waConversations.status, "open"),
+        lt(waConversations.lastInboundAt, cutoff),
+        sql`jsonb_array_length(coalesce(${waConversations.botState} -> 'cart', '[]'::jsonb)) > 0`,
+        // Nunca duas retomadas: a linha idle_cart existe uma vez por conversa.
+        sql`NOT EXISTS (SELECT 1 FROM ${waFollowups} WHERE ${waFollowups.conversationId} = ${waConversations.id} AND ${waFollowups.kind} = 'idle_cart')`,
+        or(isNull(waConversations.botDisabledUntil), lt(waConversations.botDisabledUntil, now)),
+      ),
+    )
+    .limit(200);
+  const policy = await loadSendPolicy(db);
+  const dueAt = isWithinSendWindow(now, policy.window) ? now : nextSendWindowStart(now, policy.window);
+  let scheduled = 0;
+  for (const row of rows) {
+    const cart = parseBotState(row.botState).cart ?? [];
+    let orderedAfter = false;
+    if (row.customerId && row.lastInboundAt) {
+      const [order] = await db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(and(eq(orders.customerId, row.customerId), gt(orders.createdAt, row.lastInboundAt)))
+        .limit(1);
+      orderedAfter = order !== undefined;
+    }
+    const candidate = isIdleCartCandidate({
+      status: row.status,
+      botDisabledUntil: row.botDisabledUntil,
+      cartCount: cart.length,
+      lastInboundAt: row.lastInboundAt,
+      lastOutboundAt: row.lastOutboundAt,
+      hasOptIn: row.marketingOptIn === true,
+      orderedAfterLastInbound: orderedAfter,
+      hours,
+      now,
+    });
+    if (!candidate) continue;
+    try {
+      await scheduleBotFollowup(db, {
+        conversationId: row.id,
+        phoneE164: row.phoneE164,
+        customerId: row.customerId,
+        kind: "idle_cart",
+        reason: idleCartReason(cart.length),
+        dueAt,
+        requestedBy: "system",
+        now,
+      });
+      scheduled += 1;
+    } catch (error) {
+      // Corrida entre duas rodadas: o UNIQUE recusou a segunda — a primeira já agendou.
+      console.warn(`[idle-cart] conversa ${row.id} não agendada:`, error instanceof Error ? error.message : error);
+    }
+  }
+  return { hours, checked: rows.length, scheduled };
 }
