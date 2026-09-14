@@ -14,6 +14,7 @@ import type { BotAttachment } from "@/services/bot/shared";
 import { approveSuggestion, getPendingSuggestion, sendApprovedSuggestion } from "@/services/wa-suggestions";
 import { buildToolExecutor, historyTextForOutbound, runBotTurn } from "@/services/wa-bot";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { nextMessageStamp } from "../helpers/clock";
 
 const PHONE = "+5511999990000";
 const INBOUND = "00000000-0000-4000-8000-0000000000aa";
@@ -69,7 +70,7 @@ async function seedProducts(): Promise<string> {
 let sequence = 0;
 async function addInbound(conversationId: string, body: string): Promise<string> {
   sequence += 1;
-  const at = new Date(Date.now() - 60_000 + sequence * 1000);
+  const at = nextMessageStamp();
   const [message] = await db
     .insert(schema.waMessages)
     .values({ conversationId, direction: "inbound", zapiMessageId: `MSG-${sequence}-${Math.random().toString(36).slice(2, 8)}`, body, status: "delivered", deliveredAt: at, createdAt: at })
@@ -192,12 +193,8 @@ describe("turno da Lia com áudio", () => {
       "[mensagem de voz enviada à cliente] 🎤 Nota da curadora sobre Longo Dunas",
     );
 
-    // Retry do evento (mesma inbound): o turno inteiro é idempotente.
-    assistant.enqueueScript({
-      toolCalls: [{ name: "enviar_nota_da_curadora", input: { produto: "longo-dunas", reenviar: true } }],
-      replyTemplate: "de novo",
-    });
-    await runBotTurn(sdb, assistant, provider, { conversationId });
+    // Retry do evento (mesma inbound): tudo respondido, o modelo nem roda.
+    expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ skipped: "ja_respondida" });
     expect(provider.sentAudios).toHaveLength(1);
     expect(provider.sentMessages).toHaveLength(1);
 

@@ -366,6 +366,8 @@ export type LoadedTurnHistory = {
   /** Só contagens para a trilha: a foto nunca é guardada. */
   media: { images: number; audios: number };
   lastInboundAt: Date | null;
+  /** Mensagens dela depois da última saída — zero = já respondida. */
+  pendingInbound: number;
 };
 
 export async function loadTurnHistory(
@@ -478,7 +480,13 @@ export async function loadTurnHistory(
   });
 
   const lastInboundAt = rows.filter((row) => row.direction === "inbound").at(-1)?.createdAt ?? null;
-  return { history, recentImages, media: { images: images.size, audios: pending.filter((row) => row.kind === "audio").length }, lastInboundAt };
+  return {
+    history,
+    recentImages,
+    media: { images: images.size, audios: pending.filter((row) => row.kind === "audio").length },
+    lastInboundAt,
+    pendingInbound: pending.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -596,14 +604,18 @@ export async function deliverBotTurn(
 // última wa_message inbound (retry da fila nunca duplica resposta).
 // ---------------------------------------------------------------------------
 
+export const BOT_TURN_EVENT = "wa.bot_turn";
+
 export async function runBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { conversationId: string },
+  input: { conversationId: string; attempt?: number },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunBotTurnResult> {
   const { conversationId } = input;
+  // `attempt` = tentativas ANTERIORES da fila (0 na primeira).
+  const lastAttempt = (input.attempt ?? 0) + 1 >= getRetryPolicy(BOT_TURN_EVENT).maxAttempts;
 
   return db.transaction(async (tx) => {
     const [conversation] = await tx
@@ -640,6 +652,11 @@ export async function runBotTurn(
     const loaded = await loadTurnHistory(tx, provider, { conversation, now });
     if ("skipped" in loaded) return loaded;
     const { history, recentImages, media } = loaded;
+    // Cada mensagem dela enfileira um turno, mas o primeiro que roda responde
+    // a tudo o que chegou até ali: os seguintes acham tudo respondido e não
+    // rodam o modelo de novo (era isso que estourava o limite por minuto da
+    // API e mandava a conversa para a equipe à toa).
+    if (loaded.pendingInbound === 0) return { skipped: "ja_respondida" };
 
     const { system, model } = await buildBotPromptBundle(tx);
     // Copiloto (loja ou só esta conversa): a Lia pensa, a dona manda.
@@ -676,6 +693,27 @@ export async function runBotTurn(
       turn = await assistant.respondTurn({ system, history, model, executeTool });
     } catch (error) {
       if (error instanceof AssistantUnavailableError) {
+        // Falha passageira (limite por minuto, 5xx, rede): relança — a fila
+        // tenta de novo com espera, a transação desfaz o que as ferramentas
+        // anotaram e nada saiu para a cliente. Só na última tentativa (ou
+        // em falha que não melhora sozinha: chave, crédito, modelo) vem o
+        // plano B.
+        if (error.retryable && !lastAttempt) throw error;
+        const reason = `Assistente de IA indisponível (${error.reason})`;
+        await tx.insert(auditLog).values({
+          actorType: "system",
+          actorId: null,
+          action: "wa.bot_turn_failed",
+          entityType: "wa_conversation",
+          entityId: conversationId,
+          after: {
+            inboundId: lastInbound.id,
+            attempt: (input.attempt ?? 0) + 1,
+            status: error.status ?? null,
+            code: error.code ?? null,
+            reason: error.reason,
+          },
+        });
         // Plano B: avisa o cliente, transfere para humano (audit + aviso ao
         // dono) e encerra o turno sem propagar — o evento da fila conclui.
         // Em copiloto nada sai para a cliente por conta própria: só a transferência.
@@ -695,7 +733,7 @@ export async function runBotTurn(
             phoneE164: conversation.phoneE164,
             lastInboundId: lastInbound.id,
           },
-          "Assistente de IA indisponível",
+          reason,
         );
         return { replied: true, handedOff: true };
       }

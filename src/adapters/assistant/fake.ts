@@ -65,7 +65,8 @@ export const FAKE_ARRIVAL_JSON = {
 };
 
 export class FakeSalesAssistant implements SalesAssistant {
-  private readonly scripts: FakeTurnScript[] = [];
+  /** Um Error na fila faz o próximo respondTurn lançar (modelo fora do ar). */
+  private readonly scripts: Array<FakeTurnScript | Error> = [];
   readonly turns: AssistantTurn[] = [];
   /** O que cada turno recebeu (prompt, histórico com fotos) — para os testes. */
   readonly inputs: RespondTurnInput[] = [];
@@ -73,7 +74,7 @@ export class FakeSalesAssistant implements SalesAssistant {
   /** O que cada extração recebeu (prompt, fotos, schema) — para os testes. */
   readonly extractions: ExtractFromPhotosInput[] = [];
 
-  enqueueScript(script: FakeTurnScript): void {
+  enqueueScript(script: FakeTurnScript | Error): void {
     this.scripts.push(script);
   }
 
@@ -99,6 +100,7 @@ export class FakeSalesAssistant implements SalesAssistant {
   async respondTurn(input: RespondTurnInput): Promise<AssistantTurn> {
     this.inputs.push(input);
     const script = this.scripts.shift();
+    if (script instanceof Error) throw script;
     const turn = script
       ? await this.playScript(script, input)
       : this.echoTurn(input);

@@ -18,6 +18,7 @@ import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import { buildToolExecutor, runBotTurn } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { nextMessageStamp } from "../helpers/clock";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -172,7 +173,7 @@ async function addInbound(conversationId: string, body: string): Promise<string>
       body,
       status: "delivered",
       deliveredAt: new Date(),
-      createdAt: new Date(Date.now() - 60_000 + sequence * 1000),
+      createdAt: nextMessageStamp(),
     })
     .returning({ id: schema.waMessages.id });
   return message.id;
@@ -191,7 +192,7 @@ async function addOutbound(
     status: "sent",
     dedupeKey: opts.dedupeKey,
     ...(opts.templateKey ? { templateKey: opts.templateKey } : {}),
-    createdAt: new Date(Date.now() - 60_000 + sequence * 1000),
+    createdAt: nextMessageStamp(),
   });
 }
 

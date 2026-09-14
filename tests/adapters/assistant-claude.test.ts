@@ -186,6 +186,53 @@ describe("ClaudeSalesAssistant", () => {
     ).rejects.toBeInstanceOf(AssistantUnavailableError);
   });
 
+  // O erro real da API era engolido: o painel só dizia "indisponível" e a
+  // fila transferia para a equipe na hora, mesmo num limite por minuto que
+  // passa em segundos. Agora cada status vira causa curta + "vale tentar".
+  it.each([
+    [429, "rate_limit_error", "rate limited", "limite de uso da API (429)", true],
+    [529, "overloaded_error", "overloaded", "API da Anthropic instável (529)", true],
+    [500, "api_error", "internal", "API da Anthropic instável (500)", true],
+    [401, "authentication_error", "invalid x-api-key", "chave da API inválida (401)", false],
+    [404, "not_found_error", "model: nope", "modelo não encontrado (404): claude-sonnet-5", false],
+    [400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API.", "sem crédito na API da Anthropic", false],
+    [400, "invalid_request_error", "messages: bad", "erro 400 da API (invalid_request_error)", false],
+  ])("status %s (%s) → causa \"%s\" e retryable=%s", async (status, type, message, reason, retryable) => {
+    const client: MessagesClient = {
+      messages: {
+        create: async () => {
+          throw new Anthropic.APIError(status, { type: "error", error: { type, message } }, message, new Headers({ "request-id": "req_1" }), type as never);
+        },
+      },
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = await new ClaudeSalesAssistant(client).respondTurn(baseInput).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AssistantUnavailableError);
+    const failure = error as AssistantUnavailableError;
+    expect(failure.status).toBe(status);
+    expect(failure.code).toBe(type);
+    expect(failure.reason).toBe(reason);
+    expect(failure.retryable).toBe(retryable);
+    expect(spy).toHaveBeenCalledWith("[assistant] falha na API da Anthropic", expect.objectContaining({ status, reason, requestId: "req_1" }));
+    spy.mockRestore();
+  });
+
+  it("sem conexão (timeout) é passageiro; abort não é", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failure = async (client: MessagesClient): Promise<AssistantUnavailableError> => {
+      const error = await new ClaudeSalesAssistant(client).respondTurn(baseInput).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(AssistantUnavailableError);
+      return error as AssistantUnavailableError;
+    };
+    const t = await failure({ messages: { create: async () => { throw new Anthropic.APIConnectionTimeoutError(); } } });
+    expect(t.retryable).toBe(true);
+    expect(t.reason).toBe("a API não respondeu a tempo");
+    expect(t.status).toBeUndefined();
+    const a = await failure({ messages: { create: async () => { throw new Anthropic.APIUserAbortError(); } } });
+    expect(a.retryable).toBe(false);
+    spy.mockRestore();
+  });
+
   it("sem chave e sem cliente injetado, falha como indisponível", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "");
     await expect(new ClaudeSalesAssistant().respondTurn(baseInput)).rejects.toBeInstanceOf(

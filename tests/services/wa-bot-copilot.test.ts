@@ -23,6 +23,7 @@ import {
   setConversationBotMode,
 } from "@/services/wa-suggestions";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { nextMessageStamp } from "../helpers/clock";
 
 const PHONE = "+5511999990000";
 const OWNER = "00000000-0000-4000-8000-00000000d0a0";
@@ -62,7 +63,7 @@ async function createConversation(phoneE164 = PHONE): Promise<string> {
 let sequence = 0;
 async function addInbound(conversationId: string, body: string): Promise<string> {
   sequence += 1;
-  const at = new Date(Date.now() - 60_000 + sequence * 1000);
+  const at = nextMessageStamp();
   const [message] = await db
     .insert(schema.waMessages)
     .values({ conversationId, direction: "inbound", zapiMessageId: `MSG-${sequence}-${Math.random().toString(36).slice(2, 8)}`, body, status: "delivered", deliveredAt: at, createdAt: at })

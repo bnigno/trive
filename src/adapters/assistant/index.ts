@@ -69,10 +69,34 @@ export interface SalesAssistant {
   extractFromPhotos(input: ExtractFromPhotosInput): Promise<ExtractFromPhotosResult>;
 }
 
+/**
+ * O que a API respondeu quando o assistente falhou — para o log, para a
+ * fila decidir se tenta de novo e para o painel dizer o porquê.
+ */
+export type AssistantFailure = {
+  /** Status HTTP (undefined = rede/timeout, ou falha que não veio da API). */
+  status?: number;
+  /** Tipo do erro da Anthropic: rate_limit_error, overloaded_error, api_error… */
+  code?: string;
+  /** Passageira (limite por minuto, 5xx, rede): vale tentar de novo daqui a pouco. */
+  retryable: boolean;
+  /** Causa curta para o painel e para a dona, ex.: "limite de uso da API (429)". */
+  reason: string;
+};
+
 export class AssistantUnavailableError extends Error {
-  constructor(message: string) {
+  readonly status: number | undefined;
+  readonly code: string | undefined;
+  readonly retryable: boolean;
+  readonly reason: string;
+
+  constructor(message: string, failure: Partial<AssistantFailure> = {}) {
     super(message);
     this.name = "AssistantUnavailableError";
+    this.status = failure.status;
+    this.code = failure.code;
+    this.retryable = failure.retryable ?? false;
+    this.reason = failure.reason ?? message;
   }
 }
 

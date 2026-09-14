@@ -25,6 +25,7 @@ import {
   runBotTurn,
 } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { nextMessageStamp } from "../helpers/clock";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -177,7 +178,7 @@ async function addInbound(conversationId: string, body: string): Promise<string>
       status: "delivered",
       deliveredAt: new Date(),
       // createdAt crescente para o histórico/última-inbound serem determinísticos.
-      createdAt: new Date(Date.now() - 60_000 + inboundSequence * 1000),
+      createdAt: nextMessageStamp(),
     })
     .returning({ id: schema.waMessages.id });
   return message.id;
@@ -491,7 +492,7 @@ describe("runBotTurn", () => {
     expect(provider.sentMessages).toHaveLength(0);
   });
 
-  it("idempotência: mesma última inbound não gera segunda resposta (ja_enviado)", async () => {
+  it("idempotência: mesma última inbound não gera segunda resposta (já respondida, sem rodar o modelo)", async () => {
     const conversationId = await createConversation();
     await addInbound(conversationId, "Oi!");
 
@@ -499,10 +500,12 @@ describe("runBotTurn", () => {
     const first = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(first).toEqual({ replied: true, handedOff: false });
 
-    // Retry do evento da fila: mesma conversa, mesma última inbound.
+    // Retry do evento da fila (ou o evento da mensagem seguinte da rajada):
+    // mesma conversa, tudo respondido — o modelo não roda de novo.
     assistant.enqueueScript({ replyTemplate: "Segunda resposta (não deve sair)" });
     const second = await runBotTurn(sdb, assistant, provider, { conversationId });
-    expect(second).toEqual({ replied: false, handedOff: false });
+    expect(second).toEqual({ skipped: "ja_respondida" });
+    expect(assistant.turns).toHaveLength(1);
 
     expect(provider.sentMessages).toHaveLength(1);
     expect(provider.sentMessages[0].body).toBe("Primeira resposta");
@@ -676,7 +679,7 @@ describe("runBotTurn — mídia", () => {
     }
   });
 
-  it("retry do turno: mídia e texto não duplicam (dedupe determinístico)", async () => {
+  it("retry do turno: tudo respondido, o modelo não roda e mídia e texto não duplicam", async () => {
     await setupStore();
     const conversationId = await createConversation();
     await addInbound(conversationId, "produtos?");
@@ -688,13 +691,12 @@ describe("runBotTurn — mídia", () => {
     const first = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(first).toEqual({ replied: true, handedOff: false });
 
-    // Retry do evento da fila: mesmo roteiro, mesma última inbound.
-    assistant.enqueueScript({
-      toolCalls: [{ name: "listar_produtos", input: {} }],
-      replyTemplate: "Toque em Ver produtos 👇",
-    });
+    // Retry do evento da fila: mesma última inbound, já respondida — o
+    // modelo nem roda (o dedupe determinístico dos envios fica de segunda
+    // linha, para o caso de a transação ter caído depois de enviar).
     const second = await runBotTurn(sdb, assistant, provider, { conversationId });
-    expect(second).toEqual({ replied: false, handedOff: false });
+    expect(second).toEqual({ skipped: "ja_respondida" });
+    expect(assistant.turns).toHaveLength(1);
 
     expect(provider.sentOptionLists).toHaveLength(1);
     expect(provider.sentMessages).toHaveLength(1);
@@ -1102,13 +1104,10 @@ describe("runBotTurn — enviar_chave_pix / avisar_dono / dinheiro na entrega", 
     const first = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(first).toEqual({ replied: true, handedOff: false });
 
-    // Retry do evento da fila: mesmo roteiro, mesma última inbound.
-    assistant.enqueueScript({
-      toolCalls: [{ name: "enviar_chave_pix", input: {} }],
-      replyTemplate: (toolTexts) => toolTexts[0],
-    });
+    // Retry do evento da fila: mesma última inbound, já respondida.
     const second = await runBotTurn(sdb, assistant, provider, { conversationId });
-    expect(second).toEqual({ replied: false, handedOff: false });
+    expect(second).toEqual({ skipped: "ja_respondida" });
+    expect(assistant.turns).toHaveLength(1);
 
     expect(await ownerForwards()).toHaveLength(1);
     expect(provider.sentMessages).toHaveLength(1);

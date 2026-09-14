@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type APIError } from "@anthropic-ai/sdk";
 
 import { BOT_TOOLS, type BotToolName } from "@/core/bot/tools";
 
@@ -13,6 +13,59 @@ import { AssistantUnavailableError } from "./index";
 
 const MAX_ITERATIONS = 6;
 const HANDOFF_FALLBACK_REPLY = "Vou te passar para a equipe 😉";
+const UNAVAILABLE_MESSAGE = "Assistente de IA indisponível no momento — tente novamente em instantes";
+
+/**
+ * Traduz o erro da API num AssistantUnavailableError com causa curta e o
+ * veredito de "vale tentar de novo": limite por minuto (429), instabilidade
+ * (5xx/529) e rede são passageiros; chave, crédito e modelo errado não
+ * melhoram sozinhos. O erro bruto vai para o log — antes ele sumia e o
+ * painel só dizia "indisponível".
+ */
+export function unavailableFromApiError(error: APIError, context: { model: string }): AssistantUnavailableError {
+  const status = error.status;
+  const code = error.type ?? undefined;
+  const text = error.message.toLowerCase();
+  let reason: string;
+  let retryable: boolean;
+  if (status === undefined) {
+    reason = error instanceof Anthropic.APIConnectionTimeoutError ? "a API não respondeu a tempo" : "sem conexão com a API";
+    retryable = !(error instanceof Anthropic.APIUserAbortError);
+  } else if (status === 429) {
+    reason = "limite de uso da API (429)";
+    retryable = true;
+  } else if (status === 529 || status >= 500) {
+    reason = `API da Anthropic instável (${status})`;
+    retryable = true;
+  } else if (status === 408 || status === 409) {
+    reason = `API pediu para tentar de novo (${status})`;
+    retryable = true;
+  } else if (status === 401) {
+    reason = "chave da API inválida (401)";
+    retryable = false;
+  } else if (status === 403) {
+    reason = "chave da API sem permissão (403)";
+    retryable = false;
+  } else if (status === 404) {
+    reason = `modelo não encontrado (404): ${context.model}`;
+    retryable = false;
+  } else if (status === 400 && text.includes("credit")) {
+    reason = "sem crédito na API da Anthropic";
+    retryable = false;
+  } else {
+    reason = `erro ${status} da API${code ? ` (${code})` : ""}`;
+    retryable = false;
+  }
+  console.error("[assistant] falha na API da Anthropic", {
+    status,
+    code,
+    reason,
+    model: context.model,
+    requestId: error.requestID ?? null,
+    message: error.message.slice(0, 300),
+  });
+  return new AssistantUnavailableError(UNAVAILABLE_MESSAGE, { status, code, retryable, reason });
+}
 
 /**
  * Subconjunto do cliente da Anthropic que o adapter usa. Existe para os
@@ -90,9 +143,7 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       );
     } catch (error) {
       if (error instanceof Anthropic.APIError) {
-        throw new AssistantUnavailableError(
-          "Assistente de IA indisponível no momento — tente novamente em instantes",
-        );
+        throw unavailableFromApiError(error, { model: input.model });
       }
       throw error;
     }
@@ -126,9 +177,7 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       return await this.runLoop(input);
     } catch (error) {
       if (error instanceof Anthropic.APIError) {
-        throw new AssistantUnavailableError(
-          "Assistente de IA indisponível no momento — tente novamente em instantes",
-        );
+        throw unavailableFromApiError(error, { model: input.model });
       }
       throw error;
     }
