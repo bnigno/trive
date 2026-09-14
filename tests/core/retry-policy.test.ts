@@ -27,6 +27,7 @@ describe("RETRY_POLICIES", () => {
 
   it("chegada do Ateliê: poucas tentativas e curtas (a dona espera no WhatsApp)", () => {
     expect(getRetryPolicy("wa.atelier_intake")).toEqual({ maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 });
+    expect(getRetryPolicy("wa.atelier_card")).toEqual({ maxAttempts: 2, baseDelayMs: 10_000, maxDelayMs: 30_000 });
   });
 });
 

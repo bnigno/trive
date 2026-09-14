@@ -604,7 +604,7 @@ export async function processAtelierIntake(
     interpreted = await interpretArrival(db, assistant, { note, images: available.map((item) => item.data), now, deadlineAt });
     await markIntake(db, intake.id, { parsed: interpreted }, now());
   }
-  const proposal = interpreted.proposal;
+  let proposal = interpreted.proposal;
   const name = proposal?.name || draftNameFromNote(note, startedAt);
   try {
     let productId: string;
@@ -656,6 +656,8 @@ export async function processAtelierIntake(
         console.warn("[atelier] a ficha recusou a proposta; peça simples:", error instanceof Error ? error.message : error);
         stored.failed = "ficha_recusou";
         stored.proposal = null;
+        // Sem a grade não há compra pela grade: a proposta some daqui em diante.
+        proposal = null;
         productId = await create({
           name,
           description: simpleDescription,
@@ -711,8 +713,22 @@ export async function processAtelierIntake(
     const details = [
       failedPhotos > 0 ? `${failedPhotos} foto(s) ficaram de fora` : null,
       "skipped" in notice ? `aviso não enviado: ${notice.skipped}` : null,
-      purchase.error ? `compra não lançada — ${purchase.error}` : null,
+      purchase.supplierError
+        ? `${purchase.movements > 0 ? `estoque lançado (${purchase.totalQuantity ?? purchase.movements} peças); ` : ""}fornecedor não ligado e conta a pagar não criada — ${purchase.supplierError}`
+        : null,
+      purchase.purchaseError ? `compra não lançada — ${purchase.purchaseError}` : null,
     ].filter((line): line is string => line !== null);
+    // O que a compra fez fica com a leitura, para a ficha contar a história certa.
+    const parsedWithPurchase: AtelierParsed = {
+      ...interpreted,
+      purchase: {
+        movements: purchase.movements,
+        totalQuantity: purchase.totalQuantity,
+        skipped: purchase.skipped,
+        supplierError: purchase.supplierError,
+        purchaseError: purchase.purchaseError,
+      },
+    };
 
     // "done", o audit e o cartão (fila) na MESMA transação.
     await db.transaction(async (tx) => {
@@ -724,6 +740,7 @@ export async function processAtelierIntake(
           productId,
           photosCount: photosOnProduct,
           errorDetail: details.length > 0 ? details.join("; ") : null,
+          parsed: parsedWithPurchase,
           processedAt: now(),
         },
         now(),
@@ -756,7 +773,8 @@ export async function processAtelierIntake(
             totalQuantity: purchase.totalQuantity,
             movements: purchase.movements,
             skipped: purchase.skipped,
-            error: purchase.error,
+            supplierError: purchase.supplierError,
+            purchaseError: purchase.purchaseError,
           },
           ms: now().getTime() - startedAt.getTime(),
         },

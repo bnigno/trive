@@ -274,6 +274,12 @@ describe("findSupplierByName (Ateliê)", () => {
     expect(await findOrCreateSupplierByName(db, { name: "Aurora", userId: FIXED_USER_ID })).toEqual({ ambiguous: ["Aurora Tecidos", "Áurora Confecções"] });
     expect(await db.select().from(schema.suppliers)).toHaveLength(3);
     expect((await findSupplierByName(db, "maria"))?.name).toBe("Maria Modas");
+    // Cadastro curto dentro de um nome maior não casa ("Ana" ≠ "Ana Paula Ateliê");
+    // cadastro com corpo casa por fronteira de palavra.
+    await createTestSupplier(db, { name: "Ana" });
+    expect(await findSupplierByName(db, "Ana Paula Ateliê")).toBeNull();
+    expect((await findSupplierByName(db, "Maria Modas Ltda"))?.name).toBe("Maria Modas");
+    expect(await findSupplierByName(db, "Maria Modasx")).toBeNull();
     expect(await findSupplierByName(db, "x")).toBeNull();
     expect(await findSupplierByName(db, "Zé")).toBeNull();
   });

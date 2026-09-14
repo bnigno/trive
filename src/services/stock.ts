@@ -400,6 +400,8 @@ const receivePurchaseBatchSchema = z.object({
   dueDate: z.iso.date().optional(),
   /** O total pago quando é ele que se sabe (vale mais que peça × custo arredondado). */
   amountCents: z.number().int().positive().optional(),
+  /** Quem chama sabe que ainda não há conta desta compra: cria mesmo que as linhas já tenham entrado (retomada). */
+  payableMissing: z.boolean().optional(),
   userId: z.uuid(),
 });
 
@@ -479,11 +481,12 @@ export async function receivePurchaseBatch(
       movementIds.push(movement.id);
     }
 
-    // A conta a pagar nasce junto com os movimentos; numa reentrada (tudo já
-    // lançado) ela já existe e não é criada de novo.
+    // A conta a pagar nasce junto com os movimentos; numa reentrada (linhas já
+    // lançadas) só quando quem chama garante que ela ainda não existe.
     let financialEntryId: string | null = null;
     const payableCents = parsed.amountCents ?? amountCents;
-    if (parsed.supplierId && payableCents > 0 && skipped === 0) {
+    const wantsPayable = skipped === 0 || parsed.payableMissing === true;
+    if (parsed.supplierId && payableCents > 0 && wantsPayable) {
       const [entry] = await tx
         .insert(financialEntries)
         .values({

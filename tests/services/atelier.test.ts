@@ -19,7 +19,7 @@ import {
   openAtelierIntake,
   processAtelierIntake,
 } from "@/services/atelier";
-import { createTestDb, createTestFeeRuleAndPolicy, type TestDb } from "../helpers/db";
+import { createTestDb, createTestFeeRuleAndPolicy, createTestSupplier, type TestDb } from "../helpers/db";
 
 const OWNER = "+5591981037536";
 const NOW = new Date("2026-09-13T18:00:00Z");
@@ -606,5 +606,48 @@ describe("processAtelierIntake", () => {
     expect(intake.supplierId).not.toBeNull();
     const [audit] = (await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "atelier.intake"))).slice(-1);
     expect(audit.after).toMatchObject({ purchase: { skipped: "sem_quantidade", movements: 0 } });
+    expect((intake.parsed as { purchase: { skipped: string } }).purchase.skipped).toBe("sem_quantidade");
+  });
+
+  it("fornecedor ambíguo: o estoque entra, o fornecedor e a conta ficam para a ficha, e a mensagem não mente", async () => {
+    await db.insert(schema.suppliers).values([{ name: "Aurora Confecções" }, { name: "Aurora Tecidos" }]);
+    assistant.enqueueExtraction(ARRIVAL_JSON);
+    const { conversationId, noteId } = await seedArrival();
+    const result = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in result)) throw new Error("esperava created");
+    expect(await db.select().from(schema.suppliers)).toHaveLength(2);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.supplierId).toBeNull();
+    expect(intake.errorDetail).toContain("estoque lançado (24 peças); fornecedor não ligado e conta a pagar não criada");
+    expect(intake.errorDetail).toContain("Aurora Confecções ou Aurora Tecidos");
+    expect(intake.errorDetail).not.toContain("compra não lançada");
+    expect(provider.sentMessages[0].body).not.toContain("a pagar");
+  });
+
+  it("retomada com fornecedor ligado depois de o estoque já ter entrado sem conta: a conta nasce com o nome do fornecedor", async () => {
+    await createTestFeeRuleAndPolicy(db);
+    // 1.ª passada sem fornecedor no recado: estoque entra, nenhuma conta.
+    assistant.enqueueExtraction({ ...ARRIVAL_JSON, supplierName: null });
+    const { conversationId, noteId } = await seedArrival();
+    const first = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in first)) throw new Error("esperava created");
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    // A dona liga o fornecedor à chegada (ou a 1.ª passada o achou mas caiu antes da conta) e a fila retoma.
+    const supplierId = await createTestSupplier(db, { name: "Aurora" });
+    await db.update(schema.atelierIntakes).set({ status: "failed", supplierId }).where(eq(schema.atelierIntakes.triggerWaMessageId, noteId));
+    const again = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true });
+    const entries = await db.select().from(schema.financialEntries);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].description).toContain("— Aurora");
+    expect(entries[0].amountCents).toBe(288000);
+    expect(entries[0].supplierId).toBe(supplierId);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.financialEntryId).toBe(entries[0].id);
+    expect(assistant.extractions).toHaveLength(1);
   });
 });

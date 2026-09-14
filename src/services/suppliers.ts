@@ -428,9 +428,12 @@ export async function matchSupplierByName(db: ServiceDb, name: string): Promise<
     .orderBy(suppliers.name);
   const exact = rows.find((row) => normalizeName(row.name) === target);
   if (exact) return { status: "found", supplier: exact };
+  // O recado abrevia o cadastro ("Aurora" → "Aurora Confecções"). O inverso
+  // (cadastro curto dentro de um nome maior) só com fronteira de palavra e
+  // cadastro com corpo — "Ana" nunca vira "Ana Paula Ateliê".
   const partial = rows.filter((row) => {
     const candidate = normalizeName(row.name);
-    return candidate.startsWith(target) || target.startsWith(candidate);
+    return candidate.startsWith(target) || (candidate.length >= 6 && target.startsWith(`${candidate} `));
   });
   if (partial.length === 1) return { status: "found", supplier: partial[0] };
   if (partial.length > 1) return { status: "ambiguous", candidates: partial };

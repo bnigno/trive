@@ -76,9 +76,17 @@ export function atelierCardLines(input: {
   if (input.totalQuantity !== null) pieces.push(input.totalQuantity === 1 ? "1 peça" : `${input.totalQuantity} peças`);
   if (input.unitCostCents !== null) pieces.push(`custo ${formatCentsBRL(input.unitCostCents)}`);
   if (pieces.length > 0) lines.push(pieces.join(" · "));
-  const money: string[] = [];
-  if (input.supplierName) money.push(input.supplierName.length > 24 ? `${input.supplierName.slice(0, 23).trimEnd()}…` : input.supplierName);
-  if (input.payableCents !== null) money.push(`a pagar ${formatCentsBRL(input.payableCents)}`);
+  // A parte do dinheiro nunca é cortada: o nome do fornecedor encolhe (ou sai) para caber.
+  const payable = input.payableCents !== null ? `a pagar ${formatCentsBRL(input.payableCents)}` : "";
+  let supplier = input.supplierName ?? "";
+  if (supplier && payable) {
+    const room = ATELIER_CARD_LINE_MAX_CHARS - payable.length - 3;
+    if (room < 6) supplier = "";
+    else if (supplier.length > room) supplier = `${supplier.slice(0, room - 1).trimEnd()}…`;
+  } else if (supplier.length > ATELIER_CARD_LINE_MAX_CHARS) {
+    supplier = `${supplier.slice(0, ATELIER_CARD_LINE_MAX_CHARS - 1).trimEnd()}…`;
+  }
+  const money = [supplier, payable].filter((part) => part !== "");
   if (money.length > 0) lines.push(money.join(" · "));
-  return lines.slice(0, 3).map(clampLine);
+  return lines.slice(0, 3).map((line, index) => (index === 2 && payable ? line : clampLine(line)));
 }

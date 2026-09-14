@@ -65,6 +65,7 @@ export async function renderAndSendAtelierCard(
       cardPath: atelierIntakes.cardPath,
       productName: products.name,
       productSlug: products.slug,
+      productDeletedAt: products.deletedAt,
       supplierName: suppliers.name,
       payableCents: financialEntries.amountCents,
     })
@@ -75,7 +76,7 @@ export async function renderAndSendAtelierCard(
     .where(eq(atelierIntakes.id, intakeId))
     .limit(1);
   if (!intake) return { skipped: "chegada_inexistente" };
-  if (!intake.productId || !intake.productName || !intake.productSlug) return { skipped: "sem_produto" };
+  if (!intake.productId || !intake.productName || !intake.productSlug || intake.productDeletedAt) return { skipped: "sem_produto" };
 
   const parsed = parseAtelierParsed(intake.parsed);
   const proposal = parsed?.proposal ?? null;

@@ -68,6 +68,9 @@ describe("purchaseDescription / atelierCardLines", () => {
     const long = atelierCardLines({ colors: 0, sizes: 0, totalQuantity: null, unitCostCents: null, supplierName: "Aurora Confecções e Tecidos do Norte Ltda", payableCents: 288000 });
     expect(long).toHaveLength(1);
     expect(long[0].length).toBeLessThanOrEqual(44);
-    expect(long[0]).toContain("a pagar");
+    // O dinheiro nunca é cortado: o nome encolhe.
+    expect(long[0]).toMatch(new RegExp(`… · a pagar ${formatCentsBRL(288000).replace(/[$.]/g, "\\$&")}$`));
+    const huge = atelierCardLines({ colors: 0, sizes: 0, totalQuantity: null, unitCostCents: null, supplierName: "Fornecedor", payableCents: 12_345_678_900 });
+    expect(huge[0]).toBe(`Fornecedor · a pagar ${formatCentsBRL(12_345_678_900)}`);
   });
 });
