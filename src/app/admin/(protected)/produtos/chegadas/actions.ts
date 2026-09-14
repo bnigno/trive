@@ -13,6 +13,8 @@ const REASON_LABELS: Record<string, string> = {
   chegada_inexistente: "Esta chegada não existe mais.",
   em_andamento: "Esta chegada ainda está sendo montada — espere um minuto.",
   estoque_lancado: "Esta chegada já lançou estoque: ajuste pelo painel.",
+  peca_ativa: "A peça já está na vitrine: edite pela ficha.",
+  conta_paga: "A conta a pagar desta chegada já foi paga: ajuste pelo painel.",
 };
 
 const redoSchema = z.object({ intakeId: z.uuid() });

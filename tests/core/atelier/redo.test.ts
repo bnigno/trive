@@ -14,6 +14,8 @@ describe("canRedoIntake", () => {
     expect(canRedoIntake({ ...base, status: "failed", hasLiveEvent: true })).toEqual({ ok: false, reason: "em_andamento" });
     expect(canRedoIntake({ ...base, status: "done", movements: 8 })).toEqual({ ok: false, reason: "estoque_lancado" });
     expect(canRedoIntake({ ...base, status: "done", productStatus: "active" })).toEqual({ ok: false, reason: "peca_ativa" });
+    expect(canRedoIntake({ ...base, status: "done", payableStatus: "settled" })).toEqual({ ok: false, reason: "conta_paga" });
+    expect(canRedoIntake({ ...base, status: "done", payableStatus: "pending" })).toEqual({ ok: true });
     expect(REDO_BLOCKED_LABELS.estoque_lancado).toContain("estoque");
     expect(REDO_BLOCKED_LABELS.peca_ativa).toContain("vitrine");
   });

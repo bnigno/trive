@@ -13,15 +13,18 @@ export type RedoCheckInput = {
   hasLiveEvent: boolean;
   /** Status do produto que a chegada gerou (null sem produto). */
   productStatus: string | null;
+  /** Status da conta a pagar da chegada (null sem conta). */
+  payableStatus?: string | null;
 };
 
-export type RedoBlockedReason = "em_andamento" | "estoque_lancado" | "peca_ativa";
+export type RedoBlockedReason = "em_andamento" | "estoque_lancado" | "peca_ativa" | "conta_paga";
 export type RedoCheck = { ok: true } | { ok: false; reason: RedoBlockedReason };
 
 export function canRedoIntake(input: RedoCheckInput): RedoCheck {
   if (input.hasLiveEvent) return { ok: false, reason: "em_andamento" };
   if (input.movements > 0) return { ok: false, reason: "estoque_lancado" };
   if (input.productStatus === "active") return { ok: false, reason: "peca_ativa" };
+  if (input.payableStatus === "settled") return { ok: false, reason: "conta_paga" };
   return { ok: true };
 }
 
@@ -29,6 +32,7 @@ export const REDO_BLOCKED_LABELS: Record<RedoBlockedReason, string> = {
   em_andamento: "Ainda está sendo montada.",
   estoque_lancado: "Já lançou estoque: ajuste pelo painel (estoque é histórico, não se desfaz).",
   peca_ativa: "A peça já está na vitrine: edite pela ficha.",
+  conta_paga: "A conta a pagar desta chegada já foi paga: ajuste pelo painel.",
 };
 
 /** Chave de dedupe de uma rodada: a primeira sem sufixo (compatível com o que já existe), as seguintes com ":rN". */

@@ -1091,6 +1091,7 @@ export async function listAtelierIntakes(db: DbOrTx, input: { limit?: number } =
         movements: moved,
         hasLiveEvent: live.has(row.triggerWaMessageId),
         productStatus: row.productStatus,
+        payableStatus: row.payableStatus,
       }),
     };
   });
@@ -1106,7 +1107,7 @@ export async function countAtelierIntakesFailed(db: DbOrTx): Promise<number> {
 
 export type RedoAtelierIntakeResult =
   | { ok: true; archivedProductId: string | null; canceledEntryId: string | null; round: number }
-  | { ok: false; reason: "chegada_inexistente" | "em_andamento" | "estoque_lancado" | "peca_ativa" };
+  | { ok: false; reason: "chegada_inexistente" | "em_andamento" | "estoque_lancado" | "peca_ativa" | "conta_paga" };
 
 /**
  * A chegada nasce de novo com as mesmas fotos e o mesmo recado: o rascunho
@@ -1127,12 +1128,18 @@ export async function redoAtelierIntake(
       const [product] = await tx.select({ status: products.status }).from(products).where(eq(products.id, intake.productId)).limit(1);
       productStatus = product?.status ?? null;
     }
+    let payableStatus: string | null = null;
+    if (intake.financialEntryId) {
+      const [entry] = await tx.select({ status: financialEntries.status }).from(financialEntries).where(eq(financialEntries.id, intake.financialEntryId)).limit(1);
+      payableStatus = entry?.status ?? null;
+    }
     const [movements, live] = await Promise.all([countMovementsByIntake(tx, [intake.id]), liveIntakeEvents(tx, [intake.triggerWaMessageId])]);
     const check = canRedoIntake({
       status: intake.status,
       movements: movements.get(intake.id) ?? 0,
       hasLiveEvent: live.has(intake.triggerWaMessageId),
       productStatus,
+      payableStatus,
     });
     if (!check.ok) return { ok: false, reason: check.reason };
 
@@ -1142,12 +1149,9 @@ export async function redoAtelierIntake(
       archivedProductId = intake.productId;
     }
     let canceledEntryId: string | null = null;
-    if (intake.financialEntryId) {
-      const [entry] = await tx.select({ id: financialEntries.id, status: financialEntries.status }).from(financialEntries).where(eq(financialEntries.id, intake.financialEntryId)).limit(1);
-      if (entry && entry.status === "pending") {
-        await cancelEntry(tx, { entryId: entry.id, userId: input.userId, reason: "Chegada do Ateliê refeita pelo painel." });
-        canceledEntryId = entry.id;
-      }
+    if (intake.financialEntryId && payableStatus === "pending") {
+      await cancelEntry(tx, { entryId: intake.financialEntryId, userId: input.userId, reason: "Chegada do Ateliê refeita pelo painel." });
+      canceledEntryId = intake.financialEntryId;
     }
 
     const round = intake.redoCount + 1;
@@ -1169,13 +1173,15 @@ export async function redoAtelierIntake(
         updatedAt: now,
       })
       .where(eq(atelierIntakes.id, intake.id));
-    await enqueueOutboxEvent(tx, {
+    const eventId = await enqueueOutboxEvent(tx, {
       eventType: "wa.atelier_intake",
       dedupeKey: `wa.atelier:redo:${intake.id}:${round}`,
       aggregateType: "wa_conversation",
       aggregateId: intake.conversationId,
       payload: { conversationId: intake.conversationId, triggerWaMessageId: intake.triggerWaMessageId },
     });
+    // Nunca commitar uma chegada "montando" sem evento na fila.
+    if (!eventId) throw new Error(`Chegada ${intake.id}: a rodada ${round} já estava na fila.`);
     await tx.insert(auditLog).values({
       actorType: "user",
       actorId: input.userId,
