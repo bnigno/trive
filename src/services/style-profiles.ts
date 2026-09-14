@@ -2,7 +2,7 @@
 // do que já se sabia, vínculo ao cadastro quando existe, consentimento que
 // nunca rebaixa e "esquecer" que zera tudo. A edição para a cliente vem do
 // core (buildEditionForProfile) sobre os fatos vendáveis do catálogo.
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { buildEditionForProfile, type EditionPick } from "@/core/style/edition";
@@ -15,6 +15,7 @@ import {
   styleProfileSchema,
   type StyleProfile,
 } from "@/core/style/profile";
+import { BODY_KEYS, bodyMeasurementsSchema, type BodyMeasurements } from "@/core/style/fit";
 import { auditLog, customerProfiles, customers } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { revokeCustomerLooksByPhone } from "@/services/customer-looks";
@@ -32,6 +33,9 @@ export interface StyleProfileView {
   source: string;
   consentAt: Date | null;
   updatedAt: Date;
+  /** Só o fato: as medidas em si saem por getBodyMeasurements (nunca no histórico da Lia). */
+  hasBodyMeasurements: boolean;
+  bodyMeasuredAt: Date | null;
 }
 
 function toView(row: {
@@ -44,6 +48,8 @@ function toView(row: {
   source: string;
   consentAt: Date | null;
   updatedAt: Date;
+  bodyMeasurements?: unknown;
+  bodyMeasuredAt?: Date | null;
 }): StyleProfileView {
   const parsed = styleProfileSchema.safeParse(row.profile ?? {});
   const profile = parsed.success ? parsed.data : EMPTY_PROFILE;
@@ -57,7 +63,82 @@ function toView(row: {
     source: row.source,
     consentAt: row.consentAt,
     updatedAt: row.updatedAt,
+    hasBodyMeasurements: bodyMeasurementsSchema.safeParse(row.bodyMeasurements ?? {}).success,
+    bodyMeasuredAt: row.bodyMeasuredAt ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Medidas do corpo — coluna própria, nunca no perfil nem no histórico da Lia
+// ---------------------------------------------------------------------------
+
+/** Quem é: o token do navegador (site) ou o telefone (Lia). */
+type ProfileRef = { siteToken?: string; phoneE164?: string };
+
+function profileCondition(ref: ProfileRef) {
+  if (ref.siteToken && z.uuid().safeParse(ref.siteToken).success) {
+    return and(eq(customerProfiles.siteToken, ref.siteToken), isNull(customerProfiles.forgottenAt));
+  }
+  if (ref.phoneE164) return activeByPhone(ref.phoneE164);
+  return null;
+}
+
+/** Grava (ou troca) as medidas da cartela. Sem cartela ativa, não há onde guardar. */
+export async function saveBodyMeasurements(
+  db: DbOrTx,
+  input: ProfileRef & { body: BodyMeasurements; userId?: string; now?: Date },
+): Promise<{ saved: boolean }> {
+  const condition = profileCondition(input);
+  if (!condition) return { saved: false };
+  const body = bodyMeasurementsSchema.parse(input.body);
+  const now = input.now ?? new Date();
+  const updated = await db
+    .update(customerProfiles)
+    .set({ bodyMeasurements: body, bodyMeasuredAt: now, updatedAt: now })
+    .where(condition)
+    .returning({ id: customerProfiles.id });
+  if (updated.length === 0) return { saved: false };
+  // A trilha diz QUE mudou, nunca os números.
+  await db.insert(auditLog).values({
+    actorType: input.userId ? "user" : "customer",
+    actorId: input.userId ?? null,
+    action: "style.body_measurements_save",
+    entityType: "customer_profile",
+    entityId: updated[0].id,
+    after: { measuredAt: now.toISOString(), keys: BODY_KEYS.filter((key) => body[key] !== undefined) },
+  });
+  return { saved: true };
+}
+
+export async function getBodyMeasurements(db: DbOrTx, ref: ProfileRef): Promise<{ body: BodyMeasurements; measuredAt: Date | null } | null> {
+  const condition = profileCondition(ref);
+  if (!condition) return null;
+  const [row] = await db.select({ body: customerProfiles.bodyMeasurements, measuredAt: customerProfiles.bodyMeasuredAt }).from(customerProfiles).where(condition).limit(1);
+  const parsed = bodyMeasurementsSchema.safeParse(row?.body ?? {});
+  if (!row || !parsed.success) return null;
+  return { body: parsed.data, measuredAt: row.measuredAt };
+}
+
+/** "Apagar minhas medidas": só as medidas; a cartela fica. */
+export async function forgetBodyMeasurements(db: DbOrTx, ref: ProfileRef & { userId?: string }): Promise<{ forgotten: boolean }> {
+  const condition = profileCondition(ref);
+  if (!condition) return { forgotten: false };
+  const now = new Date();
+  const updated = await db
+    .update(customerProfiles)
+    .set({ bodyMeasurements: null, bodyMeasuredAt: null, updatedAt: now })
+    .where(and(condition, isNotNull(customerProfiles.bodyMeasurements)))
+    .returning({ id: customerProfiles.id });
+  if (updated.length === 0) return { forgotten: false };
+  await db.insert(auditLog).values({
+    actorType: ref.userId ? "user" : "customer",
+    actorId: ref.userId ?? null,
+    action: "style.body_measurements_forget",
+    entityType: "customer_profile",
+    entityId: updated[0].id,
+    after: { forgottenAt: now.toISOString() },
+  });
+  return { forgotten: true };
 }
 
 const activeByPhone = (phoneE164: string) =>
@@ -192,7 +273,7 @@ export async function forgetStyleProfile(
   const now = new Date();
   const updated = await db
     .update(customerProfiles)
-    .set({ profile: {}, paletteName: null, forgottenAt: now, updatedAt: now })
+    .set({ profile: {}, paletteName: null, bodyMeasurements: null, bodyMeasuredAt: null, forgottenAt: now, updatedAt: now })
     .where(and(condition, isNull(customerProfiles.forgottenAt)))
     .returning({ id: customerProfiles.id, phoneE164: customerProfiles.phoneE164, customerId: customerProfiles.customerId });
   if (updated.length === 0) return { forgotten: false };

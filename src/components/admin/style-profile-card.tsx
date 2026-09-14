@@ -2,6 +2,7 @@
 // o botão "Esquecer" (LGPD) — zera tudo e a vitrine/vendedora param de usar.
 import { swatchHex, swatchInk } from "@/core/style/colors";
 import { OCCASION_LABELS } from "@/core/style/profile";
+import { formatDateTimeSP } from "@/emails/templates";
 import type { StyleProfileView } from "@/services/style-profiles";
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -40,6 +41,12 @@ export function StyleProfileCard({
           {SOURCE_LABEL[profile.source] ?? profile.source} · {profile.consentAt ? "com consentimento" : "sem consentimento explícito"}
         </p>
       </div>
+      {profile.hasBodyMeasurements ? (
+        // Só o fato e a data: os números do corpo não aparecem no painel.
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Medidas do corpo guardadas{profile.bodyMeasuredAt ? ` em ${formatDateTimeSP(profile.bodyMeasuredAt)}` : ""} (busto, cintura, quadril) — usadas só no “Vai me servir?”.
+        </p>
+      ) : null}
       {p.colorsLove.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {p.colorsLove.map((color) => {

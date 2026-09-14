@@ -225,6 +225,19 @@ Lia (a sacola do site não passa pelo caderninho). Depois do deploy, registrar
 a função nova no Inngest: `curl -X PUT https://trivemaison.com.br/api/inngest`.
 Produção: `scripts/sync-seed.ts --settings bot_idle_cart_followup_hours`.
 
+**Vai me servir?** — na página de uma peça com tabela de medidas, quem tem
+a cartela de estilo no navegador toca **Vai me servir?**: na primeira vez
+informa busto, cintura e quadril (em cm; ficam na cartela, em coluna
+própria, uma vez só) e depois lê na hora o veredito por tamanho — "o P
+aperta na cintura; no M fica certo (busto 6 cm de folga…); no G fica
+fluido. Eu iria de M." A regra é de folga em cm (aperta < 0; marca 0–3;
+certo 4–10; fluido 11–18; folgado > 18; o pior ponto decide) e a
+recomendação segue o caimento da cartela (justo/fluido/tanto faz). Peça só
+com comprimento na tabela não compara. "Apagar minhas medidas" apaga só as
+medidas; "esquecer a cartela" apaga tudo. Os números NUNCA entram no
+histórico da Lia, no painel ou na trilha — só o fato de existirem ("medidas
+guardadas"). Produção: migração 0042; sem setting.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

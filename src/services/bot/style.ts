@@ -45,7 +45,7 @@ export async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<st
     listLooksMemoryLines(db, phoneE164),
   ]);
   const lines: string[] = [];
-  if (profile) lines.push(...renderProfileNote(profile.profile, profile.paletteName));
+  if (profile) lines.push(...renderProfileNote(profile.profile, profile.paletteName, { hasBody: profile.hasBodyMeasurements }));
   if (hold) lines.push(`Reserva ativa (gentil): ${hold.description}`);
   if (alerts.length > 0) {
     lines.push(

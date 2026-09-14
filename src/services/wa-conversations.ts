@@ -383,7 +383,7 @@ async function loadConversationContext(
                 .map(([k, v]) => `${k} ${v}`)
                 .join(", ")}`
             : ""
-        }${styleProfile.profile.colorsLove.length > 0 ? ` · ama ${styleProfile.profile.colorsLove.join(", ")}` : ""}`
+        }${styleProfile.profile.colorsLove.length > 0 ? ` · ama ${styleProfile.profile.colorsLove.join(", ")}` : ""}${styleProfile.hasBodyMeasurements ? " · medidas guardadas" : ""}`
       : null,
     hold: hold?.description ?? null,
     alerts: alerts.map((alert) => `${alert.productName}${alert.variantLabel ? ` (${alert.variantLabel})` : ""}`),

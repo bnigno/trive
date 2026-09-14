@@ -27,6 +27,9 @@ export const customerProfiles = pgTable(
     paletteName: text("palette_name"),
     source: text("source").notNull(),
     consentAt: timestamp("consent_at", { withTimezone: true }),
+    /** Medidas do corpo (busto/cintura/quadril em cm) — coluna própria, fora do perfil de estilo; nunca no histórico da Lia. */
+    bodyMeasurements: jsonb("body_measurements"),
+    bodyMeasuredAt: timestamp("body_measured_at", { withTimezone: true }),
     forgottenAt: timestamp("forgotten_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
