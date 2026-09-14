@@ -304,7 +304,7 @@ describe("scheduleIdleCartFollowups (sacola parada)", () => {
     await idleConversation({ phone: "+5511111110005", liaLast: false });
     const ordered = await idleConversation({ phone: "+5511111110006" });
     const [conv] = await db.select({ customerId: schema.waConversations.customerId }).from(schema.waConversations).where(eq(schema.waConversations.id, ordered));
-    await db.insert(schema.orders).values({ customerId: conv.customerId, status: "paid", channel: "store", subtotalCents: 1000, shippingCents: 0, totalCents: 1000, createdAt: new Date(NOW.getTime() - 3_600_000) });
+    await db.insert(schema.orders).values({ customerId: conv.customerId as string, status: "paid", channel: "store", subtotalCents: 1000, shippingCents: 0, totalCents: 1000, createdAt: new Date(NOW.getTime() - 3_600_000) });
     expect(await scheduleIdleCartFollowups(sdb, { now: NOW })).toMatchObject({ scheduled: 0 });
     expect(await db.select().from(schema.waFollowups)).toHaveLength(0);
   });
