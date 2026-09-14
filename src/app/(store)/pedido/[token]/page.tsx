@@ -34,7 +34,7 @@ import { getPublicOrder } from "@/services/store-orders";
 import { isMpEnabled } from "@/services/store-payments";
 import { getSettingsMap } from "@/services/settings";
 
-import { payNowAction } from "./actions";
+import { confirmDeliveryAction, payNowAction } from "./actions";
 import { CopyCode } from "./copy-code";
 
 export const dynamic = "force-dynamic";
@@ -110,6 +110,8 @@ export default async function OrderPage({
     status?: string;
     /** ?pagamento=indisponivel — payNowAction não conseguiu iniciar o MP. */
     pagamento?: string;
+    /** ?chegou=1 — a cliente acabou de confirmar a entrega pelo botão. */
+    chegou?: string;
   }>;
 }) {
   const [{ token }, query] = await Promise.all([params, searchParams]);
@@ -131,6 +133,9 @@ export default async function OrderPage({
     isPendingPayment &&
     (query.collection_status === "approved" || query.status === "approved");
   const mpUnavailable = isPendingPayment && query.pagamento === "indisponivel";
+  const justConfirmed = order.status === "delivered" && query.chegou === "1";
+  const confirmFailed = query.chegou === "0";
+  const confirmAction = confirmDeliveryAction.bind(null, token);
 
   // Variante do bloco "Como pagar" pela forma de pagamento do pedido:
   // cash → dinheiro na entrega; pix_manual COM chave cadastrada → chave
@@ -423,6 +428,33 @@ export default async function OrderPage({
               <div className="mt-4">
                 <CopyCode code={order.trackingCode!} />
               </div>
+              {order.status === "shipped" ? (
+                <form action={confirmAction} className="mt-5">
+                  <button type="submit" className={btnPrimary}>
+                    Chegou!
+                  </button>
+                  <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a maison.</p>
+                  {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
+                </form>
+              ) : null}
+              {justConfirmed ? (
+                <p className="mt-4 font-display text-lg text-espresso-900 italic">Que bom que chegou 🤎 Esperamos que a peça fique linda em você.</p>
+              ) : null}
+            </Sheet>
+          ) : order.status === "shipped" ? (
+            <Sheet eyebrow="A caminho" headingId="chegou-title" aria-labelledby="chegou-title">
+              <p className="mt-3 font-display text-heading font-semibold text-espresso-900">Seu pedido está a caminho</p>
+              <form action={confirmAction} className="mt-5">
+                <button type="submit" className={btnPrimary}>
+                  Chegou!
+                </button>
+                <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a maison.</p>
+                {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
+              </form>
+            </Sheet>
+          ) : justConfirmed ? (
+            <Sheet eyebrow="Entregue" headingId="chegou-title" aria-labelledby="chegou-title">
+              <p className="mt-3 font-display text-lg text-espresso-900 italic">Que bom que chegou 🤎 Esperamos que a peça fique linda em você.</p>
             </Sheet>
           ) : null}
         </div>

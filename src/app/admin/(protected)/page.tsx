@@ -9,7 +9,7 @@ import { countRouteOfDay } from "@/services/delivery-routes";
 import { countOrdersMustShipToday } from "@/services/needed-by";
 import { countAtelierIntakesFailed } from "@/services/atelier";
 import { countOrdersAwaitingPacking } from "@/services/packing";
-import { countOrdersAwaitingDelivery } from "@/services/delivery";
+import { countOrdersAwaitingDelivery, listStaleShipments } from "@/services/delivery";
 import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
 import { getStockOverview } from "@/services/stock";
@@ -94,7 +94,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount] =
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount, staleShipments] =
     await Promise.all([
       safe(async () => {
         const db = getDb();
@@ -114,9 +114,10 @@ async function loadSharedDashboard() {
       safe(() => countRouteOfDay(getDb())),
       safe(() => countOrdersMustShipToday(getDb())),
       safe(() => countOrdersAwaitingDelivery(getDb())),
+      safe(async () => (await listStaleShipments(getDb())).length),
     ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount, staleShipments };
 }
 
 /**
@@ -381,8 +382,12 @@ export default async function AdminDashboardPage() {
             <StatCard
               label="Para entregar"
               value={String(data.toDeliverCount)}
-              tone="neutral"
-              hint="A caminho da cliente — registre a entrega com a foto."
+              tone={data.staleShipments ? "warning" : "neutral"}
+              hint={
+                data.staleShipments
+                  ? `${data.staleShipments} enviado${data.staleShipments > 1 ? "s" : ""} há 7+ dias sem confirmação — confira.`
+                  : "A caminho da cliente — registre a entrega com a foto."
+              }
             />
           </Link>
         ) : null}

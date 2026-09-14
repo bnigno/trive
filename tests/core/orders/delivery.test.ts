@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deliveredStepDetail, deliveryLine, deliveryWhen, normalizeReceivedBy } from "@/core/orders/delivery";
+import { STALE_SHIPMENT_DAYS, deliveredStepDetail, deliveryLine, deliveryWhen, isStaleShipment, normalizeReceivedBy } from "@/core/orders/delivery";
 
 // 20:42Z = 17:42 em São Paulo.
 const AT = new Date("2026-09-13T20:42:00Z");
@@ -39,5 +39,16 @@ describe("deliveryWhen / deliveryLine", () => {
     expect(deliveryLine({ deliveredAt: AT, receivedBy: null, now: new Date("2026-09-13T23:00:00Z") })).toBe("hoje às 17:42");
     expect(deliveredStepDetail("Maria")).toBe("Recebido por Maria");
     expect(deliveredStepDetail(null)).toBeNull();
+  });
+});
+
+describe("isStaleShipment", () => {
+  it("7 dias completos sem confirmação; na borda conta; sem envio, não", () => {
+    const shipped = new Date("2026-09-06T12:00:00Z");
+    expect(STALE_SHIPMENT_DAYS).toBe(7);
+    expect(isStaleShipment(shipped, new Date("2026-09-13T11:59:59Z"))).toBe(false);
+    expect(isStaleShipment(shipped, new Date("2026-09-13T12:00:00Z"))).toBe(true);
+    expect(isStaleShipment(null, new Date("2026-09-20T12:00:00Z"))).toBe(false);
+    expect(isStaleShipment(shipped, new Date("2026-09-09T12:00:00Z"), 3)).toBe(true);
   });
 });

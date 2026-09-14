@@ -100,6 +100,7 @@ export const TOOL_LABELS: Record<BotToolName, string> = {
   historico_de_compras: "viu as compras anteriores",
   criar_pedido: "criou o pedido",
   status_do_pedido: "consultou o pedido",
+  confirmar_entrega: "confirmou a entrega",
   enviar_chave_pix: "enviou a chave Pix",
   avisar_dono: "avisou você",
   reservar_peca: "guardou uma peça",

@@ -6,17 +6,18 @@
 // "Entregue" da página pública. Uma foto por pedido — refazer sobrescreve
 // o mesmo path e NÃO reenvia (dedupe). O upload acontece antes da
 // transação (como o pacote): recusa nunca deixa a linha torta.
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
-import { deliveryLine, normalizeReceivedBy, RECEIVED_BY_MAX_CHARS } from "@/core/orders/delivery";
+import { deliveryLine, isStaleShipment, normalizeReceivedBy, RECEIVED_BY_MAX_CHARS, STALE_SHIPMENT_DAYS } from "@/core/orders/delivery";
 import { type OrderStatus } from "@/core/orders/state-machine";
 import { renderTemplate } from "@/core/whatsapp/render";
 import { auditLog, customers, orders, waMessages, waTemplates } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
+import { spDayKey } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { PACKAGE_PHOTO_JPEG_QUALITY, PACKAGE_PHOTO_MAX_BYTES, PACKAGE_PHOTO_MAX_EDGE } from "@/services/packing";
@@ -182,7 +183,7 @@ export async function deliverOrderWithPhoto(
 
 export type SendDeliveredResult =
   | { sent: true; waMessageId: string; withPhoto: boolean }
-  | { skipped: WaSkipReason | "nao_entregue" | "sem_telefone" | "sem_foto" };
+  | { skipped: WaSkipReason | "nao_entregue" | "sem_telefone" | "sem_foto" | "confirmado_pela_lia" };
 
 /**
  * A mensagem de entrega (evento order.delivered): com foto, a imagem com a
@@ -224,11 +225,13 @@ export async function sendDeliveredWa(
     .limit(1);
   if (!row) throw new ServiceError("ORDER_NOT_FOUND", `Pedido ${orderId} não encontrado.`);
   if (row.status !== "delivered" || !row.deliveredAt) return { skipped: "nao_entregue" };
-  // Sem foto, só quando foi a própria cliente que confirmou (página ou Lia):
-  // "marcar entregue" pelo rastreio dos Correios não sabe a hora real e
-  // não manda nada, como antes.
-  const customerConfirmed = row.deliveryConfirmedBy === "customer" || row.deliveryConfirmedBy === "lia";
-  if (!row.deliveredPhotoPath && !customerConfirmed) return { skipped: "sem_foto" };
+  // Sem foto, só quando a cliente confirmou pela PÁGINA: pela Lia, a
+  // resposta da Lia já é o aviso; "marcar entregue" pelo rastreio dos
+  // Correios não sabe a hora real e não manda nada, como antes.
+  if (!row.deliveredPhotoPath) {
+    if (row.deliveryConfirmedBy === "lia") return { skipped: "confirmado_pela_lia" };
+    if (row.deliveryConfirmedBy !== "customer") return { skipped: "sem_foto" };
+  }
   if (!row.phoneE164) return { skipped: "sem_telefone" };
   if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
 
@@ -361,4 +364,164 @@ export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwait
 
 export async function countOrdersAwaitingDelivery(db: DbOrTx): Promise<number> {
   return (await listOrdersAwaitingDelivery(db)).length;
+}
+
+// ---------------------------------------------------------------------------
+// "Chegou!" — a cliente confirma (pela página pública ou pela Lia).
+// ---------------------------------------------------------------------------
+
+export type ConfirmDeliveryResult =
+  | { ok: true; orderId: string; orderNumber: number; already: boolean }
+  | { ok: false; reason: "nao_encontrado" | "nao_enviado"; orderNumber?: number; status?: string }
+  /** Dois ou mais pedidos enviados e nenhum número: a Lia pergunta qual chegou. */
+  | { ok: false; reason: "ambiguo"; orderNumbers: number[] };
+
+/**
+ * O pedido enviado vira entregue pela máquina de estados, assinado por quem
+ * confirmou ('customer' na página, 'lia' na conversa). Só 'shipped': pago,
+ * em separação ou cancelado não viram entregue pela mão da cliente. Já
+ * entregue = ok, sem efeito.
+ */
+async function confirmDelivery(
+  db: DbOrTx,
+  input: { orderId: string; source: "customer" | "lia" },
+): Promise<ConfirmDeliveryResult> {
+  return db.transaction(async (tx) => {
+    const [order] = await tx
+      .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .for("update");
+    if (!order) return { ok: false, reason: "nao_encontrado" };
+    if (order.status === "delivered") return { ok: true, orderId: order.id, orderNumber: order.orderNumber, already: true };
+    if (order.status !== "shipped") return { ok: false, reason: "nao_enviado", orderNumber: order.orderNumber, status: order.status };
+    await tx.update(orders).set({ deliveryConfirmedBy: input.source, updatedAt: new Date() }).where(eq(orders.id, order.id));
+    await transitionOrder(tx, { orderId: order.id, to: "delivered", userId: null, reason: input.source === "lia" ? "A cliente confirmou pela Lia." : "A cliente confirmou na página do pedido." });
+    await tx.insert(auditLog).values({
+      actorType: "customer",
+      actorId: null,
+      action: "order.delivery_confirmed",
+      entityType: "order",
+      entityId: order.id,
+      before: { status: "shipped" },
+      after: { status: "delivered", source: input.source },
+    });
+    return { ok: true, orderId: order.id, orderNumber: order.orderNumber, already: false };
+  });
+}
+
+/** Página pública: quem tem o link confirma que chegou. */
+export async function confirmDeliveryByToken(db: DbOrTx, input: { publicToken: string }): Promise<ConfirmDeliveryResult> {
+  const token = z.uuid().parse(input.publicToken);
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.publicToken, token)).limit(1);
+  if (!order) return { ok: false, reason: "nao_encontrado" };
+  return confirmDelivery(db, { orderId: order.id, source: "customer" });
+}
+
+/**
+ * A Lia: só pedidos da cliente DESTA conversa. Com o número, aquele pedido.
+ * Sem número: um único enviado → ele; dois ou mais → ambíguo (a Lia pergunta
+ * qual); nenhum → o entregue mais recente ("já estava entregue") ou o mais
+ * recente de todos, para a resposta explicar o status. O critério "último
+ * enviado" é o mesmo do caderninho: shipped_at.
+ */
+export async function confirmDeliveryForCustomer(
+  db: DbOrTx,
+  input: { customerId: string; orderNumber?: number; source: "lia" },
+): Promise<ConfirmDeliveryResult> {
+  const customerId = z.uuid().parse(input.customerId);
+  if (input.orderNumber !== undefined) {
+    const [row] = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.customerId, customerId), eq(orders.orderNumber, input.orderNumber)))
+      .limit(1);
+    if (!row) return { ok: false, reason: "nao_encontrado" };
+    return confirmDelivery(db, { orderId: row.id, source: input.source });
+  }
+  const shipped = await db
+    .select({ id: orders.id, orderNumber: orders.orderNumber })
+    .from(orders)
+    .where(and(eq(orders.customerId, customerId), eq(orders.status, "shipped")))
+    .orderBy(desc(orders.shippedAt), desc(orders.orderNumber));
+  if (shipped.length === 1) return confirmDelivery(db, { orderId: shipped[0].id, source: input.source });
+  if (shipped.length > 1) return { ok: false, reason: "ambiguo", orderNumbers: shipped.map((row) => row.orderNumber) };
+  const [delivered] = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(and(eq(orders.customerId, customerId), eq(orders.status, "delivered")))
+    .orderBy(desc(orders.deliveredAt))
+    .limit(1);
+  if (delivered) return confirmDelivery(db, { orderId: delivered.id, source: input.source });
+  const [latest] = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(eq(orders.customerId, customerId))
+    .orderBy(desc(orders.createdAt), desc(orders.orderNumber))
+    .limit(1);
+  if (!latest) return { ok: false, reason: "nao_encontrado" };
+  return confirmDelivery(db, { orderId: latest.id, source: input.source });
+}
+
+export interface StaleShipment {
+  id: string;
+  orderNumber: number;
+  customerName: string;
+  shippedAt: Date;
+  trackingCode: string | null;
+  /** Motoboy que saiu e ficou sem a foto da entrega (não é caso de rastreio). */
+  isMotoboy: boolean;
+  days: number;
+}
+
+/** Enviados há 7+ dias sem confirmação de entrega, os mais antigos primeiro. */
+export async function listStaleShipments(db: DbOrTx, input: { now?: Date; days?: number } = {}): Promise<StaleShipment[]> {
+  const now = input.now ?? new Date();
+  const days = input.days ?? STALE_SHIPMENT_DAYS;
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      customerName: customers.fullName,
+      shippedAt: orders.shippedAt,
+      trackingCode: orders.shippingTrackingCode,
+      deliveryWindow: orders.deliveryWindow,
+    })
+    .from(orders)
+    .innerJoin(customers, eq(customers.id, orders.customerId))
+    .where(and(eq(orders.status, "shipped"), isNotNull(orders.shippedAt)))
+    .orderBy(orders.shippedAt);
+  return rows
+    .filter((row) => isStaleShipment(row.shippedAt, now, days))
+    .map((row) => ({
+      id: row.id,
+      orderNumber: row.orderNumber,
+      customerName: row.customerName,
+      shippedAt: row.shippedAt as Date,
+      trackingCode: row.trackingCode,
+      isMotoboy: row.deliveryWindow !== null,
+      days: Math.floor((now.getTime() - (row.shippedAt as Date).getTime()) / 86_400_000),
+    }));
+}
+
+/**
+ * "Pedidos enviados: #1042 (05/09, rastreio …) — se ela disser que chegou,
+ * chame confirmar_entrega" — todos os enviados (até 3), para a Lia saber
+ * quando precisa perguntar qual.
+ */
+export async function lastShipmentMemoryLine(db: DbOrTx, customerId: string): Promise<string | null> {
+  const rows = await db
+    .select({ orderNumber: orders.orderNumber, shippedAt: orders.shippedAt, trackingCode: orders.shippingTrackingCode })
+    .from(orders)
+    .where(and(eq(orders.customerId, customerId), eq(orders.status, "shipped")))
+    .orderBy(desc(orders.shippedAt))
+    .limit(3);
+  if (rows.length === 0) return null;
+  const parts = rows.map((row) => {
+    const day = row.shippedAt ? spDayKey(row.shippedAt).split("-") : null;
+    const when = day ? `${day[2]}/${day[1]}` : "?";
+    return `#${row.orderNumber} (enviado em ${when}${row.trackingCode ? `, rastreio ${row.trackingCode}` : ""})`;
+  });
+  const tail = rows.length > 1 ? "se ela disser que chegou, pergunte QUAL e chame confirmar_entrega com numero_do_pedido." : "se ela disser que chegou, chame confirmar_entrega.";
+  return `${rows.length > 1 ? "Pedidos enviados" : "Último pedido"}: ${parts.join(", ")} — ${tail}`;
 }
