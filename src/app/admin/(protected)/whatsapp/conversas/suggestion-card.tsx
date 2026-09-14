@@ -60,7 +60,7 @@ export function SuggestionCard({ suggestion, sellerName, pollNow }: { suggestion
           {suggestion.attachments.map((attachment, index) => (
             <div key={`${attachment.kind}-${index}`} className="rounded-md border border-sky-200 bg-white/70 px-2.5 py-1.5 text-[12px] text-ink-800 dark:border-sky-900 dark:bg-ink-900 dark:text-ivory-100">
               <p className="font-medium">
-                {attachment.kind === "lista" ? `📋 Lista tocável · ${attachment.title}` : attachment.kind === "audio" ? "🎤 Voz da curadora (vai antes do texto)" : "🖼 Foto (vai antes do texto)"}
+                {attachment.kind === "lista" ? `📋 Lista tocável · ${attachment.title}` : attachment.kind === "audio" ? "🎤 Voz da curadora (vai depois do texto)" : "🖼 Foto (vai antes do texto)"}
               </p>
               {attachment.lines.map((line, lineIndex) => (
                 <p key={lineIndex} className="whitespace-pre-wrap text-ink-600 dark:text-ink-300">

@@ -36,10 +36,11 @@ export function curatorNoteLines(input: {
     lines.push(`Nota da curadora (cite com as palavras dela): «${fitted}»`);
   }
   if (input.hasAudio && input.audioEnabled) {
+    const also = input.pageUrl ? ` (a página da peça também tem o áudio: ${input.pageUrl})` : "";
     lines.push(
       note
-        ? "A nota também existe em áudio, na voz da curadora: se ela perguntar de tecido, caimento ou calor (ou quiser ouvir), chame enviar_nota_da_curadora — a voz chega no WhatsApp dela."
-        : "A curadora deixou uma nota em áudio, sem transcrição: se ela perguntar de tecido, caimento ou calor, chame enviar_nota_da_curadora — a voz chega no WhatsApp dela.",
+        ? `A nota também existe em áudio, na voz da curadora: se ela perguntar de tecido, caimento ou calor (ou quiser ouvir), chame enviar_nota_da_curadora e responda em 1 frase SEM citar a nota escrita — a voz responde; cite a nota escrita só se o áudio não puder sair${also}.`
+        : `A curadora deixou uma nota em áudio, sem transcrição: se ela perguntar de tecido, caimento ou calor, chame enviar_nota_da_curadora — a voz chega no WhatsApp dela${also}.`,
     );
   } else if (input.hasAudio) {
     const where = input.pageUrl ? `na página da peça (${input.pageUrl})` : "na página da peça";

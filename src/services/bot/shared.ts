@@ -79,6 +79,8 @@ export type BotExecutorContext = {
    */
   lastInboundId: string;
   onAttachment?: (attachment: BotAttachment) => void;
+  /** URLs de áudio já anexadas neste turno (buildToolExecutor cria): uma voz por turno. */
+  turnAudioUrls?: Set<string>;
   /**
    * Ensaio (playground do painel): nada com efeito externo ou de escrita
    * acontece — criar_pedido, enviar_chave_pix, avisar_dono e transferir

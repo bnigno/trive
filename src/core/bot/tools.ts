@@ -612,7 +612,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "enviar_nota_da_curadora",
     description:
-      "Manda à cliente, como mensagem de voz no WhatsApp, a nota em áudio que a curadora gravou sobre a peça (tecido, caimento, calor). Chame quando detalhar_produto disser que a peça tem nota em áudio e a cliente perguntar de tecido, caimento ou calor — ou pedir para ouvir. Uma vez por peça na conversa; 'reenviar' só quando ela pedir de novo. Se a ferramenta disser que o áudio saiu, apresente em 1 frase ('a curadora gravou uma nota sobre ela, ouve aqui') sem repetir o conteúdo; se disser que não há áudio, responda com a nota escrita ou com o que a ficha diz.",
+      "Manda à cliente, como mensagem de voz no WhatsApp (logo depois da sua resposta), a nota em áudio que a curadora gravou sobre a peça (tecido, caimento, calor). Chame quando detalhar_produto disser que a peça tem nota em áudio e a cliente perguntar de tecido, caimento ou calor — ou pedir para ouvir. Uma vez por peça na conversa; 'reenviar' só quando ela pedir de novo (no máximo mais uma). Se a ferramenta disser que o áudio vai, apresente em 1 frase ('a curadora gravou uma nota sobre ela — segue a voz dela') sem citar nem resumir a nota; se disser que não há áudio, responda com a nota escrita ou com o que a ficha diz.",
     input_schema: {
       type: "object",
       properties: {

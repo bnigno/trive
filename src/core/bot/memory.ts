@@ -114,8 +114,6 @@ export const botStateSchema = z
         at: z.string(),
       })
       .optional(),
-    /** Slugs cujo áudio da curadora já foi para esta conversa (uma vez por peça). */
-    curatorNotesSent: z.array(z.string()).optional(),
     /** A ponte do site: o que a cliente estava vendo quando tocou "Falar com a Lia". */
     // Ponte torta não derruba o caderninho inteiro (sacola, CEP, cupom): só ela some.
   bridge: bridgeStateSchema.optional().catch(undefined),
@@ -138,18 +136,6 @@ export function cartSet(cart: readonly BotCartItem[] | undefined, item: BotCartI
     return atual;
   }
   return [...atual, linha].slice(-CART_MAX_ITEMS);
-}
-
-export const CURATOR_NOTES_SENT_MAX = 20;
-
-/** O áudio de uma peça só vai uma vez por conversa: registra o slug sem repetir. */
-export function wasCuratorNoteSent(state: BotState, slug: string): boolean {
-  return (state.curatorNotesSent ?? []).includes(slug);
-}
-
-export function markCuratorNoteSent(state: BotState, slug: string): BotState {
-  if (wasCuratorNoteSent(state, slug)) return state;
-  return { ...state, curatorNotesSent: [...(state.curatorNotesSent ?? []), slug].slice(-CURATOR_NOTES_SENT_MAX) };
 }
 
 /**

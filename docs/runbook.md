@@ -257,20 +257,29 @@ Produção: migração 0042; sem setting.
 áudio (gravada na ficha da peça) e a cliente pergunta de tecido, caimento
 ou calor (ou pede para ouvir), a Lia chama `enviar_nota_da_curadora`: o
 áudio sai como **mensagem de voz** no WhatsApp dela (Z-API `POST
-/send-audio` com a URL pública do bucket, `waveform`), ANTES do texto, com
-dedupe por turno (o retry da fila não repete) e uma vez por peça na conversa
-(`curatorNotesSent` no caderninho; "manda de novo" → `reenviar: true`).
-Na conversa do painel a mensagem aparece como "🎤 Mensagem de voz" com o
+/send-audio` com a URL pública do bucket, `waveform`), logo DEPOIS do texto
+("segue a voz dela" e aí o áudio — lista e foto continuam antes do texto),
+com dedupe por turno (o retry da fila não repete). "Uma vez por peça na
+conversa" é decidido pelo que de fato saiu (linha `audio` `sent` na
+conversa): áudio que o provedor recusou pode ir de novo, áudio aprovado no
+copiloto conta, sugestão descartada não conta; "manda de novo" →
+`reenviar: true`, no máximo 2 envios da mesma voz por conversa. Na
+conversa do painel a mensagem aparece como "🎤 Mensagem de voz" com o
 player; no ensaio, como bolha com o player; em copiloto vai junto da
-sugestão (sem marcador: a dona decide cada envio) e sai quando ela aprova —
-editada, só o texto. O interruptor **A Lia manda a voz da curadora** fica
-na Central (setting `bot_audio_notes_enabled`, ausente = ligado);
-desligado, `detalhar_produto` volta a apontar o link da página e a Lia cita
-só a nota escrita. Falha do envio é melhor esforço: o texto segue e a
-mensagem fica `failed` na conversa (procure no painel se a cliente disser
-que o áudio não chegou). O áudio é o arquivo gravado no navegador (webm/opus
-no Chrome, m4a no Safari) — se a Z-API recusar o formato, grave ou envie um
-mp3/m4a na ficha da peça (o campo aceita upload). Produção: sem migração;
+sugestão e sai quando a dona aprova — editada, só o texto. O interruptor
+**A Lia manda a voz da curadora** fica na Central (setting
+`bot_audio_notes_enabled`, ausente = ligado); desligado, `detalhar_produto`
+volta a apontar o link da página e a Lia cita só a nota escrita. Com o
+áudio a Lia NÃO cita a nota escrita (a voz responde); o link da página
+segue no texto da ferramenta como plano B. Falha do envio é melhor
+esforço: o texto segue, a mensagem fica `failed` na conversa e o histórico
+da Lia diz que a voz NÃO chegou (no próximo pedido ela manda de novo). O
+áudio é o arquivo gravado no navegador (webm/opus no Chrome, m4a no Safari)
+— se a Z-API recusar o formato, grave ou envie um mp3/m4a na ficha da peça
+(o campo aceita upload). Limite conhecido (pré-existente, vale para lista e
+foto): a mídia sai dentro da transação do turno; se um balão de TEXTO falhar
+depois de uma mídia já entregue, o turno aborta e o retry reenvia a mídia —
+por isso a voz vai por último. Produção: sem migração;
 `scripts/sync-seed.ts --settings bot_audio_notes_enabled`.
 
 ## Entrega por motoboy: rota do dia e "Saiu"

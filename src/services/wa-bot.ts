@@ -156,14 +156,22 @@ export function historyTextForOutbound(input: {
   body: string;
   dedupeKey: string | null;
   templateKey: string | null;
+  status?: string;
 }): string {
   const origin = deriveWaMessageOrigin({
     direction: "outbound",
     dedupeKey: input.dedupeKey,
     templateKey: input.templateKey,
   });
-  // Só a Lia manda áudio (a voz da curadora): o marcador diz que já saiu.
-  const text = input.kind === "audio" ? `[mensagem de voz enviada à cliente] ${input.body}` : historyTextFor(input.kind, input.body);
+  // Mídia que o provedor recusou fica na conversa como 'failed': o modelo
+  // precisa saber que a cliente NÃO recebeu (senão insiste "ouve acima").
+  const failed = input.status === "failed";
+  const text =
+    input.kind === "audio"
+      ? `[mensagem de voz ${failed ? "que NÃO chegou à cliente (falhou)" : "enviada à cliente"}] ${input.body}`
+      : failed && input.kind === "image"
+        ? `[foto que NÃO chegou ao cliente (falhou)] ${input.body}`
+        : historyTextFor(input.kind, input.body);
   if (isProactiveBotReply(input.dedupeKey)) {
     return `[você chamou como combinado] ${text}`;
   }
@@ -187,6 +195,7 @@ export function buildToolExecutor(
   const ctx: ExecutorCtx = {
     ...baseCtx,
     ...(baseCtx.dryRun && !baseCtx.stateOverlay ? { stateOverlay: { current: null } } : {}),
+    turnAudioUrls: baseCtx.turnAudioUrls ?? new Set<string>(),
     emitCard: makeCardEmitter(db, baseCtx),
   };
   return async (name, rawInput) => {
@@ -378,6 +387,7 @@ export async function loadTurnHistory(
       templateKey: waMessages.templateKey,
       mediaUrl: waMessages.mediaUrl,
       mediaMeta: waMessages.mediaMeta,
+      status: waMessages.status,
       createdAt: waMessages.createdAt,
     })
     .from(waMessages)
@@ -492,9 +502,12 @@ export async function deliverBotTurn(
   const { conversation, dedupeBase, attachments, bubbles } = input;
   const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
   const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
-  // Mídia ANTES do texto (o cliente vê a lista/foto e depois o convite),
-  // cada uma com dedupe determinístico por índice; falha é melhor esforço.
-  for (const [index, attachment] of attachments.entries()) {
+  // Lista e foto ANTES do texto (o cliente vê e depois o convite); a voz da
+  // curadora DEPOIS ("segue a voz dela" e aí o áudio) — assim um texto que
+  // falha e aborta o turno nunca deixa uma mensagem de voz já entregue para o
+  // retry repetir. Cada mídia tem dedupe determinístico por índice; falha é
+  // melhor esforço.
+  const sendAttachment = async (attachment: BotAttachment, index: number): Promise<void> => {
     const mediaDedupeKey = `wa.bot_media:${dedupeBase}:${index}`;
     try {
       if (attachment.kind === "option_list") {
@@ -538,6 +551,9 @@ export async function deliverBotTurn(
         error,
       );
     }
+  };
+  for (const [index, attachment] of attachments.entries()) {
+    if (attachment.kind !== "audio") await sendAttachment(attachment, index);
   }
 
   let replied = false;
@@ -554,6 +570,10 @@ export async function deliverBotTurn(
       replied = true;
       firstWaMessageId ??= sent.waMessageId;
     }
+  }
+
+  for (const [index, attachment] of attachments.entries()) {
+    if (attachment.kind === "audio") await sendAttachment(attachment, index);
   }
 
   if (input.handedOff) {
