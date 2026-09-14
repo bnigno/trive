@@ -176,6 +176,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
   const isPost = data.kind === "post" || data.kind === "story";
   const isDropStory = data.kind === "drop_story";
   const isAtelier = data.kind === "atelier";
+  const isCustomerLook = data.kind === "customer_look";
   return (
     <div
       style={{
@@ -292,6 +293,32 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
             ))}
           </div>
         </div>
+      ) : data.kind === "customer_look" ? (
+        // Quem já vestiu: a foto dela, o nome da peça e uma frase de carinho.
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 28, width }}>
+          <Frame
+            item={{ slug: "", name: data.productName, priceLabel: "", imageDataUrl: data.photoDataUrl }}
+            width={cardFrameSize("customer_look", "hero", 1).width}
+            height={cardFrameSize("customer_look", "hero", 1).height}
+            nameSize={34}
+            priceSize={24}
+          />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              fontFamily: SERIF,
+              fontStyle: "italic",
+              fontSize: 36,
+              lineHeight: 1.2,
+              color: C.ink700,
+              textAlign: "center",
+              padding: "0 100px",
+            }}
+          >
+            {normalizeReceiptText(data.caption)}
+          </div>
+        </div>
       ) : data.kind === "post" || data.kind === "story" ? (
         <Frame
           item={data.hero}
@@ -359,7 +386,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
       </div>
       <Footer
         storeName={data.storeName}
-        line={isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
+        line={isCustomerLook ? "Obrigada por vestir a maison." : isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
       />
     </div>
   );

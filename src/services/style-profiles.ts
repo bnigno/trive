@@ -17,6 +17,7 @@ import {
 } from "@/core/style/profile";
 import { auditLog, customerProfiles, customers } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
+import { revokeCustomerLooksByPhone } from "@/services/customer-looks";
 import { listPublicVariantFacts, type PublicProductListItem } from "@/services/store-catalog";
 
 const E164 = /^\+[1-9]\d{7,14}$/;
@@ -193,8 +194,15 @@ export async function forgetStyleProfile(
     .update(customerProfiles)
     .set({ profile: {}, paletteName: null, forgottenAt: now, updatedAt: now })
     .where(and(condition, isNull(customerProfiles.forgottenAt)))
-    .returning({ id: customerProfiles.id });
+    .returning({ id: customerProfiles.id, phoneE164: customerProfiles.phoneE164, customerId: customerProfiles.customerId });
   if (updated.length === 0) return { forgotten: false };
+  // "Esquecer tudo dela" pelo painel também retira as fotos do "Quem já
+  // vestiu" (vitrine e bucket). Pelo site NÃO: o token da cartela sai para
+  // quem digitar o telefone no quiz, e a retirada de foto precisa de prova de
+  // posse — a cliente retira pela Lia (o próprio WhatsApp dela) e a dona pelo painel.
+  if (input.userId) {
+    await revokeCustomerLooksByPhone(db, { phoneE164: updated[0].phoneE164, customerId: updated[0].customerId, source: "forget", now });
+  }
   await db.insert(auditLog).values({
     actorType: input.userId ? "user" : "customer",
     actorId: input.userId ?? null,

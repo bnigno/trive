@@ -31,7 +31,9 @@ import {
   openAtelierIntake,
   routeOwnerInbound,
 } from "@/services/atelier";
+import { lookConsentHistoryText, parseLookRowId } from "@/core/looks/consent";
 import { feedbackHandledBy, feedbackHistoryText, parseFeedbackRowId } from "@/core/orders/feedback";
+import { recordLookConsent } from "@/services/customer-looks";
 import { recordDeliveryFeedback } from "@/services/delivery-feedback";
 import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
@@ -138,7 +140,8 @@ export type ProcessZapiInboundResult =
   | { action: "atelier_photo"; conversationId: string; waMessageId: string }
   | { action: "atelier_help"; conversationId: string; waMessageId: string }
   // Resposta ao "Chegou bem?" que vai direto para a equipe (defeito / falar).
-  | { action: "feedback_handoff"; conversationId: string; waMessageId: string };
+  | { action: "feedback_handoff"; conversationId: string; waMessageId: string }
+  | { action: "look_consent"; conversationId: string; waMessageId: string };
 
 export type InboundRoute = "bot_queued" | "forwarded" | "atelier_queued" | "atelier_help";
 
@@ -701,6 +704,25 @@ export async function processZapiInbound(
         });
         await markDone();
         return { action: route, conversationId: conversation.id, waMessageId: message.id } as const;
+      }
+    }
+
+    // "Posso mostrar na página?": o toque volta como look:sim|nao:<foto>. A
+    // resposta é gravada (só do telefone que recebeu a pergunta), a
+    // confirmação curta sai pela fila e a Lia não precisa de turno.
+    const lookRow = parseLookRowId(parsed.listResponseMessage?.selectedRowId);
+    if (lookRow) {
+      const consent = await recordLookConsent(tx, {
+        lookId: lookRow.lookId,
+        answer: lookRow.answer,
+        phoneE164,
+        waMessageId: message.id,
+        now,
+      });
+      if (consent) {
+        await tx.update(waMessages).set({ body: lookConsentHistoryText(consent.answer, consent.productName) }).where(eq(waMessages.id, message.id));
+        await markDone();
+        return { action: "look_consent", conversationId: conversation.id, waMessageId: message.id } as const;
       }
     }
 

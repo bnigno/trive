@@ -87,7 +87,24 @@ export interface AtelierCardData {
   lines: string[];
 }
 
-export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData | DropStoryCardData | AtelierCardData;
+/**
+ * "Quem já vestiu" (4:5): a foto da cliente usando a peça, uma só, com o
+ * título "Ana veste Longo Dunas" e uma linha de carinho. Vai para o WhatsApp
+ * dela — é o presente; a vitrine só mostra a foto com o "sim" e a aprovação.
+ */
+export interface CustomerLookCardData {
+  kind: "customer_look";
+  storeName: string;
+  eyebrow: string;
+  title: string;
+  /** O nome da peça, sob a foto. */
+  productName: string;
+  /** JPEG em data URL, já recortado na moldura. */
+  photoDataUrl: string;
+  caption: string;
+}
+
+export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData | DropStoryCardData | AtelierCardData | CustomerLookCardData;
 
 export const ATELIER_EYEBROW = "ATELIÊ · RASCUNHO PRONTO";
 export const ATELIER_CARD_MAX_LINES = 3;
@@ -155,6 +172,8 @@ export function cardFrameSize(
   if (kind === "post") return { width: 540, height: 720 };
   // Ateliê: a peça grande com respiro para as três linhas do resumo.
   if (kind === "atelier") return { width: 480, height: 640 };
+  // Quem já vestiu: a foto dela em 3:4, com respiro para o nome da peça e a frase.
+  if (kind === "customer_look") return { width: 540, height: 720 };
   if (kind === "story") return { width: 900, height: 1200 };
   // Story do lançamento: uma peça grande, ou duas/três lado a lado, com
   // respiro para a faixa, o título, a frase e o endereço da estreia.

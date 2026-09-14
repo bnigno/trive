@@ -229,6 +229,23 @@ describe("story do lançamento", () => {
     expect(networkCalls).toEqual([]);
   });
 
+  it("quem já vestiu: a foto da cliente, o nome da peça e a frase, em 1080×1350", async () => {
+    const png = await renderCardPng(
+      {
+        kind: "customer_look",
+        storeName: "TRIVÉ",
+        eyebrow: "QUEM JÁ VESTIU",
+        title: "Ana veste Longo Dunas",
+        productName: "Longo Dunas",
+        photoDataUrl: items[0].imageDataUrl,
+        caption: "Obrigada por vestir a maison.",
+      },
+      await loadReceiptAssets(),
+    );
+    const columnHas = await expectCard(png);
+    expect(columnHas(540, "#b08968")).toBe(true);
+  });
+
   it("cartão do ateliê: a peça recém-chegada e as três linhas do resumo", async () => {
     const png = await renderCardPng(
       {

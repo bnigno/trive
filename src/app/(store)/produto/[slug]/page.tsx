@@ -14,8 +14,10 @@ import { notFound } from "next/navigation";
 
 import { IconChevron } from "@/components/store/icons";
 import { ProductCard } from "@/components/store/product-card";
+import { CustomerLooks } from "@/components/store/customer-looks";
 import { SectionHeading } from "@/components/store/section-heading";
 import { fitSignalStoreLine, type FitSignal } from "@/core/catalog/fit-signal";
+import { listPublicLooksForProduct } from "@/services/customer-looks";
 import { getFitSignalsForProduct } from "@/services/delivery-feedback";
 import { getDb } from "@/db/client";
 import {
@@ -95,6 +97,8 @@ export default async function ProdutoPage({ params }: Props) {
   const db = getDb();
   const product = await getPublicProductBySlug(db, slug);
   const fitSignals = product ? (await getFitSignalsForProduct(db, product.id)).filter((row) => row.signal !== null) : [];
+  // "Quem já vestiu": só com o "sim" da cliente e a aprovação da maison.
+  const customerLooks = product ? await listPublicLooksForProduct(db, product.id) : [];
   if (!product) notFound();
 
   // Ficha da peça (placa de museu) e fita métrica, quando a maison cadastrou.
@@ -231,6 +235,11 @@ export default async function ProdutoPage({ params }: Props) {
           ) : null}
         </div>
       </ProductDetailClient>
+
+      <CustomerLooks
+        productName={product.name}
+        looks={customerLooks.map((look) => ({ id: look.id, displayName: look.displayName, url: publicImageUrl(look.photoPath) }))}
+      />
 
       {related.items.length > 0 ? (
         <section aria-labelledby="relacionados" className="mt-16">

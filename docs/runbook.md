@@ -144,6 +144,30 @@ WhatsApp), a ficha continua "ainda não perguntado" — nada fica "perguntado"
 sem ter saído. Produção: migração 0038 e
 `scripts/sync-seed.ts --settings feedback_ask_enabled --templates delivery_feedback_ask`.
 
+**Quem já vestiu** — quando a cliente manda uma foto DELA usando uma peça
+que comprou, a Lia elogia e chama `registrar_foto_com_a_peca`: a foto do
+turno vira uma linha em `customer_looks` (com o pedido, quando existe) e a
+fila (`wa.customer_look_card`) baixa a foto da Z-API, normaliza (≤ 1600 px,
+JPEG sem EXIF), guarda em `looks/<id>/`, desenha o cartão **"Ana veste
+Longo Dunas"** (kind `customer_look`) e manda para ela, seguido da lista
+tocável **"Posso mostrar na página?"** (Sim, pode / Prefiro que não). O toque
+volta pelo webhook (`look:sim|nao:<id>`): grava o consentimento e sai uma
+confirmação curta pela fila — sem turno da Lia. Só entra na vitrine
+(**Quem já vestiu** na página da peça, com o primeiro nome) com o **"sim"
+dela E a sua aprovação** em **/admin/produtos/quem-vestiu** (o painel avisa
+"Fotos aguardando aprovação"). Recusar é final; **Retirar** tira da vitrine
+para sempre. A cliente retira quando quiser ("tira minha foto" → a Lia chama
+`retirar_minha_foto`, pelo telefone E pelo cadastro dela) e "Esquecer tudo"
+na ficha da cliente no painel também retira; pelo site, "esquecer minha
+cartela" NÃO mexe nas fotos (o token da cartela não prova posse do número).
+Retirar apaga `photo.jpg` e `card.jpg` do bucket e pede a revalidação da
+página da peça pela fila (`store.revalidate`). Se ela tocar "Prefiro que não"
+depois do "sim", a última resposta vale e a foto sai da página na hora. A
+mesma foto nunca vira duas linhas (UNIQUE por mensagem). Foto de cliente é
+dado pessoal: bucket público com caminho por uuid, nunca listado; o
+interruptor **Quem já vestiu** fica na Central. Produção: migração 0039 e
+`scripts/sync-seed.ts --settings customer_looks_enabled`.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

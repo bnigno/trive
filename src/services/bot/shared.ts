@@ -94,6 +94,13 @@ export type BotExecutorContext = {
   stateOverlay?: { current: BotState | null };
   /** Consulta de CEP: cotar_frete devolve também rua/bairro/cidade/UF. */
   cepLookup?: CepLookup;
+  /**
+   * As fotos recentes da cliente (últimos 30 min, na ordem, até 3): as deste
+   * turno que a Lia viu e as do turno anterior ("foto → qual peça? → ela
+   * responde"). registrar_foto_com_a_peca escolhe por `foto` (padrão: a
+   * última). Vazio quando a Lia não enxerga fotos (mídia desligada).
+   */
+  recentImages?: Array<{ waMessageId: string; mediaUrl: string }>;
 };
 
 export type RunBotTurnResult =

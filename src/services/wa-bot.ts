@@ -78,6 +78,8 @@ import type {
   RunBotTurnResult,
 } from "./bot/shared";
 import { execCotarFrete } from "./bot/shipping";
+import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
+import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -252,6 +254,10 @@ export function buildToolExecutor(
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
+      case "registrar_foto_com_a_peca":
+        return execRegistrarFotoComAPeca(db, ctx, parsed.data as BotToolInputs["registrar_foto_com_a_peca"]);
+      case "retirar_minha_foto":
+        return execRetirarMinhaFoto(db, ctx);
       case "transferir_para_atendente":
         return execTransferir(
           db,
@@ -402,6 +408,16 @@ export async function runBotTurn(
       .slice(-MAX_IMAGES_PER_TURN)
       .map((row) => row.mediaUrl as string);
     const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
+    // Fotos recentes para registrar_foto_com_a_peca: as deste turno só se a
+    // Lia as viu de fato; as de antes (dentro da janela) valem mesmo sem
+    // anexo — "foto → qual peça? → ela responde".
+    const recentImages = mediaEnabled
+      ? rows
+          .filter((row) => row.direction === "inbound" && row.kind === "image" && row.mediaUrl && now.getTime() - row.createdAt.getTime() <= LOOK_PHOTO_WINDOW_MS)
+          .filter((row) => !pending.some((p) => p.id === row.id) || images.has(row.mediaUrl as string))
+          .slice(-MAX_IMAGES_PER_TURN)
+          .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }))
+      : [];
 
     const messages: BotChatMessage[] = rows.map((message) => {
       if (message.direction !== "inbound") {
@@ -458,6 +474,7 @@ export async function runBotTurn(
       lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
       cepLookup: getCepLookup(),
+      recentImages,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 

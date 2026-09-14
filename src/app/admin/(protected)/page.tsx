@@ -8,6 +8,7 @@ import { listOrders } from "@/services/orders";
 import { countRouteOfDay } from "@/services/delivery-routes";
 import { countOrdersMustShipToday } from "@/services/needed-by";
 import { countAtelierIntakesFailed } from "@/services/atelier";
+import { countPendingLooks } from "@/services/customer-looks";
 import { countOrdersAwaitingPacking } from "@/services/packing";
 import { countOrdersAwaitingDelivery, listStaleShipments } from "@/services/delivery";
 import { getReadinessSummary } from "@/services/catalog-readiness";
@@ -218,6 +219,7 @@ async function loadOwnerDashboard() {
     margin,
     recovery,
     atelierFailed,
+    pendingLooks,
   ] = await Promise.all([
     safe(async () => {
       const db = getDb();
@@ -251,10 +253,12 @@ async function loadOwnerDashboard() {
     safe(() => marginSummary(getDb(), { days: 30 })),
     safe(() => recoveryStats(getDb())),
     safe(() => countAtelierIntakesFailed(getDb())),
+    safe(() => countPendingLooks(getDb())),
   ]);
 
   return {
     atelierFailed,
+    pendingLooks,
     ordersTodaySumCents,
     month,
     pendingApprovals,
@@ -354,6 +358,16 @@ export default async function AdminDashboardPage() {
               value={String(ownerData.atelierFailed)}
               tone="warning"
               hint="Fotos + recado pelo WhatsApp que não viraram rascunho. Abra e refaça."
+            />
+          </Link>
+        ) : null}
+        {ownerData?.pendingLooks ? (
+          <Link href="/admin/produtos/quem-vestiu" className="block">
+            <StatCard
+              label="Fotos aguardando aprovação"
+              value={String(ownerData.pendingLooks)}
+              tone="warning"
+              hint="Clientes que autorizaram a foto delas na página da peça. Aprove ou recuse."
             />
           </Link>
         ) : null}
