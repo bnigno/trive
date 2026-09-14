@@ -18,6 +18,11 @@ export interface DeriveWaMessageOriginInput {
  * 4. templateKey presente → auto (notificações de pedido/estoque);
  * 5. fallback → auto (outbound sem assinatura conhecida).
  */
+/** Resposta que a Lia mandou por conta (retorno combinado/retomada): dedupe `wa.bot_reply:followup:<id>`. */
+export function isProactiveBotReply(dedupeKey: string | null | undefined): boolean {
+  return typeof dedupeKey === "string" && /^wa\.bot_reply:followup:/.test(dedupeKey);
+}
+
 export function deriveWaMessageOrigin(
   input: DeriveWaMessageOriginInput,
 ): WaMessageOrigin {

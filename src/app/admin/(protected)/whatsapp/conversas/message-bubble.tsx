@@ -24,7 +24,9 @@ export function MessageBubble({
   const originLabel =
     outbound && firstOfGroup
       ? message.origin === "bot"
-        ? sellerName
+        ? message.proactive
+          ? `${sellerName} · chamou como combinado`
+          : sellerName
         : message.origin === "manual"
           ? "Você"
           : "Automática"

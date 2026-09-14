@@ -30,3 +30,4 @@ export { campaignLinks } from "./campaign-links";
 export { atelierIntakes } from "./atelier";
 export { deliveryFeedback } from "./feedback";
 export { customerLooks } from "./looks";
+export { waFollowups } from "./followups";

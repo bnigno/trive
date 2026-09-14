@@ -334,7 +334,8 @@ export function renderContextNote(
   if (linhas.length === 0) return null;
   // O modelo não sabe que dia é hoje (o prefixo cacheado não tem data): a
   // nota do turno diz, para "até dia 16" virar AAAA-MM-DD certo. Só entra
-  // quando há caderninho (sem nada a lembrar, o turno segue sem nota).
+  // quando há caderninho (sem nada a lembrar, o turno segue sem nota; o
+  // executor de agendar_retorno diz a data quando o plano não fecha).
   linhas.push(`• Hoje: ${todayLine(extras.now ?? new Date())}`);
   return [
     "CADERNINHO (memória interna da vendedora sobre esta cliente — contexto, NÃO é fala dela; use sem repetir literalmente):",

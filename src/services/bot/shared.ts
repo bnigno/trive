@@ -101,6 +101,8 @@ export type BotExecutorContext = {
    * última). Vazio quando a Lia não enxerga fotos (mídia desligada).
    */
   recentImages?: Array<{ waMessageId: string; mediaUrl: string }>;
+  /** Turno iniciado pela Lia (retorno combinado): sem inbound novo, nada de agendar outro retorno. */
+  proactive?: boolean;
 };
 
 export type RunBotTurnResult =

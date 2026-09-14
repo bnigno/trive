@@ -34,6 +34,7 @@ import {
 import { lookConsentHistoryText, parseLookRowId } from "@/core/looks/consent";
 import { feedbackHandledBy, feedbackHistoryText, parseFeedbackRowId } from "@/core/orders/feedback";
 import { recordLookConsent } from "@/services/customer-looks";
+import { cancelBotFollowupsByPhone } from "@/services/wa-followups";
 import { recordDeliveryFeedback } from "@/services/delivery-feedback";
 import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
@@ -625,6 +626,7 @@ export async function processZapiInbound(
       // (lista da estreia e avisos de "voltou") — a /estreia é sem login.
       await cancelDropWaitlistByPhone(tx, phoneE164, now);
       await cancelStockAlertsByPhone(tx, phoneE164, now);
+      await cancelBotFollowupsByPhone(tx, { phoneE164, reason: "sair", now });
       if (customer) {
         await tx
           .update(customers)

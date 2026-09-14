@@ -101,6 +101,7 @@ export default async function WaConversationsPage({
             id: message.id,
             direction: message.direction,
             origin: message.origin,
+            proactive: message.proactive,
             kind: message.kind,
             body: message.body,
             mediaUrl: message.mediaUrl,
@@ -120,6 +121,7 @@ export default async function WaConversationsPage({
               ...order,
               createdAt: order.createdAt.toISOString(),
             })),
+            followups: tail.context.followups.map((followup) => ({ ...followup, dueAt: followup.dueAt.toISOString() })),
           },
           activity: tail.activity.map((turn) => ({
             ...turn,

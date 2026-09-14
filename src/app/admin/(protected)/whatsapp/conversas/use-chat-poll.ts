@@ -16,6 +16,7 @@ const chatMessageSchema = z.object({
   id: z.string(),
   direction: z.enum(["inbound", "outbound"]),
   origin: originSchema,
+  proactive: z.boolean().default(false),
   kind: z.string(),
   body: z.string(),
   mediaUrl: z.string().nullable(),
@@ -74,6 +75,9 @@ const chatContextSchema = z.object({
   style: z.string().nullable().default(null),
   hold: z.string().nullable().default(null),
   alerts: z.array(z.string()).default([]),
+  followups: z
+    .array(z.object({ id: z.string(), kind: z.string(), reason: z.string(), dueAt: z.string(), status: z.string().default("scheduled"), note: z.string().nullable().default(null) }))
+    .default([]),
   recentOrders: z.array(
     z.object({
       id: z.string(),

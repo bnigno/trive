@@ -53,7 +53,8 @@ import {
 import { processPaymentEvent } from "@/services/payments";
 import { sendPackedWa } from "@/services/packing";
 import { sendReceiptWa } from "@/services/receipts";
-import { runBotTurn } from "@/services/wa-bot";
+import { runBotTurn, runScheduledBotTurn } from "@/services/wa-bot";
+import { botFollowupPayloadSchema } from "@/services/wa-followups";
 import {
   isWaEnabled,
   sendTemplateMessage,
@@ -495,6 +496,25 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // { skipped } SEM lançar — o evento fica done e não entra em retry-loop.
   // Qualquer throw residual (banco, provedor) propaga de propósito:
   // retry/backoff/DLQ da fila agem, com idempotência via dedupe do enqueue.
+  // Retorno combinado: o turno PROATIVO da Lia no horário. Fora da janela
+  // re-enfileira datado; conversa humana/fechada/SAIR cancela o combinado;
+  // modelo fora do ar relança (política própria, 3 tentativas).
+  "wa.bot_followup": async (event) => {
+    const { followupId } = botFollowupPayloadSchema.parse(event.payload);
+    const result = await runScheduledBotTurn(
+      getDb(),
+      getSalesAssistant(),
+      getMessagingProvider(),
+      { followupId, attempt: event.attempts },
+      {
+        cards: {
+          storage: getFileStorage(),
+          render: async (data) => renderCardPng(data, await loadReceiptAssets()),
+        },
+      },
+    );
+    console.info(`[wa.bot_followup] ${followupId} → ${JSON.stringify(result)}`);
+  },
   "wa.bot_turn": async (event) => {
     const payload = waBotTurnPayloadSchema.parse(event.payload);
     await runBotTurn(

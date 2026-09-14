@@ -29,7 +29,7 @@ import {
   isAudioAwaitingTranscription,
   parseWaMediaMeta,
 } from "@/core/whatsapp/media";
-import { deriveWaMessageOrigin } from "@/core/whatsapp/origin";
+import { deriveWaMessageOrigin, isProactiveBotReply } from "@/core/whatsapp/origin";
 import { auditLog, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -78,8 +78,18 @@ import type {
   RunBotTurnResult,
 } from "./bot/shared";
 import { execCotarFrete } from "./bot/shipping";
+import { execAgendarRetorno } from "./bot/followups";
 import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
+import { followupMemoryLines } from "./wa-followups";
+import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, isFollowupTooLate, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
+import { getRetryPolicy } from "@/core/queue/retry-policy";
+import { BOT_FOLLOWUP_EVENT } from "./wa-followups";
+import { waFollowups } from "@/db/schema";
+import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-window";
+import { enqueueOutboxEvent } from "@/queue/enqueue";
+import { loadSendPolicy } from "./wa-send-policy";
+import { spDayKey } from "@/lib/sp-day";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -149,6 +159,9 @@ export function historyTextForOutbound(input: {
     templateKey: input.templateKey,
   });
   const text = historyTextFor(input.kind, input.body);
+  if (isProactiveBotReply(input.dedupeKey)) {
+    return `[você chamou como combinado] ${text}`;
+  }
   if (origin === "manual") {
     return `[mensagem enviada pela equipe da loja, não por você] ${text}`;
   }
@@ -258,6 +271,8 @@ export function buildToolExecutor(
         return execRegistrarFotoComAPeca(db, ctx, parsed.data as BotToolInputs["registrar_foto_com_a_peca"]);
       case "retirar_minha_foto":
         return execRetirarMinhaFoto(db, ctx);
+      case "agendar_retorno":
+        return execAgendarRetorno(db, ctx, parsed.data as BotToolInputs["agendar_retorno"]);
       case "transferir_para_atendente":
         return execTransferir(
           db,
@@ -317,6 +332,223 @@ export function assembleHistory(
 }
 
 // ---------------------------------------------------------------------------
+// loadTurnHistory — as últimas mensagens da conversa como o modelo recebe
+// (fotos do turno anexadas, as antigas em marcador) + o caderninho. É o
+// mesmo para o turno reativo (runBotTurn) e para o proativo
+// (runScheduledBotTurn); o segundo acrescenta a fala sintética no fim.
+// ---------------------------------------------------------------------------
+
+type TurnConversation = typeof waConversations.$inferSelect;
+
+export type LoadedTurnHistory = {
+  history: BotChatMessage[];
+  recentImages: Array<{ waMessageId: string; mediaUrl: string }>;
+  /** Só contagens para a trilha: a foto nunca é guardada. */
+  media: { images: number; audios: number };
+  lastInboundAt: Date | null;
+};
+
+export async function loadTurnHistory(
+  tx: DbOrTx,
+  provider: MessagingProvider,
+  input: { conversation: TurnConversation; now: Date },
+): Promise<LoadedTurnHistory | { skipped: "aguardando_transcricao" }> {
+  const { conversation, now } = input;
+  const conversationId = conversation.id;
+  // Histórico: últimas mensagens em ordem cronológica, com a origem de cada
+  // saída marcada (equipe/automático) e mídia resumida em marcadores.
+  const recent = await tx
+    .select({
+      id: waMessages.id,
+      direction: waMessages.direction,
+      body: waMessages.body,
+      kind: waMessages.kind,
+      dedupeKey: waMessages.dedupeKey,
+      templateKey: waMessages.templateKey,
+      mediaUrl: waMessages.mediaUrl,
+      mediaMeta: waMessages.mediaMeta,
+      createdAt: waMessages.createdAt,
+    })
+    .from(waMessages)
+    .where(eq(waMessages.conversationId, conversationId))
+    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+    .limit(HISTORY_LIMIT);
+  const rows = recent.reverse();
+
+  // "Pendentes" = o que a cliente mandou depois da última resposta: só
+  // essas fotos vão anexadas ao modelo; as antigas viram marcador.
+  const lastOutboundIndex = rows.reduce(
+    (found, row, index) => (row.direction === "outbound" ? index : found),
+    -1,
+  );
+  const pending = rows.slice(lastOutboundIndex + 1).filter((row) => row.direction === "inbound");
+  const mediaEnabled = await isBotMediaEnabled(tx);
+  if (
+    mediaEnabled &&
+    pending.some(
+      (row) =>
+        row.kind === "audio" &&
+        isAudioAwaitingTranscription(parseWaMediaMeta(row.mediaMeta), row.createdAt, now),
+    )
+  ) {
+    // O turno enfileirado pela transcrição responde a tudo de uma vez.
+    return { skipped: "aguardando_transcricao" };
+  }
+  const imageUrls = pending
+    .filter((row) => row.kind === "image" && row.mediaUrl)
+    .slice(-MAX_IMAGES_PER_TURN)
+    .map((row) => row.mediaUrl as string);
+  const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
+  // Fotos recentes para registrar_foto_com_a_peca: as deste turno só se a
+  // Lia as viu de fato; as de antes (dentro da janela) valem mesmo sem
+  // anexo — "foto → qual peça? → ela responde".
+  const recentImages = mediaEnabled
+    ? rows
+        .filter((row) => row.direction === "inbound" && row.kind === "image" && row.mediaUrl && now.getTime() - row.createdAt.getTime() <= LOOK_PHOTO_WINDOW_MS)
+        .filter((row) => !pending.some((p) => p.id === row.id) || images.has(row.mediaUrl as string))
+        .slice(-MAX_IMAGES_PER_TURN)
+        .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }))
+    : [];
+
+  const messages: BotChatMessage[] = rows.map((message) => {
+    if (message.direction !== "inbound") {
+      return { role: "assistant" as const, text: historyTextForOutbound(message) };
+    }
+    const attached = message.mediaUrl ? images.get(message.mediaUrl) : undefined;
+    const isPending = pending.some((row) => row.id === message.id);
+    return {
+      role: "user" as const,
+      text: historyTextForInbound({
+        kind: message.kind,
+        body: message.body,
+        mediaMeta: parseWaMediaMeta(message.mediaMeta),
+        image: attached ? "attached" : isPending ? "unavailable" : "old",
+      }),
+      ...(attached ? { images: [attached] } : {}),
+    };
+  });
+  const state = parseBotState(conversation.botState);
+  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines] = await Promise.all([
+    loadMemoryLines(tx, conversation.phoneE164),
+    purchaseMemoryLineFor(tx, {
+      customerId: conversation.customerId,
+      phoneE164: conversation.phoneE164,
+    }),
+    shipmentMemoryLineFor(tx, {
+      customerId: conversation.customerId,
+      phoneE164: conversation.phoneE164,
+    }),
+    // Ponte do site recente: estoque ao vivo das peças que ela estava vendo,
+    // para a Lia não inventar disponibilidade nem precisar de uma ferramenta.
+    state.bridge && isBridgeFresh(state.bridge, now)
+      ? bridgeStockLine(tx, state.bridge)
+      : Promise.resolve(null),
+    followupMemoryLines(tx, conversationId),
+  ]);
+  const history = assembleHistory(state, messages, {
+    lines: [
+      ...memoryLines,
+      ...(purchaseLine ? [purchaseLine] : []),
+      ...(shipmentLine ? [shipmentLine] : []),
+      ...(bridgeLine ? [bridgeLine] : []),
+      ...followupLines,
+    ],
+    now,
+  });
+
+  const lastInboundAt = rows.filter((row) => row.direction === "inbound").at(-1)?.createdAt ?? null;
+  return { history, recentImages, media: { images: images.size, audios: pending.filter((row) => row.kind === "audio").length }, lastInboundAt };
+}
+
+// ---------------------------------------------------------------------------
+// deliverBotTurn — a entrega do turno: mídia antes do texto, até 3 balões,
+// cortesia pós-transferência; cada envio com dedupe determinístico derivado
+// de `dedupeBase` (id da inbound no turno reativo, id do retorno no
+// proativo) — o retry da fila nunca duplica nada.
+// ---------------------------------------------------------------------------
+
+export async function deliverBotTurn(
+  tx: DbOrTx,
+  provider: MessagingProvider,
+  input: {
+    conversation: Pick<TurnConversation, "phoneE164" | "customerId">;
+    dedupeBase: string;
+    attachments: readonly BotAttachment[];
+    bubbles: readonly string[];
+    handedOff: boolean;
+  },
+): Promise<{ replied: boolean; firstWaMessageId: string | null }> {
+  const { conversation, dedupeBase, attachments, bubbles } = input;
+  const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
+  const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
+  // Mídia ANTES do texto (o cliente vê a lista/foto e depois o convite),
+  // cada uma com dedupe determinístico por índice; falha é melhor esforço.
+  for (const [index, attachment] of attachments.entries()) {
+    const mediaDedupeKey = `wa.bot_media:${dedupeBase}:${index}`;
+    try {
+      if (attachment.kind === "option_list") {
+        await sendMediaMessage(tx, provider, {
+          kind: "option_list",
+          body: attachment.message,
+          optionList: {
+            title: attachment.title,
+            buttonLabel: attachment.buttonLabel,
+            options: attachment.options,
+          },
+          phoneE164: conversation.phoneE164,
+          ...customerRef,
+          dedupeKey: mediaDedupeKey,
+          requireOptIn: false,
+        });
+      } else {
+        await sendMediaMessage(tx, provider, {
+          kind: "image",
+          imageUrl: attachment.imageUrl,
+          body: attachment.caption,
+          phoneE164: conversation.phoneE164,
+          ...customerRef,
+          dedupeKey: mediaDedupeKey,
+          requireOptIn: false,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        `[wa-bot] Falha ao enviar mídia ${mediaDedupeKey}; o texto da IA segue mesmo assim.`,
+        error,
+      );
+    }
+  }
+
+  let replied = false;
+  let firstWaMessageId: string | null = null;
+  for (const [index, bubble] of bubbles.entries()) {
+    const sent = await sendTemplateMessage(tx, provider, {
+      bodyOverride: truncateForWhatsApp(bubble),
+      phoneE164: conversation.phoneE164,
+      ...customerRef,
+      dedupeKey: index === 0 ? replyDedupeKey : `${replyDedupeKey}:${index}`,
+      requireOptIn: false,
+    });
+    if ("sent" in sent) {
+      replied = true;
+      firstWaMessageId ??= sent.waMessageId;
+    }
+  }
+
+  if (input.handedOff) {
+    // Cortesia pós-transferência, com dedupe próprio (também idempotente).
+    await sendTemplateMessage(tx, provider, {
+      bodyOverride: HANDOFF_COURTESY_REPLY,
+      phoneE164: conversation.phoneE164,
+      ...customerRef,
+      dedupeKey: `wa.bot_handoff_notice:${dedupeBase}`,
+      requireOptIn: false,
+    });
+  }
+  return { replied, firstWaMessageId };
+}
+
+// ---------------------------------------------------------------------------
 // runBotTurn — um turno completo sobre a conversa, chamado pelo handler
 // 'wa.bot_turn' da fila. FOR UPDATE serializa turnos concorrentes da mesma
 // conversa; a idempotência REAL da resposta vem do dedupe derivado do id da
@@ -363,105 +595,9 @@ export async function runBotTurn(
       .limit(1);
     if (!lastInbound) return { skipped: "sem_mensagem_inbound" };
 
-    // Histórico: últimas mensagens em ordem cronológica, com a origem de cada
-    // saída marcada (equipe/automático) e mídia resumida em marcadores.
-    const recent = await tx
-      .select({
-        id: waMessages.id,
-        direction: waMessages.direction,
-        body: waMessages.body,
-        kind: waMessages.kind,
-        dedupeKey: waMessages.dedupeKey,
-        templateKey: waMessages.templateKey,
-        mediaUrl: waMessages.mediaUrl,
-        mediaMeta: waMessages.mediaMeta,
-        createdAt: waMessages.createdAt,
-      })
-      .from(waMessages)
-      .where(eq(waMessages.conversationId, conversationId))
-      .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
-      .limit(HISTORY_LIMIT);
-    const rows = recent.reverse();
-
-    // "Pendentes" = o que a cliente mandou depois da última resposta: só
-    // essas fotos vão anexadas ao modelo; as antigas viram marcador.
-    const lastOutboundIndex = rows.reduce(
-      (found, row, index) => (row.direction === "outbound" ? index : found),
-      -1,
-    );
-    const pending = rows.slice(lastOutboundIndex + 1).filter((row) => row.direction === "inbound");
-    const mediaEnabled = await isBotMediaEnabled(tx);
-    const now = new Date();
-    if (
-      mediaEnabled &&
-      pending.some(
-        (row) =>
-          row.kind === "audio" &&
-          isAudioAwaitingTranscription(parseWaMediaMeta(row.mediaMeta), row.createdAt, now),
-      )
-    ) {
-      // O turno enfileirado pela transcrição responde a tudo de uma vez.
-      return { skipped: "aguardando_transcricao" };
-    }
-    const imageUrls = pending
-      .filter((row) => row.kind === "image" && row.mediaUrl)
-      .slice(-MAX_IMAGES_PER_TURN)
-      .map((row) => row.mediaUrl as string);
-    const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
-    // Fotos recentes para registrar_foto_com_a_peca: as deste turno só se a
-    // Lia as viu de fato; as de antes (dentro da janela) valem mesmo sem
-    // anexo — "foto → qual peça? → ela responde".
-    const recentImages = mediaEnabled
-      ? rows
-          .filter((row) => row.direction === "inbound" && row.kind === "image" && row.mediaUrl && now.getTime() - row.createdAt.getTime() <= LOOK_PHOTO_WINDOW_MS)
-          .filter((row) => !pending.some((p) => p.id === row.id) || images.has(row.mediaUrl as string))
-          .slice(-MAX_IMAGES_PER_TURN)
-          .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }))
-      : [];
-
-    const messages: BotChatMessage[] = rows.map((message) => {
-      if (message.direction !== "inbound") {
-        return { role: "assistant" as const, text: historyTextForOutbound(message) };
-      }
-      const attached = message.mediaUrl ? images.get(message.mediaUrl) : undefined;
-      const isPending = pending.some((row) => row.id === message.id);
-      return {
-        role: "user" as const,
-        text: historyTextForInbound({
-          kind: message.kind,
-          body: message.body,
-          mediaMeta: parseWaMediaMeta(message.mediaMeta),
-          image: attached ? "attached" : isPending ? "unavailable" : "old",
-        }),
-        ...(attached ? { images: [attached] } : {}),
-      };
-    });
-    const state = parseBotState(conversation.botState);
-    const [memoryLines, purchaseLine, shipmentLine, bridgeLine] = await Promise.all([
-      loadMemoryLines(tx, conversation.phoneE164),
-      purchaseMemoryLineFor(tx, {
-        customerId: conversation.customerId,
-        phoneE164: conversation.phoneE164,
-      }),
-      shipmentMemoryLineFor(tx, {
-        customerId: conversation.customerId,
-        phoneE164: conversation.phoneE164,
-      }),
-      // Ponte do site recente: estoque ao vivo das peças que ela estava vendo,
-      // para a Lia não inventar disponibilidade nem precisar de uma ferramenta.
-      state.bridge && isBridgeFresh(state.bridge, now)
-        ? bridgeStockLine(tx, state.bridge)
-        : Promise.resolve(null),
-    ]);
-    const history = assembleHistory(state, messages, {
-      lines: [
-        ...memoryLines,
-        ...(purchaseLine ? [purchaseLine] : []),
-        ...(shipmentLine ? [shipmentLine] : []),
-        ...(bridgeLine ? [bridgeLine] : []),
-      ],
-      now,
-    });
+    const loaded = await loadTurnHistory(tx, provider, { conversation, now: new Date() });
+    if ("skipped" in loaded) return loaded;
+    const { history, recentImages, media } = loaded;
 
     const { system, model } = await buildBotPromptBundle(tx);
 
@@ -512,48 +648,7 @@ export async function runBotTurn(
       throw error;
     }
 
-    // Mídia ANTES do texto (o cliente vê a lista/foto e depois o convite),
-    // cada uma com dedupe determinístico por índice; falha é melhor esforço.
-    for (const [index, attachment] of attachments.entries()) {
-      const mediaDedupeKey = `wa.bot_media:${lastInbound.id}:${index}`;
-      try {
-        if (attachment.kind === "option_list") {
-          await sendMediaMessage(tx, provider, {
-            kind: "option_list",
-            body: attachment.message,
-            optionList: {
-              title: attachment.title,
-              buttonLabel: attachment.buttonLabel,
-              options: attachment.options,
-            },
-            phoneE164: conversation.phoneE164,
-            ...customerRef,
-            dedupeKey: mediaDedupeKey,
-            requireOptIn: false,
-          });
-        } else {
-          await sendMediaMessage(tx, provider, {
-            kind: "image",
-            imageUrl: attachment.imageUrl,
-            body: attachment.caption,
-            phoneE164: conversation.phoneE164,
-            ...customerRef,
-            dedupeKey: mediaDedupeKey,
-            requireOptIn: false,
-          });
-        }
-      } catch (error) {
-        console.warn(
-          `[wa-bot] Falha ao enviar mídia ${mediaDedupeKey}; o texto da IA segue mesmo assim.`,
-          error,
-        );
-      }
-    }
-
-    // Resposta em até 3 balões (o modelo separa com '---'), o primeiro com o
-    // dedupe histórico e os demais com sufixo — retry nunca duplica nenhum.
     const bubbles = turn.reply === null ? [] : splitBotReply(turn.reply);
-
     // Trilha do turno para o painel e para o custo por conversa: quais
     // ferramentas rodaram, tokens gastos, tempo e se transferiu. Nunca guarda
     // o texto (ele já está em wa_messages).
@@ -573,36 +668,186 @@ export async function runBotTurn(
         bubbles: bubbles.length,
         durationMs: Date.now() - startedAt,
         // Só contagens: a foto nunca é guardada.
-        media: {
-          images: images.size,
-          audios: pending.filter((row) => row.kind === "audio").length,
-        },
+        media,
       },
     });
 
-    let replied = false;
-    for (const [index, bubble] of bubbles.entries()) {
-      const sent = await sendTemplateMessage(tx, provider, {
-        bodyOverride: truncateForWhatsApp(bubble),
-        phoneE164: conversation.phoneE164,
-        ...customerRef,
-        dedupeKey: index === 0 ? replyDedupeKey : `${replyDedupeKey}:${index}`,
-        requireOptIn: false,
-      });
-      if ("sent" in sent) replied = true;
-    }
-
-    if (turn.handedOff) {
-      // Cortesia pós-transferência, com dedupe próprio (também idempotente).
-      await sendTemplateMessage(tx, provider, {
-        bodyOverride: HANDOFF_COURTESY_REPLY,
-        phoneE164: conversation.phoneE164,
-        ...customerRef,
-        dedupeKey: `wa.bot_handoff_notice:${lastInbound.id}`,
-        requireOptIn: false,
-      });
-    }
-
+    const { replied } = await deliverBotTurn(tx, provider, {
+      conversation,
+      dedupeBase: lastInbound.id,
+      attachments,
+      bubbles,
+      handedOff: turn.handedOff,
+    });
     return { replied, handedOff: turn.handedOff };
   });
 }
+
+// ---------------------------------------------------------------------------
+// runScheduledBotTurn — o turno PROATIVO (retorno combinado / retomada):
+// chamado pelo handler 'wa.bot_followup' quando `due_at` vence. Mesmos
+// bloqueios do turno reativo (FOR UPDATE, humano, fechada, silenciada,
+// desligada), mais: só na janela de envio (fora dela re-enfileira datado),
+// só se a cliente não voltou por conta depois do combinado, só sem SAIR.
+// A "fala" que abre o turno é sintética e vira um marcador no histórico.
+// ---------------------------------------------------------------------------
+
+export type RunScheduledBotTurnResult =
+  | { sent: true; followupId: string; replied: boolean }
+  | { skipped: string; followupId: string };
+
+export async function runScheduledBotTurn(
+  db: DbOrTx,
+  assistant: SalesAssistant,
+  provider: MessagingProvider,
+  input: { followupId: string; now?: Date; attempt?: number; deadlineAt?: Date | null },
+  deps: { cards?: BotCardDeps } = {},
+): Promise<RunScheduledBotTurnResult> {
+  const { followupId } = input;
+  const now = input.now ?? new Date();
+  // `attempt` = tentativas ANTERIORES (0 na primeira), como no wa.transcribe.
+  const lastAttempt = (input.attempt ?? 0) + 1 >= getRetryPolicy(BOT_FOLLOWUP_EVENT).maxAttempts;
+
+  return db.transaction(async (tx) => {
+    // Ordem dos locks igual à do turno reativo — a CONVERSA primeiro (o
+    // reativo trava a conversa e depois mexe em wa_followups); só então o
+    // retorno. Senão os dois turnos se travam em cruz e um deles cai.
+    const [pointer] = await tx.select({ conversationId: waFollowups.conversationId }).from(waFollowups).where(eq(waFollowups.id, followupId)).limit(1);
+    if (!pointer) return { skipped: "inexistente", followupId };
+    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, pointer.conversationId)).for("update");
+    const [followup] = await tx.select().from(waFollowups).where(eq(waFollowups.id, followupId)).for("update");
+    if (!followup) return { skipped: "inexistente", followupId };
+    if (followup.status !== "scheduled") return { skipped: `status_${followup.status}`, followupId };
+
+    const finish = async (status: "canceled" | "superseded" | "skipped", reason: string) => {
+      await tx
+        .update(waFollowups)
+        .set({ status, canceledAt: now, canceledReason: reason, updatedAt: now })
+        .where(eq(waFollowups.id, followupId));
+      return { skipped: reason, followupId } as const;
+    };
+
+    if (!conversation) return finish("canceled", "conversa_inexistente");
+    if (conversation.status === "human") return finish("canceled", "conversa_humana");
+    if (conversation.status === "closed") return finish("canceled", "conversa_fechada");
+    if (conversation.botDisabledUntil !== null && conversation.botDisabledUntil.getTime() > now.getTime()) {
+      return finish("canceled", "bot_silenciado");
+    }
+    if (!(await isBotEnabled(tx))) return finish("canceled", "bot_desligado");
+    if (!(await isWaEnabled(tx))) return finish("canceled", "whatsapp_desligado");
+    // (SAIR cancela o combinado na hora, no webhook — com ou sem cadastro.)
+    // Chegou tarde demais (fila parada, modelo fora do ar por horas): "como
+    // combinamos" no dia seguinte soa errado — não chama.
+    if (isFollowupTooLate({ dueAt: followup.dueAt, now })) return finish("skipped", "atrasado");
+
+    // Fora da janela (retry tardio, madrugada): volta para a abertura, uma
+    // vez por dia; o status continua agendado.
+    const policy = await loadSendPolicy(tx);
+    if (!isWithinSendWindow(now, policy.window)) {
+      await enqueueOutboxEvent(tx, {
+        eventType: "wa.bot_followup",
+        dedupeKey: `wa.bot_followup:${followupId}:${spDayKey(now)}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: { followupId },
+        nextAttemptAt: nextSendWindowStart(now, policy.window),
+      });
+      return { skipped: "fora_da_janela", followupId };
+    }
+
+    // Ela voltou por conta depois do combinado? Antes de qualquer custo.
+    const [lastInbound] = await tx
+      .select({ createdAt: waMessages.createdAt })
+      .from(waMessages)
+      .where(and(eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
+      .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+      .limit(1);
+    if (isFollowupSuperseded({ createdAt: followup.createdAt, lastInboundAt: lastInbound?.createdAt ?? null })) {
+      return finish("superseded", "superada");
+    }
+    const loaded = await loadTurnHistory(tx, provider, { conversation, now });
+    if ("skipped" in loaded) {
+      // Áudio dela ainda transcrevendo: o turno da transcrição vai responder;
+      // tenta o retorno de novo daqui a pouco (política da fila) — na última
+      // tentativa desiste em vez de ficar agendado para sempre.
+      if (lastAttempt) return finish("skipped", "superada");
+      throw new Error(`Retorno ${followupId}: ${loaded.skipped} — tentando de novo.`);
+    }
+
+    const kind = followup.kind as FollowupKind;
+    const synthetic = renderFollowupPrompt({ kind, reason: followup.reason, dueAt: followup.dueAt });
+    const history: BotChatMessage[] = [...loaded.history, { role: "user", text: synthetic }];
+    const { system, model } = await buildBotPromptBundle(tx);
+
+    const attachments: BotAttachment[] = [];
+    const executeTool = buildToolExecutor(tx, {
+      conversationId: conversation.id,
+      phoneE164: conversation.phoneE164,
+      customerId: conversation.customerId,
+      // O id do retorno é a base dos dedupes do turno (não há inbound).
+      lastInboundId: followupId,
+      onAttachment: (attachment) => attachments.push(attachment),
+      cepLookup: getCepLookup(),
+      recentImages: loaded.recentImages,
+      now,
+      proactive: true,
+      ...(deps.cards ? { cards: deps.cards } : {}),
+    });
+
+    const startedAt = Date.now();
+    // Modelo fora do ar: relança — a política da fila tenta de novo e o
+    // combinado continua agendado (nada de plano B proativo). Na última
+    // tentativa, registra e desiste: nada de retorno "agendado" para sempre.
+    let turn: AssistantTurn;
+    try {
+      turn = await assistant.respondTurn({ system, history, model, executeTool });
+    } catch (error) {
+      if (lastAttempt) return finish("skipped", "modelo_indisponivel");
+      throw error;
+    }
+    const bubbles = turn.reply === null ? [] : splitBotReply(turn.reply);
+    if (bubbles.length === 0 && attachments.length === 0) return finish("skipped", "sem_resposta");
+
+    // Nada de fala sintética gravada: a resposta sai com dedupe
+    // `wa.bot_reply:followup:<id>` e o histórico/painel a marcam como
+    // "você chamou como combinado" (core/whatsapp/origin.ts).
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "wa.bot_turn",
+      entityType: "wa_conversation",
+      entityId: conversation.id,
+      after: {
+        followupId,
+        kind,
+        model,
+        toolCalls: turn.toolCalls,
+        usage: turn.usage,
+        handedOff: turn.handedOff,
+        attachments: attachments.map((attachment) => attachment.kind),
+        bubbles: bubbles.length,
+        durationMs: Date.now() - startedAt,
+        media: loaded.media,
+      },
+    });
+
+    const delivered = await deliverBotTurn(tx, provider, {
+      conversation,
+      dedupeBase: `followup:${followupId}`,
+      attachments,
+      bubbles,
+      handedOff: turn.handedOff,
+    });
+    // Nada saiu de fato (número sem WhatsApp, só anexos que falharam): o
+    // combinado não foi cumprido e o painel diz por quê.
+    if (!delivered.replied) return finish("skipped", "nao_enviado");
+    await tx
+      .update(waFollowups)
+      .set({ status: "sent", sentAt: now, sentWaMessageId: delivered.firstWaMessageId, updatedAt: now })
+      .where(eq(waFollowups.id, followupId));
+    return { sent: true, followupId, replied: true };
+  });
+}
+
+/** Carência depois do "sim": uma mensagem logo em seguida não cancela o combinado. */
+export { FOLLOWUP_GRACE_MINUTES };
