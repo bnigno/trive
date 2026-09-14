@@ -290,6 +290,12 @@ describe("scheduleIdleCartFollowups (sacola parada)", () => {
     expect(row).toMatchObject({ kind: "idle_cart", reason: "2 peças paradas na sacola", requestedBy: "system", status: "scheduled" });
     expect(row.dueAt).toEqual(NOW);
     expect(await scheduleIdleCartFollowups(sdb, { now: NOW })).toEqual({ hours: 4, checked: 0, scheduled: 0 });
+    // Corrida entre duas rodadas: a segunda tentativa direta bate no UNIQUE e NÃO cancela a primeira.
+    await expect(
+      scheduleBotFollowup(sdb, { conversationId, phoneE164: PHONE, customerId: null, kind: "idle_cart", reason: "x", dueAt: NOW, requestedBy: "system", now: NOW }),
+    ).rejects.toThrow();
+    const [still] = await db.select().from(schema.waFollowups).where(eq(schema.waFollowups.conversationId, conversationId));
+    expect(still.status).toBe("scheduled");
     // Depois de enviada/cancelada, nunca mais: a linha idle_cart existe.
     await cancelBotFollowup(sdb, { followupId: row.id, reason: "dono" });
     expect(await scheduleIdleCartFollowups(sdb, { now: new Date(NOW.getTime() + 86_400_000) })).toMatchObject({ scheduled: 0 });

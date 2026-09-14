@@ -77,11 +77,35 @@ export async function scheduleBotFollowup(
     now: Date;
   },
 ): Promise<{ followupId: string; replaced: boolean }> {
-  const previous = await tx
-    .update(waFollowups)
-    .set({ status: "canceled", canceledAt: input.now, canceledReason: "substituido", updatedAt: input.now })
-    .where(and(eq(waFollowups.conversationId, input.conversationId), eq(waFollowups.kind, input.kind), eq(waFollowups.status, "scheduled")))
-    .returning({ id: waFollowups.id });
+  // Tudo numa transação (ou savepoint): se o INSERT bater no UNIQUE (duas
+  // rodadas do cron na mesma sacola), o cancelamento do anterior desfaz junto.
+  return tx.transaction(async (inner) => scheduleBotFollowupInTx(inner, input));
+}
+
+async function scheduleBotFollowupInTx(
+  tx: DbOrTx,
+  input: {
+    conversationId: string;
+    phoneE164: string;
+    customerId: string | null;
+    kind: FollowupKind;
+    reason: string;
+    dueAt: Date;
+    consentWaMessageId?: string | null;
+    requestedBy: "lia" | "system";
+    now: Date;
+  },
+): Promise<{ followupId: string; replaced: boolean }> {
+  // Só o retorno combinado pela cliente é substituível ("mudei o horário");
+  // a retomada da sacola é uma por conversa, para sempre (UNIQUE).
+  const previous =
+    input.kind === "customer"
+      ? await tx
+          .update(waFollowups)
+          .set({ status: "canceled", canceledAt: input.now, canceledReason: "substituido", updatedAt: input.now })
+          .where(and(eq(waFollowups.conversationId, input.conversationId), eq(waFollowups.kind, input.kind), eq(waFollowups.status, "scheduled")))
+          .returning({ id: waFollowups.id })
+      : [];
   const [row] = await tx
     .insert(waFollowups)
     .values({
