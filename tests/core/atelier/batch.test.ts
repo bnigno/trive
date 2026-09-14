@@ -66,10 +66,12 @@ describe("isBatchStart / nudgeDue", () => {
     expect(INTAKE_NUDGE_AFTER_MS).toBe(180_000);
   });
 
-  it("o lembrete vale se a foto continua sem recado; reivindicada ou fora da janela, não", () => {
-    expect(nudgeDue([photo("f1", -180), photo("f2", -100)], "f1", T0)).toEqual({ due: true, photos: 2 });
-    expect(nudgeDue([photo("f1", -180, { consumed: true })], "f1", T0)).toEqual({ due: false, photos: 0 });
-    expect(nudgeDue([photo("f1", -20 * 60)], "f1", T0)).toEqual({ due: false, photos: 0 });
+  it("o lembrete vale enquanto a foto está sem recado — mesmo atrasado; reivindicada, não", () => {
+    expect(nudgeDue([photo("f1", -180), photo("f2", -100)], "f1")).toEqual({ due: true, photos: 2, reason: null });
+    expect(nudgeDue([photo("f1", -180, { consumed: true })], "f1")).toEqual({ due: false, photos: 0, reason: "recado_chegou" });
+    // Lembrete que a fila atrasou além da janela: a dona ainda é lembrada.
+    expect(nudgeDue([photo("f1", -20 * 60)], "f1")).toEqual({ due: true, photos: 1, reason: null });
+    expect(nudgeDue([], "f1")).toEqual({ due: false, photos: 0, reason: "foto_sumiu" });
   });
 });
 

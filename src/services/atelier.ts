@@ -8,7 +8,7 @@
 // transação do webhook) e guarda os ids; nenhuma outra chegada as vê. A
 // montagem só absorve as fotos que chegaram logo depois do recado e ainda
 // não têm dona. A retomada (tentativa seguinte) sobe só o que falta.
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, like, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { AssistantUnavailableError, type BotImageInput, type SalesAssistant } from "@/adapters/assistant";
@@ -38,7 +38,7 @@ import {
   type IntakeMessage,
   type NoteKind,
 } from "@/core/atelier/batch";
-import { canRedoIntake, type RedoCheck } from "@/core/atelier/redo";
+import { canRedoIntake, roundSuffix, type RedoCheck } from "@/core/atelier/redo";
 import { draftNameFromNote } from "@/core/atelier/name";
 import {
   arrivalDetailsLine,
@@ -59,9 +59,12 @@ import {
   auditLog,
   categories,
   financialEntries,
+  outboxEvents,
+  productImages,
   products,
   productVariants,
   settings,
+  stockMovements,
   suppliers,
   users,
   waConversations,
@@ -169,14 +172,24 @@ export async function hasOpenAtelierBatch(db: DbOrTx, phoneE164: string, now: Da
   return hasOpenBatch(messages, now);
 }
 
-/** Esta foto abre um lote (é a única sem recado na janela)? */
+/**
+ * Esta foto abre um lote (é a única sem recado na janela)? Uma foto que
+ * chega logo depois de uma chegada aberta é atrasada dela, não um lote novo.
+ */
 export async function isAtelierBatchStart(db: DbOrTx, phoneE164: string, photoWaMessageId: string, now: Date): Promise<boolean> {
   const messages = await loadIntakeMessages(db, {
     phoneE164,
     from: new Date(now.getTime() - INTAKE_WINDOW_MS),
     to: new Date(now.getTime() + 60_000),
   });
-  return isBatchStart(messages, photoWaMessageId, now);
+  if (!isBatchStart(messages, photoWaMessageId, now)) return false;
+  const [recent] = await db
+    .select({ id: atelierIntakes.id })
+    .from(atelierIntakes)
+    .innerJoin(waConversations, eq(waConversations.id, atelierIntakes.conversationId))
+    .where(and(eq(waConversations.phoneE164, phoneE164), gte(atelierIntakes.createdAt, new Date(now.getTime() - INTAKE_LATE_PHOTO_MS))))
+    .limit(1);
+  return !recent;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,12 +353,16 @@ export async function sendAtelierNudge(
   const parsed = atelierNudgePayloadSchema.parse(input);
   const now = (clock.now ?? (() => new Date()))();
   if (!(await isAtelierEnabled(db))) return { skipped: "desligado" };
+  const [photo] = await db.select({ createdAt: waMessages.createdAt }).from(waMessages).where(eq(waMessages.id, parsed.photoWaMessageId)).limit(1);
+  if (!photo) return { skipped: "recado_chegou" };
+  // A janela começa na foto: mesmo com o lembrete atrasado na fila, a
+  // pergunta é a mesma — o recado chegou?
   const messages = await loadIntakeMessages(db, {
     phoneE164: parsed.phoneE164,
-    from: new Date(now.getTime() - INTAKE_WINDOW_MS),
+    from: new Date(photo.createdAt.getTime() - INTAKE_WINDOW_MS),
     to: new Date(now.getTime() + 60_000),
   });
-  const check = nudgeDue(messages, parsed.photoWaMessageId, now);
+  const check = nudgeDue(messages, parsed.photoWaMessageId);
   if (!check.due) return { skipped: "recado_chegou" };
   return sendToOwner(db, provider, {
     templateKey: ATELIER_NUDGE_TEMPLATE,
@@ -547,6 +564,29 @@ async function markIntake(
     .where(eq(atelierIntakes.id, intakeId));
 }
 
+/** As fotos já publicadas no rascunho arquivado da rodada anterior (originais, na ordem da ficha). */
+async function loadPreviousPhotos(
+  db: DbOrTx,
+  storage: FileStorage,
+  productId: string,
+): Promise<{ data: Buffer; contentType: string }[]> {
+  const rows = await db
+    .select({ storagePath: productImages.storagePath })
+    .from(productImages)
+    .where(eq(productImages.productId, productId))
+    .orderBy(asc(productImages.sortOrder), asc(productImages.createdAt));
+  const out: { data: Buffer; contentType: string }[] = [];
+  for (const row of rows) {
+    try {
+      const file = await storage.download(row.storagePath);
+      out.push({ data: file.data, contentType: file.contentType ?? "image/jpeg" });
+    } catch (error) {
+      console.warn("[atelier] foto do rascunho anterior não abriu:", error instanceof Error ? error.message : error);
+    }
+  }
+  return out;
+}
+
 async function loadPhotos(db: DbOrTx, ids: readonly string[]): Promise<IntakeMessage[]> {
   if (ids.length === 0) return [];
   const rows = await db
@@ -599,7 +639,8 @@ export async function processAtelierIntake(
   if (intake.status === "done") return { skipped: "ja_processado" };
   if (!(await isAtelierEnabled(db))) return { skipped: "desligado" };
 
-  const helpDedupe = `wa.atelier_help:intake:${intake.id}`;
+  const round = roundSuffix(intake.redoCount);
+  const helpDedupe = `wa.atelier_help:intake:${intake.id}${round}`;
   const fail = async (reason: "sem_fotos" | "fotos_indisponiveis" | "sem_usuario"): Promise<ProcessAtelierIntakeResult> => {
     await markIntake(db, intake.id, { status: "failed", errorDetail: reason, processedAt: now() }, now());
     if (reason !== "sem_usuario") {
@@ -640,11 +681,16 @@ export async function processAtelierIntake(
   if (!userId) return fail("sem_usuario");
 
   // As fotos originais, uma a uma, cada uma com o próprio teto de tempo
-  // (URL expirada ou lenta = foto de fora, não falha da chegada).
+  // (URL expirada ou lenta = foto de fora, não falha da chegada). Numa
+  // rodada refeita, as fotos que já estavam na ficha arquivada valem
+  // primeiro: a URL da Z-API expira em semanas.
   const uploaded = new Set(intake.uploadedWaMessageIds);
   const pendingPhotos = photos.filter((photo) => !uploaded.has(photo.id));
+  const previous = !intake.productId && intake.previousProductId ? await loadPreviousPhotos(db, storage, intake.previousProductId) : [];
+  const fromPrevious = pendingPhotos.slice(0, previous.length).map((photo, index) => ({ photo, ...previous[index] }));
+  const fromProvider = pendingPhotos.slice(previous.length);
   const downloads = await Promise.allSettled(
-    pendingPhotos.map((photo) =>
+    fromProvider.map((photo) =>
       withTimeout(
         (async () => {
           const media = await provider.downloadMedia({ url: photo.mediaUrl as string, maxBytes: ATELIER_PHOTO_MAX_BYTES });
@@ -654,7 +700,7 @@ export async function processAtelierIntake(
       ),
     ),
   );
-  const available = downloads.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
+  const available = [...fromPrevious, ...downloads.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []))];
   for (const outcome of downloads) {
     if (outcome.status === "rejected") {
       console.warn("[atelier] foto da chegada não baixou:", outcome.reason?.message ?? outcome.reason);
@@ -784,7 +830,7 @@ export async function processAtelierIntake(
     const notice = await sendToOwner(db, provider, {
       templateKey: ATELIER_DRAFT_TEMPLATE,
       vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}`, details: detailsLine }),
-      dedupeKey: `wa.atelier_draft:${intake.id}`,
+      dedupeKey: `wa.atelier_draft:${intake.id}${round}`,
     });
     const details = [
       failedPhotos > 0 ? `${failedPhotos} foto(s) ficaram de fora` : null,
@@ -855,17 +901,19 @@ export async function processAtelierIntake(
           ms: now().getTime() - startedAt.getTime(),
         },
       });
-      if (photosOnProduct > 0) await enqueueAtelierCard(tx, intake.id);
+      if (photosOnProduct > 0) await enqueueAtelierCard(tx, intake.id, intake.redoCount);
     });
 
     return { created: true, intakeId: intake.id, productId, name, photos: photosOnProduct, failedPhotos, interpreted: proposal !== null };
   } catch (error) {
     // Erro de verdade (banco, storage, envio): a fila tenta de novo; na
     // última tentativa a dona fica sabendo em vez de esperar um rascunho.
+    // A chegada continua "montando" até a última tentativa: só então vira
+    // "deu errado" (e o Refazer se libera).
     await markIntake(
       db,
       intake.id,
-      { status: "failed", errorDetail: error instanceof Error ? error.message.slice(0, 500) : String(error) },
+      { status: isLastAttempt(attempt) ? "failed" : "queued", errorDetail: error instanceof Error ? error.message.slice(0, 500) : String(error) },
       now(),
     );
     if (isLastAttempt(attempt)) {
@@ -950,8 +998,41 @@ export type AtelierIntakeRow = {
   supplier: { id: string; name: string } | null;
   payable: { id: string; amountCents: number; status: string } | null;
   cardPath: string | null;
+  redoCount: number;
+  /** Movimentos de estoque desta chegada, contados no ledger. */
+  movements: number;
   redo: RedoCheck;
 };
+
+/** Movimentos que cada chegada lançou (chave 'atelier:<chegada>:<variação>'), contados no ledger. */
+async function countMovementsByIntake(db: DbOrTx, intakeIds: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (intakeIds.length === 0) return out;
+  const rows = await db
+    .select({ key: stockMovements.idempotencyKey })
+    .from(stockMovements)
+    .where(like(stockMovements.idempotencyKey, "atelier:%"));
+  for (const row of rows) {
+    const intakeId = row.key?.split(":")[1];
+    if (intakeId && intakeIds.includes(intakeId)) out.set(intakeId, (out.get(intakeId) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** Há montagem viva na fila (pendente, rodando ou à espera de nova tentativa) para estas chegadas? */
+async function liveIntakeEvents(db: DbOrTx, triggerIds: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (triggerIds.length === 0) return out;
+  const rows = await db
+    .select({ payload: outboxEvents.payload })
+    .from(outboxEvents)
+    .where(and(eq(outboxEvents.eventType, "wa.atelier_intake"), inArray(outboxEvents.status, ["pending", "processing", "failed"])));
+  for (const row of rows) {
+    const trigger = (row.payload as { triggerWaMessageId?: unknown } | null)?.triggerWaMessageId;
+    if (typeof trigger === "string" && triggerIds.includes(trigger)) out.add(trigger);
+  }
+  return out;
+}
 
 export async function listAtelierIntakes(db: DbOrTx, input: { limit?: number } = {}): Promise<AtelierIntakeRow[]> {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
@@ -966,6 +1047,8 @@ export async function listAtelierIntakes(db: DbOrTx, input: { limit?: number } =
       errorDetail: atelierIntakes.errorDetail,
       parsed: atelierIntakes.parsed,
       cardPath: atelierIntakes.cardPath,
+      redoCount: atelierIntakes.redoCount,
+      triggerWaMessageId: atelierIntakes.triggerWaMessageId,
       productId: products.id,
       productName: products.name,
       productStatus: products.status,
@@ -981,8 +1064,13 @@ export async function listAtelierIntakes(db: DbOrTx, input: { limit?: number } =
     .leftJoin(financialEntries, eq(financialEntries.id, atelierIntakes.financialEntryId))
     .orderBy(desc(atelierIntakes.createdAt))
     .limit(limit);
+  const [movements, live] = await Promise.all([
+    countMovementsByIntake(db, rows.map((row) => row.id)),
+    liveIntakeEvents(db, rows.map((row) => row.triggerWaMessageId)),
+  ]);
   return rows.map((row) => {
     const parsed = parseAtelierParsed(row.parsed);
+    const moved = movements.get(row.id) ?? 0;
     return {
       id: row.id,
       createdAt: row.createdAt,
@@ -996,7 +1084,14 @@ export async function listAtelierIntakes(db: DbOrTx, input: { limit?: number } =
       supplier: row.supplierId && row.supplierName ? { id: row.supplierId, name: row.supplierName } : null,
       payable: row.payableId && row.payableCents !== null && row.payableStatus ? { id: row.payableId, amountCents: row.payableCents, status: row.payableStatus } : null,
       cardPath: row.cardPath,
-      redo: canRedoIntake({ status: row.status, movements: parsed?.purchase?.movements ?? 0 }),
+      redoCount: row.redoCount,
+      movements: moved,
+      redo: canRedoIntake({
+        status: row.status,
+        movements: moved,
+        hasLiveEvent: live.has(row.triggerWaMessageId),
+        productStatus: row.productStatus,
+      }),
     };
   });
 }
@@ -1010,13 +1105,14 @@ export async function countAtelierIntakesFailed(db: DbOrTx): Promise<number> {
 }
 
 export type RedoAtelierIntakeResult =
-  | { ok: true; archivedProductId: string | null; canceledEntryId: string | null }
-  | { ok: false; reason: "chegada_inexistente" | "em_andamento" | "estoque_lancado" };
+  | { ok: true; archivedProductId: string | null; canceledEntryId: string | null; round: number }
+  | { ok: false; reason: "chegada_inexistente" | "em_andamento" | "estoque_lancado" | "peca_ativa" };
 
 /**
  * A chegada nasce de novo com as mesmas fotos e o mesmo recado: o rascunho
- * antigo é arquivado (nunca apagado — o que a dona editou fica lá), a
- * conta a pagar pendente é cancelada e a montagem volta para a fila.
+ * antigo é arquivado (nunca apagado — o que a dona editou fica lá; as fotos
+ * dele são reaproveitadas), a conta a pagar pendente é cancelada e a
+ * montagem volta para a fila numa rodada nova (chaves de dedupe próprias).
  */
 export async function redoAtelierIntake(
   db: DbOrTx,
@@ -1026,17 +1122,24 @@ export async function redoAtelierIntake(
   return db.transaction(async (tx) => {
     const [intake] = await tx.select().from(atelierIntakes).where(eq(atelierIntakes.id, input.intakeId)).limit(1).for("update");
     if (!intake) return { ok: false, reason: "chegada_inexistente" };
-    const parsed = parseAtelierParsed(intake.parsed);
-    const check = canRedoIntake({ status: intake.status, movements: parsed?.purchase?.movements ?? 0 });
+    let productStatus: string | null = null;
+    if (intake.productId) {
+      const [product] = await tx.select({ status: products.status }).from(products).where(eq(products.id, intake.productId)).limit(1);
+      productStatus = product?.status ?? null;
+    }
+    const [movements, live] = await Promise.all([countMovementsByIntake(tx, [intake.id]), liveIntakeEvents(tx, [intake.triggerWaMessageId])]);
+    const check = canRedoIntake({
+      status: intake.status,
+      movements: movements.get(intake.id) ?? 0,
+      hasLiveEvent: live.has(intake.triggerWaMessageId),
+      productStatus,
+    });
     if (!check.ok) return { ok: false, reason: check.reason };
 
     let archivedProductId: string | null = null;
-    if (intake.productId) {
-      const [product] = await tx.select({ id: products.id, status: products.status }).from(products).where(eq(products.id, intake.productId)).limit(1);
-      if (product && product.status === "draft") {
-        await updateProduct(tx as unknown as ServiceDb, { productId: product.id, status: "archived", userId: input.userId });
-        archivedProductId = product.id;
-      }
+    if (intake.productId && productStatus === "draft") {
+      await updateProduct(tx as unknown as ServiceDb, { productId: intake.productId, status: "archived", userId: input.userId });
+      archivedProductId = intake.productId;
     }
     let canceledEntryId: string | null = null;
     if (intake.financialEntryId) {
@@ -1047,25 +1150,28 @@ export async function redoAtelierIntake(
       }
     }
 
-    const redoCount = ((intake.parsed as { redoCount?: number } | null)?.redoCount ?? 0) + 1;
+    const round = intake.redoCount + 1;
     await tx
       .update(atelierIntakes)
       .set({
         status: "queued",
         productId: null,
+        // As fotos do rascunho arquivado servem à rodada nova.
+        previousProductId: archivedProductId ?? intake.previousProductId,
         supplierId: null,
         financialEntryId: null,
         cardPath: null,
         uploadedWaMessageIds: [],
-        parsed: { redoCount },
+        parsed: null,
         errorDetail: null,
         processedAt: null,
+        redoCount: round,
         updatedAt: now,
       })
       .where(eq(atelierIntakes.id, intake.id));
     await enqueueOutboxEvent(tx, {
       eventType: "wa.atelier_intake",
-      dedupeKey: `wa.atelier:redo:${intake.id}:${redoCount}`,
+      dedupeKey: `wa.atelier:redo:${intake.id}:${round}`,
       aggregateType: "wa_conversation",
       aggregateId: intake.conversationId,
       payload: { conversationId: intake.conversationId, triggerWaMessageId: intake.triggerWaMessageId },
@@ -1077,8 +1183,8 @@ export async function redoAtelierIntake(
       entityType: "atelier_intake",
       entityId: intake.id,
       before: { status: intake.status, productId: intake.productId, financialEntryId: intake.financialEntryId },
-      after: { redoCount, archivedProductId, canceledEntryId },
+      after: { round, archivedProductId, canceledEntryId },
     });
-    return { ok: true, archivedProductId, canceledEntryId };
+    return { ok: true, archivedProductId, canceledEntryId, round };
   });
 }

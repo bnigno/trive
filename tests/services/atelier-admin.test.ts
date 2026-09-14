@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { countAtelierIntakesFailed, listAtelierIntakes, redoAtelierIntake } from "@/services/atelier";
+import { createTestVariant } from "../helpers/db";
 import { createTestDb, createTestSupplier, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 const OWNER = "+5591981037536";
@@ -34,7 +35,7 @@ async function seedIntake(input: {
   withPayable?: boolean;
   movements?: number;
   at?: Date;
-}): Promise<{ intakeId: string; productId: string | null; entryId: string | null }> {
+}): Promise<{ intakeId: string; productId: string | null; entryId: string | null; triggerWaMessageId: string; conversationId: string }> {
   const [conversation] = await db
     .insert(schema.waConversations)
     .values({ phoneE164: OWNER, status: "closed" })
@@ -73,6 +74,7 @@ async function seedIntake(input: {
       financialEntryId: entryId,
       photosCount: 2,
       ...(input.at ? { createdAt: input.at } : {}),
+      // O retrato de uma tentativa pode dizer 0: o que vale é o ledger.
       parsed: {
         proposal: null,
         suggestedPriceCents: null,
@@ -81,11 +83,21 @@ async function seedIntake(input: {
         estimatedCostUsdCents: 0,
         ms: 1,
         failed: null,
-        purchase: { movements: input.movements ?? 0, totalQuantity: null, skipped: null, supplierError: null, purchaseError: null },
+        purchase: { movements: 0, totalQuantity: null, skipped: null, supplierError: null, purchaseError: null },
       },
     })
     .returning({ id: schema.atelierIntakes.id });
-  return { intakeId: intake.id, productId, entryId };
+  for (let i = 0; i < (input.movements ?? 0); i += 1) {
+    const { variantId } = await createTestVariant(db, { onHand: 0, costCents: 0 });
+    await db.insert(schema.stockMovements).values({
+      productVariantId: variantId,
+      type: "purchase_in",
+      quantityDelta: 3,
+      idempotencyKey: `atelier:${intake.id}:${variantId}`,
+      createdBy: FIXED_USER_ID,
+    });
+  }
+  return { intakeId: intake.id, productId, entryId, triggerWaMessageId: message.id, conversationId: conversation.id };
 }
 
 describe("listAtelierIntakes / countAtelierIntakesFailed", () => {
@@ -98,6 +110,7 @@ describe("listAtelierIntakes / countAtelierIntakesFailed", () => {
       product: { id: old.productId, name: "Longo Dunas", status: "draft" },
       supplier: { name: "Aurora" },
       payable: { id: old.entryId, amountCents: 288000, status: "pending" },
+      movements: 8,
       redo: { ok: false, reason: "estoque_lancado" },
     });
     expect(rows[0]).toMatchObject({ product: null, redo: { ok: true } });
@@ -109,15 +122,25 @@ describe("redoAtelierIntake", () => {
   it("arquiva o rascunho, cancela a conta pendente, limpa a chegada e volta para a fila", async () => {
     const { intakeId, productId, entryId } = await seedIntake({ status: "done", withProduct: true, withPayable: true, movements: 0 });
     const result = await redoAtelierIntake(sdb, { intakeId, userId: FIXED_USER_ID });
-    expect(result).toEqual({ ok: true, archivedProductId: productId, canceledEntryId: entryId });
+    expect(result).toEqual({ ok: true, archivedProductId: productId, canceledEntryId: entryId, round: 1 });
 
     const [product] = await db.select().from(schema.products).where(eq(schema.products.id, productId as string));
     expect(product.status).toBe("archived");
     const [entry] = await db.select().from(schema.financialEntries).where(eq(schema.financialEntries.id, entryId as string));
     expect(entry.status).toBe("canceled");
     const [intake] = await db.select().from(schema.atelierIntakes).where(eq(schema.atelierIntakes.id, intakeId));
-    expect(intake).toMatchObject({ status: "queued", productId: null, supplierId: null, financialEntryId: null, cardPath: null, errorDetail: null, uploadedWaMessageIds: [] });
-    expect(intake.parsed).toEqual({ redoCount: 1 });
+    expect(intake).toMatchObject({
+      status: "queued",
+      productId: null,
+      previousProductId: productId,
+      supplierId: null,
+      financialEntryId: null,
+      cardPath: null,
+      errorDetail: null,
+      uploadedWaMessageIds: [],
+      redoCount: 1,
+      parsed: null,
+    });
     const events = await db.select().from(schema.outboxEvents);
     expect(events.map((event) => event.eventType)).toEqual(["wa.atelier_intake"]);
     expect(events[0].dedupeKey).toBe(`wa.atelier:redo:${intakeId}:1`);
@@ -126,23 +149,27 @@ describe("redoAtelierIntake", () => {
     expect(audits).toHaveLength(1);
   });
 
-  it("rascunho já ativo fica como está (não arquiva); segunda vez ganha chave nova", async () => {
-    const { intakeId, productId } = await seedIntake({ status: "failed", withProduct: true, productStatus: "active" });
+  it("com montagem viva na fila não refaz; depois de a fila terminar, a segunda vez ganha chave nova e o contador sobrevive ao reprocesso", async () => {
+    const { intakeId } = await seedIntake({ status: "failed" });
     const first = await redoAtelierIntake(sdb, { intakeId, userId: FIXED_USER_ID });
-    expect(first).toEqual({ ok: true, archivedProductId: null, canceledEntryId: null });
-    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, productId as string));
-    expect(product.status).toBe("active");
-    // A fila está montando: não dá para refazer de novo agora.
+    expect(first).toMatchObject({ ok: true, round: 1 });
+    // O evento da rodada 1 está pendente: não dá para refazer de novo agora.
     expect(await redoAtelierIntake(sdb, { intakeId, userId: FIXED_USER_ID })).toEqual({ ok: false, reason: "em_andamento" });
-    await db.update(schema.atelierIntakes).set({ status: "failed" }).where(eq(schema.atelierIntakes.id, intakeId));
-    await redoAtelierIntake(sdb, { intakeId, userId: FIXED_USER_ID });
-    const events = await db.select().from(schema.outboxEvents);
+    // A fila processou (e regravou parsed) e falhou de novo.
+    await db.update(schema.outboxEvents).set({ status: "done" });
+    await db.update(schema.atelierIntakes).set({ status: "failed", parsed: { proposal: null, suggestedPriceCents: null, model: "m", usage: null, estimatedCostUsdCents: 0, ms: 1, failed: "ia_erro" } }).where(eq(schema.atelierIntakes.id, intakeId));
+    expect(await redoAtelierIntake(sdb, { intakeId, userId: FIXED_USER_ID })).toMatchObject({ ok: true, round: 2 });
+    const events = await db.select().from(schema.outboxEvents).orderBy(schema.outboxEvents.createdAt);
     expect(events.map((event) => event.dedupeKey)).toEqual([`wa.atelier:redo:${intakeId}:1`, `wa.atelier:redo:${intakeId}:2`]);
   });
 
-  it("chegada que já lançou estoque não se refaz; chegada inexistente idem", async () => {
-    const { intakeId } = await seedIntake({ status: "done", withProduct: true, movements: 8 });
-    expect(await redoAtelierIntake(sdb, { intakeId, userId: FIXED_USER_ID })).toEqual({ ok: false, reason: "estoque_lancado" });
+  it("'queued' sem evento vivo (a função morreu) pode ser refeita; peça já na vitrine, estoque lançado e chegada inexistente, não", async () => {
+    const dead = await seedIntake({ status: "queued" });
+    expect(await redoAtelierIntake(sdb, { intakeId: dead.intakeId, userId: FIXED_USER_ID })).toMatchObject({ ok: true });
+    const active = await seedIntake({ status: "done", withProduct: true, productStatus: "active" });
+    expect(await redoAtelierIntake(sdb, { intakeId: active.intakeId, userId: FIXED_USER_ID })).toEqual({ ok: false, reason: "peca_ativa" });
+    const stocked = await seedIntake({ status: "done", withProduct: true, movements: 8 });
+    expect(await redoAtelierIntake(sdb, { intakeId: stocked.intakeId, userId: FIXED_USER_ID })).toEqual({ ok: false, reason: "estoque_lancado" });
     expect(await redoAtelierIntake(sdb, { intakeId: "00000000-0000-4000-8000-000000000009", userId: FIXED_USER_ID })).toEqual({ ok: false, reason: "chegada_inexistente" });
   });
 });

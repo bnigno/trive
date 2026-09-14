@@ -71,16 +71,21 @@ export function isBatchStart(
   return open.length === 1 && open[0].id === photoId;
 }
 
-/** Na hora do lembrete: as fotos continuam sem recado? (nenhuma reivindicada, a primeira ainda na janela). */
+/**
+ * Na hora do lembrete: a foto continua sem recado? Reivindicada por uma
+ * chegada = o recado chegou. Fora da janela (o lembrete atrasou na fila) a
+ * dona ainda é lembrada — o lote só não vale mais para um recado novo.
+ */
 export function nudgeDue(
   messages: readonly IntakeMessage[],
   photoId: string,
-  now: Date,
-  options: IntakeBatchOptions = {},
-): { due: boolean; photos: number } {
-  const open = openPhotos(messages, now, options);
-  const stillOpen = open.some((photo) => photo.id === photoId);
-  return { due: stillOpen, photos: open.length };
+): { due: boolean; photos: number; reason: "recado_chegou" | "foto_sumiu" | null } {
+  const photo = messages.find((message) => message.id === photoId);
+  if (!photo) return { due: false, photos: 0, reason: "foto_sumiu" };
+  if (photo.consumed) return { due: false, photos: 0, reason: "recado_chegou" };
+  const since = photo.createdAt.getTime();
+  const photos = messages.filter((message) => isPhoto(message) && !message.consumed && message.createdAt.getTime() >= since).length;
+  return { due: true, photos, reason: null };
 }
 
 /**

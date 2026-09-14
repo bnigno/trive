@@ -93,7 +93,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, atelierFailed] =
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday] =
     await Promise.all([
       safe(async () => {
         const db = getDb();
@@ -112,10 +112,9 @@ async function loadSharedDashboard() {
       safe(() => getReadinessSummary(getDb())),
       safe(() => countRouteOfDay(getDb())),
       safe(() => countOrdersMustShipToday(getDb())),
-      safe(() => countAtelierIntakesFailed(getDb())),
     ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, atelierFailed };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday };
 }
 
 /**
@@ -215,6 +214,7 @@ async function loadOwnerDashboard() {
     top,
     margin,
     recovery,
+    atelierFailed,
   ] = await Promise.all([
     safe(async () => {
       const db = getDb();
@@ -247,9 +247,11 @@ async function loadOwnerDashboard() {
     safe(() => topProducts(getDb(), { days: 30, limit: 5 })),
     safe(() => marginSummary(getDb(), { days: 30 })),
     safe(() => recoveryStats(getDb())),
+    safe(() => countAtelierIntakesFailed(getDb())),
   ]);
 
   return {
+    atelierFailed,
     ordersTodaySumCents,
     month,
     pendingApprovals,
@@ -342,11 +344,11 @@ export default async function AdminDashboardPage() {
             </Link>
           </>
         ) : null}
-        {data.atelierFailed ? (
+        {ownerData?.atelierFailed ? (
           <Link href="/admin/produtos/chegadas" className="block">
             <StatCard
               label="Chegadas com problema"
-              value={String(data.atelierFailed)}
+              value={String(ownerData.atelierFailed)}
               tone="warning"
               hint="Fotos + recado pelo WhatsApp que não viraram rascunho. Abra e refaça."
             />

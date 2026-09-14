@@ -188,20 +188,20 @@ export default async function ProdutosPage({
         title="Produtos"
         subtitle="Tudo o que você vende: cadastre, edite e acompanhe estoque e preço."
         actions={
-          <div className="flex items-center gap-4">
-            <Link href="/admin/produtos/chegadas" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
-              Chegadas pelo WhatsApp
-            </Link>
-            {/* Cadastro de produto pede o custo inicial: área do dono. */}
-            <OwnerOnly>
+          // Cadastro de produto e as chegadas (custo, conta a pagar): área do dono.
+          <OwnerOnly>
+            <div className="flex items-center gap-4">
+              <Link href="/admin/produtos/chegadas" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
+                Chegadas pelo WhatsApp
+              </Link>
               <Link
                 href="/admin/produtos/novo"
                 className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
               >
                 Novo produto
               </Link>
-            </OwnerOnly>
-          </div>
+            </div>
+          </OwnerOnly>
         }
       />
 

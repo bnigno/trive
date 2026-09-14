@@ -42,6 +42,8 @@ const OWNER_ONLY_DIRS: Array<{ dir: string; skipDirs?: string[] }> = [
   // Produtos é área compartilhada, mas o cadastro novo pede o custo inicial
   // (e dispara precificação): só o dono cria produto.
   { dir: path.join("produtos", "novo") },
+  // Chegadas pelo WhatsApp mostram custo, preço sugerido e conta a pagar.
+  { dir: path.join("produtos", "chegadas") },
 ];
 
 /**

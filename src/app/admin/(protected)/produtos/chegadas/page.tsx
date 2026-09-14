@@ -10,9 +10,8 @@ import { errorDetailLabel, interpretationFailedLabel } from "@/core/atelier/repl
 import { getDb } from "@/db/client";
 import { formatDateTimeSP } from "@/emails/templates";
 import { formatCentsBRL } from "@/lib/money";
-import { requireUser } from "@/services/auth";
+import { requireOwner } from "@/services/auth";
 import { listAtelierIntakes } from "@/services/atelier";
-import { OwnerOnly } from "../../owner-only";
 import { RedoIntakeForm } from "./redo-form";
 
 export const dynamic = "force-dynamic";
@@ -28,8 +27,9 @@ const STATUS_LABELS: Record<string, { label: string; tone: BadgeTone }> = {
 // Chegadas pelo WhatsApp: cada envio da dona (fotos + recado), o que foi
 // entendido, o que virou (rascunho, fornecedor, conta) e o que deu errado.
 // Sem regra aqui: tudo vem de listAtelierIntakes; "Refazer" é uma action.
+// Custo, preço sugerido e conta a pagar são dados do dono: a página inteira é dele.
 export default async function ChegadasPage() {
-  await requireUser();
+  await requireOwner("produtos");
   const rows = await listAtelierIntakes(getDb(), { limit: 60 });
   const storage = getFileStorage();
   const failed = rows.filter((row) => row.status === "failed").length;
@@ -160,13 +160,12 @@ export default async function ChegadasPage() {
                       Inteligência: {row.parsed.model} · {(row.parsed.ms / 1000).toFixed(1)} s
                     </span>
                   ) : null}
-                  <OwnerOnly>
-                    {row.redo.ok ? (
-                      <RedoIntakeForm intakeId={row.id} hasProduct={row.product !== null && row.product.status !== "archived"} />
-                    ) : (
-                      <span className="text-xs text-zinc-500">Refazer: {REDO_BLOCKED_LABELS[row.redo.reason]}</span>
-                    )}
-                  </OwnerOnly>
+                  {row.redo.ok ? (
+                    <RedoIntakeForm intakeId={row.id} hasProduct={row.product !== null && row.product.status === "draft"} />
+                  ) : (
+                    <span className="text-xs text-zinc-500">Refazer: {REDO_BLOCKED_LABELS[row.redo.reason]}</span>
+                  )}
+                  {row.redoCount > 0 ? <span className="text-xs text-zinc-500">Refeita {row.redoCount}×</span> : null}
                 </div>
               </li>
             );

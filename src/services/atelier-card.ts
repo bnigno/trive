@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { parseAtelierParsed } from "@/core/atelier/proposal";
+import { roundSuffix } from "@/core/atelier/redo";
 import { atelierCardLines } from "@/core/atelier/purchase";
 import { arrivalDetailsLine } from "@/core/atelier/reply";
 import { ATELIER_EYEBROW, cardFrameSize, type AtelierCardData } from "@/core/cards/types";
@@ -32,10 +33,10 @@ export function atelierCardStoragePath(intakeId: string, at: Date): string {
   return `atelier/${intakeId}/card-${at.getTime()}.jpg`;
 }
 
-export async function enqueueAtelierCard(tx: DbOrTx, intakeId: string): Promise<void> {
+export async function enqueueAtelierCard(tx: DbOrTx, intakeId: string, redoCount = 0): Promise<void> {
   await enqueueOutboxEvent(tx, {
     eventType: ATELIER_CARD_EVENT,
-    dedupeKey: `wa.atelier_card:${intakeId}`,
+    dedupeKey: `wa.atelier_card:${intakeId}${roundSuffix(redoCount)}`,
     aggregateType: "atelier_intake",
     aggregateId: intakeId,
     payload: { intakeId },
@@ -63,6 +64,7 @@ export async function renderAndSendAtelierCard(
       productId: atelierIntakes.productId,
       parsed: atelierIntakes.parsed,
       cardPath: atelierIntakes.cardPath,
+      redoCount: atelierIntakes.redoCount,
       productName: products.name,
       productSlug: products.slug,
       productDeletedAt: products.deletedAt,
@@ -136,7 +138,7 @@ export async function renderAndSendAtelierCard(
       detalhes: arrivalDetailsLine(proposal, suggestedPriceCents),
       link: `${siteBaseUrl()}/admin/produtos/${intake.productId}`,
     },
-    dedupeKey: `wa.atelier_card:${intakeId}`,
+    dedupeKey: `wa.atelier_card:${intakeId}${roundSuffix(intake.redoCount)}`,
     image: { url: cardUrl },
   });
   return { ...result, cardUrl };

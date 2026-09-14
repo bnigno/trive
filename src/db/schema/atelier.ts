@@ -38,6 +38,10 @@ export const atelierIntakes = pgTable(
     supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "restrict" }),
     financialEntryId: uuid("financial_entry_id").references(() => financialEntries.id, { onDelete: "restrict" }),
     cardPath: text("card_path"),
+    /** Quantas vezes a dona mandou refazer (entra nas chaves de dedupe de cada rodada). */
+    redoCount: integer("redo_count").notNull().default(0),
+    /** O rascunho arquivado pelo "Refazer": a rodada nova reaproveita as fotos dele (a URL da Z-API expira). */
+    previousProductId: uuid("previous_product_id").references(() => products.id, { onDelete: "set null" }),
     errorDetail: text("error_detail"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
