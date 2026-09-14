@@ -236,7 +236,7 @@ export default async function ProdutoDetalhePage({
                       : atelierIntake.parsed.proposal.totalQuantity !== null
                         ? `${atelierIntake.parsed.proposal.totalQuantity} peças`
                         : "não disse"}{" "}
-                    — o estoque entra no próximo passo do Ateliê
+                    {atelierIntake.payable || atelierIntake.parsed.proposal.quantityPerVariant !== null ? " — estoque lançado na chegada" : " — sem quantidade, o estoque fica para o painel"}
                   </li>
                   <li>
                     Custo:{" "}
@@ -247,7 +247,26 @@ export default async function ProdutoDetalhePage({
                         : "não disse"}
                   </li>
                   <li>Preço sugerido: {atelierIntake.parsed.suggestedPriceCents !== null ? formatCentsBRL(atelierIntake.parsed.suggestedPriceCents) : "—"}</li>
-                  <li>Fornecedor: {atelierIntake.parsed.proposal.supplierName ?? "não disse"}</li>
+                  <li>
+                    Fornecedor:{" "}
+                    {atelierIntake.supplier ? (
+                      <Link href={`/admin/fornecedores/${atelierIntake.supplier.id}`} className="underline">
+                        {atelierIntake.supplier.name}
+                      </Link>
+                    ) : (
+                      (atelierIntake.parsed.proposal.supplierName ?? "não disse")
+                    )}
+                  </li>
+                  <li>
+                    Conta a pagar:{" "}
+                    {atelierIntake.payable ? (
+                      <Link href="/admin/financeiro" className="underline">
+                        {formatCentsBRL(atelierIntake.payable.amountCents)} ({atelierIntake.payable.status === "pending" ? "pendente" : atelierIntake.payable.status})
+                      </Link>
+                    ) : (
+                      "não lançada"
+                    )}
+                  </li>
                   {careLabels(atelierIntake.parsed.proposal).length > 0 ? (
                     <li className="sm:col-span-2">Cuidados lidos: {careLabels(atelierIntake.parsed.proposal).join(" · ")}</li>
                   ) : null}
@@ -262,6 +281,13 @@ export default async function ProdutoDetalhePage({
                 </p>
               ) : null}
               {atelierIntake.errorDetail ? <p className="mt-1 text-zinc-500">{atelierIntake.errorDetail}</p> : null}
+              {atelierIntake.cardPath ? (
+                <p className="mt-1 text-xs text-zinc-500">
+                  <a href={storage.publicUrl(atelierIntake.cardPath)} target="_blank" rel="noreferrer" className="underline">
+                    Ver o cartão enviado ao seu WhatsApp
+                  </a>
+                </p>
+              ) : null}
               {atelierIntake.parsed?.usage ? (
                 <p className="mt-1 text-xs text-zinc-500">
                   Inteligência: {atelierIntake.parsed.model} · {formatUsdCents(atelierIntake.parsed.estimatedCostUsdCents)} · {(atelierIntake.parsed.ms / 1000).toFixed(1)} s

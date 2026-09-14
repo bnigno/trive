@@ -15,6 +15,7 @@ import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropStoryToOwner } from "@/services/drop-story";
 import { atelierHelpPayloadSchema, atelierIntakePayloadSchema, processAtelierIntake, sendAtelierHelp } from "@/services/atelier";
+import { atelierCardPayloadSchema, renderAndSendAtelierCard } from "@/services/atelier-card";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -387,6 +388,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "wa.atelier_help": async (event) => {
     await sendAtelierHelp(getDb(), getMessagingProvider(), atelierHelpPayloadSchema.parse(event.payload));
+  },
+  // O cartão do rascunho para a dona: melhor esforço (sem foto na ficha,
+  // nada sai; o texto "Rascunho pronto" já foi).
+  "wa.atelier_card": async (event) => {
+    const result = await renderAndSendAtelierCard(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      async (data) => renderCardPng(data, await loadReceiptAssets()),
+      atelierCardPayloadSchema.parse(event.payload),
+    );
+    console.info(`[wa.atelier_card] ${JSON.stringify({ ...result, cardUrl: undefined })}`);
   },
   // "Bom dia da maison": o cron das 8h só enfileira; aqui a imagem é
   // montada, desenhada e enviada ao dono (retry e DLQ da fila). Skips

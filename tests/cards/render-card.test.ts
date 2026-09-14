@@ -228,4 +228,20 @@ describe("story do lançamento", () => {
     expect(found).toBe(true);
     expect(networkCalls).toEqual([]);
   });
+
+  it("cartão do ateliê: a peça recém-chegada e as três linhas do resumo", async () => {
+    const png = await renderCardPng(
+      {
+        kind: "atelier",
+        storeName: "TRIVÉ",
+        eyebrow: "ATELIÊ · RASCUNHO PRONTO",
+        title: "Longo Dunas",
+        hero: { ...items[0], priceLabel: "sugerido R$ 289,90" },
+        lines: ["2 cores × 4 tamanhos", "24 peças · custo R$ 120,00", "Aurora · a pagar R$ 2.880,00"],
+      },
+      await loadReceiptAssets(),
+    );
+    const columnHas = await expectCard(png);
+    expect(columnHas(540, "#b08968")).toBe(true);
+  });
 });

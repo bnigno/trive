@@ -393,3 +393,51 @@ export async function getSupplierDetail(db: ServiceDb, supplierId: string) {
 
   return { ...supplier, products: linkedProducts, recentPurchases, payables };
 }
+
+// ---------------------------------------------------------------------------
+// Ateliê pelo WhatsApp: fornecedor pelo nome dito no recado
+// ---------------------------------------------------------------------------
+
+function normalizeName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * "da Aurora" → o fornecedor Aurora: igual sem acento/caixa primeiro; senão
+ * um único que comece (ou seja começo) do nome dito. Dois candidatos
+ * ("Aurora" e "Aurora Confecções" para "Aurora Conf") = null: não chuta.
+ */
+export async function findSupplierByName(db: ServiceDb, name: string): Promise<{ id: string; name: string } | null> {
+  const target = normalizeName(name);
+  if (target.length < 2) return null;
+  const rows = await db
+    .select({ id: suppliers.id, name: suppliers.name })
+    .from(suppliers)
+    .where(isNull(suppliers.deletedAt))
+    .orderBy(suppliers.name);
+  const exact = rows.find((row) => normalizeName(row.name) === target);
+  if (exact) return exact;
+  const partial = rows.filter((row) => {
+    const candidate = normalizeName(row.name);
+    return candidate.startsWith(target) || target.startsWith(candidate);
+  });
+  return partial.length === 1 ? partial[0] : null;
+}
+
+/** O fornecedor do recado, criado na hora quando não existe (nome com 3+ letras). */
+export async function findOrCreateSupplierByName(
+  db: ServiceDb,
+  input: { name: string; userId: string },
+): Promise<{ id: string; name: string; created: boolean } | null> {
+  const found = await findSupplierByName(db, input.name);
+  if (found) return { ...found, created: false };
+  const name = input.name.trim().replace(/\s+/g, " ").slice(0, 120);
+  if (name.replace(/[^\p{L}]/gu, "").length < 3) return null;
+  const supplier = await createSupplier(db, { name, notes: "Criado pelo Ateliê pelo WhatsApp.", userId: input.userId });
+  return { id: supplier.id, name: supplier.name, created: true };
+}

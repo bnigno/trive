@@ -7,6 +7,8 @@ import { sql } from "drizzle-orm";
 import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import { products } from "./catalog";
+import { financialEntries } from "./financial";
+import { suppliers } from "./suppliers";
 import { waConversations, waMessages } from "./whatsapp";
 
 export const atelierIntakes = pgTable(
@@ -32,6 +34,10 @@ export const atelierIntakes = pgTable(
     productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
     /** Proposta interpretada do recado (C-B): grade, custo, fornecedor, uso do modelo. */
     parsed: jsonb("parsed"),
+    /** A compra que a chegada virou (C-C): fornecedor, conta a pagar e o cartão enviado à dona. */
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "restrict" }),
+    financialEntryId: uuid("financial_entry_id").references(() => financialEntries.id, { onDelete: "restrict" }),
+    cardPath: text("card_path"),
     errorDetail: text("error_detail"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

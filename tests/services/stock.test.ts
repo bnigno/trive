@@ -11,6 +11,7 @@ import {
   getStockOverview,
   listMovements,
   receivePurchase,
+  receivePurchaseBatch,
   receiveStock,
 } from "@/services/stock";
 import {
@@ -519,5 +520,97 @@ describe("listMovements", () => {
 
     const limited = await listMovements(sdb, { variantId, limit: 1 });
     expect(limited).toHaveLength(1);
+  });
+});
+
+describe("receivePurchaseBatch (Ateliê)", () => {
+  it("N movimentos com custo e UMA conta a pagar pelo total; rodar de novo não dobra nada", async () => {
+    const supplierId = await createTestSupplier(db, { name: "Aurora" });
+    const a = await createTestVariant(db, { onHand: 0, costCents: 0 });
+    const b = await createTestVariant(db, { onHand: 0, costCents: 0 });
+
+    const result = await receivePurchaseBatch(sdb, {
+      lines: [
+        { variantId: a.variantId, quantity: 3, unitCostCents: 12000 },
+        { variantId: b.variantId, quantity: 3, unitCostCents: 12000 },
+      ],
+      supplierId,
+      description: "Compra: 6 peças de Longo Dunas — Aurora (Ateliê pelo WhatsApp)",
+      idempotencyPrefix: "atelier:intake-1",
+      userId: FIXED_USER_ID,
+    });
+    expect(result.movementIds).toHaveLength(2);
+    expect(result.skipped).toBe(0);
+    expect(result.amountCents).toBe(72000);
+    expect(result.financialEntryId).not.toBeNull();
+
+    expect((await getLevel(a.variantId)).onHand).toBe(3);
+    expect((await getLevel(b.variantId)).onHand).toBe(3);
+    const movements = await db.select().from(schema.stockMovements);
+    expect(movements.map((movement) => movement.idempotencyKey).sort()).toEqual(
+      [`atelier:intake-1:${a.variantId}`, `atelier:intake-1:${b.variantId}`].sort(),
+    );
+    expect(movements.every((movement) => movement.referenceType === "supplier" && movement.referenceId === supplierId)).toBe(true);
+    const costs = await db.select().from(schema.variantCosts);
+    expect(costs.filter((cost) => cost.source === "purchase")).toHaveLength(2);
+    const [variantA] = await db.select().from(schema.productVariants).where(eq(schema.productVariants.id, a.variantId));
+    expect(variantA.costCents).toBe(12000);
+    const entries = await db.select().from(schema.financialEntries);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ direction: "payable", category: "supplier", amountCents: 72000, status: "pending", supplierId });
+
+    const again = await receivePurchaseBatch(sdb, {
+      lines: [
+        { variantId: a.variantId, quantity: 3, unitCostCents: 12000 },
+        { variantId: b.variantId, quantity: 3, unitCostCents: 12000 },
+      ],
+      supplierId,
+      description: "Compra: 6 peças de Longo Dunas — Aurora (Ateliê pelo WhatsApp)",
+      idempotencyPrefix: "atelier:intake-1",
+      userId: FIXED_USER_ID,
+    });
+    expect(again).toMatchObject({ movementIds: [], skipped: 2, financialEntryId: null });
+    expect((await getLevel(a.variantId)).onHand).toBe(3);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(1);
+  });
+
+  it("sem fornecedor ou sem custo: só o estoque entra, sem conta a pagar", async () => {
+    const a = await createTestVariant(db, { onHand: 1, costCents: 0 });
+    const noSupplier = await receivePurchaseBatch(sdb, {
+      lines: [{ variantId: a.variantId, quantity: 2, unitCostCents: 5000 }],
+      supplierId: null,
+      description: "Compra: 2 peças de Blusa (Ateliê pelo WhatsApp)",
+      idempotencyPrefix: "atelier:intake-2",
+      userId: FIXED_USER_ID,
+    });
+    expect(noSupplier.financialEntryId).toBeNull();
+    expect((await getLevel(a.variantId)).onHand).toBe(3);
+
+    const supplierId = await createTestSupplier(db, { name: "Maria" });
+    const noCost = await receivePurchaseBatch(sdb, {
+      lines: [{ variantId: a.variantId, quantity: 1, unitCostCents: null }],
+      supplierId,
+      description: "Compra: 1 peça de Blusa — Maria (Ateliê pelo WhatsApp)",
+      idempotencyPrefix: "atelier:intake-3",
+      userId: FIXED_USER_ID,
+    });
+    expect(noCost.financialEntryId).toBeNull();
+    expect(noCost.amountCents).toBe(0);
+    expect((await getLevel(a.variantId)).onHand).toBe(4);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+  });
+
+  it("fornecedor apagado: recusa antes de mexer no estoque", async () => {
+    const a = await createTestVariant(db, { onHand: 0, costCents: 0 });
+    await expect(
+      receivePurchaseBatch(sdb, {
+        lines: [{ variantId: a.variantId, quantity: 1, unitCostCents: 100 }],
+        supplierId: randomUUID(),
+        description: "x",
+        idempotencyPrefix: "atelier:intake-4",
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toThrow("Fornecedor não encontrado");
+    expect((await getLevel(a.variantId)).onHand).toBe(0);
   });
 });
