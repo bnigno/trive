@@ -691,9 +691,8 @@ describe("runBotTurn — mídia", () => {
     const first = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(first).toEqual({ replied: true, handedOff: false });
 
-    // Retry do evento da fila: mesma última inbound, já respondida — o
-    // modelo nem roda (o dedupe determinístico dos envios fica de segunda
-    // linha, para o caso de a transação ter caído depois de enviar).
+    // Retry do evento da fila: mesma última inbound, já respondida (o
+    // marcador é o dedupe da resposta) — o modelo nem roda.
     const second = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(second).toEqual({ skipped: "ja_respondida" });
     expect(assistant.turns).toHaveLength(1);

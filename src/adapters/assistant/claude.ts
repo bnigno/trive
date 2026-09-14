@@ -25,15 +25,22 @@ const UNAVAILABLE_MESSAGE = "Assistente de IA indisponível no momento — tente
 export function unavailableFromApiError(error: APIError, context: { model: string }): AssistantUnavailableError {
   const status = error.status;
   const code = error.type ?? undefined;
-  const text = error.message.toLowerCase();
+  const text = `${error.message} ${JSON.stringify(error.error ?? "")}`.toLowerCase();
   let reason: string;
   let retryable: boolean;
   if (status === undefined) {
     reason = error instanceof Anthropic.APIConnectionTimeoutError ? "a API não respondeu a tempo" : "sem conexão com a API";
     retryable = !(error instanceof Anthropic.APIUserAbortError);
+  } else if (status === 429 && text.includes("spend_limit")) {
+    // Teto de gasto do mês (da Anthropic ou configurado na conta): não passa sozinho.
+    reason = "teto de gasto da API atingido (429)";
+    retryable = false;
   } else if (status === 429) {
     reason = "limite de uso da API (429)";
     retryable = true;
+  } else if (status === 402 || code === "billing_error") {
+    reason = `problema de cobrança na API da Anthropic (${status})`;
+    retryable = false;
   } else if (status === 529 || status >= 500) {
     reason = `API da Anthropic instável (${status})`;
     retryable = true;
@@ -52,6 +59,9 @@ export function unavailableFromApiError(error: APIError, context: { model: strin
   } else if (status === 400 && text.includes("credit")) {
     reason = "sem crédito na API da Anthropic";
     retryable = false;
+  } else if (status === 400 && text.includes("usage limit")) {
+    reason = "limite de gasto configurado na conta da Anthropic atingido";
+    retryable = false;
   } else {
     reason = `erro ${status} da API${code ? ` (${code})` : ""}`;
     retryable = false;
@@ -64,7 +74,8 @@ export function unavailableFromApiError(error: APIError, context: { model: strin
     requestId: error.requestID ?? null,
     message: error.message.slice(0, 300),
   });
-  return new AssistantUnavailableError(UNAVAILABLE_MESSAGE, { status, code, retryable, reason });
+  // A causa vai na própria mensagem: painel, Ateliê e rascunho mostram error.message.
+  return new AssistantUnavailableError(`${UNAVAILABLE_MESSAGE} (${reason})`, { status, code, retryable, reason });
 }
 
 /**

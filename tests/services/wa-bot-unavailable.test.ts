@@ -13,11 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantUnavailableError } from "@/adapters/assistant";
 import { FakeSalesAssistant } from "@/adapters/assistant/fake";
 import { FakeMessagingProvider } from "@/adapters/zapi/fake";
-import { getRetryPolicy } from "@/core/queue/retry-policy";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { BOT_UNAVAILABLE_REPLY } from "@/services/bot/shared";
-import { BOT_TURN_EVENT, runBotTurn } from "@/services/wa-bot";
+import { BOT_TURN_MODEL_ATTEMPTS, runBotTurn } from "@/services/wa-bot";
 import { returnWaConversationToBot } from "@/services/wa-conversations";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -103,6 +102,37 @@ describe("rajada de mensagens: um turno por mensagem, mas o modelo roda uma vez"
     expect(await conversationStatus(conversationId)).toBe("open");
   });
 
+  it("saída automática depois da mensagem dela (template de pedido, cartão atrasado) NÃO conta como resposta", async () => {
+    const conversationId = await createConversation();
+    await addMessage(conversationId, "inbound", "Qual o prazo de entrega para Belém?");
+    // O webhook do pagamento manda o template no mesmo minuto…
+    await db.insert(schema.waMessages).values({
+      conversationId,
+      direction: "outbound",
+      body: "Pagamento confirmado! 🤎",
+      templateKey: "order_paid",
+      dedupeKey: "order.paid:xyz",
+      status: "sent",
+      createdAt: new Date(Date.now() + 500),
+    });
+    // …e um cartão de um turno anterior chega atrasado.
+    await db.insert(schema.waMessages).values({
+      conversationId,
+      direction: "outbound",
+      kind: "image",
+      body: "Cartão",
+      mediaUrl: "https://cdn.test/cartao.png",
+      dedupeKey: "wa.bot_media:00000000-0000-4000-8000-00000000aaaa:card",
+      status: "sent",
+      createdAt: new Date(Date.now() + 600),
+    });
+    assistant.enqueueScript({ replyTemplate: "Em Belém, motoboy no mesmo dia 🤎" });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(provider.sentMessages.map((m) => m.body)).toEqual(["Em Belém, motoboy no mesmo dia 🤎"]);
+  });
+
   it("mensagem nova depois da resposta volta a rodar o modelo", async () => {
     const conversationId = await createConversation();
     await addMessage(conversationId, "inbound", "Oi");
@@ -139,9 +169,13 @@ describe("modelo indisponível", () => {
     const conversationId = await createConversation();
     await addMessage(conversationId, "inbound", "Oi");
     assistant.enqueueScript(rateLimited());
-    const { maxAttempts } = getRetryPolicy(BOT_TURN_EVENT);
+    const maxAttempts = BOT_TURN_MODEL_ATTEMPTS;
     expect(maxAttempts).toBeGreaterThanOrEqual(3);
 
+    // A penúltima ainda relança…
+    await expect(runBotTurn(sdb, assistant, provider, { conversationId, attempt: maxAttempts - 2 })).rejects.toBeInstanceOf(AssistantUnavailableError);
+    assistant.enqueueScript(rateLimited());
+    // …a última faz o plano B.
     const result = await runBotTurn(sdb, assistant, provider, { conversationId, attempt: maxAttempts - 1 });
     expect(result).toEqual({ replied: true, handedOff: true });
 
@@ -197,10 +231,17 @@ describe("Devolver à Lia", () => {
     expect(events[0].dedupeKey).toBe(`wa.bot_turn:return:${inboundId}`);
     expect(events[0].payload).toEqual({ conversationId });
 
-    // Devolver de novo não duplica o turno.
+    // Devolver de novo não duplica o turno — e diz que não enfileirou.
     await db.update(schema.waConversations).set({ status: "human" }).where(eq(schema.waConversations.id, conversationId));
-    await returnWaConversationToBot(sdb, { conversationId, userId: OWNER });
+    expect(await returnWaConversationToBot(sdb, { conversationId, userId: OWNER })).toEqual({ status: "open", botTurnQueued: false });
     expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.bot_turn"))).toHaveLength(1);
+  });
+
+  it("SAIR esperando é comando, não pergunta: só reabre", async () => {
+    const conversationId = await createConversation("human");
+    await addMessage(conversationId, "inbound", " sair ");
+    const result = await returnWaConversationToBot(sdb, { conversationId, userId: OWNER });
+    expect(result).toEqual({ status: "open", botTurnQueued: false });
   });
 
   it("sem nada esperando (a última mensagem foi da loja), só reabre", async () => {

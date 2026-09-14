@@ -32,10 +32,6 @@ describe("RETRY_POLICIES", () => {
 });
 
 describe("nextAttemptDelayMs", () => {
-  it("resposta da Lia: tentativas curtas — a cliente espera; o limite por minuto da API passa em segundos", () => {
-    expect(getRetryPolicy("wa.bot_turn")).toEqual({ maxAttempts: 4, baseDelayMs: 15_000, maxDelayMs: 120_000 });
-  });
-
   it("retorno combinado: 3 tentativas espaçadas (o modelo pode estar fora do ar um instante)", () => {
     expect(getRetryPolicy("wa.bot_followup")).toEqual({ maxAttempts: 3, baseDelayMs: 60_000, maxDelayMs: 600_000 });
     expect(getRetryPolicy("store.revalidate")).toEqual({ maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 });

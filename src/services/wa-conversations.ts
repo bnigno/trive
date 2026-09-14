@@ -759,23 +759,27 @@ export async function returnWaConversationToBot(
     after: { status: "open", botDisabledUntil: null },
   });
   const [lastMessage] = await db
-    .select({ id: waMessages.id, direction: waMessages.direction })
+    .select({ id: waMessages.id, direction: waMessages.direction, body: waMessages.body })
     .from(waMessages)
     .where(eq(waMessages.conversationId, conversation.id))
     .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
     .limit(1);
-  const pending = lastMessage?.direction === "inbound";
-  if (pending && (await isBotEnabled(db))) {
-    await enqueueOutboxEvent(db, {
-      eventType: "wa.bot_turn",
-      dedupeKey: `wa.bot_turn:return:${lastMessage.id}`,
-      aggregateType: "wa_conversation",
-      aggregateId: conversation.id,
-      payload: { conversationId: conversation.id },
-    });
-    return { status: "open", botTurnQueued: true };
-  }
-  return { status: "open", botTurnQueued: false };
+  // SAIR/PARAR é comando (o aviso de saída responde a ele), não pergunta.
+  const pending = lastMessage?.direction === "inbound" && !isOptOutCommand(lastMessage.body ?? "");
+  if (!pending || !(await isBotEnabled(db))) return { status: "open", botTurnQueued: false };
+  const queued = await enqueueOutboxEvent(db, {
+    eventType: "wa.bot_turn",
+    dedupeKey: `wa.bot_turn:return:${lastMessage.id}`,
+    aggregateType: "wa_conversation",
+    aggregateId: conversation.id,
+    payload: { conversationId: conversation.id },
+  });
+  return { status: "open", botTurnQueued: queued !== null };
+}
+
+function isOptOutCommand(text: string): boolean {
+  const keyword = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+  return keyword === "SAIR" || keyword === "PARAR";
 }
 
 /**

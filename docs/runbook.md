@@ -420,12 +420,16 @@ letreiro some sozinho e volta o nome em texto.
 O motivo entre parênteses diz o que a API da Anthropic respondeu:
 
 - **limite de uso da API (429)** ou **API da Anthropic instável (5xx)**: passageiro.
-  A fila já tentou 4 vezes (15 s, 30 s, 60 s) antes de transferir. Se vira
+  A Lia já tentou 5 vezes (5 s, 10 s, 20 s, 40 s) antes de transferir. Se vira
   rotina, a conta está no nível de uso mais baixo da Anthropic: em
   platform.claude.com → Limites de taxa, o nível sobe com o gasto acumulado
   (ou pedindo à Anthropic).
-- **sem crédito na API da Anthropic**: comprar créditos em platform.claude.com
-  → Faturamento (e ligar a recarga automática para não repetir).
+- **teto de gasto da API atingido (429)** / **limite de gasto configurado na
+  conta**: o gasto do mês bateu no teto (da Anthropic ou o que foi definido
+  em Limites) — não passa sozinho até o mês virar ou o limite subir.
+- **sem crédito na API da Anthropic** / **problema de cobrança**: comprar
+  créditos em platform.claude.com → Faturamento (e ligar a recarga
+  automática para não repetir).
 - **chave da API inválida (401)** / **sem permissão (403)**: a
   `ANTHROPIC_API_KEY` da Vercel foi trocada ou revogada — gerar outra no
   console e atualizar a variável (deploy de novo).

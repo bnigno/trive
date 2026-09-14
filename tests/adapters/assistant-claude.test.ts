@@ -197,6 +197,8 @@ describe("ClaudeSalesAssistant", () => {
     [404, "not_found_error", "model: nope", "modelo não encontrado (404): claude-sonnet-5", false],
     [400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API.", "sem crédito na API da Anthropic", false],
     [400, "invalid_request_error", "messages: bad", "erro 400 da API (invalid_request_error)", false],
+    [400, "invalid_request_error", "You have reached your specified API usage limits.", "limite de gasto configurado na conta da Anthropic atingido", false],
+    [402, "billing_error", "billing issue", "problema de cobrança na API da Anthropic (402)", false],
   ])("status %s (%s) → causa \"%s\" e retryable=%s", async (status, type, message, reason, retryable) => {
     const client: MessagesClient = {
       messages: {
@@ -214,6 +216,29 @@ describe("ClaudeSalesAssistant", () => {
     expect(failure.reason).toBe(reason);
     expect(failure.retryable).toBe(retryable);
     expect(spy).toHaveBeenCalledWith("[assistant] falha na API da Anthropic", expect.objectContaining({ status, reason, requestId: "req_1" }));
+    spy.mockRestore();
+  });
+
+  it("429 por teto de gasto do mês (spend limit no corpo) não é passageiro", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const client: MessagesClient = {
+      messages: {
+        create: async () => {
+          throw new Anthropic.APIError(
+            429,
+            { type: "error", error: { type: "rate_limit_error", message: "Spend limit reached", details: { error_code: "enforced_spend_limit_reached" } } },
+            "Spend limit reached",
+            new Headers(),
+            "rate_limit_error",
+          );
+        },
+      },
+    };
+    const error = await new ClaudeSalesAssistant(client).respondTurn(baseInput).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AssistantUnavailableError);
+    expect((error as AssistantUnavailableError).retryable).toBe(false);
+    expect((error as AssistantUnavailableError).reason).toBe("teto de gasto da API atingido (429)");
+    expect((error as AssistantUnavailableError).message).toContain("teto de gasto da API atingido (429)");
     spy.mockRestore();
   });
 

@@ -53,10 +53,9 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // Turno proativo da Lia (retorno combinado): o modelo pode estar fora do
   // ar por um instante; 3 tentativas espaçadas e a conversa não vira DLQ à toa.
   "wa.bot_followup": { maxAttempts: 3, baseDelayMs: 60_000, maxDelayMs: 600_000 },
-  // Resposta da Lia a uma mensagem: a cliente está esperando. Limite por
-  // minuto da API (429) e instabilidade passam em segundos, então tentativas
-  // curtas — e só na última o turno cai no plano B (avisa e transfere).
-  "wa.bot_turn": { maxAttempts: 4, baseDelayMs: 15_000, maxDelayMs: 120_000 },
+  // wa.bot_turn fica na política padrão (banco/provedor fora do ar continuam
+  // tentando por até 1 h); o teto do MODELO é próprio e menor
+  // (services/wa-bot BOT_TURN_MODEL_ATTEMPTS), com plano B na última.
 };
 
 export function getRetryPolicy(eventType: string): RetryPolicy {

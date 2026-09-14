@@ -189,10 +189,7 @@ export async function rehearseBotAction(input: unknown): Promise<RehearsalResult
     return { ok: true, turn };
   } catch (error) {
     if (error instanceof AssistantUnavailableError) {
-      return {
-        error:
-          "A vendedora não respondeu: a chave da Anthropic não está configurada na hospedagem ou a API está fora do ar. Tente de novo em instantes.",
-      };
+      return { error: `A vendedora não respondeu: ${error.reason}. Tente de novo em instantes.` };
     }
     return { error: toErrorMessage(error) };
   }
