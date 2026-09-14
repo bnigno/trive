@@ -6,6 +6,7 @@ import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { REDO_BLOCKED_LABELS } from "@/core/atelier/redo";
+import { errorDetailLabel, interpretationFailedLabel } from "@/core/atelier/reply";
 import { getDb } from "@/db/client";
 import { formatDateTimeSP } from "@/emails/templates";
 import { formatCentsBRL } from "@/lib/money";
@@ -142,11 +143,11 @@ export default async function ChegadasPage() {
                   </dl>
                 ) : row.parsed?.failed ? (
                   <p className="mt-3 text-sm text-amber-800 dark:text-amber-300">
-                    A inteligência não montou a grade ({row.parsed.failed}): a ficha nasceu simples — complete no painel.
+                    A inteligência não montou a grade ({interpretationFailedLabel(row.parsed.failed)}): a ficha nasceu simples — complete no painel.
                   </p>
                 ) : null}
 
-                {row.errorDetail ? <p className="mt-2 text-sm text-red-700 dark:text-red-300">{row.errorDetail}</p> : null}
+                {row.errorDetail ? <p className="mt-2 text-sm text-red-700 dark:text-red-300">{errorDetailLabel(row.errorDetail)}</p> : null}
 
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
                   {row.cardPath ? (

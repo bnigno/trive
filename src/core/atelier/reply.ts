@@ -66,3 +66,23 @@ export function atelierHelpReasonText(reason: AtelierHelpReason): string {
 export function isAtelierHelpReason(value: unknown): value is AtelierHelpReason {
   return typeof value === "string" && value in ATELIER_HELP_REASONS;
 }
+
+/** Por que a inteligência não montou a grade — em português, para o painel. */
+export const INTERPRETATION_FAILED_LABELS: Record<string, string> = {
+  ia_indisponivel: "a inteligência está sem chave ou sem crédito",
+  ia_demorou: "a inteligência demorou demais",
+  ia_erro: "erro ao chamar a inteligência",
+  json_invalido: "a resposta veio fora do formato",
+  sem_tempo: "não sobrou tempo na fila para a inteligência",
+  ficha_recusou: "a ficha recusou a grade proposta",
+  sem_interpretacao: "a peça já existia antes da leitura",
+};
+
+export function interpretationFailedLabel(code: string): string {
+  return INTERPRETATION_FAILED_LABELS[code] ?? code;
+}
+
+/** O que ficou anotado na chegada (código do C-A ou texto livre) — em português. */
+export function errorDetailLabel(detail: string): string {
+  return isAtelierHelpReason(detail) ? ATELIER_HELP_REASONS[detail] : detail;
+}

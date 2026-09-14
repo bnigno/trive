@@ -11,6 +11,7 @@ import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { getAtelierIntakeForProduct } from "@/services/atelier";
 import { careLabels } from "@/core/atelier/proposal";
+import { errorDetailLabel, interpretationFailedLabel } from "@/core/atelier/reply";
 import { formatUsdCents } from "@/core/ai/model-cost";
 import { formatDateTimeSP } from "@/emails/templates";
 import { formatCentsBRL } from "@/lib/money";
@@ -287,10 +288,10 @@ export default async function ProdutoDetalhePage({
               ) : null}
               {atelierIntake.parsed?.failed ? (
                 <p className="mt-2 text-amber-800 dark:text-amber-300">
-                  A inteligência não respondeu ({atelierIntake.parsed.failed}): a ficha nasceu simples — complete a grade à mão.
+                  A inteligência não montou a grade ({interpretationFailedLabel(atelierIntake.parsed.failed)}): a ficha nasceu simples — complete a grade à mão.
                 </p>
               ) : null}
-              {atelierIntake.errorDetail ? <p className="mt-1 text-zinc-500">{atelierIntake.errorDetail}</p> : null}
+              {atelierIntake.errorDetail ? <p className="mt-1 text-zinc-500">{errorDetailLabel(atelierIntake.errorDetail)}</p> : null}
               {atelierIntake.cardPath ? (
                 <p className="mt-1 text-xs text-zinc-500">
                   <a href={storage.publicUrl(atelierIntake.cardPath)} target="_blank" rel="noreferrer" className="underline">
