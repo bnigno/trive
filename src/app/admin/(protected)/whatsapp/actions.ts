@@ -44,6 +44,7 @@ const toggleKeySchema = z.enum([
   "atelier_enabled",
   "feedback_ask_enabled",
   "customer_looks_enabled",
+  "bot_audio_notes_enabled",
 ]);
 
 export async function setToggleAction(

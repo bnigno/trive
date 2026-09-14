@@ -53,6 +53,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "feedback_ask_enabled", value: true },
   // "Quem já vestiu": foto da cliente com a peça vira cartão + consentimento.
   { key: "customer_looks_enabled", value: true },
+  // A voz da curadora: a Lia manda a nota em áudio da peça pelo WhatsApp.
+  { key: "bot_audio_notes_enabled", value: true },
   // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.
   { key: "atelier_enabled", value: true },
   { key: "edition_name", value: "" },

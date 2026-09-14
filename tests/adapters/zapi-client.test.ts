@@ -71,6 +71,26 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
     });
   });
 
+  it("sendAudio faz POST /send-audio com phone sem '+', a URL em `audio` e waveform (vira mensagem de voz)", async () => {
+    const { calls, fetchFn } = createFakeFetch({ messageId: "mid-audio" });
+    const provider = new ZapiMessagingProvider(fetchFn);
+
+    const sent = await provider.sendAudio({
+      toE164: "+5511999990000",
+      audioUrl: "https://cdn.trive.example/products/x/curator-note.webm",
+    });
+
+    expect(sent).toEqual({ providerMessageId: "mid-audio" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toMatch(/\/send-audio$/);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({
+      phone: "5511999990000",
+      audio: "https://cdn.trive.example/products/x/curator-note.webm",
+      waveform: true,
+    });
+  });
+
   it("sendOptionList faz POST /send-option-list com optionList aninhado", async () => {
     const { calls, fetchFn } = createFakeFetch({ id: 12345 });
     const provider = new ZapiMessagingProvider(fetchFn);
@@ -115,6 +135,9 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
         imageUrl: "https://cdn.trive.example/produtos/colar.jpg",
       }),
     ).rejects.toThrow(/send-image/);
+    await expect(
+      provider.sendAudio({ toE164: "+5511999990000", audioUrl: "https://cdn.trive.example/a.mp3" }),
+    ).rejects.toThrow(/send-audio/);
     await expect(
       provider.sendOptionList({
         toE164: "+5511999990000",

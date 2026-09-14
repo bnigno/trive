@@ -253,6 +253,26 @@ junto com a cartela ("Pular" em destaque); a tela "A sua cartela" mostra
 "Medidas guardadas · Apagar minhas medidas" (só no aparelho que gravou).
 Produção: migração 0042; sem setting.
 
+**A Lia manda a voz da curadora** — quando a peça tem a nota da curadora em
+áudio (gravada na ficha da peça) e a cliente pergunta de tecido, caimento
+ou calor (ou pede para ouvir), a Lia chama `enviar_nota_da_curadora`: o
+áudio sai como **mensagem de voz** no WhatsApp dela (Z-API `POST
+/send-audio` com a URL pública do bucket, `waveform`), ANTES do texto, com
+dedupe por turno (o retry da fila não repete) e uma vez por peça na conversa
+(`curatorNotesSent` no caderninho; "manda de novo" → `reenviar: true`).
+Na conversa do painel a mensagem aparece como "🎤 Mensagem de voz" com o
+player; no ensaio, como bolha com o player; em copiloto vai junto da
+sugestão (sem marcador: a dona decide cada envio) e sai quando ela aprova —
+editada, só o texto. O interruptor **A Lia manda a voz da curadora** fica
+na Central (setting `bot_audio_notes_enabled`, ausente = ligado);
+desligado, `detalhar_produto` volta a apontar o link da página e a Lia cita
+só a nota escrita. Falha do envio é melhor esforço: o texto segue e a
+mensagem fica `failed` na conversa (procure no painel se a cliente disser
+que o áudio não chegou). O áudio é o arquivo gravado no navegador (webm/opus
+no Chrome, m4a no Safari) — se a Z-API recusar o formato, grave ou envie um
+mp3/m4a na ficha da peça (o campo aceita upload). Produção: sem migração;
+`scripts/sync-seed.ts --settings bot_audio_notes_enabled`.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

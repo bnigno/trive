@@ -47,7 +47,8 @@ export function ToggleSwitch({
     | "catalog_draft_enabled"
     | "atelier_enabled"
     | "feedback_ask_enabled"
-    | "customer_looks_enabled";
+    | "customer_looks_enabled"
+    | "bot_audio_notes_enabled";
   checked: boolean;
   label: string;
   hint: string;

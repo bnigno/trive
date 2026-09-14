@@ -3,14 +3,17 @@ import { describe, expect, it } from "vitest";
 import { formatCentsBRL } from "@/lib/money";
 import {
   addNote,
+  CURATOR_NOTES_SENT_MAX,
   cartAdd,
   cartRemove,
   CART_MAX_QTY,
   cartSubtotalCents,
   formatCartLines,
   NOTES_MAX,
+  markCuratorNoteSent,
   mergeBridgeIntoState,
   parseBotState,
+  wasCuratorNoteSent,
   renderContextNote,
   type BotCartItem,
 } from "@/core/bot/memory";
@@ -52,6 +55,27 @@ describe("addNote", () => {
 
   it("nota vazia não entra", () => {
     expect(addNote(["a"], "   ")).toEqual(["a"]);
+  });
+});
+
+describe("áudio da curadora (curatorNotesSent)", () => {
+  it("marca o slug uma vez, não repete e respeita o teto (os mais antigos saem)", () => {
+    let state = markCuratorNoteSent({}, "longo-dunas");
+    expect(wasCuratorNoteSent(state, "longo-dunas")).toBe(true);
+    expect(wasCuratorNoteSent(state, "camisa-brisa")).toBe(false);
+    const same = markCuratorNoteSent(state, "longo-dunas");
+    expect(same).toBe(state);
+    expect(same.curatorNotesSent).toEqual(["longo-dunas"]);
+    for (let i = 0; i < CURATOR_NOTES_SENT_MAX + 2; i++) state = markCuratorNoteSent(state, `peca-${i}`);
+    expect(state.curatorNotesSent).toHaveLength(CURATOR_NOTES_SENT_MAX);
+    expect(wasCuratorNoteSent(state, "longo-dunas")).toBe(false);
+    expect(wasCuratorNoteSent(state, `peca-${CURATOR_NOTES_SENT_MAX + 1}`)).toBe(true);
+  });
+
+  it("o campo sobrevive ao parse do jsonb e não derruba o resto do caderninho", () => {
+    const parsed = parseBotState({ curatorNotesSent: ["longo-dunas"], notes: ["veste M"] });
+    expect(wasCuratorNoteSent(parsed, "longo-dunas")).toBe(true);
+    expect(parsed.notes).toEqual(["veste M"]);
   });
 });
 

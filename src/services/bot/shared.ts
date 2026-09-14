@@ -52,7 +52,9 @@ export type BotAttachment =
       buttonLabel: string;
       options: { id: string; title: string; description?: string }[];
     }
-  | { kind: "image"; imageUrl: string; caption: string };
+  | { kind: "image"; imageUrl: string; caption: string }
+  /** Mensagem de voz por URL pública; `body` é o que fica na conversa do painel. */
+  | { kind: "audio"; audioUrl: string; body: string };
 
 /** O que o turno precisa para desenhar o cartão editorial (vitrine/look). */
 export type BotCardDeps = { storage: FileStorage; render: CardRenderer };

@@ -82,9 +82,11 @@ export function MessageBubble({
                 outbound ? "text-ivory-300 dark:text-ink-500" : "text-ink-400",
               )}
             >
-              {message.body.startsWith("[a cliente enviou um áudio]")
-                ? "🎤 Áudio · não transcrito"
-                : "🎤 Áudio · transcrição automática"}
+              {outbound
+                ? "🎤 Mensagem de voz"
+                : message.body.startsWith("[a cliente enviou um áudio]")
+                  ? "🎤 Áudio · não transcrito"
+                  : "🎤 Áudio · transcrição automática"}
             </p>
             {message.mediaUrl ? (
               <audio controls preload="none" src={message.mediaUrl} className="h-9 max-w-full" />

@@ -494,6 +494,11 @@ const sendMediaMessageSchema = z.discriminatedUnion("kind", [
     ...sendMediaMessageCommonFields,
   }),
   z.object({
+    kind: z.literal("audio"),
+    audioUrl: z.url(),
+    ...sendMediaMessageCommonFields,
+  }),
+  z.object({
     kind: z.literal("option_list"),
     optionList: z.object({
       title: z.string().min(1),
@@ -551,7 +556,7 @@ export async function sendMediaMessage(
           ),
         ].join("\n")
       : parsed.body;
-  const mediaUrl = parsed.kind === "image" ? parsed.imageUrl : null;
+  const mediaUrl = parsed.kind === "image" ? parsed.imageUrl : parsed.kind === "audio" ? parsed.audioUrl : null;
 
   const conversationId = await upsertConversation(
     db,
@@ -590,7 +595,9 @@ export async function sendMediaMessage(
             imageUrl: parsed.imageUrl,
             caption: parsed.body,
           })
-        : provider.sendOptionList({
+        : parsed.kind === "audio"
+          ? provider.sendAudio({ toE164: parsed.phoneE164, audioUrl: parsed.audioUrl })
+          : provider.sendOptionList({
             toE164: parsed.phoneE164,
             message: parsed.body,
             title: parsed.optionList.title,

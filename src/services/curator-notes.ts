@@ -23,10 +23,16 @@ import {
   curatorAudioStoragePath,
   fitCuratorNote,
 } from "@/core/catalog/curator-note";
-import { auditLog, products } from "@/db/schema";
+import { auditLog, products, settings } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 // A mesma classe de erro do catálogo: é a que a tela da peça reconhece.
 import { ServiceError } from "@/services/catalog";
+
+/** Setting bot_audio_notes_enabled: ausente = ligado (a Lia manda a voz da curadora). */
+export async function isBotAudioNotesEnabled(db: DbOrTx): Promise<boolean> {
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "bot_audio_notes_enabled")).limit(1);
+  return row?.value !== false;
+}
 
 /**
  * Por que o texto (não) veio: "ok" transcreveu; "empty" o áudio não tinha

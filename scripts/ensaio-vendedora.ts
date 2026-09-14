@@ -144,6 +144,8 @@ async function main() {
             .map((option) => option.title)
             .join(" | ")}`,
         );
+      } else if (attachment.kind === "audio") {
+        console.log(`   🎤 ${attachment.body} → ${attachment.audioUrl}`);
       } else {
         console.log(`   🖼️ ${attachment.caption} → ${attachment.imageUrl}`);
       }

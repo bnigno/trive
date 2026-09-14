@@ -11,10 +11,18 @@ export const CURATOR_NOTE_BOT_MAX = 700;
 /**
  * Linhas para o texto da ferramenta: a nota entre aspas angulares (a Lia
  * cita, não reescreve) e, com áudio, onde ouvir a curadora — com o link da
- * página quando ela está aberta ao público (na janela VIP, não). Sem nota e
- * sem áudio, nada — o prompt já diz o que fazer quando a peça não tem ficha.
+ * página quando ela está aberta ao público (na janela VIP, não). Com o envio
+ * de áudio ligado (audioEnabled), a Lia pode mandar a voz da curadora pelo
+ * WhatsApp com enviar_nota_da_curadora, e a linha diz isso em vez do link.
+ * Sem nota e sem áudio, nada — o prompt já diz o que fazer quando a peça não
+ * tem ficha.
  */
-export function curatorNoteLines(input: { note: string | null | undefined; hasAudio: boolean; pageUrl: string | null }): string[] {
+export function curatorNoteLines(input: {
+  note: string | null | undefined;
+  hasAudio: boolean;
+  pageUrl: string | null;
+  audioEnabled?: boolean;
+}): string[] {
   const note = normalizeCuratorNote(input.note);
   const lines: string[] = [];
   if (note) {
@@ -27,7 +35,13 @@ export function curatorNoteLines(input: { note: string | null | undefined; hasAu
         : flat;
     lines.push(`Nota da curadora (cite com as palavras dela): «${fitted}»`);
   }
-  if (input.hasAudio) {
+  if (input.hasAudio && input.audioEnabled) {
+    lines.push(
+      note
+        ? "A nota também existe em áudio, na voz da curadora: se ela perguntar de tecido, caimento ou calor (ou quiser ouvir), chame enviar_nota_da_curadora — a voz chega no WhatsApp dela."
+        : "A curadora deixou uma nota em áudio, sem transcrição: se ela perguntar de tecido, caimento ou calor, chame enviar_nota_da_curadora — a voz chega no WhatsApp dela.",
+    );
+  } else if (input.hasAudio) {
     const where = input.pageUrl ? `na página da peça (${input.pageUrl})` : "na página da peça";
     lines.push(
       note
