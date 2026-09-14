@@ -53,7 +53,9 @@ export default async function CampaignCurtainPage({ params }: Props) {
       <div className="relative flex w-full max-w-sm flex-col items-center gap-8">
         <div className="flex items-center gap-2.5">
           <Monogram size={28} tone="gold" priority />
-          <Wordmark className="text-base text-ivory-100">{storeName}</Wordmark>
+          <Wordmark height={15} className="text-ivory-100">
+            {storeName}
+          </Wordmark>
         </div>
 
         {product ? (

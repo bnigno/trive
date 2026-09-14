@@ -389,6 +389,32 @@ recado: **3 minutos** depois da primeira foto do lote a dona recebe "Recebi
 `owner_atelier_nudge`, evento `wa.atelier_nudge`, só se o recado ainda não
 chegou). Produção: `scripts/sync-seed.ts --templates owner_atelier_nudge`.
 
+## Trocar o logo
+
+O site, os ícones, a imagem de compartilhamento (OG), os comprovantes, os
+cartões e o Bom dia saem todos de `brand-source/logo.svg`. Com o arquivo novo
+do designer em mãos, a troca é um PR de quem programa:
+
+1. Guardar o arquivo entregue, sem mexer, em `brand-source/entregue/` (nome
+   com data). Conferir o que veio: monograma em `<path>` (vetor) ou em
+   `<image>` (bitmap mascarado — funciona, mas perde nitidez acima de ~600 px);
+   letras TRIVÉ e MAISON FÉMININE em `<path>` de fonte.
+2. Ajustar `scripts/curate-brand-source.py` para o arquivo novo (hoje ele
+   junta as duas entregas: letras do Canva + monograma do vetor) e rodar
+   `python3 scripts/curate-brand-source.py` → `brand-source/logo.svg` com os
+   grupos `#monograma`, `#wordmark` e `#tagline`.
+3. `node scripts/generate-brand-assets.mjs && node scripts/generate-pwa-icons.mjs && node scripts/generate-receipt-assets.mjs`
+   e commitar tudo o que mudou (`public/brand/`, `src/app/*.png`,
+   `brand-source/generated/`, `assets.ts`, `lettering.generated.ts`,
+   `src/receipts/assets.generated.ts`).
+4. Conferir: `pnpm test` (tests/lib/brand-assets), a home (véu, hero, rodapé),
+   o cabeçalho de /produtos, `npx tsx scripts/preview-card.ts` e, depois do
+   deploy, `curl -I https://trivemaison.com.br/opengraph-image.png`. O
+   WhatsApp guarda a prévia antiga do link por alguns dias.
+
+O nome escrito no logo é fixo (TRIVÉ). Se a loja for renomeada no painel, o
+letreiro some sozinho e volta o nome em texto.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

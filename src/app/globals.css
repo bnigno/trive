@@ -408,7 +408,7 @@ body {
    "Noite de Estreia" — sistema de movimento da vitrine.
    Compositor puro (transform/opacity) em tudo que roda durante a rolagem.
    Exceções curtas e fora da rolagem: stroke-dashoffset (fitas ≤ 400×80px) e
-   o sheen do wordmark (uma passada, ligada pela classe is-lit depois do véu).
+   o sheen do wordmark (uma passada, transform num <rect>, depois do véu).
    ========================================================================== */
 
 /* O Laço: a fita rosé + o filete dourado se desenham ao entrar na tela.
@@ -499,35 +499,25 @@ body {
   }
 }
 
-/* Brilho varrendo o ouro do wordmark: uma passada só, ligada pelo BrandVeil
-   (atributo data-veil-done no <html>) depois do véu e da hidratação — nunca
-   em cima do parse do JS. */
-.gold-sheen {
-  background-image: linear-gradient(
-    100deg,
-    var(--color-gold-700) 0%,
-    var(--color-gold-brush) 35%,
-    var(--color-gold-200) 50%,
-    var(--color-gold-brush) 65%,
-    var(--color-gold-700) 100%
-  );
-  background-size: 220% 100%;
-  background-position: 50% 0;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+/* Brilho varrendo o ouro do wordmark (Wordmark sheen): o gradiente vive num
+   <rect> 4,2× mais largo que as letras, recortado por elas; uma passada só,
+   ligada pelo BrandVeil (atributo data-veil-done no <html>) depois do véu e
+   da hidratação — nunca em cima do parse do JS. Os 20% são 0,84 da largura
+   do letreiro, em relação à caixa do próprio retângulo. */
+.wordmark-sheen {
+  transform-box: fill-box;
 }
 
-[data-veil-done] .gold-sheen {
-  animation: sheen-once 2400ms var(--ease-silk) 1 both;
+[data-veil-done] .wordmark-sheen {
+  animation: wordmark-sheen-once 2400ms var(--ease-silk) 1 both;
 }
 
-@keyframes sheen-once {
+@keyframes wordmark-sheen-once {
   from {
-    background-position: 120% 0;
+    transform: translateX(-20%);
   }
   to {
-    background-position: -20% 0;
+    transform: translateX(20%);
   }
 }
 
@@ -669,7 +659,6 @@ body {
     animation: none !important;
   }
 
-  [data-veil-done] .gold-sheen,
   .animate-ribbon-drift,
   .animate-cue-pulse,
   .animate-ribbon-check,
@@ -679,6 +668,12 @@ body {
 
   .press-sheen::after {
     display: none;
+  }
+
+  /* O brilho não varre: fica no ouro do fim da passada, sem a faixa clara no meio. */
+  .wordmark-sheen {
+    animation: none !important;
+    transform: translateX(20%);
   }
 }
 
