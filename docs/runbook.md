@@ -334,7 +334,7 @@ cotação e o fechamento: `criar_pedido` recusa e manda cotar de novo. Um
 
 Do **celular da dona** (o número em **Vendedora & WhatsApp › Conexão**, nunca
 o número da própria linha — esse chega como `fromMe` e é ignorado), mande as
-fotos da peça para o número da maison e, em seguida, um recado com o nome
+fotos da peça para o número da TRIVÉ e, em seguida, um recado com o nome
 (texto ou áudio). Em até ~1 minuto ela recebe "Rascunho pronto · Longo Dunas ·
 3 fotos" com o link da ficha; a peça nasce em rascunho, com as fotos, e nada
 aparece na loja. Regras: cada foto chega num webhook próprio, o lote são as

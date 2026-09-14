@@ -386,7 +386,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
       </div>
       <Footer
         storeName={data.storeName}
-        line={isCustomerLook ? `Obrigada por vestir a ${data.storeName}.` : isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
+        line={isCustomerLook ? `Obrigada por vestir a ${normalizeReceiptText(data.storeName)}.` : isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
       />
     </div>
   );

@@ -252,7 +252,7 @@ export default async function ProdutoPage({ params }: Props) {
         <section aria-labelledby="relacionados" className="mt-16">
           <SectionHeading
             eyebrow={related.scope === "category" ? "Na mesma sala" : "Novidades"}
-            title={related.scope === "category" ? "Também na TRIVÉ" : "Mais da TRIVÉ"}
+            title={related.scope === "category" ? `Também na ${storeName}` : `Mais da ${storeName}`}
             id="relacionados"
           />
           <div className="grid grid-cols-2 gap-x-3 gap-y-10 sm:gap-x-5 lg:grid-cols-4">

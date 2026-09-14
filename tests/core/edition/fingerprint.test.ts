@@ -42,6 +42,10 @@ describe("editionCardFingerprint", () => {
       { qrTarget: "home" },
       { printedAddress: "loja.trive.com.br" },
     ];
+    // O nome da loja só desenha no cartão do presente: muda o hash só dele.
+    expect(editionCardFingerprint({ ...base, storeName: "Outra Loja" })).toBe(editionCardFingerprint(base));
+    const gift = { ...base, qrTarget: "home" as const };
+    expect(editionCardFingerprint({ ...gift, storeName: "Outra Loja" })).not.toBe(editionCardFingerprint(gift));
     // O layout é derivado dos textos: não entra no hash.
     expect(editionCardFingerprint({ ...base, layout: { ...base.layout, bodySize: 26 } })).toBe(editionCardFingerprint(base));
     const seen = new Set([editionCardFingerprint(base)]);

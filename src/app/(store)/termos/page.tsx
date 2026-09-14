@@ -55,7 +55,7 @@ export default async function TermsPage() {
 
   return (
     <LegalArticle
-      eyebrow="A TRIVÉ, por escrito"
+      eyebrow={`A ${storeName}, por escrito`}
       title="Termos de uso"
       lede={
         <>
@@ -82,7 +82,7 @@ export default async function TermsPage() {
           — informações publicadas em cumprimento ao Decreto 7.962/2013, que
           regula o comércio eletrônico no Brasil.
           {hasStoreData && !(cnpj && address)
-            ? " Os dados completos da TRIVÉ estão no rodapé."
+            ? ` Os dados completos da ${storeName} estão no rodapé.`
             : null}
         </p>
         <p>Fale com a gente {contact}.</p>

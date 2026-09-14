@@ -187,7 +187,7 @@ export default async function PrivacyPage() {
           . Canal de contato para assuntos de privacidade: fale com a gente{" "}
           {contact}.
           {hasStoreData && !cnpj
-            ? " Os dados completos da TRIVÉ estão no rodapé."
+            ? ` Os dados completos da ${storeName} estão no rodapé.`
             : null}
         </p>
         <p>
