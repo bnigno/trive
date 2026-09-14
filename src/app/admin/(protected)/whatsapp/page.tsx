@@ -372,7 +372,7 @@ export default async function WhatsappPage() {
             settingKey="atelier_enabled"
             checked={data.atelierEnabled}
             label="Ateliê pelo WhatsApp"
-            hint="Do SEU celular (o número cadastrado em Conexão), mande as fotos da peça para o número da maison e depois um recado com o nome dela — texto ou áudio. A peça nasce em rascunho, com as fotos, e você recebe o link. Texto solto seu continua indo para a Lia, como cliente."
+            hint="Do SEU celular (o número cadastrado em Conexão), mande as fotos da peça para o número da TRIVÉ e depois um recado com o nome dela — texto ou áudio. A peça nasce em rascunho, com as fotos, e você recebe o link. Texto solto seu continua indo para a Lia, como cliente."
           />
           <ToggleSwitch
             settingKey="feedback_ask_enabled"
@@ -411,7 +411,7 @@ export default async function WhatsappPage() {
       </Card>
 
       {/* Bom dia da maison */}
-      <Card title="Bom dia da maison">
+      <Card title="Bom dia da TRIVÉ">
         <div className="grid gap-6 md:grid-cols-[1fr_auto] md:items-start">
           <ToggleSwitch
             settingKey="owner_digest_enabled"

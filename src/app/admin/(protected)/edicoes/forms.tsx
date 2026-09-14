@@ -43,7 +43,7 @@ function EditionFields({ values }: { values: EditionFormValues | null }) {
           <Input name="slug" maxLength={80} defaultValue={values?.slug ?? ""} placeholder="vestida-para-o-cirio" />
         </Field>
       </div>
-      <Field label="Frase de abertura" hint="Uma linha, no tom da maison. Ex.: Vestida para o Círio.">
+      <Field label="Frase de abertura" hint="Uma linha, no tom da loja. Ex.: Vestida para o Círio.">
         <Input name="openingLine" maxLength={160} defaultValue={values?.openingLine ?? ""} />
       </Field>
       <Field label="Parágrafo da curadora" hint="Por que esta edição existe. Quebra de linha vira parágrafo.">

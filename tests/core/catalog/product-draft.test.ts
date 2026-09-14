@@ -63,7 +63,7 @@ describe("buildProductDraftPrompt", () => {
 
   it("sem manifesto e sem salas: tom padrão e categorySlug null", () => {
     const prompt = buildProductDraftPrompt({ storeName: "TRIVÉ", manifesto: "  ", categories: [], knownColors: [], knownSizes: [] });
-    expect(prompt).toContain("TOM DA MAISON: elegante");
+    expect(prompt).toContain("TOM DA LOJA: elegante");
     expect(prompt).toContain("nenhuma sala cadastrada");
   });
 });

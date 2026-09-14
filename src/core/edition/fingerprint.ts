@@ -20,6 +20,9 @@ export function editionCardFingerprint(data: EditionCardData): string {
       data.careNote,
       data.qrUrl,
       data.qrTarget,
+      // O nome da loja só entra no desenho do presente ("Conheça a TRIVÉ…"):
+      // muda o hash só desses cartões — os de peça não pedem redesenho à toa.
+      ...(data.qrTarget === "home" ? [data.storeName] : []),
       data.printedAddress,
     ]),
   );

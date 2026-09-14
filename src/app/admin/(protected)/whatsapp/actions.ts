@@ -279,7 +279,7 @@ const DIGEST_SKIP_MESSAGES: Record<string, string> = {
   digest_desligado: "O resumo está desligado — ligue o interruptor acima.",
   desabilitado: "O WhatsApp da loja está desligado.",
   sem_telefone_dono: "Cadastre o seu WhatsApp na conexão abaixo antes de enviar.",
-  sem_template: "O modelo “Bom dia da maison” está desligado nas mensagens automáticas.",
+  sem_template: "O modelo “Bom dia da TRIVÉ” está desligado nas mensagens automáticas.",
   numero_sem_whatsapp: "O seu número não tem WhatsApp ativo — confira na conexão abaixo.",
 };
 

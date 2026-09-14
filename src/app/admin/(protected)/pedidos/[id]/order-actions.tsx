@@ -236,7 +236,7 @@ export function OrderActions({
         <div className="flex flex-col gap-1">
           <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            A peça foi com o motoboy: a cliente recebe “Saiu da maison, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
+            A peça foi com o motoboy: a cliente recebe “Saiu da TRIVÉ, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
           </p>
         </div>
       ) : null}

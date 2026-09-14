@@ -290,7 +290,7 @@ ficam "aguardando pagamento" até o motoboy voltar) — por horário, com
 endereço, telefone e o que receber. **Saiu** marca o pedido pago como
 enviado; o de dinheiro só ganha a marca de saída e vai para **Na rua** até
 você registrar o pagamento no pedido e clicar **Entregue — o motoboy
-voltou**. Nos dois casos a cliente recebe "Saiu da maison, chega hoje entre
+voltou**. Nos dois casos a cliente recebe "Saiu da TRIVÉ, chega hoje entre
 19h e 21h" (template `order_out_for_delivery`), uma vez só. Janela que já
 passou não sai: reagende antes. Pedido que **pagou depois da hora-limite** ou com
 janela de ontem aparece marcado com **Reagendar** — a nova janela não avisa a
@@ -334,7 +334,7 @@ cotação e o fechamento: `criar_pedido` recusa e manda cotar de novo. Um
 
 Do **celular da dona** (o número em **Vendedora & WhatsApp › Conexão**, nunca
 o número da própria linha — esse chega como `fromMe` e é ignorado), mande as
-fotos da peça para o número da maison e, em seguida, um recado com o nome
+fotos da peça para o número da TRIVÉ e, em seguida, um recado com o nome
 (texto ou áudio). Em até ~1 minuto ela recebe "Rascunho pronto · Longo Dunas ·
 3 fotos" com o link da ficha; a peça nasce em rascunho, com as fotos, e nada
 aparece na loja. Regras: cada foto chega num webhook próprio, o lote são as

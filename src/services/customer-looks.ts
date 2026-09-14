@@ -25,10 +25,9 @@ import {
   type LookConsentAnswer,
 } from "@/core/looks/consent";
 import { auditLog, customerLooks, customers, products, settings, waMessages } from "@/db/schema";
-import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { loadCardPhotoDataUrl, type CardRenderer } from "@/services/bot-cards";
-import { getSettingsMap } from "@/services/settings";
+import { getStoreName } from "@/services/settings";
 import { INBOUND_IMAGE_MAX_BYTES } from "@/services/wa-media";
 import { sendMediaMessage, type SendWaMessageResult, type WaSkipReason } from "@/services/wa-messaging";
 
@@ -188,8 +187,7 @@ export async function renderAndSendCustomerLookCard(
   if (!cardPath) {
     // A foto acabou de ser gravada: não abrir é falha transitória do Storage — relança.
     const photoDataUrl = await loadCardPhotoDataUrl(storage, photoPath, cardFrameSize("customer_look", "hero", 1));
-    const settingsMap = await getSettingsMap(db, ["store_name"]);
-    const storeName = typeof settingsMap["store_name"] === "string" && settingsMap["store_name"].trim() !== "" ? settingsMap["store_name"].trim() : STORE_NAME_DEFAULT;
+    const storeName = await getStoreName(db);
     const data: CustomerLookCardData = {
       kind: "customer_look",
       storeName,
@@ -197,7 +195,7 @@ export async function renderAndSendCustomerLookCard(
       title: lookCardTitle(look.displayName, look.productName),
       productName: look.productName,
       photoDataUrl,
-      caption: "Obrigada por vestir a maison.",
+      caption: `Obrigada por vestir a ${storeName}.`,
     };
     const png = await render(data);
     const card = await sharp(png).jpeg({ quality: LOOK_CARD_JPEG_QUALITY }).toBuffer();

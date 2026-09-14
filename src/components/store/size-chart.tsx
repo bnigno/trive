@@ -50,7 +50,7 @@ export function SizeChartTable({ chart }: { chart: SizeChartRow[] }) {
         </table>
       </div>
       <p className="font-store text-sm text-ink-500">
-        Medidas da peça deitada, em centímetros. Em dúvida entre dois tamanhos, fale com a maison.
+        Medidas da peça deitada, em centímetros. Em dúvida entre dois tamanhos, fale com a gente.
       </p>
     </div>
   );

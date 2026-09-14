@@ -58,8 +58,8 @@ async function seedTemplate(isActive = true): Promise<void> {
     key: "payment_receipt",
     label: "Comprovante",
     bodyTemplate:
-      "{{nome}}, este é o comprovante do pagamento do pedido #{{pedido}}. Acompanhe: {{link}}",
-    variables: ["nome", "pedido", "link"],
+      "{{nome}}, este é o comprovante do pagamento do pedido #{{pedido}}. A {{loja}} agradece. Acompanhe: {{link}}",
+    variables: ["nome", "pedido", "loja", "link"],
     isActive,
   });
 }
@@ -190,6 +190,8 @@ describe("sendReceiptWa", () => {
     expect(provider.sentImages).toHaveLength(1);
     expect(provider.sentImages[0].imageUrl).toContain("?v=");
     expect(provider.sentImages[0].caption).toMatch(/Maria, este é o comprovante do pagamento do pedido #\d+/);
+    // {{loja}} é o nome da loja (setting store_name) — nunca "maison".
+    expect(provider.sentImages[0].caption).toContain("A TRIVÉ agradece.");
 
     const messages = await db.select().from(schema.waMessages);
     expect(messages).toHaveLength(1);

@@ -8,7 +8,7 @@ const WITH_SALES: readonly string[] = [
   "Terça-feira: o balanço de ontem, antes do café.",
   "Meio de semana. Ontem rendeu isto.",
   "Quinta-feira: o resumo de ontem está pronto.",
-  "Sexta chegou. Ontem foi assim na maison.",
+  "Sexta chegou. Ontem foi assim por aqui.",
   "Sábado: o que ontem deixou de bom.",
 ];
 

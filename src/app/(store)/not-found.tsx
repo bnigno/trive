@@ -19,7 +19,7 @@ export default async function StoreNotFound() {
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center gap-6 px-4 py-20 text-center">
       <p className={eyebrow}>Página não encontrada</p>
       <h1 className="font-display text-title font-semibold text-balance text-espresso-900">
-        Essa porta não existe na maison
+        Essa porta não existe na TRIVÉ
       </h1>
       <Ribbon variant="static" size="sm" />
       <p className="w-full max-w-md text-[15px] leading-7 text-ink-700">

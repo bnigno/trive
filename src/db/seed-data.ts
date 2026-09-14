@@ -112,10 +112,10 @@ export const initialWaTemplates: Array<{
     key: "payment_receipt",
     label: "Comprovante de pagamento (legenda da imagem)",
     bodyTemplate:
-      "{{nome}}, este é o comprovante do pagamento do pedido #{{pedido}}. A maison agradece. 🤍\n" +
+      "{{nome}}, este é o comprovante do pagamento do pedido #{{pedido}}. A {{loja}} agradece. 🤍\n" +
       "Acompanhe: {{link}}\n" +
       "Para não receber avisos, responda SAIR.",
-    variables: ["nome", "pedido", "link"],
+    variables: ["nome", "pedido", "loja", "link"],
   },
   {
     // Foto do pacote (legenda da imagem): sai quando o dono registra a
@@ -166,10 +166,10 @@ export const initialWaTemplates: Array<{
     key: "order_out_for_delivery",
     label: "Saiu para entrega (motoboy)",
     bodyTemplate:
-      "Boa notícia, {{nome}}! Seu pedido #{{pedido}} saiu da maison e chega {{dia}}, entre {{janela}}. 🛵\n" +
+      "Boa notícia, {{nome}}! Seu pedido #{{pedido}} saiu da {{loja}} e chega {{dia}}, entre {{janela}}. 🛵\n" +
       "Acompanhe por aqui: {{link}}\n" +
       "Para não receber avisos, responda SAIR.",
-    variables: ["nome", "pedido", "dia", "janela", "link"],
+    variables: ["nome", "pedido", "dia", "janela", "loja", "link"],
   },
   {
     key: "order_delivered",
@@ -340,7 +340,7 @@ export const initialWaTemplates: Array<{
   {
     // Legenda da imagem "Bom dia da maison" (todo dia às 8h, só para o dono).
     key: "owner_daily_digest",
-    label: "[interno] Bom dia da maison (legenda da imagem)",
+    label: "[interno] Bom dia da TRIVÉ (legenda da imagem)",
     bodyTemplate:
       "Bom dia! ☕ Seu resumo de {{dia}}, {{data}}:\n" +
       "Vendas: {{vendas}} em {{pedidos}} pedido(s) · ticket {{ticket}}\n" +

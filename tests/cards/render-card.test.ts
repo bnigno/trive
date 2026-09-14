@@ -238,7 +238,7 @@ describe("story do lançamento", () => {
         title: "Ana veste Longo Dunas",
         productName: "Longo Dunas",
         photoDataUrl: items[0].imageDataUrl,
-        caption: "Obrigada por vestir a maison.",
+        caption: "Obrigada por vestir a TRIVÉ.",
       },
       await loadReceiptAssets(),
     );

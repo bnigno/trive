@@ -7,6 +7,7 @@ import {
 } from "@/components/store/legal/legal-article";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { describeContact, settingText } from "@/lib/settings-text";
 import { getSettingsMap } from "@/services/settings";
 
@@ -31,7 +32,7 @@ export default async function ReturnsPage() {
   const s = await tryOrBuildFallback({}, () =>
     getSettingsMap(getDb(), ["store_name", "store_email", "store_whatsapp"]),
   );
-  const storeName = settingText(s, "store_name", "a maison");
+  const storeName = settingText(s, "store_name", STORE_NAME_DEFAULT);
   const email = settingText(s, "store_email");
   const whatsapp = settingText(s, "store_whatsapp");
   const contact = describeContact(whatsapp, email);

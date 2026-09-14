@@ -163,10 +163,10 @@ export function fitEditionTitle(name: string): { text: string; truncated: boolea
 }
 
 /** O convite ao lado do QR, conforme o destino dele. */
-export function editionInvite(qrTarget: "peca" | "home"): string {
+export function editionInvite(qrTarget: "peca" | "home", storeName: string): string {
   return qrTarget === "peca"
     ? "Veja a peça, a ficha e a nossa conversa."
-    : "Conheça a maison e fale com a curadora.";
+    : `Conheça a ${storeName} e fale com a curadora.`;
 }
 
 /** Só o texto, para quem não precisa do aviso de corte. */

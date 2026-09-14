@@ -81,7 +81,7 @@ export type RawArrivalProposal = z.infer<typeof rawArrivalProposalSchema>;
 export const ARRIVAL_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
-    name: { type: "string", description: "Nome da peça como a dona chamou no recado (ou, se não disse, um nome curto no tom da maison), até 80 caracteres, sem cor nem preço." },
+    name: { type: "string", description: "Nome da peça como a dona chamou no recado (ou, se não disse, um nome curto no tom da loja), até 80 caracteres, sem cor nem preço." },
     categorySlug: { type: ["string", "null"], description: "Slug de UMA sala da lista, ou null." },
     description: { type: "string", description: "Descrição da peça com pelo menos 300 caracteres, em pt-BR." },
     composition: { type: "string", description: "Composição lida na etiqueta ou dita no recado; vazio se não houver." },

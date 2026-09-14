@@ -867,7 +867,7 @@ export function CheckoutClient({
               <span>
                 Sim, é para presentear alguém. Enviamos{" "}
                 <strong className="font-medium text-espresso-900">sem preço na embalagem</strong>,
-                com um bilhete impresso na tipografia da maison.
+                com um bilhete impresso na tipografia da TRIVÉ.
               </span>
             </label>
             {isGift ? (
@@ -883,7 +883,7 @@ export function CheckoutClient({
                 </Field>
                 <Field
                   label="Bilhete (opcional)"
-                  hint={`${giftMessage.length}/${GIFT_MESSAGE_MAX} · sem emojis — impresso com a tipografia da maison`}
+                  hint={`${giftMessage.length}/${GIFT_MESSAGE_MAX} · sem emojis — impresso com a tipografia da TRIVÉ`}
                   className="sm:col-span-2"
                 >
                   <textarea
@@ -910,7 +910,7 @@ export function CheckoutClient({
               />
               <span>
                 Sim, preciso da peça até um dia. Mostramos, em cada opção de entrega,{" "}
-                <strong className="font-medium text-espresso-900">se chega a tempo</strong> — e a maison prioriza a saída.
+                <strong className="font-medium text-espresso-900">se chega a tempo</strong> — e a TRIVÉ prioriza a saída.
               </span>
             </label>
             {hasNeededBy ? (

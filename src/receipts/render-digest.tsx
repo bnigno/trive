@@ -154,7 +154,7 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
             color: C.gold400,
           }}
         >
-          BOM DIA DA MAISON
+          {`BOM DIA DA ${data.storeName.toUpperCase()}`}
         </div>
         <div style={{ marginTop: 8, fontSize: 22, color: C.ivory300 }}>
           {data.dayLabel}

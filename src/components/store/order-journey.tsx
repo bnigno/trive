@@ -107,7 +107,7 @@ export function OrderJourney({
                   {/* Foto tirada pelo dono; sem dado pessoal (aviso no painel). */}
                   <img
                     src={packagePhotoUrl}
-                    alt="Foto do seu pacote, embalado na maison"
+                    alt="Foto do seu pacote, embalado na TRIVÉ"
                     loading="lazy"
                     className="aspect-[4/5] w-full rounded-(--radius-hair) border border-ivory-300 object-cover"
                   />

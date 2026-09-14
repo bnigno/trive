@@ -30,7 +30,7 @@ import {
   listPublicProducts,
 } from "@/services/store-catalog";
 
-const COLLECTION_DESCRIPTION = "Todas as peças da maison, por sala ou por busca.";
+const COLLECTION_DESCRIPTION = "Todas as peças da TRIVÉ, por sala ou por busca.";
 
 /** Cada sala é uma página de verdade (canonical); a busca não é indexável. */
 export async function generateMetadata({
@@ -52,7 +52,7 @@ export async function generateMetadata({
   const description = edition
     ? (edition.openingLine ?? `As peças da ${edition.name}, escolhidas para Belém.`)
     : sala
-      ? `As peças da sala ${sala.name} da maison, escolhidas com calma.`
+      ? `As peças da sala ${sala.name} da TRIVÉ, escolhidas com calma.`
       : COLLECTION_DESCRIPTION;
   return {
     title,
@@ -222,7 +222,7 @@ export default async function ProdutosPage({
       {/* 3. Cabeço corrente: salas + contagem */}
       {categories.length > 0 ? (
         <nav
-          aria-label="Salas da maison"
+          aria-label="Salas da TRIVÉ"
           className="sticky top-(--header-h) z-30 mt-8 border-b border-ivory-300 bg-ivory-100/95 py-1 lg:backdrop-blur"
         >
           <div className="lg:flex lg:items-center lg:justify-between lg:gap-6">

@@ -200,7 +200,7 @@ export default async function OrderPage({
         >
           <Monogram tone="gold" size={56} className="mx-auto" />
           <p className="mt-5 font-display text-title font-semibold text-balance text-ivory-100 italic">
-            A maison agradece. Recebemos o seu pedido.
+            A TRIVÉ agradece. Recebemos o seu pedido.
           </p>
           <p className="mt-3 font-store text-sm text-ivory-300">
             Acompanhe tudo por esta página — e guarde o link.
@@ -268,7 +268,7 @@ export default async function OrderPage({
               ) : null}
               {order.neededByLabel ? (
                 <p className="mb-4 font-store text-sm text-ink-700">
-                  Data marcada: <span className="font-medium text-ink-900">{order.neededByLabel}</span>. A maison prioriza a saída.
+                  Data marcada: <span className="font-medium text-ink-900">{order.neededByLabel}</span>. A TRIVÉ prioriza a saída.
                 </p>
               ) : null}
               {journey ? (
@@ -433,7 +433,7 @@ export default async function OrderPage({
                   <button type="submit" className={btnPrimary}>
                     Chegou!
                   </button>
-                  <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a maison.</p>
+                  <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a TRIVÉ.</p>
                   {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
                 </form>
               ) : null}
@@ -448,7 +448,7 @@ export default async function OrderPage({
                 <button type="submit" className={btnPrimary}>
                   Chegou!
                 </button>
-                <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a maison.</p>
+                <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a TRIVÉ.</p>
                 {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
               </form>
             </Sheet>

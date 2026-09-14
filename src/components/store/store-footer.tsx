@@ -61,7 +61,7 @@ export function StoreFooter({
 
         <div className="mt-12 grid gap-10 sm:grid-cols-3">
           <div className="space-y-1.5">
-            <p className={`${eyebrowNoir} mb-3`}>A maison</p>
+            <p className={`${eyebrowNoir} mb-3`}>A marca</p>
             <p className="font-display text-base font-semibold tracking-[0.2em] text-ivory-100">
               {storeName}
             </p>

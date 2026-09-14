@@ -103,6 +103,7 @@ function card(partial: Omit<EditionCardData, "layout">): EditionCardData {
 }
 
 const base: EditionCardData = card({
+  storeName: "TRIVÉ",
   editionName: "Edição Círio",
   productName: "Longo Dunas",
   curatorNote: "Escolhi este linho pelo caimento no calor: ele acompanha o corpo sem grudar.",
@@ -202,7 +203,7 @@ describe("renderEditionCardPng", () => {
     expect(qrTop - lastBand.end).toBeGreaterThanOrEqual(G.boxes.paddingBottom);
   });
 
-  it("presente: o convite fala da maison, não da peça (o QR vai para a home)", async () => {
+  it("presente: o convite fala da TRIVÉ, não da peça (o QR vai para a home)", async () => {
     const data = card({ ...base, qrUrl: "https://trivemaison.com.br", qrTarget: "home" });
     const png = await renderEditionCardPng(data, await loadReceiptAssets());
     await check(png, data);

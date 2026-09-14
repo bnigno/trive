@@ -53,6 +53,14 @@ describe("buildBotSystemPrompt", () => {
     expect(section).toContain("nunca o repita");
   });
 
+  it("a loja é chamada pelo nome dela: o prompt nunca a chama de 'maison' (só proíbe a palavra)", () => {
+    const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
+    expect(prompt).toContain("A TRIVÉ é uma marca de moda brasileira");
+    expect(prompt).toContain("A loja se chama TRIVÉ — nunca a chame de \"maison\"");
+    // Fora da proibição, a palavra não aparece em lugar nenhum do prompt.
+    expect(prompt.replace(/nunca a chame de "maison"/g, "")).not.toMatch(/\bmaison\b/i);
+  });
+
   it("ocasião de Belém: manda usar o filtro edicao e nunca inventar edição", () => {
     const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
     expect(prompt).toContain("listar_produtos com edicao");
