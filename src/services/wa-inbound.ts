@@ -677,7 +677,7 @@ export async function processZapiInbound(
         waMessageId: message.id,
         now,
       });
-      if (recorded.context) {
+      if (recorded.recorded && recorded.context) {
         const contextText = feedbackHistoryText(recorded.context);
         await tx.update(waMessages).set({ body: contextText }).where(eq(waMessages.id, message.id));
         if (feedbackHandledBy(feedbackRow.answer) === "human") {

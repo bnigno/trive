@@ -224,7 +224,7 @@ export default async function PedidoDetalhePage({
 
           <OrderFinancialCard orderId={order.id} />
 
-          {order.status === "delivered" ? (
+          {order.status === "delivered" || feedback ? (
             <Card title="Chegou bem?">
               {!feedback ? (
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">Ainda não perguntado — a lista sai um dia depois da entrega, das 9h às 21h, se a cliente aceita avisos.</p>

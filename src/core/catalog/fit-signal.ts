@@ -26,8 +26,14 @@ export const FIT_SIGNAL_LABELS: Record<FitSignal, string> = {
   veste_pequeno: "Veste pequeno",
 };
 
+/** Peça sem eixo de tamanho: um balde só, sem conselho de "um número". */
+export const FIT_SIZE_SINGLE = "único";
+
 /** A frase da vitrine, por tamanho: honesta e curta. */
 export function fitSignalStoreLine(size: string, signal: FitSignal): string {
+  if (size === FIT_SIZE_SINGLE) {
+    return signal === "veste_grande" ? "Pelas clientes, esta peça tende a vestir grande." : "Pelas clientes, esta peça tende a vestir pequeno.";
+  }
   return signal === "veste_grande"
     ? `Pelas clientes, o ${size} tende a vestir grande — na dúvida, um número abaixo.`
     : `Pelas clientes, o ${size} tende a vestir pequeno — na dúvida, um número acima.`;

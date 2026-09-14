@@ -135,9 +135,13 @@ toque volta pelo webhook (`feedback:<resposta>:<pedido>`): **grande/pequeno**
 caem na Lia, que agradece, ajusta a cartela e transfere a troca com resumo;
 **defeito** e **falar** vão direto para você (conversa em "com você"). A
 ficha do pedido mostra o estado (card **Chegou bem?**); a ficha da peça ganha
-**Caimento pelas clientes** (por tamanho) e, a partir de 3 respostas com 60%
-na mesma direção, a vitrine avisa "Pelas clientes, o M tende a vestir
-pequeno". Produção: migração 0038 e
+**Caimento pelas clientes** (por tamanho; uma opinião por cliente; peça sem
+eixo de tamanho conta como "único") e, a partir de 3 clientes com 60% na
+mesma direção, a vitrine avisa "Pelas clientes, o M tende a vestir pequeno".
+Se ela tocar de novo com outra opção, a última vale (a ficha e a conversa
+ficam iguais). Se a pergunta não sair (WhatsApp fora do ar, número sem
+WhatsApp), a ficha continua "ainda não perguntado" — nada fica "perguntado"
+sem ter saído. Produção: migração 0038 e
 `scripts/sync-seed.ts --settings feedback_ask_enabled --templates delivery_feedback_ask`.
 
 ## Entrega por motoboy: rota do dia e "Saiu"

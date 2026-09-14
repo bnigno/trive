@@ -573,9 +573,11 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // cliente, uma vez; skips não lançam.
   "order.delivered": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
-    const result = await sendDeliveredWa(getDb(), getMessagingProvider(), getFileStorage(), { orderId });
-    // "Chegou bem?" um dia depois (dedupe por pedido: o retry não agenda duas vezes).
+    // "Chegou bem?" um dia depois da entrega — agendado ANTES do aviso, para
+    // um provedor fora do ar não engolir a pergunta (dedupe por pedido: o
+    // retry não agenda duas vezes).
     await scheduleDeliveryFeedback(getDb(), { orderId, now: new Date() });
+    const result = await sendDeliveredWa(getDb(), getMessagingProvider(), getFileStorage(), { orderId });
     console.info(`[order.delivered] ${orderId} → ${JSON.stringify(result)}`);
   },
   // "Chegou bem?": a lista tocável, na janela; skips não lançam.

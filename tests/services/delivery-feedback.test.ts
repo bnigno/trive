@@ -117,6 +117,35 @@ describe("scheduleDeliveryFeedback / askDeliveryFeedback", () => {
     expect(provider.sentOptionLists).toHaveLength(1);
   });
 
+  it("+24 h conta da ENTREGA, não do retry do handler", async () => {
+    const { orderId } = await seedDelivered();
+    await scheduleDeliveryFeedback(sdb, { orderId, now: new Date(NOW.getTime() + 6 * 3_600_000) });
+    const [event] = await db.select().from(schema.outboxEvents);
+    expect(event.nextAttemptAt.getTime()).toBe(NOW.getTime() + FEEDBACK_DELAY_MS);
+  });
+
+  it("provedor fora do ar na 1ª tentativa: nada fica 'perguntado'; o retry manda a lista uma vez", async () => {
+    const { orderId } = await seedDelivered();
+    provider.simulateDisconnect();
+    await expect(askDeliveryFeedback(sdb, provider, { orderId, now: NOW })).rejects.toThrow();
+    expect(await db.select().from(schema.deliveryFeedback)).toHaveLength(0);
+    expect(await getFeedbackForOrder(sdb, orderId)).toBeNull();
+    provider.simulateReconnect();
+    expect(await askDeliveryFeedback(sdb, provider, { orderId, now: NOW })).toMatchObject({ sent: true });
+    expect(provider.sentOptionLists).toHaveLength(1);
+    expect(await db.select().from(schema.deliveryFeedback)).toHaveLength(1);
+    // Retry depois de enviado: o dedupe de wa_messages responde e nada sai de novo.
+    expect(await askDeliveryFeedback(sdb, provider, { orderId, now: NOW })).toEqual({ skipped: "ja_perguntado" });
+    expect(provider.sentOptionLists).toHaveLength(1);
+  });
+
+  it("número sem WhatsApp: não sai e não fica 'perguntado'", async () => {
+    const { orderId } = await seedDelivered();
+    provider.setPhoneExists(PHONE, false);
+    expect(await askDeliveryFeedback(sdb, provider, { orderId, now: NOW })).toEqual({ skipped: "numero_sem_whatsapp" });
+    expect(await db.select().from(schema.deliveryFeedback)).toHaveLength(0);
+  });
+
   it("fora da janela re-enfileira para as 9h com dedupe datado; desligado, sem opt-in, não entregue e pedido com várias peças", async () => {
     const { orderId } = await seedDelivered();
     const night = new Date("2026-09-14T02:00:00Z"); // 23:00 em SP
@@ -163,7 +192,7 @@ describe("o toque volta pelo webhook", () => {
       },
     });
 
-  it("'Ficou grande' grava a resposta, vira texto com contexto e cai na Lia; a segunda resposta não sobrescreve", async () => {
+  it("'Ficou grande' grava a resposta, vira texto com contexto e cai na Lia; outra opção depois substitui (com o rastro); o mesmo toque repetido não muda nada", async () => {
     const { orderId, orderNumber } = await seedDelivered();
     await askDeliveryFeedback(sdb, provider, { orderId, now: NOW });
     const result = await send("MSG-FB-1", feedbackRowId("grande", orderId), "Ficou grande");
@@ -175,11 +204,20 @@ describe("o toque volta pelo webhook", () => {
     expect(inbound[0].body).toBe(`[resposta ao "Chegou bem?" do pedido #${orderNumber} (Longo Dunas · Areia · M)]: Ficou grande`);
     expect(row.answerWaMessageId).toBe(inbound[0].id);
 
+    expect(await listFeedbackByPhone(sdb, PHONE)).toEqual([expect.stringContaining(`Pedido #${orderNumber} (Longo Dunas · Areia · M): respondeu "Ficou grande"`)]);
+
+    // Ela reabre a lista e toca "Amei": a última vale — ficha, caderninho e conversa iguais.
     await send("MSG-FB-2", feedbackRowId("amei", orderId), "Amei");
     const [after] = await db.select().from(schema.deliveryFeedback).where(eq(schema.deliveryFeedback.orderId, orderId));
-    expect(after.answer).toBe("grande");
-
-    expect(await listFeedbackByPhone(sdb, PHONE)).toEqual([expect.stringContaining(`Pedido #${orderNumber} (Longo Dunas · Areia · M): respondeu "Ficou grande"`)]);
+    expect(after.answer).toBe("amei");
+    const second = await db.select().from(schema.waMessages).where(eq(schema.waMessages.zapiMessageId, "MSG-FB-2"));
+    expect(second[0].body).toContain('Amei (antes tinha respondido "Ficou grande")');
+    // O mesmo toque de novo: nada muda e a mensagem segue como texto comum.
+    await send("MSG-FB-2b", feedbackRowId("amei", orderId), "Amei");
+    const third = await db.select().from(schema.waMessages).where(eq(schema.waMessages.zapiMessageId, "MSG-FB-2b"));
+    expect(third[0].body).not.toContain("[resposta ao");
+    const [same] = await db.select().from(schema.deliveryFeedback).where(eq(schema.deliveryFeedback.orderId, orderId));
+    expect(same.answerWaMessageId).toBe(second[0].id);
   });
 
   it("'Veio com defeito' transfere para a equipe (conversa em 'human'), sem turno da Lia", async () => {
@@ -228,15 +266,33 @@ describe("getFitSignalsForProduct", () => {
     const answers: ("amei" | "grande" | "pequeno")[] = ["grande", "grande", "amei"];
     const orderIds = [first.orderId];
     for (let i = 1; i < 3; i += 1) orderIds.push((await seedDelivered({ productId: first.productId, variantId: first.variantId })).orderId);
+    // Três clientes diferentes (uma opinião por pessoa).
     for (const [index, orderId] of orderIds.entries()) {
-      await db.insert(schema.deliveryFeedback).values({ orderId, phoneE164: PHONE, productVariantId: (await db.select({ v: schema.orderItems.productVariantId }).from(schema.orderItems).where(eq(schema.orderItems.orderId, orderId)))[0].v, answer: answers[index], askedAt: NOW, answeredAt: NOW });
+      await db.insert(schema.deliveryFeedback).values({ orderId, phoneE164: `+551199999010${index}`, productVariantId: (await db.select({ v: schema.orderItems.productVariantId }).from(schema.orderItems).where(eq(schema.orderItems.orderId, orderId)))[0].v, answer: answers[index], askedAt: NOW, answeredAt: NOW });
     }
     const gSize = await seedDelivered({ size: "G", productId: first.productId });
     await db.insert(schema.deliveryFeedback).values({ orderId: gSize.orderId, phoneE164: PHONE, productVariantId: gSize.variantId, answer: "pequeno", askedAt: NOW, answeredAt: NOW });
     const signals = await getFitSignalsForProduct(sdb, first.productId);
     expect(signals).toEqual([
-      { size: "G", amei: 0, grande: 0, pequeno: 1, signal: null },
       { size: "M", amei: 1, grande: 2, pequeno: 0, signal: "veste_grande" },
+      { size: "G", amei: 0, grande: 0, pequeno: 1, signal: null },
     ]);
+  });
+
+  it("uma opinião por cliente: três pedidos da mesma pessoa contam uma vez; sem eixo de tamanho vira 'único'", async () => {
+    const first = await seedDelivered({ size: "M" });
+    const orderIds = [first.orderId];
+    for (let i = 1; i < 3; i += 1) orderIds.push((await seedDelivered({ productId: first.productId, variantId: first.variantId })).orderId);
+    for (const orderId of orderIds) {
+      await db.insert(schema.deliveryFeedback).values({ orderId, customerId: first.customerId, phoneE164: PHONE, productVariantId: first.variantId, answer: "grande", askedAt: NOW, answeredAt: NOW });
+    }
+    expect(await getFitSignalsForProduct(sdb, first.productId)).toEqual([{ size: "M", amei: 0, grande: 1, pequeno: 0, signal: null }]);
+
+    const [scarf] = await db.insert(schema.products).values({ name: "Lenço Rio", slug: "lenco-rio", status: "active", attributesSchema: ["cor"] }).returning({ id: schema.products.id });
+    const [green] = await db.insert(schema.productVariants).values({ productId: scarf.id, sku: "LR-VERDE", attributes: { cor: "Verde" }, costCents: 100 }).returning({ id: schema.productVariants.id });
+    await db.insert(schema.stockLevels).values({ productVariantId: green.id, onHand: 5, reserved: 0 });
+    const scarfOrder = await seedDelivered({ productId: scarf.id, variantId: green.id });
+    await db.insert(schema.deliveryFeedback).values({ orderId: scarfOrder.orderId, phoneE164: "+5511999990099", productVariantId: green.id, answer: "grande", askedAt: NOW, answeredAt: NOW });
+    expect(await getFitSignalsForProduct(sdb, scarf.id)).toEqual([{ size: "único", amei: 0, grande: 1, pequeno: 0, signal: null }]);
   });
 });

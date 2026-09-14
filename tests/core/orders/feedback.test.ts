@@ -26,6 +26,8 @@ describe("Chegou bem? — lista", () => {
     expect(parseFeedbackRowId("produto:longo-dunas")).toBeNull();
     expect(parseFeedbackRowId("feedback:otimo:" + ORDER)).toBeNull();
     expect(parseFeedbackRowId("feedback:amei:nao-e-uuid")).toBeNull();
+    expect(parseFeedbackRowId("feedback:amei:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBeNull();
+    expect(feedbackHistoryText({ answer: "defeito", orderNumber: 3, itemLabel: null, previous: "amei" })).toBe('[resposta ao "Chegou bem?" do pedido #3]: Veio com defeito (antes tinha respondido "Amei")');
     expect(parseFeedbackRowId(undefined)).toBeNull();
   });
 
@@ -59,5 +61,6 @@ describe("fitSignal", () => {
     expect(fitSignal({ amei: 0, grande: 1, pequeno: 1 }, { min: 2, ratio: 0.5 })).toBeNull();
     expect(fitSignalStoreLine("M", "veste_pequeno")).toContain("um número acima");
     expect(fitSignalStoreLine("G", "veste_grande")).toContain("um número abaixo");
+    expect(fitSignalStoreLine("único", "veste_grande")).toBe("Pelas clientes, esta peça tende a vestir grande.");
   });
 });

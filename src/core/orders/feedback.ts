@@ -50,7 +50,7 @@ export function feedbackRowId(answer: FeedbackAnswer, orderId: string): string {
 export function parseFeedbackRowId(rowId: string | undefined): { answer: FeedbackAnswer; orderId: string } | null {
   if (!rowId || !rowId.startsWith("feedback:")) return null;
   const [, answer, orderId] = rowId.split(":");
-  if (!isFeedbackAnswer(answer) || !orderId || !/^[0-9a-f-]{36}$/i.test(orderId)) return null;
+  if (!isFeedbackAnswer(answer) || !orderId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) return null;
   return { answer, orderId };
 }
 
@@ -63,9 +63,10 @@ export function feedbackOptions(orderId: string): { id: string; title: string; d
 }
 
 /** O toque vira texto no histórico da Lia (e no painel), com o contexto do pedido. */
-export function feedbackHistoryText(input: { answer: FeedbackAnswer; orderNumber: number; itemLabel: string | null }): string {
+export function feedbackHistoryText(input: { answer: FeedbackAnswer; orderNumber: number; itemLabel: string | null; previous?: FeedbackAnswer | null }): string {
   const item = input.itemLabel ? ` (${input.itemLabel})` : "";
-  return `[resposta ao "Chegou bem?" do pedido #${input.orderNumber}${item}]: ${FEEDBACK_LABELS[input.answer]}`;
+  const previous = input.previous ? ` (antes tinha respondido "${FEEDBACK_LABELS[input.previous]}")` : "";
+  return `[resposta ao "Chegou bem?" do pedido #${input.orderNumber}${item}]: ${FEEDBACK_LABELS[input.answer]}${previous}`;
 }
 
 /** A linha do caderninho: "Pedido #1042 (Longo Dunas · M): respondeu 'Ficou grande' em 05/09". */

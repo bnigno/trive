@@ -5,12 +5,12 @@
 // pequeno caem num turno da Lia (que ajusta a cartela e oferece a troca);
 // defeito e "falar" vão direto para a equipe. As respostas viram o sinal
 // de caimento por tamanho na ficha e na vitrine.
-import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, countDistinct, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
-import { findSizeAxis } from "@/core/catalog/measurements";
-import { fitSignal, type FitSignal } from "@/core/catalog/fit-signal";
+import { compareSizeLabels, findSizeAxis } from "@/core/catalog/measurements";
+import { FIT_SIZE_SINGLE, fitSignal, type FitSignal } from "@/core/catalog/fit-signal";
 import {
   FEEDBACK_DELAY_MS,
   feedbackMemoryLine,
@@ -38,15 +38,21 @@ export async function isFeedbackAskEnabled(db: DbOrTx): Promise<boolean> {
   return row?.value !== false;
 }
 
-/** Na transação de quem entregou: a pergunta fica agendada para um dia depois (dedupe por pedido). */
+/**
+ * A pergunta fica agendada para um dia depois da ENTREGA (delivered_at do
+ * pedido; `now` só quando o pedido ainda não a tem), com dedupe por pedido:
+ * o retry do handler não agenda duas vezes nem desliza a hora.
+ */
 export async function scheduleDeliveryFeedback(tx: DbOrTx, input: { orderId: string; now: Date }): Promise<void> {
+  const [order] = await tx.select({ deliveredAt: orders.deliveredAt }).from(orders).where(eq(orders.id, input.orderId)).limit(1);
+  const base = order?.deliveredAt ?? input.now;
   await enqueueOutboxEvent(tx, {
     eventType: FEEDBACK_ASK_EVENT,
     dedupeKey: `wa.feedback_ask:${input.orderId}`,
     aggregateType: "order",
     aggregateId: input.orderId,
     payload: { orderId: input.orderId },
-    nextAttemptAt: new Date(input.now.getTime() + FEEDBACK_DELAY_MS),
+    nextAttemptAt: new Date(base.getTime() + FEEDBACK_DELAY_MS),
   });
 }
 
@@ -54,12 +60,22 @@ export type AskFeedbackResult =
   | { sent: true; waMessageId: string }
   | { skipped: WaSkipReason | "desligado" | "nao_entregue" | "sem_telefone" | "ja_perguntado" | "fora_da_janela" };
 
+/** A linha de delivery_feedback nasce só depois de a lista SAIR (UNIQUE por pedido). */
+async function markAsked(db: DbOrTx, input: { orderId: string; customerId: string; phoneE164: string; productVariantId: string | null; now: Date }): Promise<void> {
+  await db
+    .insert(deliveryFeedback)
+    .values({ orderId: input.orderId, customerId: input.customerId, phoneE164: input.phoneE164, productVariantId: input.productVariantId, askedAt: input.now })
+    .onConflictDoNothing({ target: deliveryFeedback.orderId });
+}
+
 /**
  * A pergunta. Guardas em ordem: recurso ligado, pedido ainda entregue (não
  * reembolsado), cliente com telefone e opt-in, ainda não perguntado, dentro
  * da janela (fora, re-enfileira para a abertura com dedupe datado), template
- * ativo. A linha de delivery_feedback nasce ANTES do envio (UNIQUE por
- * pedido): reentrada da fila não pergunta duas vezes.
+ * ativo. O árbitro do envio é o dedupe de wa_messages (UNIQUE; retoma uma
+ * linha 'failed' no retry): a linha de delivery_feedback nasce DEPOIS de a
+ * lista sair — provedor fora do ar ou número sem WhatsApp não deixam
+ * "perguntado" sem pergunta.
  */
 export async function askDeliveryFeedback(
   db: DbOrTx,
@@ -133,20 +149,6 @@ export async function askDeliveryFeedback(
     peca: single ? single.name : items.length > 1 ? "suas peças" : "sua peça",
   });
 
-  // A linha nasce antes do envio: UNIQUE por pedido é o árbitro da duplicata.
-  const inserted = await db
-    .insert(deliveryFeedback)
-    .values({
-      orderId,
-      customerId: row.customerId,
-      phoneE164: row.phoneE164,
-      productVariantId: single?.productVariantId ?? null,
-      askedAt: now,
-    })
-    .onConflictDoNothing({ target: deliveryFeedback.orderId })
-    .returning({ id: deliveryFeedback.id });
-  if (inserted.length === 0) return { skipped: "ja_perguntado" };
-
   const result: SendWaMessageResult = await sendMediaMessage(db, provider, {
     kind: "option_list",
     body,
@@ -157,15 +159,21 @@ export async function askDeliveryFeedback(
     dedupeKey: `wa.feedback_ask:${orderId}`,
     requireOptIn: true,
   });
+  // Saiu agora, ou já tinha saído (retry depois de a linha não ter sido
+  // gravada): a linha nasce aqui. Qualquer outro skip não deixa rastro.
+  if ("sent" in result || result.skipped === "ja_enviado") {
+    await markAsked(db, { orderId, customerId: row.customerId, phoneE164: row.phoneE164, productVariantId: single?.productVariantId ?? null, now });
+  }
   return "sent" in result ? { sent: true, waMessageId: result.waMessageId } : result;
 }
 
-export type FeedbackContext = { orderNumber: number; itemLabel: string | null; answer: FeedbackAnswer };
+export type FeedbackContext = { orderNumber: number; itemLabel: string | null; answer: FeedbackAnswer; previous?: FeedbackAnswer | null };
 
 /**
  * O toque chegou (webhook): grava a resposta na linha do pedido — só se o
- * telefone é o mesmo que recebeu a pergunta e ainda não havia resposta. A
- * segunda resposta (ou uma reentrega) não sobrescreve.
+ * telefone é o mesmo que recebeu a pergunta. Se ela tocar de novo com outra
+ * opção, a ÚLTIMA vale (ficha, caderninho e sinal ficam iguais à conversa) e
+ * o contexto carrega a anterior; o mesmo toque repetido não muda nada.
  */
 export async function recordDeliveryFeedback(
   tx: DbOrTx,
@@ -188,12 +196,13 @@ export async function recordDeliveryFeedback(
     .from(orderItems)
     .where(eq(orderItems.orderId, input.orderId));
   const itemLabel = items.length === 1 ? await variantLabelOf(tx, items[0].variantId, items[0].name) : items.length > 1 ? `${items.length} peças` : null;
-  const context: FeedbackContext = { orderNumber: row.orderNumber, itemLabel, answer: input.answer };
-  if (row.answer !== null) return { recorded: false, context };
+  const previous = isFeedbackAnswer(row.answer) && row.answer !== input.answer ? row.answer : null;
+  const context: FeedbackContext = { orderNumber: row.orderNumber, itemLabel, answer: input.answer, previous };
+  if (row.answer === input.answer) return { recorded: false, context };
   await tx
     .update(deliveryFeedback)
     .set({ answer: input.answer, answeredAt: input.now, answerWaMessageId: input.waMessageId })
-    .where(and(eq(deliveryFeedback.id, row.id), sql`${deliveryFeedback.answer} IS NULL`));
+    .where(eq(deliveryFeedback.id, row.id));
   return { recorded: true, context };
 }
 
@@ -234,13 +243,18 @@ export async function listFeedbackByPhone(db: DbOrTx, phoneE164: string, limit =
 
 export type ProductFitSignals = { size: string; amei: number; grande: number; pequeno: number; signal: FitSignal | null }[];
 
-/** Por tamanho: quantas disseram amei / grande / pequeno, e o sinal quando há base. */
+/**
+ * Por tamanho: quantas CLIENTES (uma opinião por pessoa) disseram amei /
+ * grande / pequeno, e o sinal quando há base. Peça sem eixo de tamanho
+ * (lenço, bolsa, tamanho único) junta tudo em "único" — a vitrine não fala
+ * em "um número acima/abaixo" para ela.
+ */
 export async function getFitSignalsForProduct(db: DbOrTx, productId: string): Promise<ProductFitSignals> {
   const rows = await db
     .select({
       attributes: productVariants.attributes,
       answer: deliveryFeedback.answer,
-      total: count(),
+      total: countDistinct(sql`coalesce(${deliveryFeedback.customerId}::text, ${deliveryFeedback.phoneE164})`),
     })
     .from(deliveryFeedback)
     .innerJoin(productVariants, eq(productVariants.id, deliveryFeedback.productVariantId))
@@ -250,14 +264,14 @@ export async function getFitSignalsForProduct(db: DbOrTx, productId: string): Pr
   for (const row of rows) {
     const attributes = (row.attributes ?? {}) as Record<string, string>;
     const sizeAxis = findSizeAxis(Object.keys(attributes));
-    const size = sizeAxis ? attributes[sizeAxis] : (Object.values(attributes).filter(Boolean).join(" · ") || "único");
+    const size = sizeAxis && attributes[sizeAxis] ? attributes[sizeAxis] : FIT_SIZE_SINGLE;
     const counts = bySize.get(size) ?? { amei: 0, grande: 0, pequeno: 0 };
     counts[row.answer as "amei" | "grande" | "pequeno"] += Number(row.total);
     bySize.set(size, counts);
   }
   return [...bySize.entries()]
     .map(([size, counts]) => ({ size, ...counts, signal: fitSignal(counts) }))
-    .sort((a, b) => a.size.localeCompare(b.size, "pt-BR", { numeric: true }));
+    .sort((a, b) => compareSizeLabels(a.size, b.size));
 }
 
 /** O estado da pergunta para a ficha do pedido. */
