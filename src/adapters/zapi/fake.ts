@@ -1,6 +1,7 @@
 import type {
   DownloadedMedia,
   MessagingProvider,
+  OutboundAudioMessage,
   OutboundImageMessage,
   OutboundOptionListMessage,
   OutboundTextMessage,
@@ -22,6 +23,7 @@ export const FAKE_QR_CODE_PNG_BASE64 =
 export class FakeMessagingProvider implements MessagingProvider {
   readonly sentMessages: FakeSentMessage[] = [];
   readonly sentImages: (OutboundImageMessage & { providerMessageId: string })[] = [];
+  readonly sentAudios: (OutboundAudioMessage & { providerMessageId: string })[] = [];
   readonly sentOptionLists: (OutboundOptionListMessage & {
     providerMessageId: string;
   })[] = [];
@@ -55,6 +57,12 @@ export class FakeMessagingProvider implements MessagingProvider {
   async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
     const providerMessageId = this.nextProviderMessageId();
     this.sentImages.push({ ...message, providerMessageId });
+    return { providerMessageId };
+  }
+
+  async sendAudio(message: OutboundAudioMessage): Promise<SentMessage> {
+    const providerMessageId = this.nextProviderMessageId();
+    this.sentAudios.push({ ...message, providerMessageId });
     return { providerMessageId };
   }
 
@@ -115,6 +123,7 @@ export class FakeMessagingProvider implements MessagingProvider {
   reset(): void {
     this.sentMessages.length = 0;
     this.sentImages.length = 0;
+    this.sentAudios.length = 0;
     this.sentOptionLists.length = 0;
     this.connected = true;
     this.sequence = 0;

@@ -14,6 +14,12 @@ export type OutboundImageMessage = {
   caption?: string;
 };
 
+/** Áudio por URL pública: o WhatsApp mostra como mensagem de voz (PTT). */
+export type OutboundAudioMessage = {
+  toE164: string;
+  audioUrl: string;
+};
+
 export type OptionListOption = {
   id: string;
   title: string;
@@ -57,6 +63,8 @@ export interface MessagingProvider {
   sendText(input: OutboundTextMessage): Promise<SentMessage>;
   /** Envia imagem por URL (mensagem de mídia da Z-API). */
   sendImage(input: OutboundImageMessage): Promise<SentMessage>;
+  /** Envia áudio por URL como mensagem de voz (POST /send-audio da Z-API). */
+  sendAudio(input: OutboundAudioMessage): Promise<SentMessage>;
   /** Envia lista interativa de opções (mídia da Z-API); não funciona em grupos. */
   sendOptionList(input: OutboundOptionListMessage): Promise<SentMessage>;
   getSessionStatus(): Promise<SessionStatus>;

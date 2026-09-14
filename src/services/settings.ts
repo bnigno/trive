@@ -549,6 +549,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   feedback_ask_enabled: z.boolean(),
   /** "Quem já vestiu": a Lia guarda a foto da cliente com a peça e pede consentimento. */
   customer_looks_enabled: z.boolean(),
+  /** A Lia manda a nota em áudio da curadora como mensagem de voz (ausente = ligado). */
+  bot_audio_notes_enabled: z.boolean(),
   /** Datas da cidade (Círio, Natal…): o selo da vitrine e o "faltam N dias" do Bom dia. */
   city_dates: cityDatesSchema,
   /** Nome da edição em cartaz (ex.: "Edição Círio"): entra no post e na legenda. */

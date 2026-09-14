@@ -26,6 +26,7 @@ export const BOT_TOOL_NAMES = [
   "avisar_quando_voltar",
   "atualizar_cartela",
   "sugerir_tamanho",
+  "enviar_nota_da_curadora",
   "montar_look",
   "anotar",
   "registrar_foto_com_a_peca",
@@ -116,6 +117,8 @@ export type BotToolInputs = {
   };
   /** "Será que o M me serve?": a folga em cm por tamanho e a recomendação, pelas medidas da cartela. */
   sugerir_tamanho: { produto: string };
+  /** A voz da curadora sobre a peça vai para o WhatsApp dela como mensagem de voz. */
+  enviar_nota_da_curadora: { produto: string; reenviar?: true };
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
   /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
@@ -607,6 +610,20 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "enviar_nota_da_curadora",
+    description:
+      "Manda à cliente, como mensagem de voz no WhatsApp (logo depois da sua resposta), a nota em áudio que a curadora gravou sobre a peça (tecido, caimento, calor). Chame quando detalhar_produto disser que a peça tem nota em áudio e a cliente perguntar de tecido, caimento ou calor — ou pedir para ouvir. Uma vez por peça na conversa; 'reenviar' só quando ela pedir de novo (no máximo mais uma). Se a ferramenta disser que o áudio vai, apresente em 1 frase ('a curadora gravou uma nota sobre ela — segue a voz dela') sem citar nem resumir a nota; se disser que não há áudio, responda com a nota escrita ou com o que a ficha diz.",
+    input_schema: {
+      type: "object",
+      properties: {
+        produto: { type: "string", description: "Nome, slug ou SKU da peça (o mesmo de detalhar_produto)." },
+        reenviar: { type: "boolean", enum: [true], description: "Só quando a cliente pedir para ouvir de novo." },
+      },
+      required: ["produto"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "montar_look",
     description:
       "Monta o look completo a partir de UMA peça: escolhe 1 ou 2 complementos reais do catálogo (categoria diferente e que combina, com foto e estoque, preço na vizinhança) e envia à cliente o cartão do look em imagem. Chame UMA vez, depois do pedido fechado ou quando ela perguntar o que combina/como usar. Nunca invente combinação fora do que a ferramenta devolveu.",
@@ -905,6 +922,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     .refine((value) => Object.keys(value).length > 0, { message: "Passe ao menos um campo da cartela." }),
   sugerir_tamanho: z.strictObject({
     produto: z.string().trim().min(1).max(120),
+  }),
+  enviar_nota_da_curadora: z.strictObject({
+    produto: z.string().trim().min(1).max(120),
+    reenviar: z.literal(true).optional(),
   }),
   montar_look: z.strictObject({
     produto: z.string().min(1),

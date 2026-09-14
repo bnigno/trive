@@ -36,6 +36,7 @@ import {
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveCityEditionSlug } from "@/services/city-editions";
+import { isBotAudioNotesEnabled } from "@/services/curator-notes";
 import { getSettingsMap } from "@/services/settings";
 import {
   getPublicProductBySlug,
@@ -508,6 +509,8 @@ export async function execDetalharProduto(
       note: detail.curatorNote,
       hasAudio: detail.curatorAudioPath !== null,
       pageUrl: detail.publicNow ? `${siteBaseUrl()}/produto/${detail.slug}` : null,
+      // Com o interruptor ligado (e a Lia podendo anexar), a linha aponta para a ferramenta.
+      audioEnabled: detail.curatorAudioPath !== null && ctx.onAttachment !== undefined && (await isBotAudioNotesEnabled(db)),
     }),
   );
   // Ficha da peça: o que a placa de museu mostra, a Lia também sabe.

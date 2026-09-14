@@ -102,7 +102,7 @@ const chatSuggestionSchema = z.object({
   id: z.string(),
   bubbles: z.array(z.string()),
   attachments: z
-    .array(z.object({ kind: z.enum(["lista", "foto"]), title: z.string(), lines: z.array(z.string()), url: z.string().nullable() }))
+    .array(z.object({ kind: z.enum(["lista", "foto", "audio"]), title: z.string(), lines: z.array(z.string()), url: z.string().nullable() }))
     .default([]),
   toolCalls: z.array(z.string()).default([]),
   createdAt: z.string(),

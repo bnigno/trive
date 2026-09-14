@@ -67,6 +67,7 @@ interface PageData {
   atelierEnabled: boolean;
   feedbackAskEnabled: boolean;
   customerLooksEnabled: boolean;
+  audioNotesEnabled: boolean;
   handoffSilenceHours: number;
   handoffAutoReturnHours: number;
   idleCartFollowupHours: number;
@@ -121,6 +122,7 @@ async function loadPageData(): Promise<PageData | null> {
         "atelier_enabled",
         "feedback_ask_enabled",
         "customer_looks_enabled",
+        "bot_audio_notes_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -162,6 +164,7 @@ async function loadPageData(): Promise<PageData | null> {
     atelierEnabled: settingsMap["atelier_enabled"] !== false,
     feedbackAskEnabled: settingsMap["feedback_ask_enabled"] !== false,
     customerLooksEnabled: settingsMap["customer_looks_enabled"] !== false,
+    audioNotesEnabled: settingsMap["bot_audio_notes_enabled"] !== false,
     handoffSilenceHours: hours("handoff_silence_hours", 24),
     handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
     idleCartFollowupHours: hours("bot_idle_cart_followup_hours", 0),
@@ -382,6 +385,12 @@ export default async function WhatsappPage() {
             checked={data.customerLooksEnabled}
             label="Quem já vestiu"
             hint="Quando a cliente manda uma foto dela usando a peça que comprou, a Lia guarda a foto, ela recebe o cartão “Ana veste …” e a pergunta tocável se pode aparecer na página da peça. Só entra na vitrine com o “sim” dela e a sua aprovação em Produtos › Quem já vestiu; ela retira quando quiser."
+          />
+          <ToggleSwitch
+            settingKey="bot_audio_notes_enabled"
+            checked={data.audioNotesEnabled}
+            label="A Lia manda a voz da curadora"
+            hint="Quando a cliente pergunta de tecido, caimento ou calor de uma peça com nota em áudio, a Lia diz que a curadora gravou uma nota e a cliente recebe o áudio como mensagem de voz no WhatsApp — uma vez por peça na conversa. Desligado, a Lia cita só a nota escrita."
           />
           <ToggleSwitch
             settingKey="bot_cards_enabled"

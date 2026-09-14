@@ -59,13 +59,17 @@ export function SuggestionCard({ suggestion, sellerName, pollNow }: { suggestion
         <div className="mt-2 flex flex-col gap-1.5">
           {suggestion.attachments.map((attachment, index) => (
             <div key={`${attachment.kind}-${index}`} className="rounded-md border border-sky-200 bg-white/70 px-2.5 py-1.5 text-[12px] text-ink-800 dark:border-sky-900 dark:bg-ink-900 dark:text-ivory-100">
-              <p className="font-medium">{attachment.kind === "lista" ? `📋 Lista tocável · ${attachment.title}` : "🖼 Foto (vai antes do texto)"}</p>
+              <p className="font-medium">
+                {attachment.kind === "lista" ? `📋 Lista tocável · ${attachment.title}` : attachment.kind === "audio" ? "🎤 Voz da curadora (vai depois do texto)" : "🖼 Foto (vai antes do texto)"}
+              </p>
               {attachment.lines.map((line, lineIndex) => (
                 <p key={lineIndex} className="whitespace-pre-wrap text-ink-600 dark:text-ink-300">
                   {line}
                 </p>
               ))}
-              {attachment.url ? (
+              {attachment.url && attachment.kind === "audio" ? (
+                <audio controls preload="none" src={attachment.url} className="mt-1 h-8 max-w-full" />
+              ) : attachment.url ? (
                 <a href={attachment.url} target="_blank" rel="noreferrer" className="text-sky-800 underline dark:text-sky-300">
                   ver a foto
                 </a>
@@ -89,7 +93,7 @@ export function SuggestionCard({ suggestion, sellerName, pollNow }: { suggestion
             className="mt-2 w-full resize-y rounded-md border border-sky-300 bg-white p-2 text-sm text-ink-900 focus-visible:outline-2 focus-visible:outline-sky-500 dark:border-sky-800 dark:bg-ink-900 dark:text-ivory-100"
           />
           <p className="mt-1 text-[11px] text-ink-500 dark:text-ink-300">
-            {draft.length}/1200{suggestion.attachments.length > 0 ? " · editada, a mensagem vai SEM a lista/foto da Lia — ajuste o texto se ele falava dela." : ""}
+            {draft.length}/1200{suggestion.attachments.length > 0 ? " · editada, a mensagem vai SEM a lista/foto/áudio da Lia — ajuste o texto se ele falava dela." : ""}
           </p>
         </>
       ) : (

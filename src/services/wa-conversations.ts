@@ -314,7 +314,7 @@ export interface WaThreadSuggestion {
   id: string;
   bubbles: string[];
   /** O que vai antes do texto: a lista (título + opções) ou a foto (legenda + URL). */
-  attachments: { kind: "lista" | "foto"; title: string; lines: string[]; url: string | null }[];
+  attachments: { kind: "lista" | "foto" | "audio"; title: string; lines: string[]; url: string | null }[];
   /** Só as ferramentas que rodaram de verdade (as bloqueadas ficam de fora). */
   toolCalls: string[];
   createdAt: Date;
@@ -545,7 +545,9 @@ export async function getWaThreadTail(
         attachments: pending.attachments.map((attachment) =>
           attachment.kind === "option_list"
             ? { kind: "lista" as const, title: attachment.title, lines: [attachment.message, ...attachment.options.map((option) => `• ${option.title}`)], url: null }
-            : { kind: "foto" as const, title: "Foto", lines: [attachment.caption], url: attachment.imageUrl },
+            : attachment.kind === "audio"
+              ? { kind: "audio" as const, title: "Áudio da curadora", lines: [attachment.body], url: attachment.audioUrl }
+              : { kind: "foto" as const, title: "Foto", lines: [attachment.caption], url: attachment.imageUrl },
         ),
         toolCalls: pending.toolCalls.filter((call) => call.ok).map((call) => call.name),
         createdAt: pending.createdAt,

@@ -29,6 +29,21 @@ describe("curatorNoteLines", () => {
     );
   });
 
+  it("com o envio de áudio ligado, a linha aponta para enviar_nota_da_curadora em vez do link", () => {
+    const withNote = curatorNoteLines({ note: "Linho puro.", hasAudio: true, pageUrl: URL, audioEnabled: true });
+    expect(withNote).toHaveLength(2);
+    expect(withNote[1]).toContain("enviar_nota_da_curadora");
+    expect(withNote[1]).toContain("SEM citar a nota escrita");
+    // O link da página continua como plano B (ela pode preferir ler/ouvir no site).
+    expect(withNote[1]).toContain(URL);
+    const onlyAudio = curatorNoteLines({ note: null, hasAudio: true, pageUrl: null, audioEnabled: true });
+    expect(onlyAudio).toEqual([
+      "A curadora deixou uma nota em áudio, sem transcrição: se ela perguntar de tecido, caimento ou calor, chame enviar_nota_da_curadora — a voz chega no WhatsApp dela.",
+    ]);
+    // Ligado mas sem áudio: nada muda.
+    expect(curatorNoteLines({ note: "Linho puro.", hasAudio: false, pageUrl: URL, audioEnabled: true })).toHaveLength(1);
+  });
+
   it("sem nota e sem áudio, nada; nota vazia ou só emoji também é nada", () => {
     expect(curatorNoteLines({ note: null, hasAudio: false, pageUrl: URL })).toEqual([]);
     expect(curatorNoteLines({ note: "   ", hasAudio: false, pageUrl: URL })).toEqual([]);

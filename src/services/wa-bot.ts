@@ -51,6 +51,7 @@ import {
   execVerSacola,
 } from "./bot/cart";
 import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/catalog";
+import { execEnviarNotaDaCuradora } from "./bot/curator-audio";
 import { execBuscarCadastro } from "./bot/customer";
 import { execAvisarQuandoVoltar, execLiberarReserva, execReservarPeca } from "./bot/holds";
 import {
@@ -155,13 +156,22 @@ export function historyTextForOutbound(input: {
   body: string;
   dedupeKey: string | null;
   templateKey: string | null;
+  status?: string;
 }): string {
   const origin = deriveWaMessageOrigin({
     direction: "outbound",
     dedupeKey: input.dedupeKey,
     templateKey: input.templateKey,
   });
-  const text = historyTextFor(input.kind, input.body);
+  // Mídia que o provedor recusou fica na conversa como 'failed': o modelo
+  // precisa saber que a cliente NÃO recebeu (senão insiste "ouve acima").
+  const failed = input.status === "failed";
+  const text =
+    input.kind === "audio"
+      ? `[mensagem de voz ${failed ? "que NÃO chegou à cliente (falhou)" : "enviada à cliente"}] ${input.body}`
+      : failed && input.kind === "image"
+        ? `[foto que NÃO chegou ao cliente (falhou)] ${input.body}`
+        : historyTextFor(input.kind, input.body);
   if (isProactiveBotReply(input.dedupeKey)) {
     return `[você chamou como combinado] ${text}`;
   }
@@ -185,6 +195,7 @@ export function buildToolExecutor(
   const ctx: ExecutorCtx = {
     ...baseCtx,
     ...(baseCtx.dryRun && !baseCtx.stateOverlay ? { stateOverlay: { current: null } } : {}),
+    turnAudioUrls: baseCtx.turnAudioUrls ?? new Set<string>(),
     emitCard: makeCardEmitter(db, baseCtx),
   };
   return async (name, rawInput) => {
@@ -274,6 +285,8 @@ export function buildToolExecutor(
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
       case "sugerir_tamanho":
         return execSugerirTamanho(db, ctx, parsed.data as BotToolInputs["sugerir_tamanho"]);
+      case "enviar_nota_da_curadora":
+        return execEnviarNotaDaCuradora(db, ctx, parsed.data as BotToolInputs["enviar_nota_da_curadora"]);
       case "registrar_foto_com_a_peca":
         return execRegistrarFotoComAPeca(db, ctx, parsed.data as BotToolInputs["registrar_foto_com_a_peca"]);
       case "retirar_minha_foto":
@@ -374,6 +387,7 @@ export async function loadTurnHistory(
       templateKey: waMessages.templateKey,
       mediaUrl: waMessages.mediaUrl,
       mediaMeta: waMessages.mediaMeta,
+      status: waMessages.status,
       createdAt: waMessages.createdAt,
     })
     .from(waMessages)
@@ -488,9 +502,12 @@ export async function deliverBotTurn(
   const { conversation, dedupeBase, attachments, bubbles } = input;
   const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
   const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
-  // Mídia ANTES do texto (o cliente vê a lista/foto e depois o convite),
-  // cada uma com dedupe determinístico por índice; falha é melhor esforço.
-  for (const [index, attachment] of attachments.entries()) {
+  // Lista e foto ANTES do texto (o cliente vê e depois o convite); a voz da
+  // curadora DEPOIS ("segue a voz dela" e aí o áudio) — assim um texto que
+  // falha e aborta o turno nunca deixa uma mensagem de voz já entregue para o
+  // retry repetir. Cada mídia tem dedupe determinístico por índice; falha é
+  // melhor esforço.
+  const sendAttachment = async (attachment: BotAttachment, index: number): Promise<void> => {
     const mediaDedupeKey = `wa.bot_media:${dedupeBase}:${index}`;
     try {
       if (attachment.kind === "option_list") {
@@ -502,6 +519,16 @@ export async function deliverBotTurn(
             buttonLabel: attachment.buttonLabel,
             options: attachment.options,
           },
+          phoneE164: conversation.phoneE164,
+          ...customerRef,
+          dedupeKey: mediaDedupeKey,
+          requireOptIn: false,
+        });
+      } else if (attachment.kind === "audio") {
+        await sendMediaMessage(tx, provider, {
+          kind: "audio",
+          audioUrl: attachment.audioUrl,
+          body: attachment.body,
           phoneE164: conversation.phoneE164,
           ...customerRef,
           dedupeKey: mediaDedupeKey,
@@ -524,6 +551,9 @@ export async function deliverBotTurn(
         error,
       );
     }
+  };
+  for (const [index, attachment] of attachments.entries()) {
+    if (attachment.kind !== "audio") await sendAttachment(attachment, index);
   }
 
   let replied = false;
@@ -540,6 +570,10 @@ export async function deliverBotTurn(
       replied = true;
       firstWaMessageId ??= sent.waMessageId;
     }
+  }
+
+  for (const [index, attachment] of attachments.entries()) {
+    if (attachment.kind === "audio") await sendAttachment(attachment, index);
   }
 
   if (input.handedOff) {

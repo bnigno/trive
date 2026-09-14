@@ -52,7 +52,9 @@ export type BotAttachment =
       buttonLabel: string;
       options: { id: string; title: string; description?: string }[];
     }
-  | { kind: "image"; imageUrl: string; caption: string };
+  | { kind: "image"; imageUrl: string; caption: string }
+  /** Mensagem de voz por URL pública; `body` é o que fica na conversa do painel. */
+  | { kind: "audio"; audioUrl: string; body: string };
 
 /** O que o turno precisa para desenhar o cartão editorial (vitrine/look). */
 export type BotCardDeps = { storage: FileStorage; render: CardRenderer };
@@ -77,6 +79,8 @@ export type BotExecutorContext = {
    */
   lastInboundId: string;
   onAttachment?: (attachment: BotAttachment) => void;
+  /** URLs de áudio já anexadas neste turno (buildToolExecutor cria): uma voz por turno. */
+  turnAudioUrls?: Set<string>;
   /**
    * Ensaio (playground do painel): nada com efeito externo ou de escrita
    * acontece — criar_pedido, enviar_chave_pix, avisar_dono e transferir

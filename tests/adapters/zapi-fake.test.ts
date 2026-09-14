@@ -68,6 +68,26 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
     });
   });
 
+  it("sendAudio registra em sentAudios com o mesmo contador de ids", async () => {
+    const provider = new FakeMessagingProvider();
+    await provider.sendText({ toE164: "+5511999990000", body: "oi" });
+    const sent = await provider.sendAudio({
+      toE164: "+5511999990000",
+      audioUrl: "https://cdn.trive.example/products/x/curator-note.webm",
+    });
+
+    expect(sent.providerMessageId).toMatch(/^fake-zapi-msg-[a-z0-9]+-2$/);
+    expect(provider.sentAudios).toEqual([
+      {
+        toE164: "+5511999990000",
+        audioUrl: "https://cdn.trive.example/products/x/curator-note.webm",
+        providerMessageId: sent.providerMessageId,
+      },
+    ]);
+    provider.reset();
+    expect(provider.sentAudios).toHaveLength(0);
+  });
+
   it("sendOptionList registra a mensagem completa com as opções", async () => {
     const provider = new FakeMessagingProvider();
     const sent = await provider.sendOptionList({

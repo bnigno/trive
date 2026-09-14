@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   DownloadedMedia,
   MessagingProvider,
+  OutboundAudioMessage,
   OutboundImageMessage,
   OutboundOptionListMessage,
   OutboundTextMessage,
@@ -144,6 +145,26 @@ export class ZapiMessagingProvider implements MessagingProvider {
     const providerMessageId = parsed.messageId ?? parsed.zaapId ?? parsed.id;
     if (!providerMessageId) {
       throw new Error("Resposta da Z-API sem id de mensagem em /send-image.");
+    }
+    return { providerMessageId };
+  }
+
+  async sendAudio(message: OutboundAudioMessage): Promise<SentMessage> {
+    // Z-API: { phone (sem '+'), audio: URL ou base64, waveform } → sai como
+    // mensagem de voz; a resposta traz zaapId/messageId/id como o texto.
+    const raw = await this.request("/send-audio", {
+      method: "POST",
+      body: {
+        phone: message.toE164.replace(/^\+/, ""),
+        audio: message.audioUrl,
+        waveform: true,
+      },
+    });
+
+    const parsed = zapiSendTextResponseSchema.parse(raw);
+    const providerMessageId = parsed.messageId ?? parsed.zaapId ?? parsed.id;
+    if (!providerMessageId) {
+      throw new Error("Resposta da Z-API sem id de mensagem em /send-audio.");
     }
     return { providerMessageId };
   }

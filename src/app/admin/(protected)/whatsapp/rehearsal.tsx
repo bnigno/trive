@@ -14,7 +14,7 @@ type Bubble =
   | {
       kind: "seller";
       texts: string[];
-      attachments: { text: string; imageUrl?: string }[];
+      attachments: { text: string; imageUrl?: string; audioUrl?: string }[];
       tools: string;
       handedOff: boolean;
       durationMs: number;
@@ -59,7 +59,9 @@ export function Rehearsal({ sellerName }: { sellerName: string }) {
               ? {
                   text: `📋 Lista tocável «${attachment.buttonLabel}» com ${attachment.options.length} ${attachment.options.length === 1 ? "opção" : "opções"}: ${attachment.options.map((option) => option.title).join(" · ")}`,
                 }
-              : { text: `🖼️ ${attachment.caption}`, imageUrl: attachment.imageUrl },
+              : attachment.kind === "audio"
+                ? { text: attachment.body, audioUrl: attachment.audioUrl }
+                : { text: `🖼️ ${attachment.caption}`, imageUrl: attachment.imageUrl },
           ),
           tools: describeTools(turn.toolCalls.map((call) => call.name)) ?? "",
           handedOff: turn.handedOff,
@@ -124,6 +126,9 @@ export function Rehearsal({ sellerName }: { sellerName: string }) {
                       alt=""
                       className="w-56 rounded-lg border border-ivory-300 shadow-sm dark:border-ink-700"
                     />
+                  ) : null}
+                  {attachment.audioUrl ? (
+                    <audio controls preload="none" src={attachment.audioUrl} className="h-9 w-56 max-w-full" />
                   ) : null}
                   <p className="rounded-lg border border-dashed border-gold-500/60 bg-gold-300/20 px-3 py-1.5 text-[11px] text-ink-700 dark:text-gold-300">
                     {attachment.text}
