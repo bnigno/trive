@@ -704,7 +704,13 @@ export async function processAtelierIntake(
     const detailsLine =
       arrivalDetailsLine(proposal, interpreted.suggestedPriceCents) +
       (purchase.payableCents !== null ? ` · a pagar ${formatCentsBRL(purchase.payableCents)}` : "") +
-      (interpreted.failed ? " · sem a grade (a inteligência não respondeu)" : "");
+      (purchase.purchaseError ? " · compra NÃO lançada (veja a ficha)" : "") +
+      (purchase.supplierError ? " · fornecedor por escolher na ficha" : "") +
+      (interpreted.failed === "ficha_recusou"
+        ? " · a ficha recusou a grade: peça simples (complete no painel)"
+        : interpreted.failed
+          ? " · sem a grade (a inteligência não respondeu)"
+          : "");
     const notice = await sendToOwner(db, provider, {
       templateKey: ATELIER_DRAFT_TEMPLATE,
       vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}`, details: detailsLine }),
