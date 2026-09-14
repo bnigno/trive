@@ -111,6 +111,7 @@ export const TOOL_LABELS: Record<BotToolName, string> = {
   anotar: "anotou no caderninho",
   registrar_foto_com_a_peca: "guardou a foto dela com a peça",
   retirar_minha_foto: "retirou a foto dela da página",
+  agendar_retorno: "combinou de chamar depois",
   transferir_para_atendente: "passou para você",
 };
 

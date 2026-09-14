@@ -114,3 +114,17 @@ export function subtractBusinessDaysSP(key: string, n: number, isHoliday: (day: 
   }
   return day;
 }
+
+/** "HH:MM" no relógio de parede de São Paulo. */
+export function spTimeLabel(date: Date): string {
+  return hourMinuteFormatter.format(date);
+}
+
+/** O instante de "YYYY-MM-DD HH:MM" no relógio de São Paulo. */
+export function spDateTime(key: string, minutesOfDay: number): Date {
+  if (!isSpDayKey(key)) throw new RangeError(`Dia inválido: ${key}`);
+  if (!Number.isInteger(minutesOfDay) || minutesOfDay < 0 || minutesOfDay > 1439) throw new RangeError(`Minutos inválidos: ${minutesOfDay}`);
+  const hh = String(Math.floor(minutesOfDay / 60)).padStart(2, "0");
+  const mm = String(minutesOfDay % 60).padStart(2, "0");
+  return new Date(`${key}T${hh}:${mm}:00${SP_OFFSET}`);
+}

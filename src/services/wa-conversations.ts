@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   deriveWaMessageOrigin,
   type WaMessageOrigin,
+  isProactiveBotReply,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
 import {
@@ -23,6 +24,7 @@ import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
+import { listScheduledFollowups } from "@/services/wa-followups";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import { originLabel } from "@/core/bot/site-bridge";
 
@@ -165,6 +167,8 @@ export interface WaThreadMessage {
   direction: "inbound" | "outbound";
   /** Quem falou: cliente, robô, dono (manual) ou automação. */
   origin: WaMessageOrigin;
+  /** A Lia chamou por conta (retorno combinado/retomada). */
+  proactive: boolean;
   /** 'text' | 'image' (body é a legenda) | 'option_list' (body traz o menu). */
   kind: string;
   body: string;
@@ -233,6 +237,7 @@ export async function getWaConversationThread(
       id: row.id,
       direction: row.direction === "inbound" ? "inbound" : "outbound",
       origin: deriveWaMessageOrigin(row),
+      proactive: isProactiveBotReply(row.dedupeKey),
       kind: row.kind,
       body: row.body,
       mediaUrl: row.mediaUrl,
@@ -252,6 +257,7 @@ export interface WaThreadTailMessage {
   id: string;
   direction: "inbound" | "outbound";
   origin: WaMessageOrigin;
+  proactive: boolean;
   kind: string;
   body: string;
   mediaUrl: string | null;
@@ -266,6 +272,8 @@ export interface WaConversationContext {
   style: string | null;
   hold: string | null;
   alerts: string[];
+  /** Retornos combinados agendados (a Lia vai chamar). */
+  followups: { id: string; kind: string; reason: string; dueAt: Date }[];
   customerId: string | null;
   customerName: string | null;
   displayName: string | null;
@@ -329,10 +337,11 @@ async function loadConversationContext(
         .orderBy(desc(orders.createdAt))
         .limit(3)
     : [];
-  const [styleProfile, hold, alerts] = await Promise.all([
+  const [styleProfile, hold, alerts, followups] = await Promise.all([
     getStyleProfileByPhone(db, conversation.phoneE164),
     getActiveHoldByPhone(db, conversation.phoneE164),
     listOpenAlertsByPhone(db, conversation.phoneE164),
+    listScheduledFollowups(db, conversation.id),
   ]);
   return {
     style: styleProfile
@@ -347,6 +356,7 @@ async function loadConversationContext(
       : null,
     hold: hold?.description ?? null,
     alerts: alerts.map((alert) => `${alert.productName}${alert.variantLabel ? ` (${alert.variantLabel})` : ""}`),
+    followups: followups.map((row) => ({ id: row.id, kind: row.kind, reason: row.reason, dueAt: row.dueAt })),
     customerId: conversation.customerId,
     customerName: conversation.customerName,
     displayName: state.displayName?.trim() || null,
@@ -486,6 +496,7 @@ export async function getWaThreadTail(
       id: row.id,
       direction: row.direction === "inbound" ? "inbound" : "outbound",
       origin: deriveWaMessageOrigin(row),
+      proactive: isProactiveBotReply(row.dedupeKey),
       kind: row.kind,
       body: row.body,
       mediaUrl: row.mediaUrl,

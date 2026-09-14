@@ -281,6 +281,13 @@
       "when": 1789359659252,
       "tag": "0039_quem_vestiu",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789381400072,
+      "tag": "0040_retorno_combinado",
+      "breakpoints": true
     }
   ]
 }

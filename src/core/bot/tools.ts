@@ -29,6 +29,7 @@ export const BOT_TOOL_NAMES = [
   "anotar",
   "registrar_foto_com_a_peca",
   "retirar_minha_foto",
+  "agendar_retorno",
   "transferir_para_atendente",
 ] as const;
 
@@ -116,6 +117,8 @@ export type BotToolInputs = {
   /** `foto` = qual das fotos recentes dela (1 = a primeira, 2 = a segunda…); omitida = a última. */
   registrar_foto_com_a_peca: { produto: string; foto?: number };
   retirar_minha_foto: Record<string, never>;
+  /** Só depois do SIM dela à pergunta "posso te chamar …?". Data/hora no relógio de São Paulo. */
+  agendar_retorno: { data: string; hora: string; motivo: string; cliente_autorizou: true };
   transferir_para_atendente: { motivo: string; resumo?: string };
 };
 
@@ -646,6 +649,22 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "agendar_retorno",
+    description:
+      "Combina de VOCÊ chamar a cliente depois (ela adiou: 'me chama amanhã às 10', 'vou pensar'). SÓ chame depois de ela responder SIM à sua pergunta 'posso te chamar <quando>?' — nunca sem o sim explícito e nunca inventando a data. Horário entre 9h e 21h de São Paulo, de 30 minutos a 7 dias à frente. No horário a maison manda a mensagem por você.",
+    input_schema: {
+      type: "object",
+      properties: {
+        data: { type: "string", description: "Dia do retorno no formato YYYY-MM-DD (calendário de São Paulo; o caderninho diz que dia é hoje)." },
+        hora: { type: "string", description: "Hora no formato HH:MM, relógio de São Paulo (ex.: '10:00')." },
+        motivo: { type: "string", minLength: 3, maxLength: 140, description: "O que retomar, em poucas palavras (ex.: 'ver se decidiu o Longo Dunas em M')." },
+        cliente_autorizou: { type: "boolean", enum: [true], description: "true SÓ se ela acabou de responder sim à sua pergunta. Sem o sim, não chame." },
+      },
+      required: ["data", "hora", "motivo", "cliente_autorizou"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "transferir_para_atendente",
     description:
       "Passa a conversa para a equipe da loja e encerra a sua participação. Use quando a cliente pedir para falar com uma pessoa, quando você não conseguir ajudar após 2 tentativas, ou em reclamação, troca, defeito ou reembolso. Passe um resumo de 3 linhas para a equipe não perguntar nada de novo.",
@@ -859,6 +878,12 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     foto: z.number().int().min(1).max(10).optional(),
   }),
   retirar_minha_foto: z.strictObject({}),
+  agendar_retorno: z.strictObject({
+    data: z.string().trim().min(8).max(10),
+    hora: z.string().trim().min(4).max(5),
+    motivo: z.string().trim().min(3).max(140),
+    cliente_autorizou: z.literal(true),
+  }),
   transferir_para_atendente: z.strictObject({
     motivo: z.string().min(1),
     resumo: z.string().trim().max(600).optional(),

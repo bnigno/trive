@@ -15,6 +15,7 @@ import {
   sendManualWaReply,
   takeOverWaConversation,
 } from "@/services/wa-conversations";
+import { cancelBotFollowup } from "@/services/wa-followups";
 
 export type ActionResult = { ok: true } | { error: string };
 
@@ -83,6 +84,18 @@ export async function sendManualReplyAction(
  * então o erro vira `{ ok: false }` silencioso (sem mensagem para a UI).
  * O requireUser fica FORA do try para o redirect de sessão expirada propagar.
  */
+/** "Cancelar retorno": a Lia não vai chamar; a fila encontra o status e não manda nada. */
+export async function cancelFollowupAction(followupId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  try {
+    const { canceled } = await cancelBotFollowup(getDb(), { followupId: z.uuid().parse(followupId), reason: "dono", userId: user.id });
+    if (!canceled) return { error: "Este retorno já não estava agendado." };
+    return { ok: true };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
 export async function markConversationSeenAction(
   conversationId: string,
 ): Promise<{ ok: boolean }> {

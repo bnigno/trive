@@ -81,6 +81,7 @@ export function MessageList({
         id: o.tempId,
         direction: "outbound" as const,
         origin: "manual" as const,
+        proactive: false,
         kind: "text",
         body: o.body,
         mediaUrl: null,

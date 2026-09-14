@@ -4,10 +4,12 @@
 // a sacola em andamento, os últimos pedidos e o resumo da transferência —
 // para o dono nunca precisar perguntar o que a cliente já contou.
 import Link from "next/link";
+import { useState, useTransition } from "react";
 
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { formatCentsBRL } from "@/lib/money";
 import { daySeparatorLabel, formatTimeSP } from "./chat-format";
+import { cancelFollowupAction } from "./actions";
 import { formatPhoneBR } from "./format";
 import type { ChatContext } from "./use-chat-poll";
 
@@ -118,6 +120,16 @@ export function ContextPanel({
             <p className="mt-1 text-[11px] opacity-80">
               pela {context.bridge.label} · {daySeparatorLabel(context.bridge.at).toLowerCase()} às {formatTimeSP(context.bridge.at)}
             </p>
+          </div>
+        </Section>
+      ) : null}
+
+      {context && context.followups.length > 0 ? (
+        <Section title="Retorno combinado">
+          <div className="flex flex-col gap-2">
+            {context.followups.map((followup) => (
+              <FollowupCard key={followup.id} followup={followup} sellerName={sellerName} />
+            ))}
           </div>
         </Section>
       ) : null}
@@ -237,6 +249,39 @@ export function ContextPanel({
           <p className="text-xs text-ink-400">Nenhum pedido ainda.</p>
         )}
       </Section>
+    </div>
+  );
+}
+
+/** O combinado: quando a Lia vai chamar e por quê, com "Cancelar" para o dono. */
+function FollowupCard({ followup, sellerName }: { followup: ChatContext["followups"][number]; sellerName: string }) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [gone, setGone] = useState(false);
+  if (gone) return null;
+  const dueAt = followup.dueAt;
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
+      <p className="font-medium">
+        {followup.kind === "idle_cart" ? "Retomada da sacola" : `${sellerName} vai chamar`} · {daySeparatorLabel(dueAt).toLowerCase()} às {formatTimeSP(dueAt)}
+      </p>
+      <p className="mt-1">{followup.reason}</p>
+      <button
+        type="button"
+        disabled={isPending}
+        onClick={() => {
+          setError(null);
+          startTransition(async () => {
+            const result = await cancelFollowupAction(followup.id);
+            if ("error" in result) setError(result.error);
+            else setGone(true);
+          });
+        }}
+        className="mt-2 inline-flex items-center rounded-md border border-sky-300 px-2.5 py-1 text-[11px] font-medium text-sky-900 transition-colors hover:bg-sky-100 disabled:opacity-60 dark:border-sky-800 dark:text-sky-200 dark:hover:bg-sky-900"
+      >
+        {isPending ? "Cancelando…" : "Cancelar retorno"}
+      </button>
+      {error ? <p className="mt-1 text-[11px] text-red-700 dark:text-red-300">{error}</p> : null}
     </div>
   );
 }

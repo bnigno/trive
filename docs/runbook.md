@@ -168,6 +168,22 @@ dado pessoal: bucket público com caminho por uuid, nunca listado; o
 interruptor **Quem já vestiu** fica na Central. Produção: migração 0039 e
 `scripts/sync-seed.ts --settings customer_looks_enabled`.
 
+**Retorno combinado** — quando a cliente adia ("vou pensar", "me chama
+amanhã às 10"), a Lia pergunta em uma frase se pode chamá-la e quando; só
+com o **sim** dela chama `agendar_retorno` (o executor ainda confere que a
+última mensagem dela parece um sim; horário entre 9h e 21h de São Paulo —
+fora disso ajusta para a abertura —, de 30 minutos a 7 dias). A linha vai
+para `wa_followups` e o evento `wa.bot_followup` fica na fila para o horário.
+No horário roda o **turno proativo** (`runScheduledBotTurn`): mesmos
+bloqueios do turno normal (conversa com você, fechada, silenciada, Lia
+desligada), mais **SAIR** (cancela), **ela já voltou** por conta depois do
+combinado (passados 10 min do sim — cancela como "superada") e **fora da
+janela** (re-enfileira para a abertura). A mensagem sai marcada no painel
+como "Lia · chamou como combinado" e no histórico da Lia como "[você chamou
+como combinado]". O painel da conversa mostra **Retorno combinado** com
+**Cancelar retorno**; agendar de novo substitui o anterior. Produção:
+migração 0040; sem template nem setting novos.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa
