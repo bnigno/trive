@@ -162,7 +162,12 @@ export default async function OrderPage({
     preparingAt: order.preparingAt,
     shippedAt: order.shippedAt,
     deliveredAt: order.deliveredAt,
+    receivedBy: order.receivedBy,
   });
+  const deliveredPhotoUrl =
+    order.deliveredPhotoPath && order.deliveredPhotoAt
+      ? `${getFileStorage().publicUrl(order.deliveredPhotoPath)}?v=${order.deliveredPhotoAt.getTime()}`
+      : null;
   const packagePhotoUrl =
     order.packagePhotoPath && order.packedAt
       ? `${getFileStorage().publicUrl(order.packagePhotoPath)}?v=${order.packedAt.getTime()}`
@@ -265,6 +270,7 @@ export default async function OrderPage({
                 <OrderJourney
                   steps={journey}
                   packagePhotoUrl={packagePhotoUrl}
+                  deliveredPhotoUrl={deliveredPhotoUrl}
                   trackingCode={order.trackingCode}
                 />
               ) : null}

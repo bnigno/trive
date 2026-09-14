@@ -30,6 +30,8 @@ import { OrderFinancialCard } from "./financial-card";
 import { OrderMarginCard } from "./margin-card";
 import { OrderActions } from "./order-actions";
 import { PackForm } from "./pack-form";
+import { DeliverForm } from "./deliver-form";
+import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
 import { giftNoteUrl } from "@/services/gifts";
 import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { packagePhotoUrl } from "@/services/packing";
@@ -418,6 +420,18 @@ export default async function PedidoDetalhePage({
               </p>
             )}
           </Card>
+
+          {canDeliverWithPhoto(status, { dispatched: Boolean(order.deliveryWindow?.dispatchedAt), paymentMethod: order.paymentMethod }) ||
+          (status === "delivered" && order.deliveredAt) ? (
+            <Card title="Entrega">
+              <DeliverForm
+                orderId={order.id}
+                photoUrl={order.deliveredPhotoPath ? deliveryPhotoUrl(getFileStorage(), order.deliveredPhotoPath, order.updatedAt) : null}
+                receivedBy={order.receivedBy ?? null}
+                deliveredAtLabel={order.deliveredAt ? formatDateTimeSP(order.deliveredAt) : null}
+              />
+            </Card>
+          ) : null}
 
           {status === "paid" || status === "preparing" ? (
             <Card title="Embalagem">

@@ -7,6 +7,7 @@
 // separação, chama-se "Em preparação". Cancelado/reembolsado não tem linha:
 // a página mostra o aviso.
 
+import { deliveredStepDetail } from "@/core/orders/delivery";
 import type { OrderStatus } from "@/core/orders/state-machine";
 
 export type JourneyStepKey = "received" | "paid" | "packed" | "shipped" | "delivered";
@@ -17,6 +18,8 @@ export interface JourneyStep {
   label: string;
   at: Date | null;
   state: JourneyStepState;
+  /** Uma linha a mais sob o passo (ex.: "Recebido por Maria"). */
+  detail?: string | null;
 }
 
 export interface OrderJourneyInput {
@@ -28,6 +31,8 @@ export interface OrderJourneyInput {
   preparingAt: Date | null;
   shippedAt: Date | null;
   deliveredAt: Date | null;
+  /** Quem recebeu a entrega (primeiro nome), quando a dona registrou. */
+  receivedBy?: string | null;
 }
 
 /** Índice do passo "atual" por status; cancelado/reembolsado ficam de fora. */
@@ -79,6 +84,12 @@ export function buildOrderJourney(input: OrderJourneyInput): JourneyStep[] | nul
       state: packedState,
     },
     { key: "shipped", label: "Enviado", at: input.shippedAt, state: stateOf(3) },
-    { key: "delivered", label: "Entregue", at: input.deliveredAt, state: stateOf(4) },
+    {
+      key: "delivered",
+      label: "Entregue",
+      at: input.deliveredAt,
+      state: stateOf(4),
+      detail: stateOf(4) === "done" ? deliveredStepDetail(input.receivedBy ?? null) : null,
+    },
   ];
 }

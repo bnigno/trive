@@ -101,6 +101,22 @@ E-mail de **recuperação de senha** não passa pela outbox (o payload é uma
 credencial e o feedback precisa ser imediato): reprocessar não se aplica — ver
 **Perdi o acesso ao painel**, item 4.
 
+## Entregue com foto
+
+No pedido enviado (Correios ou motoboy que saiu) ou pago para entrega em
+mãos, o card **Entrega** (e a **Mesa de entrega**, /admin/pedidos/entregar,
+no celular) abre a câmera: foto do pacote na mão de quem recebeu, "recebido
+por" (só o primeiro nome vai adiante) e o pedido vira **entregue** pela
+máquina de estados. A cliente recebe a foto com a legenda "seu pedido foi
+entregue hoje às 17:42, recebido por Maria" (template `order_delivered`,
+evento `order.delivered`, uma vez, só com opt-in) e a foto vira o passo
+"Entregue" da página pública do pedido. **Marcar como entregue** sem foto
+(pelo rastreio dos Correios) continua existindo e, como antes, não manda
+nada — a hora do clique não é a da entrega. Refazer a foto troca a imagem
+sem reenviar. A câmera aparece no pedido enviado, no pago em dinheiro na
+entrega e no motoboy que já saiu; pedido pago pelos Correios embala primeiro. Produção: migração 0037 e
+`scripts/sync-seed.ts --templates order_delivered`.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

@@ -119,6 +119,12 @@ export const orders = pgTable(
     editionCardsFingerprint: jsonb("edition_cards_fingerprint").$type<Record<string, string>>(),
     shippedAt: timestamp("shipped_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** Foto da entrega (pacote na mão da cliente/portaria): deliveries/<orderId>/entrega.jpg. */
+    deliveredPhotoPath: text("delivered_photo_path"),
+    /** Quem recebeu (só o primeiro nome; aparece na página pública do pedido). */
+    receivedBy: text("received_by"),
+    /** Quem confirmou a entrega: a dona (owner), a cliente (customer) ou a Lia. */
+    deliveryConfirmedBy: text("delivery_confirmed_by"),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     cancelReason: text("cancel_reason"),
     createdBy: uuid("created_by"),
@@ -147,6 +153,11 @@ export const orders = pgTable(
     uniqueIndex("orders_mp_payment_id_unique_idx")
       .on(table.mpPaymentId)
       .where(sql`${table.mpPaymentId} IS NOT NULL`),
+    check("orders_received_by_check", sql`${table.receivedBy} IS NULL OR char_length(${table.receivedBy}) <= 60`),
+    check(
+      "orders_delivery_confirmed_by_check",
+      sql`${table.deliveryConfirmedBy} IS NULL OR ${table.deliveryConfirmedBy} IN ('owner', 'customer', 'lia')`,
+    ),
     check(
       "orders_status_check",
       sql`${table.status} IN ('draft', 'pending_payment', 'paid', 'preparing', 'shipped', 'delivered', 'canceled', 'refunded')`,

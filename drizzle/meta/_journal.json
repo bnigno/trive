@@ -260,6 +260,13 @@
       "when": 1789350736661,
       "tag": "0036_nappy_the_hunter",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789351928171,
+      "tag": "0037_lumpy_maverick",
+      "breakpoints": true
     }
   ]
 }

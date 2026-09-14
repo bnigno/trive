@@ -23,6 +23,7 @@ import {
   sendAtelierNudge,
 } from "@/services/atelier";
 import { atelierCardPayloadSchema, renderAndSendAtelierCard } from "@/services/atelier-card";
+import { sendDeliveredWa } from "@/services/delivery";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -567,7 +568,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "order.out_for_delivery": async (event) => {
     await sendOrderWa(String(event.payload.orderId), "out_for_delivery");
   },
-  "order.delivered": async () => {},
+  // Entregue: a foto da entrega com a legenda (ou só o texto) para a
+  // cliente, uma vez; skips não lançam.
+  "order.delivered": async (event) => {
+    const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const result = await sendDeliveredWa(getDb(), getMessagingProvider(), getFileStorage(), { orderId });
+    console.info(`[order.delivered] ${orderId} → ${JSON.stringify(result)}`);
+  },
   // Cancelado (pela dona ou pela expiração da reserva): a cliente recebe o
   // motivo em linguagem humana e o link do pedido (só com opt-in).
   "order.canceled": async (event) => {
