@@ -52,9 +52,11 @@ src/
 tests/        # testes automatizados, por área
 docs/         # documentação: setup externo, fases
 scripts/      # verificações de CI (migrações destrutivas, segredos no client),
-              # generate-brand-assets.mjs (logo: brand-source/*.svg → webp/ícones/OG)
-              # e backfill-image-md.ts (rendição média das fotos antigas)
-brand-source/ # SVGs originais do logo — fonte da verdade, nunca vão ao navegador
+              # curate-brand-source.py + generate-brand-assets.mjs (logo:
+              # brand-source/logo.svg → webp/ícones/OG/letreiro) e
+              # backfill-image-md.ts (rendição média das fotos antigas)
+brand-source/ # o logo: entregue/ (arquivos do designer, intocados), logo.svg
+              # (curado, fonte da verdade), fonts/ — nada disso vai ao navegador
 ```
 
 Regra de ouro da estrutura: as camadas só importam "para dentro" (app → services → core). O lint reclama se alguém furar a fila.

@@ -1,7 +1,8 @@
-// Monograma da maison (T e V entrelaçados pela fita rosé). A fonte da verdade
-// é brand-source/*.svg; este componente só exibe os rasters gerados por
+// Monograma da TRIVÉ (T e V entrelaçados pela fita rosé). A fonte da verdade
+// é brand-source/logo.svg; este componente só exibe os rasters gerados por
 // scripts/generate-brand-assets.mjs (ver assets.ts), com width/height reais
-// para a marca nunca causar CLS.
+// para a marca nunca causar CLS. Desde o logo de 2026-09-14 o ouro metálico
+// é o mesmo nos dois tons (light = dark); a API de tone fica pelos callers.
 import { cx } from "@/components/ui/cx";
 
 import { BRAND, type BrandImage } from "./assets";

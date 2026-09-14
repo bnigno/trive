@@ -54,7 +54,9 @@ export function StoreFooter({
         <div className="flex flex-col items-center gap-4 text-center">
           <Monogram tone="gold" size={56} lazy />
           <p>
-            <Wordmark className="text-3xl text-gold-brush">{storeName}</Wordmark>
+            <Wordmark height={30} className="text-gold-brush">
+              {storeName}
+            </Wordmark>
           </p>
           <Tagline tone="noir" />
         </div>

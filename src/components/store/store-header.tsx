@@ -39,7 +39,10 @@ export function StoreHeader({ storeName }: { storeName: string }) {
             lazy
             className="logo-dark hidden noir:block"
           />
-          <Wordmark className="text-base text-espresso-900 sm:text-lg noir:text-ivory-100">
+          <Wordmark
+            height={15}
+            className="text-espresso-900 noir:text-ivory-100 sm:h-[17px] sm:w-auto"
+          >
             {storeName}
           </Wordmark>
         </Link>

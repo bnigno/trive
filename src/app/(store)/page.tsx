@@ -188,11 +188,15 @@ export default async function HomePage() {
               className="h-auto w-[min(58vw,38svh)] sm:w-[min(20rem,38svh)]"
             />
             <h1 className="mt-2">
-              <Wordmark weight="normal" className="text-hero gold-sheen">
+              <Wordmark
+                height={120}
+                sheen
+                className="h-auto w-[min(60vw,25rem)] text-gold-brush"
+              >
                 {storeName}
               </Wordmark>
             </h1>
-            <Tagline tone="noir" />
+            <Tagline tone="noir" height={13} />
             <p className="max-w-md font-display text-xl text-ivory-200 italic sm:text-2xl">
               {tagline}
             </p>

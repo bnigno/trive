@@ -1,8 +1,10 @@
 // Embute em base64 as fontes (subset latim, brand-source/fonts/subset) e o
-// lockup escuro (PNG rasterizado do SVG) que o comprovante de pagamento usa:
+// lockup escuro (PNG 900×400 que scripts/generate-brand-assets.mjs compõe em
+// brand-source/generated/) que o comprovante, os cartões e o Bom dia usam:
 //   node scripts/generate-receipt-assets.mjs  →  src/receipts/assets.generated.ts
-// Rodar à mão quando trocar uma fonte ou o logo; o arquivo gerado é versionado
-// porque em produção nada é lido do disco (o Satori recebe Buffers).
+// Rodar à mão quando trocar uma fonte ou o logo (depois do generate-brand-assets);
+// o arquivo gerado é versionado porque em produção nada é lido do disco (o
+// Satori recebe Buffers).
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,10 +19,9 @@ const FONTS = {
   cormorantSemiBold: "brand-source/fonts/subset/CormorantGaramond-SemiBold.ttf",
   cormorantItalic: "brand-source/fonts/subset/CormorantGaramond-Italic.ttf",
 };
-const LOCKUP_SVG = "brand-source/lockup-dark.svg";
-const LOCKUP_WIDTH = 900;
-// Rasteriza a 2× e reduz: o antialias do sharp suaviza o traçado automático.
-const RENDER_WIDTH = 1800;
+const LOCKUP_PNG = "brand-source/generated/lockup-dark-900.png";
+// Proporção 2,25 que todo <img width height> do Satori assume.
+const LOCKUP = { width: 900, height: 400 };
 
 async function fontB64(relative) {
   const data = await readFile(path.join(root, relative));
@@ -29,16 +30,14 @@ async function fontB64(relative) {
 }
 
 async function lockupB64() {
-  const svg = await readFile(path.join(root, LOCKUP_SVG));
-  const png = await sharp(svg, { density: 144 })
-    .resize({ width: RENDER_WIDTH })
-    .png()
-    .toBuffer();
-  const small = await sharp(png)
-    .resize({ width: LOCKUP_WIDTH })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
-  return small.toString("base64");
+  const png = await readFile(path.join(root, LOCKUP_PNG));
+  const { width, height } = await sharp(png).metadata();
+  if (width !== LOCKUP.width || height !== LOCKUP.height) {
+    throw new Error(
+      `${LOCKUP_PNG}: esperado ${LOCKUP.width}×${LOCKUP.height}, veio ${width}×${height} — rode node scripts/generate-brand-assets.mjs antes`,
+    );
+  }
+  return png.toString("base64");
 }
 
 const entries = {};
