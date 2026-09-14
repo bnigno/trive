@@ -206,7 +206,9 @@ export function ThreadHeader({
   const returnToSeller = () => {
     if (
       !window.confirm(
-        `Devolver a conversa para a ${sellerName}? Ela volta a responder a partir da PRÓXIMA mensagem da cliente — quem já recebeu "a equipe vai responder" não é avisada de novo.`,
+        effectiveBotMode === "copilot"
+          ? `Devolver a conversa para a ${sellerName}? Ela volta a SUGERIR respostas a partir da próxima mensagem da cliente (copiloto) — nada sai sem você.`
+          : `Devolver a conversa para a ${sellerName}? Ela volta a responder a partir da PRÓXIMA mensagem da cliente — quem já recebeu "a equipe vai responder" não é avisada de novo.`,
       )
     ) {
       return;

@@ -25,7 +25,7 @@ import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
 import { FOLLOWUP_CANCEL_LABELS, listFollowupHistory, type FollowupCancelReason } from "@/services/wa-followups";
-import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, resolveConversationBotMode } from "@/services/wa-suggestions";
+import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, resolveConversationBotMode, supersedePendingSuggestions } from "@/services/wa-suggestions";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import { originLabel } from "@/core/bot/site-bridge";
 
@@ -385,7 +385,20 @@ async function loadConversationContext(
       reason: row.reason,
       dueAt: row.dueAt,
       status: row.status,
-      note: row.status === "sent" ? "chamou no horário" : row.canceledReason ? (FOLLOWUP_CANCEL_LABELS[row.canceledReason as FollowupCancelReason] ?? row.canceledReason) : null,
+      note:
+        row.status === "sent"
+          ? row.suggestionStatus === "pending"
+            ? "virou sugestão — aguardando você"
+            : row.suggestionStatus === "discarded"
+              ? "virou sugestão — você descartou"
+              : row.suggestionStatus === "superseded"
+                ? "virou sugestão — superada"
+                : row.suggestionStatus === "sent"
+                  ? "virou sugestão — você enviou"
+                  : "chamou no horário"
+          : row.canceledReason
+            ? (FOLLOWUP_CANCEL_LABELS[row.canceledReason as FollowupCancelReason] ?? row.canceledReason)
+            : null,
     })),
     customerId: conversation.customerId,
     customerName: conversation.customerName,
@@ -687,6 +700,7 @@ export async function takeOverWaConversation(
     .update(waConversations)
     .set({ status: "human", updatedAt: new Date() })
     .where(eq(waConversations.id, conversation.id));
+  await supersedePendingSuggestions(db, conversation.id);
   await db.insert(auditLog).values({
     actorType: "user",
     actorId: parsed.userId,
@@ -798,6 +812,7 @@ export async function closeWaConversation(
     .update(waConversations)
     .set({ status: "closed", botDisabledUntil: null, updatedAt: new Date() })
     .where(eq(waConversations.id, conversation.id));
+  await supersedePendingSuggestions(db, conversation.id);
   await db.insert(auditLog).values({
     actorType: "user",
     actorId: parsed.userId,

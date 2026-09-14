@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import type { FollowupKind } from "@/core/bot/followup";
 import { followupMemoryLine } from "@/core/bot/followup";
-import { auditLog, waFollowups } from "@/db/schema";
+import { auditLog, waFollowups, waSuggestions } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 
 export const BOT_FOLLOWUP_EVENT = "wa.bot_followup";
@@ -185,6 +185,8 @@ export interface FollowupHistoryRow {
   canceledReason: string | null;
   sentAt: Date | null;
   createdAt: Date;
+  /** Copiloto: o retorno virou sugestão — e o que a dona fez com ela. */
+  suggestionStatus: string | null;
 }
 
 /** Painel: os últimos retornos da conversa, em qualquer estado. */
@@ -199,8 +201,10 @@ export async function listFollowupHistory(db: DbOrTx, conversationId: string, li
       canceledReason: waFollowups.canceledReason,
       sentAt: waFollowups.sentAt,
       createdAt: waFollowups.createdAt,
+      suggestionStatus: waSuggestions.status,
     })
     .from(waFollowups)
+    .leftJoin(waSuggestions, eq(waSuggestions.followupId, waFollowups.id))
     .where(eq(waFollowups.conversationId, conversationId))
     .orderBy(desc(waFollowups.createdAt))
     .limit(limit);

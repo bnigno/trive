@@ -158,6 +158,16 @@ describe("turno em copiloto", () => {
     await sendManualWaReply(sdb, { conversationId, userId: OWNER, body: "Respondo eu mesma." });
     const [conversation] = await db.select().from(schema.waConversations).where(eq(schema.waConversations.id, conversationId));
     expect(conversation.status).toBe("open");
+
+    // A dona assume a conversa: a sugestão pendente é superada e some do badge.
+    await addInbound(conversationId, "e o prazo?");
+    assistant.enqueueScript({ replyTemplate: "3 dias." });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(await countPendingSuggestions(sdb)).toBe(1);
+    const { takeOverWaConversation } = await import("@/services/wa-conversations");
+    await takeOverWaConversation(sdb, { conversationId, userId: OWNER });
+    expect(await countPendingSuggestions(sdb)).toBe(0);
+    expect(await getPendingSuggestion(sdb, conversationId)).toBeNull();
   });
 
   it("override por conversa: 'sozinha nesta conversa' responde na hora mesmo com a loja em copiloto; e vice-versa", async () => {

@@ -147,8 +147,23 @@ export async function getPendingSuggestion(db: DbOrTx, conversationId: string): 
   return row ? toPending(row) : null;
 }
 
+/** Conversa assumida pela dona ou encerrada: a sugestão pendente perde o sentido. */
+export async function supersedePendingSuggestions(db: DbOrTx, conversationId: string, now = new Date()): Promise<number> {
+  const updated = await db
+    .update(waSuggestions)
+    .set({ status: "superseded", supersededAt: now, updatedAt: now })
+    .where(and(eq(waSuggestions.conversationId, conversationId), eq(waSuggestions.status, "pending")))
+    .returning({ id: waSuggestions.id });
+  return updated.length;
+}
+
+/** Só as conversas abertas contam (em 'human'/'closed' a sugestão já foi superada; cinto e suspensório). */
 export async function countPendingSuggestions(db: DbOrTx): Promise<number> {
-  const [row] = await db.select({ total: count() }).from(waSuggestions).where(eq(waSuggestions.status, "pending"));
+  const [row] = await db
+    .select({ total: count() })
+    .from(waSuggestions)
+    .innerJoin(waConversations, eq(waConversations.id, waSuggestions.conversationId))
+    .where(and(eq(waSuggestions.status, "pending"), eq(waConversations.status, "open")));
   return row?.total ?? 0;
 }
 
@@ -159,7 +174,7 @@ export async function listPendingSuggestions(db: DbOrTx): Promise<{ conversation
     .from(waSuggestions)
     .innerJoin(waConversations, eq(waConversations.id, waSuggestions.conversationId))
     .leftJoin(customers, eq(customers.id, waConversations.customerId))
-    .where(eq(waSuggestions.status, "pending"))
+    .where(and(eq(waSuggestions.status, "pending"), eq(waConversations.status, "open")))
     .orderBy(desc(waSuggestions.createdAt));
   return rows.map((row) => ({ conversationId: row.conversationId, label: row.customerName ?? maskPhone(row.phoneE164), createdAt: row.createdAt }));
 }
@@ -185,28 +200,31 @@ export async function approveSuggestion(
   const suggestionId = z.uuid().parse(input.suggestionId);
   const now = input.now ?? new Date();
   const finalBubbles = input.body && input.body.trim() !== "" ? bubblesSchema.parse([input.body.trim()]) : null;
-  const updated = await db
-    .update(waSuggestions)
-    .set({ status: "sent", sentBy: input.userId, sentAt: now, finalBubbles, updatedAt: now })
-    .where(and(eq(waSuggestions.id, suggestionId), eq(waSuggestions.status, "pending")))
-    .returning({ id: waSuggestions.id, conversationId: waSuggestions.conversationId });
-  if (updated.length === 0) throw new ServiceError("sugestao_indisponivel", "Esta sugestão já foi enviada, descartada ou superada por uma mensagem nova.");
-  await enqueueOutboxEvent(db, {
-    eventType: SUGGESTION_SEND_EVENT,
-    dedupeKey: `wa.suggestion_send:${suggestionId}`,
-    aggregateType: "wa_conversation",
-    aggregateId: updated[0].conversationId,
-    payload: { suggestionId },
+  // Status e evento na MESMA transação: 'sent' sem evento nunca sairia.
+  return db.transaction(async (tx) => {
+    const updated = await tx
+      .update(waSuggestions)
+      .set({ status: "sent", sentBy: input.userId, sentAt: now, finalBubbles, updatedAt: now })
+      .where(and(eq(waSuggestions.id, suggestionId), eq(waSuggestions.status, "pending")))
+      .returning({ id: waSuggestions.id, conversationId: waSuggestions.conversationId });
+    if (updated.length === 0) throw new ServiceError("sugestao_indisponivel", "Esta sugestão já foi enviada, descartada ou superada por uma mensagem nova.");
+    await enqueueOutboxEvent(tx, {
+      eventType: SUGGESTION_SEND_EVENT,
+      dedupeKey: `wa.suggestion_send:${suggestionId}`,
+      aggregateType: "wa_conversation",
+      aggregateId: updated[0].conversationId,
+      payload: { suggestionId },
+    });
+    await tx.insert(auditLog).values({
+      actorType: "user",
+      actorId: input.userId,
+      action: "wa.suggestion_approved",
+      entityType: "wa_conversation",
+      entityId: updated[0].conversationId,
+      after: { suggestionId, edited: finalBubbles !== null },
+    });
+    return { queued: true as const };
   });
-  await db.insert(auditLog).values({
-    actorType: "user",
-    actorId: input.userId,
-    action: "wa.suggestion_approved",
-    entityType: "wa_conversation",
-    entityId: updated[0].conversationId,
-    after: { suggestionId, edited: finalBubbles !== null },
-  });
-  return { queued: true };
 }
 
 export async function discardSuggestion(db: DbOrTx, input: { suggestionId: string; userId: string; now?: Date }): Promise<{ discarded: boolean }> {
