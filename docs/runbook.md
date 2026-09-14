@@ -239,8 +239,10 @@ histórico da Lia, no painel ou na trilha — só o fato de existirem ("medidas
 guardadas"). Tabela "a meio" (largura da peça deitada, ex.: busto 47) é
 dobrada antes de comparar — a convenção é da tabela inteira. As medidas têm
 credencial própria: só o aparelho que gravou (e a vendedora, pelo WhatsApp)
-lê, troca ou apaga; o token da cartela sozinho não basta. Produção:
-migração 0042; sem setting.
+lê, troca ou apaga; o token da cartela sozinho não basta. Pela Lia: "o M me serve?" → `sugerir_tamanho`
+(folga por tamanho e o recomendado); sem medidas ela pede busto, cintura e
+quadril e guarda com `atualizar_cartela.medidas` (coluna própria; `anotar`
+recusa medidas). Produção: migração 0042; sem setting.
 
 ## Entrega por motoboy: rota do dia e "Saiu"
 
