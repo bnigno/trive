@@ -89,7 +89,7 @@ import { getRetryPolicy } from "@/core/queue/retry-policy";
 import { BOT_FOLLOWUP_EVENT, idleCartStillValid } from "./wa-followups";
 import { waFollowups } from "@/db/schema";
 import { isWithinSendWindow, nextSendWindowStart } from "@/core/whatsapp/send-window";
-import { enqueueOutboxEvent } from "@/queue/enqueue";
+import { enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
@@ -520,7 +520,7 @@ export async function deliverBotTurn(
     bubbles: readonly string[];
     handedOff: boolean;
   },
-): Promise<{ replied: boolean; firstWaMessageId: string | null }> {
+): Promise<{ replied: boolean; firstWaMessageId: string | null; firstSentAt: number | null }> {
   const { conversation, dedupeBase, attachments, bubbles } = input;
   const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
   const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
@@ -580,6 +580,7 @@ export async function deliverBotTurn(
 
   let replied = false;
   let firstWaMessageId: string | null = null;
+  let firstSentAt: number | null = null;
   for (const [index, bubble] of bubbles.entries()) {
     const sent = await sendTemplateMessage(tx, provider, {
       bodyOverride: truncateForWhatsApp(bubble),
@@ -591,6 +592,7 @@ export async function deliverBotTurn(
     if ("sent" in sent) {
       replied = true;
       firstWaMessageId ??= sent.waMessageId;
+      firstSentAt ??= Date.now();
     }
   }
 
@@ -608,7 +610,7 @@ export async function deliverBotTurn(
       requireOptIn: false,
     });
   }
-  return { replied, firstWaMessageId };
+  return { replied, firstWaMessageId, firstSentAt };
 }
 
 // ---------------------------------------------------------------------------
@@ -625,19 +627,56 @@ export async function deliverBotTurn(
  * tentando por mais tempo, sem transferir ninguém).
  */
 export const BOT_TURN_MODEL_ATTEMPTS = 5;
+/**
+ * Orçamento do turno dentro dos 60 s da rota do Inngest: ~0,5 s de partida,
+ * ≤ 2 s de preparo, o modelo (com ferramentas) até este teto e a entrega
+ * (balões com "digitando", mídia) na reserva. Estourou → o modelo devolve
+ * falha passageira e a fila tenta de novo.
+ */
+export const BOT_TURN_MODEL_BUDGET_MS = 35_000;
+export const BOT_TURN_DELIVERY_RESERVE_MS = 12_000;
+
+/** Onde o tempo de um turno foi — vai no audit para o painel medir a demora real. */
+export type BotTurnTimings = {
+  enqueuedAt: string | null;
+  /** created_at do evento (BEGIN da transação de quem enfileirou) → início do turno. */
+  queueWaitMs: number | null;
+  /** Início do turno → primeira chamada ao modelo (queries, prompt, memória). */
+  prepMs: number;
+  /** Modelo com as ferramentas dentro. */
+  modelMs: number;
+  /** Só as ferramentas (subconjunto de modelMs). */
+  toolsMs: number;
+  /** Entrega dos balões e mídia; null quando nada saiu (copiloto, transferência). */
+  deliveryMs: number | null;
+  totalMs: number;
+  /** Mensagem dela → primeiro balão enviado; null quando nada saiu. */
+  inboundToFirstBubbleMs: number | null;
+};
 
 export async function runBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { conversationId: string; attempt?: number },
+  input: { conversationId: string; attempt?: number; enqueuedAt?: Date; deadlineAt?: Date },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunBotTurnResult> {
   const { conversationId } = input;
   // `attempt` = tentativas ANTERIORES da fila (0 na primeira).
   const lastModelAttempt = (input.attempt ?? 0) + 1 >= BOT_TURN_MODEL_ATTEMPTS;
+  const turnStartedAt = Date.now();
+  // O modelo tem até 35 s — ou o que sobra do prazo da fila menos a reserva
+  // da entrega, quando isso ainda dá ≥ 20 s.
+  const modelDeadline = new Date(
+    Math.min(
+      turnStartedAt + BOT_TURN_MODEL_BUDGET_MS,
+      input.deadlineAt && input.deadlineAt.getTime() - BOT_TURN_DELIVERY_RESERVE_MS - turnStartedAt >= 20_000
+        ? input.deadlineAt.getTime() - BOT_TURN_DELIVERY_RESERVE_MS
+        : Number.POSITIVE_INFINITY,
+    ),
+  );
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx): Promise<RunBotTurnResult> => {
     const [conversation] = await tx
       .select()
       .from(waConversations)
@@ -656,7 +695,7 @@ export async function runBotTurn(
     if (!(await isBotEnabled(tx))) return { skipped: "desabilitado" };
 
     const [lastInbound] = await tx
-      .select({ id: waMessages.id })
+      .select({ id: waMessages.id, createdAt: waMessages.createdAt })
       .from(waMessages)
       .where(
         and(
@@ -692,7 +731,7 @@ export async function runBotTurn(
 
     // Mídia emitida pelas ferramentas do turno (lista tocável, foto).
     const attachments: BotAttachment[] = [];
-    const executeTool = buildToolExecutor(tx, {
+    const baseExecuteTool = buildToolExecutor(tx, {
       conversationId,
       phoneE164: conversation.phoneE164,
       customerId: conversation.customerId,
@@ -703,6 +742,15 @@ export async function runBotTurn(
       copilot,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
+    let toolsMs = 0;
+    const executeTool: ToolExecutor = async (name, toolInput) => {
+      const toolStartedAt = Date.now();
+      try {
+        return await baseExecuteTool(name, toolInput);
+      } finally {
+        toolsMs += Date.now() - toolStartedAt;
+      }
+    };
 
     const replyDedupeKey = `wa.bot_reply:${lastInbound.id}`;
     const customerRef = conversation.customerId
@@ -711,9 +759,25 @@ export async function runBotTurn(
 
     let turn: AssistantTurn;
     const startedAt = Date.now();
+    const timings = (extra: { deliveryMs: number | null; firstSentAt: number | null }): BotTurnTimings => {
+      const finishedAt = Date.now();
+      return {
+        enqueuedAt: input.enqueuedAt?.toISOString() ?? null,
+        queueWaitMs: input.enqueuedAt ? Math.max(0, turnStartedAt - input.enqueuedAt.getTime()) : null,
+        prepMs: startedAt - turnStartedAt,
+        modelMs: modelMs,
+        toolsMs,
+        deliveryMs: extra.deliveryMs,
+        totalMs: finishedAt - turnStartedAt,
+        inboundToFirstBubbleMs: extra.firstSentAt === null ? null : Math.max(0, extra.firstSentAt - lastInbound.createdAt.getTime()),
+      };
+    };
+    let modelMs = 0;
     try {
-      turn = await assistant.respondTurn({ system, history, model, executeTool });
+      turn = await assistant.respondTurn({ system, history, model, executeTool, deadlineAt: modelDeadline });
+      modelMs = Date.now() - startedAt;
     } catch (error) {
+      modelMs = Date.now() - startedAt;
       if (error instanceof AssistantUnavailableError) {
         // Falha passageira (limite por minuto, 5xx, rede): relança — a fila
         // tenta de novo com espera, a transação desfaz o que as ferramentas
@@ -734,6 +798,7 @@ export async function runBotTurn(
             status: error.status ?? null,
             code: error.code ?? null,
             reason: error.reason,
+            timings: timings({ deliveryMs: null, firstSentAt: null }),
           },
         });
         // Plano B: avisa o cliente, transfere para humano (audit + aviso ao
@@ -764,34 +829,39 @@ export async function runBotTurn(
 
     const bubbles = turn.reply === null ? [] : splitBotReply(turn.reply);
     // Trilha do turno para o painel e para o custo por conversa: quais
-    // ferramentas rodaram, tokens gastos, tempo e se transferiu. Nunca guarda
-    // o texto (ele já está em wa_messages).
-    await tx.insert(auditLog).values({
-      actorType: "system",
-      actorId: null,
-      action: "wa.bot_turn",
-      entityType: "wa_conversation",
-      entityId: conversationId,
-      after: {
-        inboundId: lastInbound.id,
-        mode: copilot ? "copilot" : "autonomous",
-        model,
-        toolCalls: turn.toolCalls,
-        usage: turn.usage,
-        handedOff: turn.handedOff,
-        attachments: attachments.map((attachment) => attachment.kind),
-        bubbles: bubbles.length,
-        durationMs: Date.now() - startedAt,
-        // Só contagens: a foto nunca é guardada.
-        media,
-      },
-    });
+    // ferramentas rodaram, tokens gastos, tempos e se transferiu. Nunca
+    // guarda o texto (ele já está em wa_messages). Escrita no fim de cada
+    // ramo, depois da entrega, para os tempos serem os de verdade.
+    const writeTurnAudit = async (extra: { deliveryMs: number | null; firstSentAt: number | null }) => {
+      await tx.insert(auditLog).values({
+        actorType: "system",
+        actorId: null,
+        action: "wa.bot_turn",
+        entityType: "wa_conversation",
+        entityId: conversationId,
+        after: {
+          inboundId: lastInbound.id,
+          mode: copilot ? "copilot" : "autonomous",
+          model,
+          toolCalls: turn.toolCalls,
+          usage: turn.usage,
+          handedOff: turn.handedOff,
+          attachments: attachments.map((attachment) => attachment.kind),
+          bubbles: bubbles.length,
+          durationMs: modelMs,
+          // Só contagens: a foto nunca é guardada.
+          media,
+          timings: timings(extra),
+        },
+      });
+    };
 
     if (copilot) {
       // A Lia pediu ajuda (recusa do modelo, estouro): a dona assume de vez —
       // é o que ela faria sozinha, só que sem texto para a cliente.
       if (turn.handedOff) {
         await handOffToHuman(tx, { conversationId, phoneE164: conversation.phoneE164, lastInboundId: lastInbound.id }, "A vendedora pediu ajuda (copiloto)");
+        await writeTurnAudit({ deliveryMs: null, firstSentAt: null });
         return { replied: false, handedOff: true };
       }
       const [customer] = conversation.customerId
@@ -802,6 +872,7 @@ export async function runBotTurn(
         // cliente não pode ficar no vácuo sem ninguém saber.
         await supersedePendingSuggestions(tx, conversationId, now);
         await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now, empty: true });
+        await writeTurnAudit({ deliveryMs: null, firstSentAt: null });
         return { replied: false, handedOff: false };
       }
       const { suggestionId, created } = await createSuggestion(tx, {
@@ -813,18 +884,25 @@ export async function runBotTurn(
         now,
       });
       if (created) await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
+      await writeTurnAudit({ deliveryMs: null, firstSentAt: null });
       return { suggested: true, suggestionId };
     }
 
-    const { replied } = await deliverBotTurn(tx, provider, {
+    const deliveryStartedAt = Date.now();
+    const { replied, firstSentAt } = await deliverBotTurn(tx, provider, {
       conversation,
       dedupeBase: lastInbound.id,
       attachments,
       bubbles,
       handedOff: turn.handedOff,
     });
+    await writeTurnAudit({ deliveryMs: Date.now() - deliveryStartedAt, firstSentAt });
     return { replied, handedOff: turn.handedOff };
   });
+  // O que o turno enfileirou (cartão, aviso ao dono, sugestão) só fica
+  // visível agora, depois do commit: o kick aqui faz sair em segundos.
+  if (!("skipped" in result)) await kickOutbox();
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -852,7 +930,8 @@ export async function runScheduledBotTurn(
   // `attempt` = tentativas ANTERIORES (0 na primeira), como no wa.transcribe.
   const lastAttempt = (input.attempt ?? 0) + 1 >= getRetryPolicy(BOT_FOLLOWUP_EVENT).maxAttempts;
 
-  return db.transaction(async (tx) => {
+  const turnStartedAt = Date.now();
+  const result = await db.transaction(async (tx): Promise<RunScheduledBotTurnResult> => {
     // Ordem dos locks igual à do turno reativo — a CONVERSA primeiro (o
     // reativo trava a conversa e depois mexe em wa_followups); só então o
     // retorno. Senão os dois turnos se travam em cruz e um deles cai.
@@ -952,11 +1031,18 @@ export async function runScheduledBotTurn(
     // tentativa, registra e desiste: nada de retorno "agendado" para sempre.
     let turn: AssistantTurn;
     try {
-      turn = await assistant.respondTurn({ system, history, model, executeTool });
+      turn = await assistant.respondTurn({
+        system,
+        history,
+        model,
+        executeTool,
+        deadlineAt: new Date(turnStartedAt + BOT_TURN_MODEL_BUDGET_MS),
+      });
     } catch (error) {
       if (lastAttempt) return finish("skipped", "modelo_indisponivel");
       throw error;
     }
+    const modelMs = Date.now() - startedAt;
     const bubbles = turn.reply === null ? [] : splitBotReply(turn.reply);
     if (bubbles.length === 0 && attachments.length === 0) return finish("skipped", "sem_resposta");
 
@@ -978,8 +1064,18 @@ export async function runScheduledBotTurn(
         handedOff: turn.handedOff,
         attachments: attachments.map((attachment) => attachment.kind),
         bubbles: bubbles.length,
-        durationMs: Date.now() - startedAt,
+        durationMs: modelMs,
         media: loaded.media,
+        timings: {
+          enqueuedAt: null,
+          queueWaitMs: null,
+          prepMs: startedAt - turnStartedAt,
+          modelMs,
+          toolsMs: 0,
+          deliveryMs: null,
+          totalMs: Date.now() - turnStartedAt,
+          inboundToFirstBubbleMs: null,
+        } satisfies BotTurnTimings,
       },
     });
 
@@ -1010,6 +1106,9 @@ export async function runScheduledBotTurn(
       .where(eq(waFollowups.id, followupId));
     return { sent: true, followupId, replied: true };
   });
+  // Cartão/aviso enfileirados no turno saem agora, depois do commit.
+  if ("sent" in result && result.sent) await kickOutbox();
+  return result;
 }
 
 /** Carência depois do "sim": uma mensagem logo em seguida não cancela o combinado. */

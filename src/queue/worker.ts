@@ -18,6 +18,7 @@ type ClaimedRow = {
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
+  created_at: Date | string;
 };
 
 export type DrainOutboxOptions = {
@@ -44,8 +45,14 @@ export type DrainOutboxResult = {
   released: number;
 };
 
-/** Lease vencido: a função morreu no meio (timeout, deploy). Conta como tentativa. */
-const LEASE_EXPIRED_ERROR = "lease expired: worker did not finish within 5 minutes";
+/**
+ * Lease: passado esse tempo sem terminar, a função morreu no meio (timeout de
+ * 60 s da rota, deploy) e a linha volta para a fila. Dois minutos cobrem o
+ * pior handler com folga; era 5 e uma resposta da Lia ficava presa isso tudo.
+ */
+const LEASE_MINUTES = 2;
+const LEASE_EXPIRED_ERROR = `lease expired: worker did not finish within ${LEASE_MINUTES} minutes`;
+const LEASE_INTERVAL = sql.raw(`interval '${LEASE_MINUTES} minutes'`);
 
 /**
  * Processa um lote do outbox. Idempotente e seguro para execução
@@ -82,7 +89,7 @@ export async function drainOutbox(
     SELECT id, event_type, attempts
     FROM outbox_events
     WHERE status = 'processing'
-      AND locked_at < now() - interval '5 minutes'
+      AND locked_at < now() - ${LEASE_INTERVAL}
     FOR UPDATE SKIP LOCKED
   `));
   for (const row of expiredRows) {
@@ -98,7 +105,7 @@ export async function drainOutbox(
             locked_by = NULL
         WHERE id = ${row.id}
           AND status = 'processing'
-          AND locked_at < now() - interval '5 minutes'
+          AND locked_at < now() - ${LEASE_INTERVAL}
           AND attempts = ${row.attempts}
       `);
     } else {
@@ -113,7 +120,7 @@ export async function drainOutbox(
             locked_by = NULL
         WHERE id = ${row.id}
           AND status = 'processing'
-          AND locked_at < now() - interval '5 minutes'
+          AND locked_at < now() - ${LEASE_INTERVAL}
           AND attempts = ${row.attempts}
       `);
     }
@@ -135,7 +142,7 @@ export async function drainOutbox(
       FOR UPDATE SKIP LOCKED
     )
     RETURNING id, event_type, aggregate_type, aggregate_id, payload,
-              attempts, max_attempts
+              attempts, max_attempts, created_at
   `));
   result.claimed = claimedRows.length;
 
@@ -161,6 +168,7 @@ export async function drainOutbox(
       aggregateId: row.aggregate_id,
       payload: row.payload,
       attempts: row.attempts,
+      createdAt: new Date(row.created_at),
       // O handler pode se encolher para caber no que sobra da varredura.
       ...(options.budgetMs !== undefined ? { deadlineAt: new Date(startedAt + options.budgetMs) } : {}),
     };

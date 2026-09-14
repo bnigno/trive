@@ -5,6 +5,7 @@ import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
+import { runOutboxKick } from "@/queue/kick";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { yesterdaySpDayKey } from "@/services/daily-digest";
 import { pollEmailInbox } from "@/services/email-inbox";
@@ -62,10 +63,14 @@ export const outboxSweep = inngest.createFunction(
   },
 );
 
+// Kick: drena agora. Com o id da linha, espera ela aparecer (quem enfileirou
+// pode ainda estar na transação) — ver src/queue/kick.ts.
 export const outboxKick = inngest.createFunction(
   { id: "outbox-kick", triggers: [{ event: "outbox/event.enqueued" }] },
-  async () => {
-    return drainOutbox(getDb(), { limit: 10, budgetMs: SWEEP_BUDGET_MS });
+  async ({ event }) => {
+    const data = (event.data ?? {}) as { outboxEventId?: unknown };
+    const outboxEventId = typeof data.outboxEventId === "string" ? data.outboxEventId : undefined;
+    return runOutboxKick(getDb(), { outboxEventId });
   },
 );
 

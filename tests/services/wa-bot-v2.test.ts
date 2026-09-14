@@ -933,6 +933,30 @@ describe("balões", () => {
     });
     expect(typeof (trail.after as { durationMs: number }).durationMs).toBe("number");
   });
+
+  it("os tempos do turno (fila, preparo, modelo, ferramentas, entrega, total, mensagem → 1º balão) vão no audit", async () => {
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "oi");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "ver_sacola", input: {} }],
+      replyTemplate: "Sacola vazia por enquanto!",
+    });
+    const enqueuedAt = new Date(Date.now() - 1_500);
+    await runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt });
+
+    const [trail] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.bot_turn"));
+    const timings = (trail.after as { timings: Record<string, number | string | null> }).timings;
+    expect(timings.enqueuedAt).toBe(enqueuedAt.toISOString());
+    expect(timings.queueWaitMs).toBeGreaterThanOrEqual(1_500);
+    expect(timings.queueWaitMs).toBeLessThan(60_000);
+    for (const key of ["prepMs", "modelMs", "toolsMs", "deliveryMs", "totalMs", "inboundToFirstBubbleMs"]) {
+      expect(typeof timings[key], key).toBe("number");
+      expect(timings[key] as number, key).toBeGreaterThanOrEqual(0);
+    }
+    expect(timings.toolsMs as number).toBeLessThanOrEqual(timings.modelMs as number);
+    expect(timings.totalMs as number).toBeGreaterThanOrEqual((timings.prepMs as number) + (timings.modelMs as number));
+    expect((trail.after as { durationMs: number }).durationMs).toBe(timings.modelMs);
+  });
 });
 
 // ---------------------------------------------------------------------------

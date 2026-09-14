@@ -11,7 +11,7 @@ import { createTestDb, type TestDb } from "../helpers/db";
 
 // Handlers injetados: o teste decide quem falha e quem demora. O módulo real
 // puxa todos os adapters; aqui só interessa o comportamento do varredor.
-const handlers: Record<string, (event: { id: string; eventType: string }) => Promise<void>> = {};
+const handlers: Record<string, (event: { id: string; eventType: string; createdAt: Date }) => Promise<void>> = {};
 vi.mock("@/queue/handlers", () => ({
   resolveOutboxHandler: (eventType: string) => {
     const handler = handlers[eventType];
@@ -94,11 +94,16 @@ describe("drainOutbox — teto pela política", () => {
     expect(retried.nextAttemptAt.getTime()).toBeGreaterThan(now.getTime());
   });
 
-  it("handler que resolve marca done e limpa o lock", async () => {
-    handlers["order.receipt"] = async () => {};
+  it("handler que resolve marca done e limpa o lock; recebe createdAt (Date) para medir a espera na fila", async () => {
+    let seen: Date | null = null;
+    handlers["order.receipt"] = async (event) => {
+      seen = event.createdAt;
+    };
     const id = await insertEvent({ eventType: "order.receipt" });
     const result = await drainOutbox(asDb(), { limit: 10 });
     expect(result).toMatchObject({ claimed: 1, done: 1, failed: 0, dead: 0 });
+    expect(seen).toBeInstanceOf(Date);
+    expect(Date.now() - (seen as unknown as Date).getTime()).toBeLessThan(60_000);
     const row = await eventRow(id);
     expect(row.status).toBe("done");
     expect(row.processedAt).not.toBeNull();
@@ -106,7 +111,7 @@ describe("drainOutbox — teto pela política", () => {
   });
 });
 
-describe("drainOutbox — lease vencido", () => {
+describe("drainOutbox — lease vencido (2 min: nenhum handler sobrevive aos 60 s da rota)", () => {
   it("conta como tentativa pela política: product.published na 2ª vira dead; o padrão volta a failed com backoff", async () => {
     handlers["product.published"] = async () => {};
     handlers["order.receipt"] = async () => {};
@@ -114,13 +119,13 @@ describe("drainOutbox — lease vencido", () => {
       eventType: "product.published",
       status: "processing",
       attempts: 1,
-      lockedMinutesAgo: 6,
+      lockedMinutesAgo: 3,
     });
     const stuckReceipt = await insertEvent({
       eventType: "order.receipt",
       status: "processing",
       attempts: 0,
-      lockedMinutesAgo: 6,
+      lockedMinutesAgo: 3,
     });
     const fresh = await insertEvent({
       eventType: "order.receipt",
@@ -137,6 +142,7 @@ describe("drainOutbox — lease vencido", () => {
     expect(dead.status).toBe("dead");
     expect(dead.attempts).toBe(2);
     expect(dead.lastError).toContain("lease expired");
+    expect(dead.lastError).toContain("2 minutes");
     expect(dead.lockedBy).toBeNull();
 
     // Recuperado como failed com next_attempt_at no futuro: não é reprocessado neste lote.

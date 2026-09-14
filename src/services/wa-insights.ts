@@ -156,6 +156,74 @@ export async function getBotActivitySummary(db: DbOrTx): Promise<BotActivitySumm
   };
 }
 
+/** Percentis de cada trecho do turno, em ms (null quando não há amostra). */
+export interface BotTimingSplit {
+  queueWaitMs: number | null;
+  prepMs: number | null;
+  modelMs: number | null;
+  deliveryMs: number | null;
+  totalMs: number | null;
+  inboundToFirstBubbleMs: number | null;
+}
+
+export interface BotResponseTimes {
+  windowDays: number;
+  /** Turnos autônomos com tempos medidos na janela. */
+  turns: number;
+  p50: BotTimingSplit;
+  p90: BotTimingSplit;
+}
+
+const TIMING_FIELDS = [
+  "queueWaitMs",
+  "prepMs",
+  "modelMs",
+  "deliveryMs",
+  "totalMs",
+  "inboundToFirstBubbleMs",
+] as const;
+
+/**
+ * Quanto a Lia demora, de verdade: mediana e p90 de cada trecho do turno
+ * (fila, preparo, modelo, entrega) nos últimos 7 dias, a partir dos
+ * `timings` que runBotTurn grava no audit. Só turnos autônomos (em copiloto
+ * quem responde é a dona) e só os que já têm a medição.
+ */
+export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes> {
+  const since = new Date(Date.now() - WINDOW_DAYS * 86_400_000);
+  const timing = (field: (typeof TIMING_FIELDS)[number]) =>
+    sql`(${auditLog.after} -> 'timings' ->> ${field})::numeric`;
+  const percentile = (q: number, field: (typeof TIMING_FIELDS)[number]) =>
+    sql<string | null>`percentile_cont(${q}) within group (order by ${timing(field)})`;
+  const selection: Record<string, ReturnType<typeof percentile> | ReturnType<typeof sql<string>>> = {
+    turns: sql<string>`count(*)`,
+  };
+  for (const field of TIMING_FIELDS) {
+    selection[`p50_${field}`] = percentile(0.5, field);
+    selection[`p90_${field}`] = percentile(0.9, field);
+  }
+  const [row] = await db
+    .select(selection)
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, "wa.bot_turn"),
+        gte(auditLog.createdAt, since),
+        sql`${auditLog.after} ->> 'mode' = 'autonomous'`,
+        sql`${auditLog.after} ? 'timings'`,
+      ),
+    );
+  const pick = (prefix: "p50" | "p90"): BotTimingSplit => {
+    const split = {} as Record<(typeof TIMING_FIELDS)[number], number | null>;
+    for (const field of TIMING_FIELDS) {
+      const value = row?.[`${prefix}_${field}`];
+      split[field] = value === null || value === undefined ? null : Math.round(Number(value));
+    }
+    return split;
+  };
+  return { windowDays: WINDOW_DAYS, turns: Number(row?.turns ?? 0), p50: pick("p50"), p90: pick("p90") };
+}
+
 export interface BotActivityEvent {
   kind: "handoff" | "order";
   at: Date;

@@ -14,6 +14,15 @@ import { AssistantUnavailableError } from "./index";
 const MAX_ITERATIONS = 6;
 const HANDOFF_FALLBACK_REPLY = "Vou te passar para a equipe 😉";
 const UNAVAILABLE_MESSAGE = "Assistente de IA indisponível no momento — tente novamente em instantes";
+/**
+ * Teto de uma chamada ao modelo e nenhum retry no SDK: a rota do Inngest tem
+ * 60 s, e quem tenta de novo é a fila (services/wa-bot, desde o PR #73) —
+ * o retry interno do SDK era o que deixava uma chamada chegar a 80 s.
+ */
+export const ANTHROPIC_TIMEOUT_MS = 30_000;
+export const ANTHROPIC_MAX_RETRIES = 0;
+/** Abaixo disto não vale começar outra chamada: devolve "tempo esgotado". */
+const MIN_MODEL_CALL_MS = 5_000;
 
 /**
  * Traduz o erro da API num AssistantUnavailableError com causa curta e o
@@ -87,7 +96,7 @@ export type MessagesClient = {
   messages: {
     create(
       params: Anthropic.MessageCreateParamsNonStreaming,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; timeout?: number },
     ): Promise<Anthropic.Message>;
   };
 };
@@ -106,10 +115,7 @@ export class ClaudeSalesAssistant implements SalesAssistant {
           "Assistente de IA não configurado — informe a ANTHROPIC_API_KEY",
         );
       }
-      // A rota do Inngest tem 60 s: um turno lento precisa falhar dentro
-      // desse teto (o default do SDK é 10 min com 2 tentativas — a função
-      // morreria antes e o evento ficaria preso até o lease expirar).
-      this.client = new Anthropic({ timeout: 40_000, maxRetries: 1 });
+      this.client = new Anthropic({ timeout: ANTHROPIC_TIMEOUT_MS, maxRetries: ANTHROPIC_MAX_RETRIES });
     }
     return this.client;
   }
@@ -195,7 +201,7 @@ export class ClaudeSalesAssistant implements SalesAssistant {
   }
 
   private async runLoop(input: RespondTurnInput): Promise<AssistantTurn> {
-    const { system, history, model, executeTool } = input;
+    const { system, history, model, executeTool, deadlineAt } = input;
     const client = this.getClient();
 
     // Foto anexada vira bloco de imagem antes do texto (Sonnet é multimodal).
@@ -257,7 +263,20 @@ export class ClaudeSalesAssistant implements SalesAssistant {
         request.output_config = { effort: "medium" };
       }
 
-      const response = await client.messages.create(request);
+      // Prazo do turno: sem tempo para mais uma chamada, a falha é passageira
+      // (a fila tenta de novo) — e uma chamada em curso é cortada no prazo.
+      const remainingMs = deadlineAt ? deadlineAt.getTime() - Date.now() : ANTHROPIC_TIMEOUT_MS;
+      if (remainingMs < MIN_MODEL_CALL_MS) {
+        throw new AssistantUnavailableError(`${UNAVAILABLE_MESSAGE} (tempo esgotado)`, {
+          retryable: true,
+          reason: "tempo esgotado",
+        });
+      }
+      const callTimeoutMs = Math.min(ANTHROPIC_TIMEOUT_MS, remainingMs);
+      const response = await client.messages.create(request, {
+        signal: AbortSignal.timeout(callTimeoutMs),
+        timeout: callTimeoutMs,
+      });
       usage.inputTokens += response.usage.input_tokens;
       usage.outputTokens += response.usage.output_tokens;
       usage.cacheReadTokens += response.usage.cache_read_input_tokens ?? 0;

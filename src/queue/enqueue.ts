@@ -20,14 +20,33 @@ export const enqueueOutboxEventSchema = z.object({
 export type EnqueueOutboxEventInput = z.input<typeof enqueueOutboxEventSchema>;
 
 /**
+ * "Kick" best-effort no Inngest: o outbox-kick drena a fila agora, sem
+ * esperar o cron de 1 min. Com id, o kick espera essa linha aparecer (a
+ * transação de quem enfileirou pode não ter commitado); sem id, só drena.
+ * Quem enfileira DENTRO de uma transação longa (webhook, turno da Lia)
+ * chama isto depois do commit — o kick disparado antes não acha a linha.
+ */
+export async function kickOutbox(outboxEventId?: string): Promise<void> {
+  try {
+    await inngest.send({
+      name: "outbox/event.enqueued",
+      data: outboxEventId ? { outboxEventId } : {},
+    });
+  } catch {
+    // O cron de varredura entrega mesmo sem o kick.
+  }
+}
+
+/**
  * Insere um evento no outbox. Retorna o id criado, ou null quando o
  * dedupeKey já existe (duplicado ignorado). Após o insert, dá um "kick"
- * best-effort no Inngest; a varredura por cron garante a entrega mesmo
- * se o kick falhar.
+ * best-effort no Inngest (a menos que `kick: false`); a varredura por cron
+ * garante a entrega mesmo se o kick falhar.
  */
 export async function enqueueOutboxEvent(
   dbOrTx: DbOrTx,
   input: EnqueueOutboxEventInput,
+  options: { kick?: boolean } = {},
 ): Promise<string | null> {
   const parsed = enqueueOutboxEventSchema.parse(input);
 
@@ -54,15 +73,8 @@ export async function enqueueOutboxEvent(
   // entrega na hora certa); poupa uma chamada HTTP por linha dentro da
   // transação de quem enfileira em lote.
   if (parsed.nextAttemptAt && parsed.nextAttemptAt.getTime() > Date.now() + 1_000) return id;
+  if (options.kick === false) return id;
 
-  try {
-    await inngest.send({
-      name: "outbox/event.enqueued",
-      data: { outboxEventId: id },
-    });
-  } catch {
-    // Kick é best-effort: o cron de varredura entrega mesmo sem ele.
-  }
-
+  await kickOutbox(id);
   return id;
 }

@@ -10,7 +10,11 @@ import { FakeMessagingProvider } from "@/adapters/zapi/fake";
 import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
-import { transcribeInboundAudio } from "@/services/wa-transcribe";
+
+const kicks: unknown[] = [];
+vi.mock("@/inngest/client", () => ({ inngest: { send: async (event: unknown) => { kicks.push(event); return { ids: [] }; } } }));
+
+const { transcribeInboundAudio } = await import("@/services/wa-transcribe");
 import { createTestCustomer, createTestDb, type TestDb } from "../helpers/db";
 
 const PHONE = "+5511999990000";
@@ -23,6 +27,7 @@ let provider: FakeMessagingProvider;
 let transcriber: FakeTranscriber;
 
 beforeEach(async () => {
+  kicks.length = 0;
   ({ db, close } = await createTestDb());
   sdb = db as unknown as DbOrTx;
   provider = new FakeMessagingProvider();
@@ -102,6 +107,8 @@ describe("transcribeInboundAudio", () => {
       dedupeKey: "wa.bot_turn:MSG-AUDIO-1",
       payload: { conversationId },
     });
+    // O kick do turno sai depois do commit, sem id.
+    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: {} }]);
 
     // O audit guarda medidas, nunca o texto.
     const [audit] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.transcribe"));
