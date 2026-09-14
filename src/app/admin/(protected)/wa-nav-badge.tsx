@@ -108,6 +108,7 @@ export function WaNavBadge() {
       if (firstPollDone && freshSuggestions.length > 0 && !pathnameRef.current.startsWith("/admin/whatsapp/conversas")) {
         for (const item of freshSuggestions) {
           pushToast({ conversationId: item.id, label: item.label, title: "A vendedora sugeriu uma resposta" });
+          notify({ kind: "handoff", title: "A vendedora sugeriu uma resposta", body: item.label, conversationId: item.id });
         }
       }
       firstPollDone = true;

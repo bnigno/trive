@@ -40,6 +40,7 @@ const chatConversationSchema = z.object({
   isOwnerNotices: z.boolean(),
   originLabel: z.string().nullable().default(null),
   pendingSuggestion: z.boolean().default(false),
+  botMode: z.enum(["autonomous", "copilot"]).default("autonomous"),
 });
 
 const chatContextSchema = z.object({
@@ -100,7 +101,9 @@ const chatActivitySchema = z.object({
 const chatSuggestionSchema = z.object({
   id: z.string(),
   bubbles: z.array(z.string()),
-  attachments: z.array(z.string()).default([]),
+  attachments: z
+    .array(z.object({ kind: z.enum(["lista", "foto"]), title: z.string(), lines: z.array(z.string()), url: z.string().nullable() }))
+    .default([]),
   toolCalls: z.array(z.string()).default([]),
   createdAt: z.string(),
   inboundPreview: z.string().nullable().default(null),

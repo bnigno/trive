@@ -19,7 +19,9 @@ export const suggestionSendPayloadSchema = z.object({ suggestionId: z.uuid() });
 /** Um aviso no WhatsApp da dona por conversa a cada meia hora, no máximo. */
 export const SUGGESTION_NOTICE_BUCKET_MS = 30 * 60_000;
 
-const bubblesSchema = z.array(z.string().trim().min(1).max(4000)).min(1).max(3);
+/** Um balão nunca passa do que o WhatsApp mostra inteiro (truncateForWhatsApp). */
+export const SUGGESTION_BUBBLE_MAX = 1200;
+const bubblesSchema = z.array(z.string().trim().min(1).max(SUGGESTION_BUBBLE_MAX)).min(1).max(3);
 
 /** O modo da loja (setting bot_mode; ausente = autônoma). */
 export async function loadStoreBotMode(db: DbOrTx): Promise<BotMode> {
@@ -32,7 +34,17 @@ export async function resolveConversationBotMode(db: DbOrTx, conversation: { bot
   return resolveBotMode(await loadStoreBotMode(db), conversation.botMode);
 }
 
-/** "Só sugerir nesta conversa" / "deixar responder sozinha" / voltar ao modo da loja (null). */
+/** A sugestão já existente para esta mensagem (reentrada da fila). */
+export async function findSuggestionByInbound(db: DbOrTx, inboundMessageId: string): Promise<string | null> {
+  const [row] = await db.select({ id: waSuggestions.id }).from(waSuggestions).where(eq(waSuggestions.inboundMessageId, inboundMessageId)).limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * "Só sugerir nesta conversa" / "deixar responder sozinha" / voltar ao modo
+ * da loja (null). Se o modo efetivo deixa de ser copiloto, a sugestão
+ * pendente perde o sentido (a Lia volta a responder sozinha).
+ */
 export async function setConversationBotMode(
   db: DbOrTx,
   input: { conversationId: string; mode: BotMode | null; userId: string },
@@ -41,6 +53,7 @@ export async function setConversationBotMode(
   const [row] = await db.select({ botMode: waConversations.botMode }).from(waConversations).where(eq(waConversations.id, conversationId)).limit(1);
   if (!row) throw new ServiceError("conversa_inexistente", "Conversa não encontrada.");
   await db.update(waConversations).set({ botMode: input.mode, updatedAt: new Date() }).where(eq(waConversations.id, conversationId));
+  if (resolveBotMode(await loadStoreBotMode(db), input.mode) !== "copilot") await supersedePendingSuggestions(db, conversationId);
   await db.insert(auditLog).values({
     actorType: "user",
     actorId: input.userId,
@@ -105,23 +118,36 @@ export async function createSuggestion(
   return { suggestionId: row.id, created: true };
 }
 
-/** Aviso no WhatsApp da dona: uma vez por conversa a cada meia hora (dedupe por balde). */
+/** Aviso no WhatsApp da dona: uma vez por conversa a cada meia hora (dedupe por balde de relógio). */
 export async function enqueueSuggestionNotice(
   tx: DbOrTx,
-  input: { conversationId: string; phoneE164: string; customerName: string | null; now: Date },
+  input: { conversationId: string; phoneE164: string; customerName: string | null; now: Date; empty?: boolean },
 ): Promise<void> {
   const bucket = Math.floor(input.now.getTime() / SUGGESTION_NOTICE_BUCKET_MS);
+  const who = input.customerName ?? maskPhone(input.phoneE164);
   await enqueueOutboxEvent(tx, {
     eventType: "wa.owner_forward",
-    dedupeKey: `wa.suggestion_notice:${input.conversationId}:${bucket}`,
+    dedupeKey: `wa.suggestion_notice:${input.conversationId}:${bucket}${input.empty ? ":vazia" : ""}`,
     aggregateType: "wa_conversation",
     aggregateId: input.conversationId,
     payload: {
       phoneE164: input.phoneE164,
-      body: `💡 A vendedora sugeriu uma resposta para ${input.customerName ?? maskPhone(input.phoneE164)}. Abra a Central para enviar, editar ou descartar.`,
+      body: input.empty
+        ? `⚠️ A vendedora não conseguiu sugerir uma resposta para ${who} (copiloto). Responda pelo painel.`
+        : `💡 A vendedora sugeriu uma resposta para ${who}. Abra a Central para enviar, editar ou descartar.`,
       raw: true,
     },
   });
+}
+
+/** Trocar o modo da LOJA para "sozinha": todas as sugestões pendentes perdem o sentido. */
+export async function supersedeAllPendingSuggestions(db: DbOrTx, now = new Date()): Promise<number> {
+  const updated = await db
+    .update(waSuggestions)
+    .set({ status: "superseded", supersededAt: now, updatedAt: now })
+    .where(eq(waSuggestions.status, "pending"))
+    .returning({ id: waSuggestions.id });
+  return updated.length;
 }
 
 function toPending(row: typeof waSuggestions.$inferSelect): PendingSuggestion {
@@ -130,7 +156,7 @@ function toPending(row: typeof waSuggestions.$inferSelect): PendingSuggestion {
     conversationId: row.conversationId,
     inboundMessageId: row.inboundMessageId,
     followupId: row.followupId,
-    bubbles: bubblesSchema.catch([]).parse(row.bubbles),
+    bubbles: (Array.isArray(row.bubbles) ? row.bubbles : []).filter((bubble): bubble is string => typeof bubble === "string" && bubble.trim() !== "").map((bubble) => bubble.slice(0, SUGGESTION_BUBBLE_MAX)),
     attachments: (Array.isArray(row.attachments) ? row.attachments : []) as BotAttachment[],
     toolCalls: (Array.isArray(row.toolCalls) ? row.toolCalls : []) as { name: string; ok: boolean }[],
     createdAt: row.createdAt,
@@ -271,7 +297,7 @@ export async function sendApprovedSuggestion(
       .limit(1);
     if (!conversation) return { skipped: "conversa_inexistente" };
     const pending = toPending(row);
-    const bubbles = row.finalBubbles ? bubblesSchema.catch(pending.bubbles).parse(row.finalBubbles) : pending.bubbles;
+    const bubbles = Array.isArray(row.finalBubbles) && row.finalBubbles.length > 0 ? (row.finalBubbles as string[]).map((bubble) => String(bubble).slice(0, SUGGESTION_BUBBLE_MAX)) : pending.bubbles;
     const delivered = await deliverBotTurn(tx, provider, {
       conversation,
       dedupeBase: `suggestion:${suggestionId}`,

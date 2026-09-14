@@ -67,7 +67,7 @@ export function ConversationItem({
   const badge = attendantBadge(
     item.status,
     item.botDisabledUntil ? new Date(item.botDisabledUntil) : null,
-    { botEnabled, sellerName },
+    { botEnabled, sellerName, botMode: item.botMode },
   );
   const label = conversationLabel(item);
   const hasUnread = item.unreadCount > 0;

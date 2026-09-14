@@ -92,7 +92,7 @@ import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
-import { createSuggestion, enqueueSuggestionNotice, resolveConversationBotMode } from "./wa-suggestions";
+import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode } from "./wa-suggestions";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -608,6 +608,12 @@ export async function runBotTurn(
     const { system, model } = await buildBotPromptBundle(tx);
     // Copiloto (loja ou só esta conversa): a Lia pensa, a dona manda.
     const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
+    if (copilot) {
+      // Reentrada da fila (mesma inbound): a sugestão já existe — nada de
+      // rodar o modelo e as ferramentas de estado de novo.
+      const existing = await findSuggestionByInbound(tx, lastInbound.id);
+      if (existing) return { suggested: true, suggestionId: existing };
+    }
 
     // Mídia emitida pelas ferramentas do turno (lista tocável, foto).
     const attachments: BotAttachment[] = [];
@@ -686,8 +692,21 @@ export async function runBotTurn(
     });
 
     if (copilot) {
-      if (bubbles.length === 0 && attachments.length === 0) return { replied: false, handedOff: false };
-      const { suggestionId } = await createSuggestion(tx, {
+      // A Lia pediu ajuda (recusa do modelo, estouro): a dona assume de vez —
+      // é o que ela faria sozinha, só que sem texto para a cliente.
+      if (turn.handedOff) {
+        await handOffToHuman(tx, { conversationId, phoneE164: conversation.phoneE164, lastInboundId: lastInbound.id }, "A vendedora pediu ajuda (copiloto)");
+        return { replied: false, handedOff: true };
+      }
+      const [customer] = conversation.customerId
+        ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
+        : [];
+      if (bubbles.length === 0 && attachments.length === 0) {
+        // Sem sugestão: a cliente não pode ficar no vácuo sem ninguém saber.
+        await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now, empty: true });
+        return { replied: false, handedOff: false };
+      }
+      const { suggestionId, created } = await createSuggestion(tx, {
         conversationId,
         inboundMessageId: lastInbound.id,
         bubbles,
@@ -695,10 +714,7 @@ export async function runBotTurn(
         toolCalls: turn.toolCalls,
         now,
       });
-      const [customer] = conversation.customerId
-        ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
-        : [];
-      await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
+      if (created) await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
       return { suggested: true, suggestionId };
     }
 
@@ -865,11 +881,11 @@ export async function runScheduledBotTurn(
 
     if (copilot) {
       // O retorno vira sugestão: a dona manda (ou não) — o combinado está cumprido pela Lia.
-      const { suggestionId } = await createSuggestion(tx, { conversationId: conversation.id, followupId, bubbles, attachments, toolCalls: turn.toolCalls, now });
+      const { suggestionId, created } = await createSuggestion(tx, { conversationId: conversation.id, followupId, bubbles, attachments, toolCalls: turn.toolCalls, now });
       const [customer] = conversation.customerId
         ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
         : [];
-      await enqueueSuggestionNotice(tx, { conversationId: conversation.id, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
+      if (created) await enqueueSuggestionNotice(tx, { conversationId: conversation.id, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now });
       await tx.update(waFollowups).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(waFollowups.id, followupId));
       return { sent: true, followupId, replied: false, suggestionId };
     }

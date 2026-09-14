@@ -25,7 +25,8 @@ import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
 import { FOLLOWUP_CANCEL_LABELS, listFollowupHistory, type FollowupCancelReason } from "@/services/wa-followups";
-import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, resolveConversationBotMode, supersedePendingSuggestions } from "@/services/wa-suggestions";
+import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, loadStoreBotMode, resolveConversationBotMode, supersedePendingSuggestions } from "@/services/wa-suggestions";
+import { resolveBotMode } from "@/core/bot/copilot";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import { originLabel } from "@/core/bot/site-bridge";
 
@@ -67,6 +68,8 @@ export interface WaConversationListItem {
   originLabel: string | null;
   /** Copiloto: a Lia sugeriu e a dona ainda não decidiu. */
   pendingSuggestion: boolean;
+  /** O modo efetivo desta conversa (loja + override). */
+  botMode: "autonomous" | "copilot";
 }
 
 export async function listWaConversations(
@@ -81,6 +84,7 @@ export async function listWaConversations(
       phoneE164: waConversations.phoneE164,
       customerName: customers.fullName,
       status: waConversations.status,
+      botMode: waConversations.botMode,
       botDisabledUntil: waConversations.botDisabledUntil,
       botState: waConversations.botState,
       updatedAt: waConversations.updatedAt,
@@ -134,7 +138,7 @@ export async function listWaConversations(
   const unreadByConversation = new Map(
     unreadRows.map((row) => [row.conversationId, row.unreadCount]),
   );
-  const withSuggestion = await conversationIdsWithPendingSuggestion(db, ids);
+  const [withSuggestion, storeMode] = await Promise.all([conversationIdsWithPendingSuggestion(db, ids), loadStoreBotMode(db)]);
 
   return rows.map((row) => {
     const last = byConversation.get(row.id) ?? null;
@@ -163,6 +167,7 @@ export async function listWaConversations(
       isOwnerNotices: sameE164(ownerPhone, row.phoneE164),
       originLabel: state.bridge ? (state.bridge.sourceLabel ?? originLabel(state.bridge.source)) : null,
       pendingSuggestion: withSuggestion.has(row.id),
+      botMode: resolveBotMode(storeMode, row.botMode),
     };
   });
 }
@@ -308,8 +313,9 @@ export interface WaBotTurnActivity {
 export interface WaThreadSuggestion {
   id: string;
   bubbles: string[];
-  /** Só o tipo de cada anexo ("lista", "foto") — o painel mostra chips. */
-  attachments: string[];
+  /** O que vai antes do texto: a lista (título + opções) ou a foto (legenda + URL). */
+  attachments: { kind: "lista" | "foto"; title: string; lines: string[]; url: string | null }[];
+  /** Só as ferramentas que rodaram de verdade (as bloqueadas ficam de fora). */
   toolCalls: string[];
   createdAt: Date;
   /** A mensagem dela que gerou a sugestão (null: retorno combinado). */
@@ -534,8 +540,12 @@ export async function getWaThreadTail(
     ? {
         id: pending.id,
         bubbles: pending.bubbles,
-        attachments: pending.attachments.map((attachment) => (attachment.kind === "option_list" ? "lista" : "foto")),
-        toolCalls: pending.toolCalls.map((call) => call.name),
+        attachments: pending.attachments.map((attachment) =>
+          attachment.kind === "option_list"
+            ? { kind: "lista" as const, title: attachment.title, lines: [attachment.message, ...attachment.options.map((option) => `• ${option.title}`)], url: null }
+            : { kind: "foto" as const, title: "Foto", lines: [attachment.caption], url: attachment.imageUrl },
+        ),
+        toolCalls: pending.toolCalls.filter((call) => call.ok).map((call) => call.name),
         createdAt: pending.createdAt,
         inboundPreview: await getInboundPreview(db, pending.inboundMessageId),
         fromFollowup: pending.followupId !== null,
@@ -847,12 +857,17 @@ export async function sendManualWaReply(
     parsed.conversationId,
   );
 
-  // Em copiloto responder é o normal — a conversa continua com a Lia (sugerindo).
-  if (conversation.status !== "human" && (await resolveConversationBotMode(db, conversation)) !== "copilot") {
-    await takeOverWaConversation(db, {
-      conversationId: parsed.conversationId,
-      userId: parsed.userId,
-    });
+  // Em copiloto responder é o normal — a conversa continua com a Lia
+  // (sugerindo); a sugestão pendente perde o sentido: a dona já respondeu.
+  if (conversation.status !== "human") {
+    if ((await resolveConversationBotMode(db, conversation)) === "copilot") {
+      await supersedePendingSuggestions(db, conversation.id);
+    } else {
+      await takeOverWaConversation(db, {
+        conversationId: parsed.conversationId,
+        userId: parsed.userId,
+      });
+    }
   }
 
   await enqueueOutboxEvent(db, {

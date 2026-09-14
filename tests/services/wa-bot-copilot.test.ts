@@ -94,10 +94,12 @@ describe("turno em copiloto", () => {
     expect(await countPendingSuggestions(sdb)).toBe(1);
     expect((await listPendingSuggestions(sdb))[0]).toMatchObject({ conversationId, label: "(11) •••••-0000" });
 
-    // Retry da fila (mesma inbound): a sugestão é a mesma, sem duplicar aviso.
+    // Retry da fila (mesma inbound): a sugestão é a mesma, o modelo NÃO roda de novo, sem duplicar aviso.
+    const turnsBefore = assistant.turns.length;
     assistant.enqueueScript({ replyTemplate: "de novo" });
     const again = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(again).toMatchObject({ suggested: true, suggestionId: pending!.id });
+    expect(assistant.turns).toHaveLength(turnsBefore);
     expect(await db.select().from(schema.waSuggestions)).toHaveLength(1);
     expect((await db.select().from(schema.outboxEvents)).filter((event) => event.eventType === "wa.owner_forward")).toHaveLength(1);
   });
@@ -155,9 +157,15 @@ describe("turno em copiloto", () => {
     expect(await sendApprovedSuggestion(sdb, provider, { suggestionId: next.id })).toEqual({ skipped: "nao_aprovada" });
     expect(provider.sentMessages).toHaveLength(1);
 
+    await addInbound(conversationId, "qual o horário?");
+    assistant.enqueueScript({ replyTemplate: "Das 9h às 21h." });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(await getPendingSuggestion(sdb, conversationId)).not.toBeNull();
+    // Respondendo à mão, a sugestão pendente perde o sentido — e a conversa continua aberta.
     await sendManualWaReply(sdb, { conversationId, userId: OWNER, body: "Respondo eu mesma." });
     const [conversation] = await db.select().from(schema.waConversations).where(eq(schema.waConversations.id, conversationId));
     expect(conversation.status).toBe("open");
+    expect(await getPendingSuggestion(sdb, conversationId)).toBeNull();
 
     // A dona assume a conversa: a sugestão pendente é superada e some do badge.
     await addInbound(conversationId, "e o prazo?");
@@ -185,9 +193,25 @@ describe("turno em copiloto", () => {
     assistant.enqueueScript({ replyTemplate: "Oi!" });
     expect(await runBotTurn(sdb, assistant, provider, { conversationId: other })).toMatchObject({ suggested: true });
     expect(provider.sentMessages).toHaveLength(1);
+    // Voltar ao modo da loja (sozinha) supera a sugestão pendente desta conversa.
+    expect(await getPendingSuggestion(sdb, other)).not.toBeNull();
     await setConversationBotMode(sdb, { conversationId: other, mode: null, userId: OWNER });
     const [row] = await db.select().from(schema.waConversations).where(eq(schema.waConversations.id, other));
     expect(row.botMode).toBeNull();
+    expect(await getPendingSuggestion(sdb, other)).toBeNull();
+  });
+
+  it("a Lia pede ajuda em copiloto (recusa/estouro): transfere para a dona sem texto para a cliente; sem sugestão avisa a dona", async () => {
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "oi");
+    assistant.enqueueScript({ toolCalls: [{ name: "transferir_para_atendente", input: { motivo: "x" } }], replyTemplate: "" });
+    // transferir está bloqueada em copiloto: não transfere por ferramenta; sem balões → aviso "sem sugestão".
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: false, handedOff: false });
+    const notice = (await db.select().from(schema.outboxEvents)).find((event) => event.eventType === "wa.owner_forward");
+    expect(notice?.dedupeKey).toContain(":vazia");
+    expect((notice?.payload as { body: string }).body).toContain("não conseguiu sugerir");
+    expect(provider.sentMessages).toHaveLength(0);
   });
 
   it("retorno combinado em copiloto vira sugestão (o combinado conta como cumprido)", async () => {

@@ -102,7 +102,9 @@ export function ThreadPanel({
         </p>
         <p className="max-w-sm text-sm text-ink-500 dark:text-ink-300">
           {botEnabled
-            ? `A ${sellerName} atende sozinha; você entra quando quiser — ou quando ela passar uma cliente para você.`
+            ? effectiveBotMode === "copilot"
+              ? `A ${sellerName} está em copiloto: ela sugere a resposta e você envia, edita ou descarta em cada conversa.`
+              : `A ${sellerName} atende sozinha; você entra quando quiser — ou quando ela passar uma cliente para você.`
             : `A ${sellerName} está desligada: toda mensagem nova cai com você. Ligue-a na Central do WhatsApp quando quiser.`}
         </p>
       </div>
