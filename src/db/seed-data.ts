@@ -278,9 +278,9 @@ export const initialWaTemplates: Array<{
     key: "owner_atelier_draft",
     label: "[interno] Ateliê: rascunho pronto",
     bodyTemplate:
-      "🧵 Rascunho pronto · {{peca}} · {{fotos}}\n" +
+      "🧵 Rascunho pronto · {{peca}} · {{fotos}}{{detalhes}}\n" +
       "Revise a ficha e publique quando quiser: {{link}}",
-    variables: ["peca", "fotos", "link"],
+    variables: ["peca", "fotos", "detalhes", "link"],
   },
   {
     key: "owner_atelier_help",

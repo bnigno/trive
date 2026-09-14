@@ -199,6 +199,8 @@ export type OutboxEvent = {
   aggregateId: string | null;
   payload: Record<string, unknown>;
   attempts: number;
+  /** Até quando o worker deixa este evento rodar (orçamento da varredura), quando há um. */
+  deadlineAt?: Date;
 };
 
 export type OutboxHandler = (event: OutboxEvent) => Promise<void>;
@@ -379,8 +381,8 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // pronto" no WhatsApp dele. Skips não lançam; foto expirada e recado sem
   // fotos viram orientação ao dono; erro real relança até a política esgotar.
   "wa.atelier_intake": async (event) => {
-    const payload = atelierIntakePayloadSchema.parse({ ...event.payload, attempt: event.attempts });
-    const result = await processAtelierIntake(getDb(), getMessagingProvider(), getFileStorage(), payload);
+    const payload = atelierIntakePayloadSchema.parse({ ...event.payload, attempt: event.attempts, deadlineAt: event.deadlineAt });
+    const result = await processAtelierIntake(getDb(), getMessagingProvider(), getFileStorage(), getSalesAssistant(), payload);
     console.info(`[wa.atelier_intake] ${payload.triggerWaMessageId} → ${JSON.stringify(result)}`);
   },
   "wa.atelier_help": async (event) => {

@@ -10,7 +10,10 @@ import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { getAtelierIntakeForProduct } from "@/services/atelier";
+import { careLabels } from "@/core/atelier/proposal";
+import { formatUsdCents } from "@/core/ai/model-cost";
 import { formatDateTimeSP } from "@/emails/templates";
+import { formatCentsBRL } from "@/lib/money";
 import { axisValues } from "@/core/catalog/attributes";
 import { buildSizeChart, compareSizeLabels, findSizeAxis } from "@/core/catalog/measurements";
 import { suggestSkuForVariant } from "@/core/catalog/sku";
@@ -217,11 +220,54 @@ export default async function ProdutoDetalhePage({
             </p>
           </div>
           {atelierIntake ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              <Badge tone="info">Chegou pelo WhatsApp</Badge>{" "}
-              {formatDateTimeSP(atelierIntake.createdAt)}
-              {atelierIntake.note ? ` · recado: “${atelierIntake.note.slice(0, 160)}${atelierIntake.note.length > 160 ? "…" : ""}”` : ""}
-            </p>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900/40">
+              <p className="text-zinc-700 dark:text-zinc-300">
+                <Badge tone="info">Chegou pelo WhatsApp</Badge> {formatDateTimeSP(atelierIntake.createdAt)}
+                {atelierIntake.note ? ` · recado: “${atelierIntake.note.slice(0, 240)}${atelierIntake.note.length > 240 ? "…" : ""}”` : ""}
+              </p>
+              {atelierIntake.parsed?.proposal ? (
+                <ul className="mt-2 grid gap-1 text-zinc-600 dark:text-zinc-400 sm:grid-cols-2">
+                  <li>Cores: {atelierIntake.parsed.proposal.colors.join(", ") || "—"}</li>
+                  <li>Tamanhos: {atelierIntake.parsed.proposal.sizes.join(", ") || "—"}</li>
+                  <li>
+                    Quantidade:{" "}
+                    {atelierIntake.parsed.proposal.quantityPerVariant !== null
+                      ? `${atelierIntake.parsed.proposal.quantityPerVariant} de cada (${atelierIntake.parsed.proposal.totalQuantity ?? "?"} peças)`
+                      : atelierIntake.parsed.proposal.totalQuantity !== null
+                        ? `${atelierIntake.parsed.proposal.totalQuantity} peças`
+                        : "não disse"}{" "}
+                    — o estoque entra no próximo passo do Ateliê
+                  </li>
+                  <li>
+                    Custo:{" "}
+                    {atelierIntake.parsed.proposal.unitCostCents !== null
+                      ? `${formatCentsBRL(atelierIntake.parsed.proposal.unitCostCents)} por peça`
+                      : atelierIntake.parsed.proposal.totalCostCents !== null
+                        ? `${formatCentsBRL(atelierIntake.parsed.proposal.totalCostCents)} no total`
+                        : "não disse"}
+                  </li>
+                  <li>Preço sugerido: {atelierIntake.parsed.suggestedPriceCents !== null ? formatCentsBRL(atelierIntake.parsed.suggestedPriceCents) : "—"}</li>
+                  <li>Fornecedor: {atelierIntake.parsed.proposal.supplierName ?? "não disse"}</li>
+                  {careLabels(atelierIntake.parsed.proposal).length > 0 ? (
+                    <li className="sm:col-span-2">Cuidados lidos: {careLabels(atelierIntake.parsed.proposal).join(" · ")}</li>
+                  ) : null}
+                </ul>
+              ) : null}
+              {atelierIntake.parsed?.proposal?.warnings.length ? (
+                <p className="mt-2 text-amber-800 dark:text-amber-300">Avisos: {atelierIntake.parsed.proposal.warnings.join(" · ")}</p>
+              ) : null}
+              {atelierIntake.parsed?.failed ? (
+                <p className="mt-2 text-amber-800 dark:text-amber-300">
+                  A inteligência não respondeu ({atelierIntake.parsed.failed}): a ficha nasceu simples — complete a grade à mão.
+                </p>
+              ) : null}
+              {atelierIntake.errorDetail ? <p className="mt-1 text-zinc-500">{atelierIntake.errorDetail}</p> : null}
+              {atelierIntake.parsed?.usage ? (
+                <p className="mt-1 text-xs text-zinc-500">
+                  Inteligência: {atelierIntake.parsed.model} · {formatUsdCents(atelierIntake.parsed.estimatedCostUsdCents)} · {(atelierIntake.parsed.ms / 1000).toFixed(1)} s
+                </p>
+              ) : null}
+            </div>
           ) : null}
           <OwnerOnly>
             <div className="flex flex-wrap gap-2">

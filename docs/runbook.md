@@ -169,6 +169,20 @@ na Z-API, recado sem foto ou erro na montagem viram a mensagem
 **Ateliê pelo WhatsApp** na Central; em produção as chaves entram com
 `scripts/sync-seed.ts --settings atelier_enabled --templates owner_atelier_draft,owner_atelier_help`.
 
+O recado é interpretado pela inteligência (modelo da setting `bot_model`, a
+mesma chave da Anthropic da Lia; centavos por chegada, anotados no audit
+`atelier.intake` e na ficha): "chegou o Longo Dunas da Aurora, areia e terra,
+do P ao GG, três de cada, custou 120" vira a grade cor × tamanho com SKUs e o
+custo por peça em cada variação, a sala, a descrição e o preço sugerido pela
+calculadora — a resposta diz "2 cores × 4 tamanhos · 3 de cada (24 peças) ·
+custo R$ 120,00 · sugerido R$ 289,90 · Aurora". O **estoque não entra nesse
+passo** (a chegada vira compra, com conta a pagar, no passo seguinte do
+Ateliê) e o preço sugerido não é aplicado: a dona decide na ficha. Sem chave,
+demora (25 s) ou resposta fora do formato, a ficha nasce simples (nome pelo
+recado, 1 variação) e a mensagem avisa "sem a grade"; o bloco "Chegou pelo
+WhatsApp" na ficha mostra o que foi entendido e os avisos. Template
+atualizado em produção com `--templates owner_atelier_draft --force-templates`.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).
