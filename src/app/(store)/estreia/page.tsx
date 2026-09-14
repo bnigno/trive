@@ -28,7 +28,7 @@ export const revalidate = 30;
 
 export const metadata: Metadata = {
   title: "Estreia",
-  description: "A próxima estreia da maison: a data, a contagem e as peças atrás do véu. Peça para ser avisada quando a cortina abrir.",
+  description: "A próxima estreia da TRIVÉ: a data, a contagem e as peças atrás do véu. Peça para ser avisada quando a cortina abrir.",
   alternates: { canonical: "/estreia" },
 };
 
@@ -53,7 +53,7 @@ export default async function EstreiaPage() {
         <p className={`${eyebrowNoir} mt-8`}>Estreia</p>
         <h1 className="mt-3 font-display text-3xl font-normal text-ivory-50 sm:text-4xl">A próxima cortina ainda não tem data.</h1>
         <p className="mt-4 max-w-md font-store text-sm text-ivory-200/80">
-          Quando a maison marcar a estreia, a contagem começa aqui. Enquanto isso, a coleção está aberta.
+          Quando a TRIVÉ marcar a estreia, a contagem começa aqui. Enquanto isso, a coleção está aberta.
         </p>
         <Link href="/produtos" className={`${btnGold} mt-8 w-full max-w-xs`}>
           Ver a coleção
@@ -75,7 +75,7 @@ export default async function EstreiaPage() {
             <p className="mt-3 font-display text-xl text-ivory-200/90 italic">{teaser.edition.openingLine}</p>
           ) : null}
           <p className="mt-4 max-w-md font-store text-sm text-ivory-200/80">
-            As peças estão na maison. Se quiser, a {sellerName} guarda uma por 24 horas — é só chamar.
+            As peças estão na TRIVÉ. Se quiser, a {sellerName} guarda uma por 24 horas — é só chamar.
           </p>
           <Link href="/produtos" className={`${btnGold} mt-8 w-full max-w-xs`}>
             Ver a coleção

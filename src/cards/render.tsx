@@ -254,7 +254,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
             }}
           >
             <div style={{ display: "flex", fontFamily: SANS, fontSize: 24, letterSpacing: 4, color: C.gold800 }}>
-              {data.variant === "open" ? "AS PEÇAS ESTÃO NA MAISON" : "ME AVISA QUANDO ABRIR"}
+              {data.variant === "open" ? `AS PEÇAS ESTÃO NA ${normalizeReceiptText(data.storeName).toUpperCase()}` : "ME AVISA QUANDO ABRIR"}
             </div>
             <div style={{ display: "flex", fontFamily: SERIF, fontWeight: 600, fontSize: 52, color: C.ink900 }}>
               {normalizeReceiptText(data.siteLine)}
@@ -386,7 +386,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
       </div>
       <Footer
         storeName={data.storeName}
-        line={isCustomerLook ? "Obrigada por vestir a maison." : isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
+        line={isCustomerLook ? `Obrigada por vestir a ${data.storeName}.` : isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
       />
     </div>
   );

@@ -530,7 +530,7 @@ export function StyleQuiz({ colors, sizes }: { colors: string[]; sizes: string[]
             </div>
             <label className="flex cursor-pointer items-start gap-2 font-store text-xs text-ink-700">
               <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-gold-600" />
-              <span>Autorizo guardar as minhas respostas ligadas a este WhatsApp para receber sugestões da maison. Sem novidades por mensagem sem o meu sim.</span>
+              <span>Autorizo guardar as minhas respostas ligadas a este WhatsApp para receber sugestões da TRIVÉ. Sem novidades por mensagem sem o meu sim.</span>
             </label>
             <input type="text" name="website" tabIndex={-1} autoComplete="off" className="hidden" aria-hidden="true" />
             {message ? <p className="font-store text-xs text-claret-600" role="alert">{message}</p> : null}

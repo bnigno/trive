@@ -40,7 +40,7 @@ export default async function ChegadasPage() {
         title="Chegadas pelo WhatsApp"
         subtitle={
           rows.length === 0
-            ? "Cada foto + recado que você manda para o número da maison aparece aqui."
+            ? "Cada foto + recado que você manda para o número da TRIVÉ aparece aqui."
             : `${rows.length} ${rows.length === 1 ? "chegada" : "chegadas"}${failed > 0 ? ` · ${failed} ${failed === 1 ? "deu" : "deram"} errado` : ""}`
         }
         actions={
@@ -53,7 +53,7 @@ export default async function ChegadasPage() {
       {rows.length === 0 ? (
         <EmptyState
           title="Nenhuma chegada ainda."
-          hint="Do seu celular, mande as fotos da peça para o número da maison e depois um recado com o nome, cores, tamanhos e custo. A peça nasce em rascunho e aparece aqui."
+          hint="Do seu celular, mande as fotos da peça para o número da TRIVÉ e depois um recado com o nome, cores, tamanhos e custo. A peça nasce em rascunho e aparece aqui."
         />
       ) : (
         <ul className="flex flex-col gap-4">

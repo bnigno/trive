@@ -150,6 +150,8 @@ describe("buildEditionCardsBasis", () => {
       careNote: "Lavar à mão · Secar à sombra",
       qrUrl: "https://trivemaison.com.br/produto/longo-dunas",
       qrTarget: "peca",
+      // Sem store_name no banco de teste: o fallback oficial (o convite do presente diz "Conheça a TRIVÉ").
+      storeName: "TRIVÉ",
       printedAddress: "trivemaison.com.br",
       // Texto curto: corpos máximos, uma linha de título e de frase, QR pequeno.
       layout: { titleSize: 84, titleLines: 1, quoteSize: 44, quoteLines: 1, bodySize: 30, wearLines: 3, careLines: 1, qrSize: 220 },

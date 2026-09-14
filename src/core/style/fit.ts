@@ -151,8 +151,8 @@ function pointLabel(point: SizeVerdict["points"][number]): string {
 /** "No M fica certo (busto 6 cm de folga); o P marca a cintura; eu iria de M." */
 export function renderSizeAdvice(advice: SizeAdvice): string {
   if (advice.kind === "no_body") return "Me conta suas medidas (busto, cintura e quadril, em cm) e eu digo como cada tamanho fica em você.";
-  if (advice.kind === "no_chart") return "Esta peça ainda não tem a tabela de medidas — na dúvida, fale com a maison.";
-  if (advice.kind === "no_overlap") return "A tabela desta peça só traz comprimento — não dá para comparar com busto, cintura e quadril. Na dúvida, fale com a maison.";
+  if (advice.kind === "no_chart") return "Esta peça ainda não tem a tabela de medidas — na dúvida, fale com a gente.";
+  if (advice.kind === "no_overlap") return "A tabela desta peça só traz comprimento — não dá para comparar com busto, cintura e quadril. Na dúvida, fale com a gente.";
   const parts = advice.verdicts.map((verdict) => {
     const detail = verdict.points.map(pointLabel).join(", ");
     if (verdict.overall === "aperta") {
@@ -165,6 +165,6 @@ export function renderSizeAdvice(advice: SizeAdvice): string {
     }
     return `no ${verdict.size} ${EASE_LABELS[verdict.overall]} (${detail})`;
   });
-  const closing = advice.recommended ? ` Eu iria de ${advice.recommended}.` : " Nenhum tamanho fecha bem — vale conversar com a maison.";
+  const closing = advice.recommended ? ` Eu iria de ${advice.recommended}.` : " Nenhum tamanho fecha bem — vale conversar com a gente.";
   return `${parts.join("; ")}.${closing}`.replace(/\s+\./g, ".");
 }

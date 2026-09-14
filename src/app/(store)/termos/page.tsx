@@ -11,6 +11,7 @@ import {
 import { linkGold } from "@/components/store/styles";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { describeContact, settingText } from "@/lib/settings-text";
 import { getSettingsMap } from "@/services/settings";
 
@@ -44,7 +45,7 @@ export default async function TermsPage() {
       "store_whatsapp",
     ]),
   );
-  const storeName = settingText(s, "store_name", "a maison");
+  const storeName = settingText(s, "store_name", STORE_NAME_DEFAULT);
   const cnpj = settingText(s, "store_cnpj");
   const address = settingText(s, "store_address");
   const email = settingText(s, "store_email");
@@ -54,7 +55,7 @@ export default async function TermsPage() {
 
   return (
     <LegalArticle
-      eyebrow="A maison, por escrito"
+      eyebrow="A TRIVÉ, por escrito"
       title="Termos de uso"
       lede={
         <>
@@ -81,7 +82,7 @@ export default async function TermsPage() {
           — informações publicadas em cumprimento ao Decreto 7.962/2013, que
           regula o comércio eletrônico no Brasil.
           {hasStoreData && !(cnpj && address)
-            ? " Os dados completos da maison estão no rodapé."
+            ? " Os dados completos da TRIVÉ estão no rodapé."
             : null}
         </p>
         <p>Fale com a gente {contact}.</p>

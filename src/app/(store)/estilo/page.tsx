@@ -14,9 +14,9 @@ export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Sua cartela",
-  description: "Em um minuto, a maison descobre a sua cartela de estilo e escolhe peças para você.",
+  description: "Em um minuto, a TRIVÉ descobre a sua cartela de estilo e escolhe peças para você.",
   alternates: { canonical: "/estilo" },
-  openGraph: { title: "Sua cartela", description: "Em um minuto, a maison descobre a sua cartela de estilo e escolhe peças para você.", url: "/estilo", type: "website" },
+  openGraph: { title: "Sua cartela", description: "Em um minuto, a TRIVÉ descobre a sua cartela de estilo e escolhe peças para você.", url: "/estilo", type: "website" },
 };
 
 export default async function EstiloPage() {
@@ -34,7 +34,7 @@ export default async function EstiloPage() {
         align="left"
       />
       <p className="-mt-4 mb-8 max-w-2xl font-store text-base leading-relaxed text-ink-700">
-        Sete perguntas, nenhuma resposta errada — a última é opcional. No fim, a maison dá um nome à sua cartela
+        Sete perguntas, nenhuma resposta errada — a última é opcional. No fim, a TRIVÉ dá um nome à sua cartela
         e separa três peças da coleção que conversam com ela.
       </p>
       <StyleQuiz colors={map.colors} sizes={map.sizes} />

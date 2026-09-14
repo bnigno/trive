@@ -7,6 +7,7 @@ import {
 } from "@/components/store/legal/legal-article";
 import { getDb } from "@/db/client";
 import { tryOrBuildFallback } from "@/lib/build-safe";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { describeContact, settingText } from "@/lib/settings-text";
 import { getSettingsMap } from "@/services/settings";
 
@@ -39,7 +40,7 @@ export default async function PrivacyPage() {
       "store_whatsapp",
     ]),
   );
-  const storeName = settingText(s, "store_name", "a maison");
+  const storeName = settingText(s, "store_name", STORE_NAME_DEFAULT);
   const cnpj = settingText(s, "store_cnpj");
   const email = settingText(s, "store_email");
   const whatsapp = settingText(s, "store_whatsapp");
@@ -186,7 +187,7 @@ export default async function PrivacyPage() {
           . Canal de contato para assuntos de privacidade: fale com a gente{" "}
           {contact}.
           {hasStoreData && !cnpj
-            ? " Os dados completos da maison estão no rodapé."
+            ? " Os dados completos da TRIVÉ estão no rodapé."
             : null}
         </p>
         <p>

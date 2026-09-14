@@ -15,7 +15,6 @@ import { openingFor } from "@/core/digest/openings";
 import type { DailyDigestData } from "@/core/digest/types";
 import { normalizeReceiptText } from "@/core/receipts/types";
 import { auditLog, orders, settings, waMessages, waTemplates } from "@/db/schema";
-import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL, formatUsdCents } from "@/lib/money";
 import { isValidE164 } from "@/lib/phone";
 import {
@@ -33,6 +32,8 @@ import { topProducts } from "@/services/reports";
 import { getStockOverview } from "@/services/stock";
 import { summarizeCityEditionsForDigest } from "@/services/city-editions";
 import { countOrdersMustShipToday } from "@/services/needed-by";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
+import { getStoreName } from "@/services/settings";
 import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
 import { summarizeBotActivity } from "@/services/wa-insights";
 import { isWaEnabled, sendToOwner, type SendWaMessageResult } from "@/services/wa-messaging";
@@ -63,16 +64,6 @@ const dateSchema = z.object({
 });
 
 const EXCLUDED_STATUSES = ["canceled", "refunded"] as const;
-
-async function loadStoreName(db: DbOrTx): Promise<string> {
-  const [row] = await db
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, "store_name"))
-    .limit(1);
-  const value = row?.value;
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : STORE_NAME_DEFAULT;
-}
 
 /** Só leitura: os números do dia `date` (janela de São Paulo) e o estado de agora. */
 export async function buildDailyDigestData(
@@ -130,7 +121,7 @@ export async function buildDailyDigestData(
     summarizeBotActivity(db, { from, to }),
     getStockOverview(db),
     topProducts(db, { days: BEST_SELLER_DAYS, limit: 1 }),
-    loadStoreName(db),
+    getStoreName(db),
     countOrdersMustShipToday(db, { now }),
     // O Bom dia chega na manhã seguinte ao dia relatado: a vigência é a desse dia.
     summarizeCityEditionsForDigest(db, { now: now }),

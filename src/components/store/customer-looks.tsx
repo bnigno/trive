@@ -5,11 +5,11 @@ import { SectionHeading } from "@/components/store/section-heading";
 
 export type CustomerLookView = { id: string; displayName: string; url: string };
 
-export function CustomerLooks({ productName, looks }: { productName: string; looks: CustomerLookView[] }) {
+export function CustomerLooks({ productName, storeName, looks }: { productName: string; storeName: string; looks: CustomerLookView[] }) {
   if (looks.length === 0) return null;
   return (
     <section aria-labelledby="quem-vestiu" className="mt-16">
-      <SectionHeading eyebrow="Quem já vestiu" title="Nas clientes da maison" id="quem-vestiu" />
+      <SectionHeading eyebrow="Quem já vestiu" title={`Nas clientes da ${storeName}`} id="quem-vestiu" />
       <ul className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 sm:gap-x-5 lg:grid-cols-4">
         {looks.map((look) => (
           <li key={look.id} className="flex flex-col gap-2">

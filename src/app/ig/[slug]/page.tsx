@@ -10,9 +10,8 @@ import { Monogram } from "@/components/store/brand/monogram";
 import { Wordmark } from "@/components/store/brand/wordmark";
 import { btnGold, eyebrowNoir } from "@/components/store/styles";
 import { getDb } from "@/db/client";
-import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { getCampaignCurtain } from "@/services/campaign-links";
-import { getSettingsMap } from "@/services/settings";
+import { getStoreName } from "@/services/settings";
 import { publicMdUrl } from "@/services/store-catalog";
 
 import { curtainMetadata } from "./curtain-metadata";
@@ -22,20 +21,15 @@ export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ slug: string }> };
 
-async function loadStoreName(): Promise<string> {
-  const map = await getSettingsMap(getDb(), ["store_name"]);
-  return (typeof map.store_name === "string" && map.store_name.trim()) || STORE_NAME_DEFAULT;
-}
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const [curtain, storeName] = await Promise.all([getCampaignCurtain(getDb(), slug), loadStoreName()]);
+  const [curtain, storeName] = await Promise.all([getCampaignCurtain(getDb(), slug), getStoreName(getDb())]);
   return curtainMetadata(curtain, storeName);
 }
 
 export default async function CampaignCurtainPage({ params }: Props) {
   const { slug } = await params;
-  const [curtain, storeName] = await Promise.all([getCampaignCurtain(getDb(), slug), loadStoreName()]);
+  const [curtain, storeName] = await Promise.all([getCampaignCurtain(getDb(), slug), getStoreName(getDb())]);
   if (!curtain) notFound();
   // Link desligado: para a peça só se a página dela abre ao público agora; senão, a maison.
   if (!curtain.isActive) redirect(curtain.product && curtain.productPublicNow ? `/produto/${curtain.product.slug}` : "/");
@@ -95,7 +89,7 @@ export default async function CampaignCurtainPage({ params }: Props) {
           </noscript>
         ) : (
           <p className="font-store text-sm text-ivory-200/80">
-            O WhatsApp da maison ainda não está configurado — fale com a gente pela coleção.
+            O WhatsApp da {storeName} ainda não está configurado — fale com a gente pela coleção.
           </p>
         )}
 
@@ -111,7 +105,7 @@ export default async function CampaignCurtainPage({ params }: Props) {
             href="/"
             className="min-h-11 text-xs uppercase tracking-[0.16em] text-gold-300 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-200"
           >
-            Entrar na maison
+            Entrar na {storeName}
           </Link>
         )}
       </div>

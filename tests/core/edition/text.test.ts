@@ -121,9 +121,10 @@ describe("fitEditionNote / normalizeEditionNote", () => {
   });
 
   it("o convite ao lado do QR muda com o destino", () => {
-    expect(editionInvite("peca")).toMatch(/peça/);
-    expect(editionInvite("home")).toMatch(/maison/);
-    expect(editionInvite("home")).not.toBe(editionInvite("peca"));
+    expect(editionInvite("peca", "TRIVÉ")).toMatch(/peça/);
+    // A loja é chamada pelo nome dela (nunca "maison").
+    expect(editionInvite("home", "TRIVÉ")).toBe("Conheça a TRIVÉ e fale com a curadora.");
+    expect(editionInvite("home", "TRIVÉ")).not.toBe(editionInvite("peca", "TRIVÉ"));
   });
 });
 

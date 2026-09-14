@@ -42,7 +42,7 @@ export function EditionForYou() {
           }
         />
         <p className="max-w-2xl font-store text-base leading-relaxed text-ink-700">
-          Em um minuto a maison dá um nome à sua cartela — cores, caimento, tamanhos — e
+          Em um minuto a TRIVÉ dá um nome à sua cartela — cores, caimento, tamanhos — e
           passa a escolher peças para você toda vez que a coleção muda.
         </p>
       </section>

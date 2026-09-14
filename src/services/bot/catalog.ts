@@ -536,7 +536,7 @@ export async function execDetalharProduto(
   const sizeChart = buildSizeChart(detail.variants, axes);
   if (isSizeChartEmpty(sizeChart)) {
     lines.push(
-      "[Sem tabela de medidas cadastrada: não afirme medidas — diga que confere com a maison.]",
+      "[Sem tabela de medidas cadastrada: não afirme medidas — diga que confere com a equipe.]",
     );
   } else {
     lines.push(...renderSizeChartLines(sizeChart));

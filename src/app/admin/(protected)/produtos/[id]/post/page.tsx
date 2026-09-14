@@ -44,7 +44,7 @@ export default async function PostDaPecaPage({
     <div className="flex max-w-3xl flex-col gap-6">
       <PageHeader
         title="Post da peça"
-        subtitle="O post 4:5 e o story 9:16 na identidade da maison, com a legenda pronta para colar."
+        subtitle="O post 4:5 e o story 9:16 na identidade da TRIVÉ, com a legenda pronta para colar."
         actions={
           <Link
             href={`/admin/produtos/${id}`}

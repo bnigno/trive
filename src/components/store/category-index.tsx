@@ -61,7 +61,7 @@ export function CategoryIndex({
   compact = false,
   activeSlug = null,
   includeAll = false,
-  ariaLabel = "Salas da maison",
+  ariaLabel = "Salas da TRIVÉ",
   className,
 }: {
   categories: PublicCategory[];

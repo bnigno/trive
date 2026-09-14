@@ -33,7 +33,7 @@ export default async function LancamentoPage({ params }: { params: Promise<{ tok
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
-      <p className={eyebrowTaupe}>Convite da maison</p>
+      <p className={eyebrowTaupe}>Convite da TRIVÉ</p>
       <h1 className="mt-2 font-display text-title font-semibold text-espresso-900">
         {view.invite.firstName ? `${view.invite.firstName}, você vê primeiro.` : "Você vê primeiro."}
       </h1>

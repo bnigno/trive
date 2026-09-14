@@ -316,13 +316,14 @@ describe("dispatchOrder ('Saiu')", () => {
     expect(still.status).toBe("pending_payment");
   });
 
-  it("o contexto do WhatsApp do pedido de motoboy traz {{janela}} e {{dia}} para o aviso 'Saiu da maison'", async () => {
+  it("o contexto do WhatsApp do pedido de motoboy traz {{janela}} e {{dia}} para o aviso 'Saiu da TRIVÉ'", async () => {
     const { variantId, rateId } = await setup();
     const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
     const ctx = await loadOrderWaContext(sdb, created.orderId);
     expect(ctx?.hasDeliveryWindow).toBe(true);
     expect(ctx?.vars.janela).toBe("19h e 21h");
     expect(ctx?.vars.nome).toBe("Ana");
+    expect(ctx?.vars.loja).toBe("TRIVÉ");
     expect(["hoje", "amanhã"].includes(ctx!.vars.dia) || /\d{2}\/\d{2}$/.test(ctx!.vars.dia)).toBe(true);
 
     const pac = await setup({ kind: "correios" });

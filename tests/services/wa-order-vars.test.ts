@@ -1,4 +1,4 @@
-// {{janela}} e {{dia}} do aviso "Saiu da maison" (motoboy) — puros.
+// {{janela}} e {{dia}} do aviso "Saiu da TRIVÉ" (motoboy) — puros.
 import { describe, expect, it } from "vitest";
 
 import { buildOrderVars, deliveryDayWord } from "@/services/wa-messaging";

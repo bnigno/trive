@@ -393,7 +393,7 @@ export default async function PedidoDetalhePage({
                       Bilhete
                     </dt>
                     <dd className="whitespace-pre-line italic text-zinc-900 dark:text-zinc-100">
-                      {order.giftMessage ?? "Sem bilhete escrito — vai só o cartão da maison."}
+                      {order.giftMessage ?? "Sem bilhete escrito — vai só o cartão da TRIVÉ."}
                     </dd>
                   </div>
                 </dl>

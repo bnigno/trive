@@ -282,7 +282,7 @@ function EditionCard({ data, lockup, qr }: { data: EditionCardData; lockup: stri
                   wordBreak: "break-word",
                 }}
               >
-                {editionInvite(data.qrTarget)}
+                {editionInvite(data.qrTarget, data.storeName)}
               </div>
               <div
                 style={{

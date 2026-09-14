@@ -22,7 +22,7 @@ export function DispatchForm({ orderId, customerName, compact = false }: { order
       <ConfirmButton
         variant="primary"
         size={compact ? "sm" : "md"}
-        confirmMessage={`O pedido de ${customerName} saiu com o motoboy? A cliente recebe "Saiu da maison" no WhatsApp agora.`}
+        confirmMessage={`O pedido de ${customerName} saiu com o motoboy? A cliente recebe "Saiu da TRIVÉ" no WhatsApp agora.`}
       >
         Saiu
       </ConfirmButton>

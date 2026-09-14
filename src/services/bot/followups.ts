@@ -75,6 +75,6 @@ export async function execAgendarRetorno(
         : "";
   return {
     ok: true,
-    text: `Retorno combinado para ${when}${adjusted}${replaced ? " — substitui o combinado anterior" : ""}. Confirme em 1 frase e encerre por aqui; a maison chama por você no horário.`,
+    text: `Retorno combinado para ${when}${adjusted}${replaced ? " — substitui o combinado anterior" : ""}. Confirme em 1 frase e encerre por aqui; a equipe chama por você no horário.`,
   };
 }

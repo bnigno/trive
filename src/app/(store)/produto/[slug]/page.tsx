@@ -28,6 +28,7 @@ import {
   publicMdUrl,
   publicThumbUrl,
 } from "@/services/store-catalog";
+import { getStoreName } from "@/services/settings";
 import { loadBridgeSettings, plainBridgeUrl } from "@/services/site-carts";
 
 import { FitAdvisor } from "./fit-advisor";
@@ -111,6 +112,7 @@ export default async function ProdutoPage({ params }: Props) {
   const sizeChart = buildSizeChart(product.variants, product.attributesSchema);
   // "Falar com a Lia": o telefone da loja e o nome da vendedora (ISR de 5 min).
   const bridge = await loadBridgeSettings(db);
+  const storeName = await getStoreName(db);
   const lia = { sellerName: bridge.sellerName, fallbackUrl: plainBridgeUrl(bridge) };
   // A nota da curadora: o texto e, se ela gravou, o áudio na voz dela.
   const curatorNote = {
@@ -242,6 +244,7 @@ export default async function ProdutoPage({ params }: Props) {
 
       <CustomerLooks
         productName={product.name}
+        storeName={storeName}
         looks={customerLooks.map((look) => ({ id: look.id, displayName: look.displayName, url: publicImageUrl(look.photoPath) }))}
       />
 
@@ -249,7 +252,7 @@ export default async function ProdutoPage({ params }: Props) {
         <section aria-labelledby="relacionados" className="mt-16">
           <SectionHeading
             eyebrow={related.scope === "category" ? "Na mesma sala" : "Novidades"}
-            title={related.scope === "category" ? "Também na maison" : "Mais da maison"}
+            title={related.scope === "category" ? "Também na TRIVÉ" : "Mais da TRIVÉ"}
             id="relacionados"
           />
           <div className="grid grid-cols-2 gap-x-3 gap-y-10 sm:gap-x-5 lg:grid-cols-4">

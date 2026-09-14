@@ -10,6 +10,7 @@ import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/core/orders/payment-m
 import { cityDatesSchema } from "@/core/shipping/needed-by";
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { toE164BR } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { enqueueProductCardRefresh } from "@/services/product-cards-queue";
@@ -433,7 +434,7 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   store_tagline: z
     .string()
     .trim()
-    .max(140, "A frase da maison deve ter no máximo 140 caracteres."),
+    .max(140, "A frase da loja deve ter no máximo 140 caracteres."),
   store_manifesto: z
     .string()
     .trim()
@@ -594,6 +595,13 @@ export async function getSettingsMap(
     .from(settings)
     .where(inArray(settings.key, keys));
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+/** O nome da loja como a dona escreveu (setting store_name), com o fallback oficial. */
+export async function getStoreName(db: ServiceDb): Promise<string> {
+  const map = await getSettingsMap(db, ["store_name"]);
+  const value = map["store_name"];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : STORE_NAME_DEFAULT;
 }
 
 const updateSettingSchema = z.object({

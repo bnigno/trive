@@ -87,7 +87,7 @@ export type BotToolInputs = {
     cidade?: string;
     uf?: string;
     cupom?: string;
-    /** Data marcada ("preciso até dia 16", AAAA-MM-DD) e a ocasião — a maison prioriza a saída. */
+    /** Data marcada ("preciso até dia 16", AAAA-MM-DD) e a ocasião — a loja prioriza a saída. */
     entregar_ate?: string;
     ocasiao?: string;
     /** Aceito e ignorado — o pedido usa o telefone da conversa. */
@@ -195,7 +195,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "detalhar_produto",
     description:
-      "Devolve tudo sobre uma peça: descrição completa, ficha (composição, cuidados, como veste) e tabela de medidas por tamanho em cm quando a maison cadastrou, categoria, cores e tamanhos com estoque, preço exato (e preço 'de/por' quando houver promoção) e o SKU de cada combinação — E envia à cliente a foto e, quando cabem até 10, a lista tocável de cores e tamanhos. Chame SEMPRE antes de adicionar à sacola. Passe cor quando a cliente já disse a cor: a foto passa a ser a daquela cor. Se houver mais de uma peça com o nome, a ferramenta devolve as candidatas para você perguntar qual.",
+      "Devolve tudo sobre uma peça: descrição completa, ficha (composição, cuidados, como veste) e tabela de medidas por tamanho em cm quando a loja cadastrou, categoria, cores e tamanhos com estoque, preço exato (e preço 'de/por' quando houver promoção) e o SKU de cada combinação — E envia à cliente a foto e, quando cabem até 10, a lista tocável de cores e tamanhos. Chame SEMPRE antes de adicionar à sacola. Passe cor quando a cliente já disse a cor: a foto passa a ser a daquela cor. Se houver mais de uma peça com o nome, a ferramenta devolve as candidatas para você perguntar qual.",
     input_schema: {
       type: "object",
       properties: {
@@ -665,7 +665,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "registrar_foto_com_a_peca",
     description:
-      "A cliente mandou há pouco uma foto DELA usando uma peça da maison que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça e, se ela mandou mais de uma foto, qual delas (foto: 1 = a primeira). Nunca chame para print do Instagram, foto de outra marca, peça no cabide, foto de outra pessoa ou foto sem a peça.",
+      "A cliente mandou há pouco uma foto DELA usando uma peça da loja que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça e, se ela mandou mais de uma foto, qual delas (foto: 1 = a primeira). Nunca chame para print do Instagram, foto de outra marca, peça no cabide, foto de outra pessoa ou foto sem a peça.",
     input_schema: {
       type: "object",
       properties: {
@@ -697,7 +697,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "agendar_retorno",
     description:
-      "Combina de VOCÊ chamar a cliente depois (ela adiou: 'me chama amanhã às 10', 'vou pensar'). SÓ chame depois de ela responder SIM à sua pergunta 'posso te chamar <quando>?' — nunca sem o sim explícito e nunca inventando a data. Horário entre 9h e 21h de São Paulo, de 30 minutos a 7 dias à frente. No horário a maison manda a mensagem por você.",
+      "Combina de VOCÊ chamar a cliente depois (ela adiou: 'me chama amanhã às 10', 'vou pensar'). SÓ chame depois de ela responder SIM à sua pergunta 'posso te chamar <quando>?' — nunca sem o sim explícito e nunca inventando a data. Horário entre 9h e 21h de São Paulo, de 30 minutos a 7 dias à frente. No horário a loja manda a mensagem por você.",
     input_schema: {
       type: "object",
       properties: {

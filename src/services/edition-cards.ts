@@ -33,6 +33,7 @@ import { editionTexts } from "@/core/edition/text";
 import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
 import { categories, customers, orderItems, orders, products, productVariants, settings } from "@/db/schema";
 import { siteUrl } from "@/lib/site-url";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import type { DbOrTx } from "@/queue/enqueue";
 
 export class ServiceError extends Error {
@@ -117,12 +118,6 @@ async function editionSettings(db: DbOrTx): Promise<Record<string, string>> {
   const map: Record<string, string> = {};
   for (const row of rows) map[row.key] = typeof row.value === "string" ? row.value.trim() : "";
   return map;
-}
-
-/** O nome da edição, como sai na faixa do cartão. */
-async function editionNameSetting(db: DbOrTx): Promise<string | null> {
-  const map = await editionSettings(db);
-  return map["edition_name"] ? map["edition_name"] : null;
 }
 
 /** O que a regra da estreia precisa saber de um pedido. */
@@ -230,7 +225,9 @@ export async function planEditionCardsByOrder(
     // tela e a impressão, e igual ao papel que a cliente já viu.
     .orderBy(orderItems.orderId, orderItems.skuSnapshot, orderItems.id);
 
-  const editionName = await editionNameSetting(db);
+  const editionSettingsMap = await editionSettings(db);
+  const editionName = editionSettingsMap["edition_name"] ? editionSettingsMap["edition_name"] : null;
+  const storeName = editionSettingsMap["store_name"] || STORE_NAME_DEFAULT;
   const now = Date.now();
   const printedAddress = printedSiteAddress();
   const seen = new Set<string>();
@@ -285,6 +282,7 @@ export async function planEditionCardsByOrder(
         careNote: texts.careNote,
         qrUrl,
         qrTarget: isGift ? "home" : "peca",
+        storeName,
         printedAddress,
         layout: {
           titleSize: layout.titleSize,

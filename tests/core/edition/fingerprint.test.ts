@@ -15,6 +15,7 @@ import {
 import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
 
 const base: EditionCardData = {
+  storeName: "TRIVÉ",
   editionName: "Edição Círio",
   productName: "Longo Dunas",
   curatorNote: "Escolhi pelo caimento.",

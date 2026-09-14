@@ -233,7 +233,7 @@ export default async function HomePage() {
               <section className="mb-16 flex flex-col items-center gap-4 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-6 py-20 text-center">
                 <Ribbon variant="static" size="md" className="opacity-70" />
                 <p className="font-display text-heading font-semibold text-espresso-900">
-                  A maison está sendo preparada
+                  A {storeName} está sendo preparada
                 </p>
                 <p className="max-w-md text-sm text-ink-500">
                   Estamos alinhando cada peça. Em breve, a coleção abre as
@@ -269,7 +269,7 @@ export default async function HomePage() {
                     ))}
                     <Reveal delay={manifesto.length * 140}>
                       <p className={eyebrowTaupe}>
-                        Uma maison brasileira, com a elegância de quem não
+                        Uma marca brasileira, com a elegância de quem não
                         precisa provar nada.
                       </p>
                     </Reveal>
@@ -286,7 +286,7 @@ export default async function HomePage() {
                 <section aria-labelledby="colecao" className="py-12">
                   <SectionHeading
                     eyebrow="A coleção"
-                    title="Novidades da maison"
+                    title={`Novidades da ${storeName}`}
                     id="colecao"
                     aside={
                       <Link
@@ -319,7 +319,7 @@ export default async function HomePage() {
                   <section aria-labelledby="salas" className="pb-12">
                     <SectionHeading
                       eyebrow="Explore"
-                      title="As salas da maison"
+                      title={`As salas da ${storeName}`}
                       id="salas"
                     />
                     <div
@@ -372,7 +372,7 @@ export default async function HomePage() {
                 {/* 5. Cuidados da maison — quieta de propósito */}
                 <Reveal className="pb-16">
                   <section
-                    aria-label="Cuidados da maison"
+                    aria-label={`Cuidados da ${storeName}`}
                     className="grid divide-y divide-ivory-300 rounded-(--radius-hair) border border-ivory-300 bg-ivory-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0"
                   >
                     {CARE.map((item, index) => (
@@ -411,7 +411,7 @@ export default async function HomePage() {
         <div className="relative mx-auto flex max-w-3xl flex-col items-center gap-7 px-4 text-center sm:px-6">
           <Monogram tone="gold" size={72} lazy />
           <p className="font-display text-3xl text-ivory-100 italic sm:text-4xl">
-            Entre. A maison é sua.
+            Entre. A {storeName} é sua.
           </p>
           <div className="flex w-full flex-col items-center justify-center gap-3 sm:flex-row">
             <Link
@@ -428,7 +428,7 @@ export default async function HomePage() {
                 className={cx(btnOutlineNoir, "w-full sm:w-auto")}
               >
                 <IconWhatsApp className="h-5 w-5" />
-                Falar com a maison
+                Falar com a {storeName}
               </a>
             ) : null}
           </div>
