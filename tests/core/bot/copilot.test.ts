@@ -14,7 +14,7 @@ describe("copiloto", () => {
     for (const blocked of ["criar_pedido", "enviar_chave_pix", "avisar_dono", "reservar_peca", "transferir_para_atendente", "agendar_retorno", "registrar_foto_com_a_peca", "confirmar_entrega"] as const) {
       expect(isToolBlockedInCopilot(blocked), blocked).toBe(true);
     }
-    for (const allowed of ["listar_produtos", "detalhar_produto", "cotar_frete", "adicionar_a_sacola", "anotar", "atualizar_cartela", "status_do_pedido"] as const) {
+    for (const allowed of ["listar_produtos", "detalhar_produto", "cotar_frete", "adicionar_a_sacola", "anotar", "atualizar_cartela", "status_do_pedido", "sugerir_tamanho"] as const) {
       expect(isToolBlockedInCopilot(allowed), allowed).toBe(false);
     }
     expect(copilotBlockedText("criar_pedido")).toContain("criar_pedido");

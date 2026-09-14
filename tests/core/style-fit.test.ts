@@ -96,5 +96,8 @@ describe("adviseSize", () => {
     expect(bodyMeasurementsSchema.safeParse({ bustCm: 88 }).success).toBe(true);
     expect(bodyMeasurementsSchema.safeParse({}).success).toBe(false);
     expect(bodyMeasurementsSchema.safeParse({ bustCm: 20 }).success).toBe(false);
+    // Numeração de roupa não é medida.
+    expect(bodyMeasurementsSchema.safeParse({ bustCm: 42 }).success).toBe(false);
+    expect(bodyMeasurementsSchema.safeParse({ waistCm: 55 }).success).toBe(true);
   });
 });

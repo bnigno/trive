@@ -100,7 +100,7 @@ export function FitAdvisor({ slug }: { slug: string }) {
                   id={`fit-${key}`}
                   type="number"
                   inputMode="numeric"
-                  min={40}
+                  min={key === "waistCm" ? 50 : 60}
                   max={200}
                   step={1}
                   placeholder="cm"
@@ -116,7 +116,7 @@ export function FitAdvisor({ slug }: { slug: string }) {
             <button type="submit" disabled={isPending} className={btnPrimary}>
               {isPending ? "Guardando…" : "Ver como fica"}
             </button>
-            <p className="text-xs text-ink-500">Só busto, cintura e quadril — nada de peso ou altura.</p>
+            <p className="text-xs text-ink-500">Contorno em cm (fita métrica) — não a numeração da roupa. Só busto, cintura e quadril.</p>
           </div>
         </form>
       ) : null}

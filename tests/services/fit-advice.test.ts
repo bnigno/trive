@@ -63,13 +63,21 @@ describe("Vai me servir?", () => {
     expect(stored?.body).toEqual({ bustCm: 88, waistCm: 72, hipsCm: 96 });
     // Trocar com a credencial mantém a mesma credencial.
     expect(await saveBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken, body: { bustCm: 88, waistCm: 72, hipsCm: 96 } })).toEqual({ saved: true, bodyToken });
+    // Gravação pela Lia (telefone) GIRA a credencial: um navegador que tivesse semeado medidas perde o acesso.
+    const byPhone = await saveBodyMeasurements(sdb, { phoneE164: PHONE, body: { bustCm: 88, waistCm: 72, hipsCm: 96 } });
+    expect(byPhone.saved).toBe(true);
+    expect(byPhone.bodyToken).not.toBe(bodyToken);
+    expect(await getBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken })).toBeNull();
+    const rotated = byPhone.bodyToken as string;
+    // Daqui em diante o teste segue com a credencial nova, regravada pelo site.
+    expect(await saveBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken: rotated, body: { bustCm: 88, waistCm: 72, hipsCm: 96 } })).toEqual({ saved: true, bodyToken: rotated });
     // A coluna do perfil não ganha as medidas.
     const [row] = await db.select().from(schema.customerProfiles).where(eq(schema.customerProfiles.id, profile.id));
     expect(row.profile).toEqual(expect.not.objectContaining({ bustCm: expect.anything() }));
     expect(JSON.stringify(row.profile)).not.toMatch(/\b88\b/);
     expect(row.bodyMeasuredAt).not.toBeNull();
 
-    const view = await adviseSizeForProduct(sdb, { slug: "longo-dunas", siteToken: profile.siteToken, bodyToken });
+    const view = await adviseSizeForProduct(sdb, { slug: "longo-dunas", siteToken: profile.siteToken, bodyToken: rotated });
     expect(view.advice).toMatchObject({ kind: "advice", recommended: "G", fit: "fluido" });
     if (view.advice.kind === "advice") expect(view.advice.verdicts.map((verdict) => verdict.size)).toEqual(["P", "M", "G"]);
     expect(view.text).toContain("Eu iria de G.");
@@ -86,9 +94,9 @@ describe("Vai me servir?", () => {
     expect((await getStyleProfileByToken(sdb, profile.siteToken))?.hasBodyMeasurements).toBe(true);
 
     // Apagar só as medidas (com a credencial): a cartela fica.
-    expect(await forgetBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken })).toEqual({ forgotten: true });
-    expect(await forgetBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken })).toEqual({ forgotten: false });
-    expect(await getBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken })).toBeNull();
+    expect(await forgetBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken: rotated })).toEqual({ forgotten: true });
+    expect(await forgetBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken: rotated })).toEqual({ forgotten: false });
+    expect(await getBodyMeasurements(sdb, { siteToken: profile.siteToken, bodyToken: rotated })).toBeNull();
     expect(await getBodyMeasurements(sdb, { phoneE164: PHONE })).toBeNull();
     expect((await getStyleProfileByToken(sdb, profile.siteToken))?.profile.fit).toBe("fluido");
 

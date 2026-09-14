@@ -242,7 +242,13 @@ credencial própria: só o aparelho que gravou (e a vendedora, pelo WhatsApp)
 lê, troca ou apaga; o token da cartela sozinho não basta. Pela Lia: "o M me serve?" → `sugerir_tamanho`
 (folga por tamanho e o recomendado); sem medidas ela pede busto, cintura e
 quadril e guarda com `atualizar_cartela.medidas` (coluna própria; `anotar`
-recusa medidas). Produção: migração 0042; sem setting.
+recusa medidas; "apaga minhas medidas" → `medidas.apagar`). Gravação pela
+Lia ou pelo painel gira a credencial do site (quem tivesse semeado medidas
+com o telefone dela perde o acesso). Contornos abaixo de 60/50/60 cm são
+recusados (numeração de roupa não é medida). Atenção (decisão do dono
+pendente): quem sabe o telefone pode gravar as PRIMEIRAS medidas de uma
+cartela sem medidas pelo quiz/site — a cliente apaga pela Lia. Produção:
+migração 0042; sem setting.
 
 ## Entrega por motoboy: rota do dia e "Saiu"
 

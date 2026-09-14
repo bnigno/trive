@@ -112,7 +112,7 @@ export type BotToolInputs = {
     ocasioes?: ("trabalho" | "dia_a_dia" | "festa" | "casamento" | "viagem" | "praia" | "jantar")[];
     compra_para?: "mim" | "presente" | "os_dois";
     /** Medidas do corpo em cm (40–200) — ficam em coluna própria, nunca no histórico. */
-    medidas?: { busto_cm?: number; cintura_cm?: number; quadril_cm?: number };
+    medidas?: { busto_cm?: number; cintura_cm?: number; quadril_cm?: number; apagar?: true };
   };
   /** "Será que o M me serve?": a folga em cm por tamanho e a recomendação, pelas medidas da cartela. */
   sugerir_tamanho: { produto: string };
@@ -584,6 +584,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
             busto_cm: { type: "number", description: "Contorno do busto em cm." },
             cintura_cm: { type: "number", description: "Contorno da cintura em cm." },
             quadril_cm: { type: "number", description: "Contorno do quadril em cm." },
+            apagar: { type: "boolean", enum: [true], description: "true quando ela pedir para apagar as medidas guardadas." },
           },
           additionalProperties: false,
         },
@@ -894,9 +895,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
       compra_para: z.enum(["mim", "presente", "os_dois"]).optional(),
       medidas: z
         .strictObject({
-          busto_cm: z.number().min(40).max(200).optional(),
-          cintura_cm: z.number().min(40).max(200).optional(),
-          quadril_cm: z.number().min(40).max(200).optional(),
+          busto_cm: z.number().min(60, "Busto em cm de contorno (a partir de 60) — 42 é numeração, não cm.").max(200).optional(),
+          cintura_cm: z.number().min(50, "Cintura em cm de contorno (a partir de 50) — 42 é numeração, não cm.").max(200).optional(),
+          quadril_cm: z.number().min(60, "Quadril em cm de contorno (a partir de 60) — 42 é numeração, não cm.").max(200).optional(),
+          apagar: z.literal(true).optional(),
         })
         .optional(),
     })

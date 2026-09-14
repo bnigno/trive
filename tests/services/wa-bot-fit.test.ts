@@ -72,9 +72,18 @@ describe("sugerir_tamanho", () => {
     expect((await executor("sugerir_tamanho", { produto: "nao-existe" })).ok).toBe(false);
     // Medida de 30 cm não passa no schema; anotar recusa medidas.
     expect((await executor("atualizar_cartela", { medidas: { busto_cm: 30 } })).ok).toBe(false);
-    const note = await executor("anotar", { nota: "busto 88, cintura 72" });
-    expect(note.ok).toBe(false);
-    expect(note.text).toContain("atualizar_cartela.medidas");
+    for (const nota of ["busto 88, cintura 72", "tem 88 de busto", "veste 88 no busto", "medidas: 88/72/96", "medidas 88 72 96"]) {
+      const note = await executor("anotar", { nota });
+      expect(note.ok, nota).toBe(false);
+      expect(note.text).toContain("atualizar_cartela.medidas");
+    }
+    expect((await executor("anotar", { nota: "prefere tons terrosos, veste M" })).ok).toBe(true);
+    // Numeração de roupa não passa; apagar pela Lia apaga.
+    expect((await executor("atualizar_cartela", { medidas: { busto_cm: 42 } })).ok).toBe(false);
+    const erased = await executor("atualizar_cartela", { medidas: { apagar: true } });
+    expect(erased.ok).toBe(true);
+    expect(erased.text).toContain("Medidas apagadas");
+    expect(await getBodyMeasurements(sdb, { phoneE164: PHONE })).toBeNull();
   });
 
   it("no ensaio (dryRun) sugerir_tamanho consulta mas atualizar_cartela não grava", async () => {

@@ -5,7 +5,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { renderProfileNote } from "@/core/style/profile";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { adviseSizeForProduct } from "@/services/fit-advice";
-import { getStyleProfileByPhone, saveBodyMeasurements, saveStyleProfile } from "@/services/style-profiles";
+import { forgetBodyMeasurements, getStyleProfileByPhone, saveBodyMeasurements, saveStyleProfile } from "@/services/style-profiles";
 import { resolveProductDetail } from "./catalog";
 import { listFeedbackByPhone } from "@/services/delivery-feedback";
 import { listLooksMemoryLines } from "@/services/customer-looks";
@@ -35,7 +35,10 @@ export async function execAtualizarCartela(
   });
   // As medidas vão para a coluna própria (nunca no perfil nem no histórico).
   let bodyNote = "";
-  if (input.medidas) {
+  if (input.medidas?.apagar) {
+    const { forgotten } = await forgetBodyMeasurements(db, { phoneE164: ctx.phoneE164 });
+    bodyNote = forgotten ? " Medidas apagadas — confirme em 1 frase." : " Não havia medidas guardadas.";
+  } else if (input.medidas) {
     const body = {
       ...(input.medidas.busto_cm !== undefined ? { bustCm: input.medidas.busto_cm } : {}),
       ...(input.medidas.cintura_cm !== undefined ? { waistCm: input.medidas.cintura_cm } : {}),
@@ -120,7 +123,7 @@ export async function execAnotar(
     };
   }
   // Medidas do corpo não são anotação: vão para atualizar_cartela.medidas (coluna própria, fora do histórico).
-  if (/\b(busto|cintura|quadril)\b[^\d]{0,20}\d{2,3}\b/i.test(input.nota)) {
+  if (/\b(busto|cintura|quadril|medidas?)\b[^\d]{0,20}\d{2,3}\b|\b\d{2,3}\s*(cm)?\s*(de|do|da|no|na)?\s*(busto|cintura|quadril)\b|\b\d{2,3}\s*[\/x-]\s*\d{2,3}\s*[\/x-]\s*\d{2,3}\b/i.test(input.nota)) {
     return { ok: false, text: "Medidas do corpo não vão para o caderninho: guarde com atualizar_cartela.medidas (busto_cm, cintura_cm, quadril_cm)." };
   }
   const state = await updateBotState(db, ctx, (current) => ({
