@@ -1,17 +1,15 @@
 // Gera os assets de marca a partir de brand-source/logo.svg (rodar à mão,
 // nunca no build): node scripts/generate-brand-assets.mjs
 //
-// A fonte é o export do designer (Canva, 2026-09-14) curado por
-// scripts/curate-brand-source.py, que envolve as partes em grupos com id:
-//   #monograma  T e V entrelaçados pela fita rosé — no export atual é um
-//               bitmap mascarado (569×648 px), então acima de ~600 px de
-//               largura o raster fica levemente suave; um vetor de verdade
-//               (ou brand-source/monograma.png em alta, fundo transparente,
-//               que tem prioridade quando existe) resolve sem tocar aqui.
-//   #wordmark   as letras TRIVÉ em <path> (vetor)
-//   #tagline    as letras MAISON FÉMININE em <path> (vetor)
-//   #filetes    os dois filetes rosé em raster — ignorados; o pipeline desenha
-//               filetes vetoriais nas cores dos tokens
+// A fonte é montada por scripts/curate-brand-source.py a partir das entregas
+// do designer (brand-source/entregue/), em grupos com id:
+//   #monograma  T e V entrelaçados pela fita rosé, em <path> (traçado em
+//               camadas de cor). Se existir brand-source/monograma.png (PNG
+//               em alta, fundo transparente), ele tem prioridade — serve para
+//               um monograma que venha só em bitmap.
+//   #wordmark   as letras TRIVÉ em <path> de fonte
+//   #tagline    as letras MAISON FÉMININE em <path> de fonte
+// Os filetes rosé o pipeline desenha em vetor, nas cores dos tokens.
 // O logo entregue é empilhado e escuro; daqui saem, todos commitados:
 //   public/brand/mark-{light,dark}-{96,192,400,600,800}.webp  só o monograma
 //               (o ouro metálico funciona sobre marfim e sobre noir: light e
@@ -162,6 +160,19 @@ function extractGlyphs(group, id) {
   return glyphs;
 }
 
+/**
+ * Altura das maiúsculas: o glifo mais baixo acima da linha de base (o "I",
+ * sem overshoot nem acento). Os paths do Canva só têm M/L/C/Z com pares
+ * absolutos e y negativo para cima.
+ */
+function capHeightOf(glyphs) {
+  const tops = glyphs.map((g) => {
+    const numbers = g.d.match(/-?\d*\.?\d+/g).map(Number);
+    return -Math.min(...numbers.filter((_, i) => i % 2 === 1));
+  });
+  return round(Math.min(...tops));
+}
+
 function round(n, places = 2) {
   const f = 10 ** places;
   return Math.round(n * f) / f;
@@ -221,7 +232,8 @@ async function composeLockup(mark, lettering, colors) {
 
   const filetLength = tagline.box.width * LAYOUT.filet.lengthRatio;
   const filetGap = tagline.box.width * LAYOUT.filet.gapRatio;
-  const filetY = tagline.box.y + tagline.box.height / 2;
+  // No centro das maiúsculas (a caixa inclui o acento do É).
+  const filetY = tagline.box.y + tagline.box.height - tagline.capHeight / 2;
   const filet = (x1, x2) =>
     `<line x1="${x1}" x2="${x2}" y1="${filetY}" y2="${filetY}" stroke="${colors.filet}" stroke-width="${LAYOUT.filet.stroke / s}" stroke-linecap="round"/>`;
   const filets =
@@ -259,7 +271,7 @@ async function composeLockup(mark, lettering, colors) {
 }
 
 function letteringTs(lettering) {
-  const part = (name, { glyphs, box }) => {
+  const part = (name, { glyphs, box, capHeight }) => {
     const viewBox = [box.x, box.y, box.width, box.height].map((n) => round(n)).join(" ");
     const lines = glyphs.map(
       (g) => `    { x: ${g.x}, y: ${g.y}, d: ${JSON.stringify(g.d)} },`,
@@ -268,6 +280,7 @@ function letteringTs(lettering) {
   viewBox: "${viewBox}",
   width: ${round(box.width)},
   height: ${round(box.height)},
+  capHeight: ${capHeight},
   glyphs: [
 ${lines.join("\n")}
   ],
@@ -289,6 +302,8 @@ export interface Lettering {
   readonly viewBox: string;
   readonly width: number;
   readonly height: number;
+  /** Altura das maiúsculas (a caixa inclui o acento do É). */
+  readonly capHeight: number;
   readonly glyphs: readonly LetteringGlyph[];
 }
 
@@ -333,8 +348,9 @@ async function main() {
   for (const id of ["wordmark", "tagline"]) {
     const group = extractById(svg, id);
     const { box } = await rasterTrimmed(wrapSvg(viewBox, defs + group), viewBox);
-    lettering[id] = { glyphs: extractGlyphs(group, id), box };
-    console.log(`${id}: ${lettering[id].glyphs.length} glifos, caixa`, box);
+    const glyphs = extractGlyphs(group, id);
+    lettering[id] = { glyphs, box, capHeight: capHeightOf(glyphs) };
+    console.log(`${id}: ${glyphs.length} glifos, maiúsculas ${lettering[id].capHeight}, caixa`, box);
   }
   await writeFile(
     path.join(root, "src/components/store/brand/lettering.generated.ts"),

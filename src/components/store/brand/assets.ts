@@ -22,7 +22,7 @@ export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
       {
         "src": "/brand/mark-dark-96.webp",
         "width": 96,
-        "height": 114
+        "height": 113
       },
       {
         "src": "/brand/mark-dark-192.webp",
@@ -37,12 +37,12 @@ export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
       {
         "src": "/brand/mark-dark-600.webp",
         "width": 600,
-        "height": 710
+        "height": 709
       },
       {
         "src": "/brand/mark-dark-800.webp",
         "width": 800,
-        "height": 946
+        "height": 945
       }
     ],
     "lockup": {
@@ -56,7 +56,7 @@ export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
       {
         "src": "/brand/mark-light-96.webp",
         "width": 96,
-        "height": 114
+        "height": 113
       },
       {
         "src": "/brand/mark-light-192.webp",
@@ -71,12 +71,12 @@ export const BRAND: { readonly light: BrandTone; readonly dark: BrandTone } =
       {
         "src": "/brand/mark-light-600.webp",
         "width": 600,
-        "height": 710
+        "height": 709
       },
       {
         "src": "/brand/mark-light-800.webp",
         "width": 800,
-        "height": 946
+        "height": 945
       }
     ],
     "lockup": {

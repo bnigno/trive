@@ -31,6 +31,8 @@ CANVA_MARK_BOX = (434.75, 235.75, 652.5, 770.75)
 # No vetor, o monograma é o primeiro bloco de tinta de cima; abaixo dele há
 # um vão sem tinta (y 1344–1463) antes de TRIVÉ.
 VETOR_MARK_MAX_Y = 1400
+# Cacos do vetorizador (fiapos de menos de 2 unidades) ficam de fora.
+MIN_SUBPATH_SIZE = 2.0
 
 # ---- Canva: grupos de topo por cor de preenchimento -------------------------
 
@@ -70,7 +72,8 @@ def parse_path(d):
     toks = [(m.group(1), m.group(2)) for m in TOK.finditer(d)]
     i, cmd, subpaths, cur = 0, None, [], None
     x = y = sx = sy = 0.0
-    cx = cy = None
+    cx = cy = None  # último ponto de controle, só vale para S (após C/S) e T (após Q/T)
+    family = None
     while i < len(toks):
         if toks[i][0]:
             cmd = toks[i][0]
@@ -78,7 +81,7 @@ def parse_path(d):
             if cmd in "Zz":
                 cur["cmds"].append(("Z", []))
                 x, y = sx, sy
-                cx = cy = None
+                cx = cy = family = None
                 continue
         assert cmd, "path sem comando inicial"
         n = ARGC[cmd.upper()]
@@ -88,7 +91,7 @@ def parse_path(d):
         if C == "M":
             x, y = (x + args[0], y + args[1]) if rel else (args[0], args[1])
             sx, sy = x, y
-            cx = cy = None
+            cx = cy = family = None
             cur = {"cmds": [("M", [x, y])], "pts": [(x, y)]}
             subpaths.append(cur)
             cmd = "l" if rel else "L"  # coordenadas seguintes viram lineto
@@ -96,23 +99,25 @@ def parse_path(d):
         if C == "L":
             x, y = (x + args[0], y + args[1]) if rel else (args[0], args[1])
             cur["cmds"].append(("L", [x, y]))
-            cx = cy = None
+            cx = cy = family = None
         elif C == "H":
             x = x + args[0] if rel else args[0]
             cur["cmds"].append(("L", [x, y]))
-            cx = cy = None
+            cx = cy = family = None
         elif C == "V":
             y = y + args[0] if rel else args[0]
             cur["cmds"].append(("L", [x, y]))
-            cx = cy = None
+            cx = cy = family = None
         elif C in "CSQT":
             a = [args[k] + (x if k % 2 == 0 else y) for k in range(n)] if rel else list(args)
-            if C in "ST":  # ponto de controle refletido
-                r = (2 * x - cx, 2 * y - cy) if cx is not None else (x, y)
+            if C in "ST":  # controle refletido só se o anterior for da mesma família
+                same = family == ("C" if C == "S" else "Q")
+                r = (2 * x - cx, 2 * y - cy) if same else (x, y)
                 a = [r[0], r[1]] + a
                 C = "C" if C == "S" else "Q"
             cur["cmds"].append((C, a))
             cx, cy = a[-4], a[-3]
+            family = C
             x, y = a[-2], a[-1]
             cur["pts"].extend((a[k], a[k + 1]) for k in range(0, len(a), 2))
             continue
@@ -144,19 +149,25 @@ def vetor_monograma(svg):
     assert len(paths) >= 10, "esperava um traçado em camadas de cor"
     layers = []
     for fill, d in paths:
-        keep = [sp for sp in parse_path(d) if sp["box"][3] <= VETOR_MARK_MAX_Y]
+        keep = [
+            sp for sp in parse_path(d)
+            if sp["box"][3] <= VETOR_MARK_MAX_Y
+            and sp["box"][2] - sp["box"][0] >= MIN_SUBPATH_SIZE
+            and sp["box"][3] - sp["box"][1] >= MIN_SUBPATH_SIZE
+        ]
         if keep:
             layers.append((fill, keep))
-    x0 = min(sp["box"][0] for _, sps in layers for sp in sps)
-    y0 = min(sp["box"][1] for _, sps in layers for sp in sps)
-    x1 = max(sp["box"][2] for _, sps in layers for sp in sps)
-    y1 = max(sp["box"][3] for _, sps in layers for sp in sps)
-    # As caixas incluem pontos de controle; a proporção real bate com a do
-    # Canva (0,847), então a escala vem da altura da tinta medida (1027).
-    k = CANVA_MARK_BOX[3] / 1027.0
-    tx = CANVA_MARK_BOX[0] - 579.5 * k
-    ty = CANVA_MARK_BOX[1] - 315.0 * k
-    print(f"monograma do vetor: {len(layers)} camadas, caixa bruta {x0:.0f},{y0:.0f}–{x1:.0f},{y1:.0f}, escala {k:.4f}")
+    boxes = [sp["box"] for _, sps in layers for sp in sps]
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    # A caixa inclui pontos de controle, mas num traçado eles ficam colados na
+    # curva (conferido: bate com a tinta medida no raster em <1 unidade), e a
+    # proporção é a mesma do monograma do Canva (0,847) — a escala vem da altura.
+    k = CANVA_MARK_BOX[3] / (y1 - y0)
+    assert abs((x1 - x0) / (y1 - y0) - CANVA_MARK_BOX[2] / CANVA_MARK_BOX[3]) < 0.02, "proporção diferente do Canva"
+    tx = CANVA_MARK_BOX[0] - x0 * k
+    ty = CANVA_MARK_BOX[1] - y0 * k
+    print(f"monograma do vetor: {len(layers)} camadas, caixa {x0:.1f},{y0:.1f}–{x1:.1f},{y1:.1f}, escala {k:.4f}")
     return "".join(f'<path fill="{fill}" d="{emit(sps, k, tx, ty)}"/>' for fill, sps in layers)
 
 def main():

@@ -22,8 +22,18 @@ function foldName(name: string): string {
 }
 
 const LETTERING_NAME = foldName(STORE_NAME_DEFAULT);
-/** A caixa do letreiro inclui o acento do É: as maiúsculas têm ~2/3 da altura. */
-const CAP_RATIO = 106 / WORDMARK_LETTERING.height;
+/** A caixa do letreiro inclui o acento do É; a maiúscula é a fração medida. */
+const CAP_RATIO = WORDMARK_LETTERING.capHeight / WORDMARK_LETTERING.height;
+/** Paradas do brilho (mesmas do antigo .gold-sheen), no meio de um retângulo 4,2× a largura das letras. */
+const SHEEN_STOPS: ReadonlyArray<readonly [number, string]> = [
+  [0, "gold-700"],
+  [0.238, "gold-700"],
+  [0.421, "gold-brush"],
+  [0.5, "gold-200"],
+  [0.579, "gold-brush"],
+  [0.762, "gold-700"],
+  [1, "gold-700"],
+];
 
 /** O nome da loja (settings) é o do logo? Fora isso o letreiro não vale. */
 export function isLetteringName(storeName: string): boolean {
@@ -88,13 +98,10 @@ export function Wordmark({
           <>
             <defs>
               <linearGradient id={`${id}-gold`} x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0" stopColor="var(--color-gold-700)" />
-                <stop offset="0.238" stopColor="var(--color-gold-700)" />
-                <stop offset="0.421" stopColor="var(--color-gold-brush)" />
-                <stop offset="0.5" stopColor="var(--color-gold-200)" />
-                <stop offset="0.579" stopColor="var(--color-gold-brush)" />
-                <stop offset="0.762" stopColor="var(--color-gold-700)" />
-                <stop offset="1" stopColor="var(--color-gold-700)" />
+                {SHEEN_STOPS.map(([offset, token]) => (
+                  // stop-color via style: o atributo de apresentação nem sempre resolve var().
+                  <stop key={offset} offset={offset} style={{ stopColor: `var(--color-${token})` }} />
+                ))}
               </linearGradient>
               <clipPath id={`${id}-clip`}>{paths}</clipPath>
             </defs>

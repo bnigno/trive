@@ -18,9 +18,12 @@ export function Tagline({
   className?: string;
 }) {
   const noir = tone === "noir";
-  const { viewBox, width: boxWidth, height: boxHeight, glyphs } = TAGLINE_LETTERING;
+  const { viewBox, width: boxWidth, height: boxHeight, capHeight, glyphs } = TAGLINE_LETTERING;
   const width = Math.round((height * boxWidth) / boxHeight);
   const filet = cx("h-px w-8 shrink-0", noir ? "bg-rose-300" : "bg-rose-700");
+  // O flex centraliza pela caixa toda (com o acento do É); o filete desce
+  // até o centro das maiúsculas.
+  const filetStyle = { transform: `translateY(${((1 - capHeight / boxHeight) * height) / 2}px)` };
 
   return (
     <p
@@ -31,7 +34,7 @@ export function Tagline({
         className,
       )}
     >
-      <span aria-hidden="true" className={filet} />
+      <span aria-hidden="true" className={filet} style={filetStyle} />
       <svg
         aria-hidden="true"
         focusable="false"
@@ -50,7 +53,7 @@ export function Tagline({
         ))}
       </svg>
       <span className="sr-only">{STORE_TAGLINE}</span>
-      <span aria-hidden="true" className={filet} />
+      <span aria-hidden="true" className={filet} style={filetStyle} />
     </p>
   );
 }

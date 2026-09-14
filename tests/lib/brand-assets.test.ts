@@ -1,36 +1,40 @@
 // Os assets de marca são gerados por scripts/generate-brand-assets.mjs e
 // commitados; este teste segura o contrato que os componentes assumem:
 // manifest com as dimensões reais dos arquivos (zero CLS), o mesmo desenho
-// em todas as larguras do srcset, lockup na horizontal e o letreiro em paths.
-import { statSync } from "node:fs";
+// em todas as larguras do srcset, lockup na horizontal, o PNG que o Satori
+// embute igual ao gerado e o letreiro em paths dentro da própria caixa.
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
-import { BRAND } from "@/components/store/brand/assets";
+import { BRAND, type BrandImage } from "@/components/store/brand/assets";
 import {
   TAGLINE_LETTERING,
   WORDMARK_LETTERING,
   type Lettering,
 } from "@/components/store/brand/lettering.generated";
 import { isLetteringName } from "@/components/store/brand/wordmark";
+import { RECEIPT_ASSETS_B64 } from "@/receipts/assets.generated";
 
-const PUBLIC = path.join(process.cwd(), "public");
+const ROOT = process.cwd();
 
-function sizeOf(src: string): number {
-  return statSync(path.join(PUBLIC, src)).size;
+async function realSize(image: BrandImage): Promise<{ width: number; height: number }> {
+  const { width, height } = await sharp(path.join(ROOT, "public", image.src)).metadata();
+  return { width: width ?? 0, height: height ?? 0 };
 }
 
 describe("assets de marca (BRAND)", () => {
   for (const tone of ["light", "dark"] as const) {
     const { mark, lockup } = BRAND[tone];
 
-    it(`${tone}: cada variante do monograma existe e a largura bate com o nome`, () => {
+    it(`${tone}: o manifest traz as dimensões reais de cada arquivo (zero CLS)`, async () => {
       expect(mark.length).toBeGreaterThanOrEqual(4);
       for (const variant of mark) {
         expect(variant.src).toBe(`/brand/mark-${tone}-${variant.width}.webp`);
-        expect(sizeOf(variant.src)).toBeGreaterThan(500);
+        expect(await realSize(variant)).toEqual({ width: variant.width, height: variant.height });
       }
-      expect(sizeOf(lockup.src)).toBeGreaterThan(5000);
+      expect(await realSize(lockup)).toEqual({ width: lockup.width, height: lockup.height });
     });
 
     it(`${tone}: o srcset é o mesmo desenho (proporção igual, do menor para o maior)`, () => {
@@ -50,19 +54,39 @@ describe("assets de marca (BRAND)", () => {
   }
 });
 
+describe("lockup embutido no Satori", () => {
+  it("é o PNG 900×400 que o pipeline gerou (recibos e cartões não ficam com logo velho)", async () => {
+    const generated = readFileSync(path.join(ROOT, "brand-source/generated/lockup-dark-900.png"));
+    expect(RECEIPT_ASSETS_B64.lockupDarkPng).toBe(generated.toString("base64"));
+    const { width, height } = await sharp(generated).metadata();
+    expect({ width, height }).toEqual({ width: 900, height: 400 });
+  });
+});
+
 describe("letreiro do logo (lettering.generated)", () => {
   function expectLettering(lettering: Lettering, minGlyphs: number) {
-    const box = lettering.viewBox.split(" ").map(Number);
-    expect(box).toHaveLength(4);
-    expect(box[2]).toBeCloseTo(lettering.width, 1);
-    expect(box[3]).toBeCloseTo(lettering.height, 1);
-    expect(lettering.width).toBeGreaterThan(0);
-    expect(lettering.height).toBeGreaterThan(0);
+    const [x, y, width, height] = lettering.viewBox.split(" ").map(Number);
+    expect(width).toBeCloseTo(lettering.width, 1);
+    expect(height).toBeCloseTo(lettering.height, 1);
+    expect(width).toBeGreaterThan(0);
+    expect(height).toBeGreaterThan(0);
+    expect(lettering.capHeight).toBeGreaterThan(height / 2);
+    expect(lettering.capHeight).toBeLessThan(height);
     expect(lettering.glyphs.length).toBeGreaterThanOrEqual(minGlyphs);
+    // A caixa vem do raster e os glifos do XML: a origem de cada glifo (o
+    // pé da letra, na linha de base) tem que cair dentro dela — se o gerador
+    // medir a caixa em outro espaço, o letreiro some e este teste acusa.
     for (const glyph of lettering.glyphs) {
       expect(glyph.d).toMatch(/^M/);
       expect(glyph.d).not.toMatch(/\s{2,}/);
+      expect(glyph.x).toBeGreaterThanOrEqual(x - 5);
+      expect(glyph.x).toBeLessThan(x + width);
+      expect(glyph.y).toBeGreaterThan(y);
+      expect(glyph.y).toBeLessThanOrEqual(y + height + 1);
     }
+    const first = lettering.glyphs[0]!;
+    const last = lettering.glyphs[lettering.glyphs.length - 1]!;
+    expect(last.x - first.x).toBeGreaterThan(width * 0.6);
   }
 
   it("TRIVÉ: 5 letras em path, mais largo do que alto", () => {

@@ -659,7 +659,6 @@ body {
     animation: none !important;
   }
 
-  [data-veil-done] .wordmark-sheen,
   .animate-ribbon-drift,
   .animate-cue-pulse,
   .animate-ribbon-check,
@@ -669,6 +668,12 @@ body {
 
   .press-sheen::after {
     display: none;
+  }
+
+  /* O brilho não varre: fica no ouro do fim da passada, sem a faixa clara no meio. */
+  .wordmark-sheen {
+    animation: none !important;
+    transform: translateX(20%);
   }
 }
 
