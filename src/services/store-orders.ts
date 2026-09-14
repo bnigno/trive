@@ -877,6 +877,8 @@ export interface PublicOrder {
   packedAt: Date | null;
   shippedAt: Date | null;
   deliveredAt: Date | null;
+  deliveredPhotoPath: string | null;
+  receivedBy: string | null;
   /** Foto do pacote (path no Storage); a página resolve a URL pública. */
   packagePhotoPath: string | null;
   /** Presente: a página mostra o bilhete (a compradora escreveu; sem PII nosso). */
@@ -921,6 +923,8 @@ export async function getPublicOrder(
         packedAt: orders.packedAt,
         shippedAt: orders.shippedAt,
         deliveredAt: orders.deliveredAt,
+        deliveredPhotoPath: orders.deliveredPhotoPath,
+        receivedBy: orders.receivedBy,
         packagePhotoPath: orders.packagePhotoPath,
         isGift: orders.isGift,
         giftRecipientName: orders.giftRecipientName,
@@ -985,6 +989,8 @@ export async function getPublicOrder(
     paidAt: order.paidAt,
     preparingAt: preparing?.createdAt ?? null,
     packedAt: order.packedAt,
+    deliveredPhotoPath: order.deliveredPhotoPath,
+    receivedBy: order.receivedBy,
     shippedAt: order.shippedAt,
     deliveredAt: order.deliveredAt,
     packagePhotoPath: order.packagePhotoPath,

@@ -162,6 +162,15 @@ export const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "dia", "janela", "link"],
   },
   {
+    key: "order_delivered",
+    label: "Pedido entregue (legenda da foto)",
+    bodyTemplate:
+      "{{nome}}, seu pedido #{{pedido}} foi entregue {{entrega}} 🤎\n" +
+      "Esperamos que a peça chegue bem — se precisar de qualquer coisa, é só chamar.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "entrega", "recebido_por"],
+  },
+  {
     key: "order_recovery",
     label: "Lembrete de pagamento",
     bodyTemplate:

@@ -12,6 +12,7 @@ import {
   transitionOrder,
   updateOrderTracking,
 } from "@/services/orders";
+import { deliverOrderWithPhoto } from "@/services/delivery";
 import { PACKAGE_PHOTO_MAX_BYTES, packOrder } from "@/services/packing";
 
 export type FormState = { error?: string; success?: string };
@@ -106,6 +107,45 @@ export async function markShippedAction(
       success: trackingCode
         ? "Pedido marcado como enviado com código de rastreio."
         : "Pedido marcado como enviado.",
+    };
+  } catch (error) {
+    return friendlyError(error);
+  }
+}
+
+/**
+ * "Entregue — enviar foto": foto na mão da cliente + quem recebeu →
+ * deliverOrderWithPhoto (processa, guarda, leva a 'delivered' pela máquina
+ * de estados e a fila manda a foto à cliente).
+ */
+export async function deliverWithPhotoAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const orderId = orderIdSchema.parse(formData.get("orderId"));
+    const photo = formData.get("photo");
+    if (!(photo instanceof File) || photo.size === 0) {
+      return { error: "Tire (ou escolha) a foto da entrega antes de enviar." };
+    }
+    if (!photo.type.startsWith("image/")) {
+      return { error: "O arquivo precisa ser uma imagem (JPG, PNG ou HEIC)." };
+    }
+    if (photo.size > PACKAGE_PHOTO_MAX_BYTES) {
+      return { error: "A foto passou de 8 MB. Tire a foto direto pela câmera ou escolha uma menor." };
+    }
+    const receivedBy = String(formData.get("receivedBy") ?? "").slice(0, 180);
+    const result = await deliverOrderWithPhoto(getDb(), getFileStorage(), {
+      orderId,
+      photo: { data: new Uint8Array(await photo.arrayBuffer()), contentType: photo.type },
+      receivedBy,
+      userId: user.id,
+    });
+    revalidateOrder(orderId);
+    revalidatePath("/admin/pedidos/entregar");
+    revalidatePath("/admin/pedidos/rota");
+    return {
+      success: result.rephoto
+        ? "Foto trocada. A cliente não recebe uma segunda mensagem — a nova foto fica na página do pedido."
+        : `Pedido #${result.orderNumber} entregue${result.receivedBy ? ` — recebido por ${result.receivedBy}` : ""}. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.`,
     };
   } catch (error) {
     return friendlyError(error);

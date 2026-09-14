@@ -24,11 +24,14 @@ function formatAt(date: Date): string {
 export function OrderJourney({
   steps,
   packagePhotoUrl,
+  deliveredPhotoUrl = null,
   trackingCode,
 }: {
   steps: JourneyStep[];
   /** URL pública da foto do pacote, quando o dono já embalou. */
   packagePhotoUrl: string | null;
+  /** URL pública da foto da entrega, quando a dona registrou a entrega com foto. */
+  deliveredPhotoUrl?: string | null;
   trackingCode: string | null;
 }) {
   return (
@@ -37,6 +40,7 @@ export function OrderJourney({
         const last = index === steps.length - 1;
         const showPhoto =
           step.key === "packed" && step.state !== "upcoming" && packagePhotoUrl !== null;
+        const showDelivered = step.key === "delivered" && step.state === "done" && deliveredPhotoUrl !== null;
         const showTracking =
           step.key === "shipped" && step.state !== "upcoming" && trackingCode !== null;
         return (
@@ -109,6 +113,22 @@ export function OrderJourney({
                   />
                   <figcaption className="mt-2 font-display text-base text-ink-700 italic">
                     Sua peça, embalada com carinho.
+                  </figcaption>
+                </figure>
+              ) : null}
+              {step.detail ? (
+                <p className="mt-0.5 font-store text-sm text-ink-700">{step.detail}</p>
+              ) : null}
+              {showDelivered ? (
+                <figure className="mt-3 max-w-xs">
+                  <img
+                    src={deliveredPhotoUrl as string}
+                    alt="Foto da entrega do seu pedido"
+                    loading="lazy"
+                    className="aspect-[4/5] w-full rounded-(--radius-hair) border border-ivory-300 object-cover"
+                  />
+                  <figcaption className="mt-2 font-display text-base text-ink-700 italic">
+                    Chegou até você.
                   </figcaption>
                 </figure>
               ) : null}

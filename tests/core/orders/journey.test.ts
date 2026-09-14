@@ -74,4 +74,13 @@ describe("buildOrderJourney", () => {
     expect(buildOrderJourney(input({ status: "canceled" }))).toBeNull();
     expect(buildOrderJourney(input({ status: "refunded" }))).toBeNull();
   });
+
+  it("entregue com quem recebeu: o passo ganha o detalhe", () => {
+    const steps = buildOrderJourney(input({ status: "delivered", paidAt: T1, deliveredAt: T4, receivedBy: "Maria" }));
+    expect(steps?.at(-1)).toMatchObject({ key: "delivered", state: "done", detail: "Recebido por Maria" });
+    const plain = buildOrderJourney(input({ status: "delivered", paidAt: T1, deliveredAt: T4 }));
+    expect(plain?.at(-1)?.detail).toBeNull();
+    const pending = buildOrderJourney(input({ status: "shipped", paidAt: T1, receivedBy: "Maria" }));
+    expect(pending?.at(-1)?.detail).toBeNull();
+  });
 });

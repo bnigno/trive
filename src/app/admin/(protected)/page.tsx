@@ -9,6 +9,7 @@ import { countRouteOfDay } from "@/services/delivery-routes";
 import { countOrdersMustShipToday } from "@/services/needed-by";
 import { countAtelierIntakesFailed } from "@/services/atelier";
 import { countOrdersAwaitingPacking } from "@/services/packing";
+import { countOrdersAwaitingDelivery } from "@/services/delivery";
 import { getReadinessSummary } from "@/services/catalog-readiness";
 import { monthOverview } from "@/services/financial";
 import { getStockOverview } from "@/services/stock";
@@ -93,7 +94,7 @@ type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 /** O que a equipe também vê: operação do dia, sem valor de faturamento. */
 async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday] =
+  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount] =
     await Promise.all([
       safe(async () => {
         const db = getDb();
@@ -112,9 +113,10 @@ async function loadSharedDashboard() {
       safe(() => getReadinessSummary(getDb())),
       safe(() => countRouteOfDay(getDb())),
       safe(() => countOrdersMustShipToday(getDb())),
+      safe(() => countOrdersAwaitingDelivery(getDb())),
     ]);
 
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday };
+  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount };
 }
 
 /**
@@ -371,6 +373,16 @@ export default async function AdminDashboardPage() {
               value={String(data.route.today)}
               tone={data.route.late ? "warning" : "neutral"}
               hint={data.route.late ? `${data.route.late} atrasado${data.route.late > 1 ? "s" : ""} — abra a rota.` : "Pedidos com janela de entrega hoje."}
+            />
+          </Link>
+        ) : null}
+        {data.toDeliverCount ? (
+          <Link href="/admin/pedidos/entregar" className="block">
+            <StatCard
+              label="Para entregar"
+              value={String(data.toDeliverCount)}
+              tone="neutral"
+              hint="A caminho da cliente — registre a entrega com a foto."
             />
           </Link>
         ) : null}
