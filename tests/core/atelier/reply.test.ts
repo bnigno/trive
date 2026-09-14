@@ -34,9 +34,13 @@ describe("resposta do Ateliê", () => {
       totalQuantity: 24,
       unitCostCents: 12000,
       totalCostCents: 288000,
+      unconfirmedCostCents: null,
       costBasis: "per_piece" as const,
       supplierName: "Aurora",
     };
+    expect(
+      arrivalDetailsLine({ ...full, unitCostCents: null, totalCostCents: null, unconfirmedCostCents: 120000, costBasis: "unknown", supplierName: null, quantityPerVariant: null, totalQuantity: null }, null),
+    ).toBe(` · 2 cores × 4 tamanhos · custo ${formatCentsBRL(120000)} (por peça ou o lote? confira)`);
     expect(arrivalDetailsLine(full, 28990)).toBe(
       ` · 2 cores × 4 tamanhos · 3 de cada (24 peças) · custo ${formatCentsBRL(12000)} · sugerido ${formatCentsBRL(28990)} · Aurora`,
     );

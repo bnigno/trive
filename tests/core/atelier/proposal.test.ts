@@ -42,6 +42,9 @@ describe("expandSizeRange / sizeRank", () => {
     expect(expandSizeRange("36", "42")).toEqual(["36", "38", "40", "42"]);
     expect(expandSizeRange("P", "42")).toEqual([]);
     expect(expandSizeRange("10", "20")).toEqual([]);
+    // Extremos invertidos abaixo do mínimo não passam pela porta dos fundos.
+    expect(expandSizeRange("40", "30")).toEqual([]);
+    expect(expandSizeRange("60", "34")).toEqual([]);
   });
 
   it("ordena letras antes de números e o resto no fim", () => {
@@ -66,8 +69,9 @@ describe("normalizeArrivalProposal", () => {
       costBasis: "per_piece",
       supplierName: "Aurora",
       weightGrams: 320,
-      careSymbols: ["hand_wash"],
-      careFreeText: ["Não torcer", "secar à sombra"],
+      // "secar à sombra" em texto livre é o pictograma dry_shade: vira símbolo.
+      careSymbols: ["hand_wash", "dry_shade"],
+      careFreeText: ["Não torcer"],
     });
     expect(proposal.warnings).toEqual([]);
   });
@@ -90,11 +94,44 @@ describe("normalizeArrivalProposal", () => {
     expect(noQty.warnings.join(" ")).toContain("Custo total sem a quantidade");
   });
 
-  it("custo sem base conhecida é tratado como por peça, com aviso", () => {
-    const proposal = normalizeArrivalProposal(raw({ costBasis: "unknown" }), { categories: CATEGORIES });
-    expect(proposal.costBasis).toBe("per_piece");
-    expect(proposal.unitCostCents).toBe(12000);
-    expect(proposal.warnings.join(" ")).toContain("POR PEÇA");
+  it("custo sem base conhecida NÃO vai para a grade: fica como valor a confirmar, com aviso", () => {
+    const proposal = normalizeArrivalProposal(raw({ costBasis: "unknown", costCents: 120000 }), { categories: CATEGORIES });
+    expect(proposal.costBasis).toBe("unknown");
+    expect(proposal.unitCostCents).toBeNull();
+    expect(proposal.totalCostCents).toBeNull();
+    expect(proposal.unconfirmedCostCents).toBe(120000);
+    expect(proposal.warnings.join(" ")).toContain("por peça ou o total da compra");
+  });
+
+  it("total dito diferente de 'N de cada' × combinações vira aviso, e o custo total usa o total dito", () => {
+    const proposal = normalizeArrivalProposal(raw({ totalQuantity: 20, costCents: 60000, costBasis: "total" }), { categories: CATEGORIES });
+    expect(proposal.totalQuantity).toBe(24);
+    expect(proposal.unitCostCents).toBe(3000);
+    expect(proposal.totalCostCents).toBe(60000);
+    expect(proposal.warnings.join(" ")).toContain("Você disse 20 peças, mas 3 de cada em 8 combinações dá 24");
+  });
+
+  it("custo e quantidade fora do esperado somem da ficha, mas com aviso", () => {
+    const proposal = normalizeArrivalProposal(raw({ costCents: 15_000_000_00, quantityPerVariant: 5000, totalQuantity: 200_000 }), { categories: CATEGORIES });
+    expect(proposal.unitCostCents).toBeNull();
+    expect(proposal.quantityPerVariant).toBeNull();
+    expect(proposal.totalQuantity).toBeNull();
+    const text = proposal.warnings.join(" ");
+    expect(text).toContain("Custo fora do esperado");
+    expect(text).toContain("Quantidade por combinação fora do esperado (5000)");
+    expect(text).toContain("Total de peças fora do esperado (200000)");
+  });
+
+  it("cuidados: rótulo repetido vira pictograma (sem duplicar) e texto longo é cortado com aviso", () => {
+    const dup = normalizeArrivalProposal(raw({ careSymbols: ["dry_shade"], careFreeText: "Secar à sombra; Não torcer" }), { categories: CATEGORIES });
+    expect(dup.careSymbols).toEqual(["dry_shade"]);
+    expect(dup.careFreeText).toEqual(["Não torcer"]);
+    const long = normalizeArrivalProposal(
+      raw({ careSymbols: [], careFreeText: Array.from({ length: 30 }, (_, i) => `Cuidado número ${i} com muitas palavras para encher a linha`).join("; ") }),
+      { categories: CATEGORIES },
+    );
+    expect(long.careFreeText.join("\n").length).toBeLessThanOrEqual(800);
+    expect(long.warnings.join(" ")).toContain("Cuidados em texto longos demais");
   });
 
   it("sala desconhecida, descrição curta, peso fora da faixa e quantidade absurda viram null/aviso", () => {

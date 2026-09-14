@@ -22,7 +22,7 @@ export function atelierDraftVars(input: { name: string; photos: number; link: st
  * o separador para colar em "{{fotos}}{{detalhes}}"; vazia sem proposta.
  */
 export function arrivalDetailsLine(
-  proposal: Pick<ArrivalProposal, "colors" | "sizes" | "quantityPerVariant" | "totalQuantity" | "unitCostCents" | "totalCostCents" | "costBasis" | "supplierName"> | null,
+  proposal: Pick<ArrivalProposal, "colors" | "sizes" | "quantityPerVariant" | "totalQuantity" | "unitCostCents" | "totalCostCents" | "unconfirmedCostCents" | "costBasis" | "supplierName"> | null,
   suggestedPriceCents: number | null,
 ): string {
   if (!proposal) return "";
@@ -38,6 +38,7 @@ export function arrivalDetailsLine(
   }
   if (proposal.unitCostCents !== null) parts.push(`custo ${formatCentsBRL(proposal.unitCostCents)}`);
   else if (proposal.totalCostCents !== null) parts.push(`custo total ${formatCentsBRL(proposal.totalCostCents)}`);
+  else if (proposal.unconfirmedCostCents !== null) parts.push(`custo ${formatCentsBRL(proposal.unconfirmedCostCents)} (por peça ou o lote? confira)`);
   if (suggestedPriceCents !== null) parts.push(`sugerido ${formatCentsBRL(suggestedPriceCents)}`);
   if (proposal.supplierName) parts.push(proposal.supplierName);
   return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";

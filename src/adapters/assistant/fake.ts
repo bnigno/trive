@@ -39,6 +39,31 @@ export type FakeTurnScript = {
  * próximo roteiro da fila (executando as ferramentas na ordem); sem roteiro,
  * ecoa a última mensagem do usuário.
  */
+/**
+ * Chegada do Ateliê sem roteiro: nada além do que o recado diz — o nome sai
+ * do recado (name vazio), sem grade, sem custo. Os testes que querem a grade
+ * enfileiram a proposta completa.
+ */
+export const FAKE_ARRIVAL_JSON = {
+  name: "",
+  categorySlug: null,
+  description: "",
+  composition: "",
+  careSymbols: [],
+  careFreeText: "",
+  fitNotes: "",
+  colors: [],
+  sizes: [],
+  sizeRange: null,
+  quantityPerVariant: null,
+  totalQuantity: null,
+  costCents: null,
+  costBasis: "unknown",
+  supplierName: null,
+  weightGramsEstimate: null,
+  warnings: [],
+};
+
 export class FakeSalesAssistant implements SalesAssistant {
   private readonly scripts: FakeTurnScript[] = [];
   readonly turns: AssistantTurn[] = [];
@@ -61,8 +86,12 @@ export class FakeSalesAssistant implements SalesAssistant {
     this.extractions.push(input);
     const scripted = this.extractionScripts.shift();
     if (scripted instanceof Error) throw scripted;
+    // Sem roteiro, responde no formato que o schema pediu: a chegada do
+    // Ateliê (costBasis) ou a ficha pela foto.
+    const properties = (input.jsonSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    const fallback = "costBasis" in properties ? FAKE_ARRIVAL_JSON : FAKE_PRODUCT_DRAFT_JSON;
     return {
-      json: scripted === undefined ? FAKE_PRODUCT_DRAFT_JSON : scripted,
+      json: scripted === undefined ? fallback : scripted,
       usage: { inputTokens: 4200, outputTokens: 800, cacheReadTokens: 0, cacheWriteTokens: 0 },
     };
   }

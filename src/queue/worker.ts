@@ -161,6 +161,8 @@ export async function drainOutbox(
       aggregateId: row.aggregate_id,
       payload: row.payload,
       attempts: row.attempts,
+      // O handler pode se encolher para caber no que sobra da varredura.
+      ...(options.budgetMs !== undefined ? { deadlineAt: new Date(startedAt + options.budgetMs) } : {}),
     };
 
     try {

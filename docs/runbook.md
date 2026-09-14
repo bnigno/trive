@@ -178,7 +178,7 @@ calculadora — a resposta diz "2 cores × 4 tamanhos · 3 de cada (24 peças) �
 custo R$ 120,00 · sugerido R$ 289,90 · Aurora". O **estoque não entra nesse
 passo** (a chegada vira compra, com conta a pagar, no passo seguinte do
 Ateliê) e o preço sugerido não é aplicado: a dona decide na ficha. Sem chave,
-demora (30 s) ou resposta fora do formato, a ficha nasce simples (nome pelo
+demora (25 s) ou resposta fora do formato, a ficha nasce simples (nome pelo
 recado, 1 variação) e a mensagem avisa "sem a grade"; o bloco "Chegou pelo
 WhatsApp" na ficha mostra o que foi entendido e os avisos. Template
 atualizado em produção com `--templates owner_atelier_draft --force-templates`.

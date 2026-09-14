@@ -7,7 +7,8 @@
 import { z } from "zod";
 
 import { normalizeAxisValue } from "@/core/catalog/attributes";
-import { CARE_SYMBOL_KEYS, CARE_SYMBOLS, type CareSymbolKey } from "@/core/catalog/care";
+import { CARE_SYMBOL_KEYS, CARE_SYMBOLS, parseCareNotes, type CareSymbolKey } from "@/core/catalog/care";
+import { formatCentsBRL } from "@/lib/money";
 import {
   DRAFT_MAX_COLORS,
   DRAFT_MAX_DESCRIPTION_CHARS,
@@ -23,6 +24,9 @@ export const NUMERIC_SIZE_MIN = 34;
 export const NUMERIC_SIZE_MAX = 54;
 export const ARRIVAL_MAX_COST_CENTS = 100_000_00;
 export const ARRIVAL_MAX_QUANTITY = 999;
+/** Cuidados em texto livre: cada linha e o conjunto (a ficha aceita 1000 no total, com os pictogramas). */
+export const ARRIVAL_CARE_LINE_MAX = 200;
+export const ARRIVAL_CARE_TOTAL_MAX = 700;
 
 export function sizeRank(value: string): number {
   const upper = value.trim().toUpperCase();
@@ -43,13 +47,12 @@ export function expandSizeRange(from: string, to: string): string[] {
   if (ia >= 0 && ib >= 0) return ia <= ib ? letters.slice(ia, ib + 1) : letters.slice(ib, ia + 1);
   const na = Number(a);
   const nb = Number(b);
-  if (Number.isInteger(na) && Number.isInteger(nb) && na >= NUMERIC_SIZE_MIN && nb <= NUMERIC_SIZE_MAX) {
-    const [lo, hi] = na <= nb ? [na, nb] : [nb, na];
-    const out: string[] = [];
-    for (let size = lo; size <= hi; size += 2) out.push(String(size));
-    return out;
-  }
-  return [];
+  if (!Number.isInteger(na) || !Number.isInteger(nb)) return [];
+  const [lo, hi] = na <= nb ? [na, nb] : [nb, na];
+  if (lo < NUMERIC_SIZE_MIN || hi > NUMERIC_SIZE_MAX) return [];
+  const out: string[] = [];
+  for (let size = lo; size <= hi; size += 2) out.push(String(size));
+  return out;
 }
 
 export const rawArrivalProposalSchema = z.object({
@@ -139,8 +142,11 @@ export type ArrivalProposal = {
   variantCount: number;
   quantityPerVariant: number | null;
   totalQuantity: number | null;
+  /** Só quando se sabe a base: com costBasis 'unknown' o custo NÃO vai para a grade. */
   unitCostCents: number | null;
   totalCostCents: number | null;
+  /** O valor dito quando não dá para saber se é por peça ou o lote (fica no painel e no aviso). */
+  unconfirmedCostCents: number | null;
   costBasis: "per_piece" | "total" | "unknown";
   supplierName: string | null;
   weightGrams: number | null;
@@ -171,6 +177,13 @@ function wholeOrNull(value: number | null, max: number): number | null {
   if (value === null || !Number.isFinite(value)) return null;
   const rounded = Math.round(value);
   return rounded > 0 && rounded <= max ? rounded : null;
+}
+
+/** O valor veio, mas fora do que faz sentido: some da ficha e vira aviso. */
+function outOfRange(value: number | null, max: number): boolean {
+  if (value === null || !Number.isFinite(value)) return false;
+  const rounded = Math.round(value);
+  return rounded <= 0 || rounded > max;
 }
 
 /**
@@ -217,24 +230,46 @@ export function normalizeArrivalProposal(raw: unknown, opts: { categories: reado
 
   const variantCount = Math.max(1, colorsRead.kept.length) * Math.max(1, sizes.length);
   const quantityPerVariant = wholeOrNull(parsed.quantityPerVariant, ARRIVAL_MAX_QUANTITY);
-  let totalQuantity = wholeOrNull(parsed.totalQuantity, ARRIVAL_MAX_QUANTITY * 100);
-  if (quantityPerVariant !== null) totalQuantity = quantityPerVariant * variantCount;
+  if (outOfRange(parsed.quantityPerVariant, ARRIVAL_MAX_QUANTITY)) {
+    warnings.push(`Quantidade por combinação fora do esperado (${Math.round(parsed.quantityPerVariant as number)}): confira na ficha.`);
+  }
+  const saidTotal = wholeOrNull(parsed.totalQuantity, ARRIVAL_MAX_QUANTITY * 100);
+  if (outOfRange(parsed.totalQuantity, ARRIVAL_MAX_QUANTITY * 100)) {
+    warnings.push(`Total de peças fora do esperado (${Math.round(parsed.totalQuantity as number)}): confira na ficha.`);
+  }
+  let totalQuantity = saidTotal;
+  if (quantityPerVariant !== null) {
+    totalQuantity = quantityPerVariant * variantCount;
+    if (saidTotal !== null && saidTotal !== totalQuantity) {
+      warnings.push(
+        `Você disse ${saidTotal} peças, mas ${quantityPerVariant} de cada em ${variantCount} ${variantCount === 1 ? "combinação" : "combinações"} dá ${totalQuantity}: confira cores e tamanhos.`,
+      );
+    }
+  }
 
   const costCents = wholeOrNull(parsed.costCents, ARRIVAL_MAX_COST_CENTS);
+  if (outOfRange(parsed.costCents, ARRIVAL_MAX_COST_CENTS)) {
+    warnings.push(`Custo fora do esperado (${formatCentsBRL(Math.max(0, Math.round(parsed.costCents as number)))}): confira na ficha.`);
+  }
   let unitCostCents: number | null = null;
   let totalCostCents: number | null = null;
-  let costBasis = parsed.costBasis;
+  let unconfirmedCostCents: number | null = null;
+  const costBasis = parsed.costBasis;
   if (costCents !== null) {
     if (costBasis === "unknown") {
-      costBasis = "per_piece";
-      warnings.push("Entendi o custo como valor POR PEÇA; se era o total da compra, corrija na ficha.");
-    }
-    if (costBasis === "per_piece") {
+      // Sem saber se é por peça ou o lote, o custo não entra na grade: fica
+      // para a dona confirmar na ficha (e no passo da compra).
+      unconfirmedCostCents = costCents;
+      warnings.push(`Não deu para saber se ${formatCentsBRL(costCents)} é por peça ou o total da compra: confira o custo na ficha.`);
+    } else if (costBasis === "per_piece") {
       unitCostCents = costCents;
       totalCostCents = totalQuantity !== null ? costCents * totalQuantity : null;
     } else {
+      // O total é o que ela pagou: o custo por peça sai do total dito (se
+      // houve), senão da grade.
       totalCostCents = costCents;
-      unitCostCents = totalQuantity !== null && totalQuantity > 0 ? Math.round(costCents / totalQuantity) : null;
+      const pieces = saidTotal ?? totalQuantity;
+      unitCostCents = pieces !== null && pieces > 0 ? Math.round(costCents / pieces) : null;
       if (unitCostCents === null) warnings.push("Custo total sem a quantidade: não dá para saber o custo por peça.");
     }
   }
@@ -247,11 +282,26 @@ export function normalizeArrivalProposal(raw: unknown, opts: { categories: reado
       ? Math.round(parsed.weightGramsEstimate)
       : null;
 
-  const careSymbols = parsed.careSymbols.filter(isCareSymbolKey);
-  const careFreeText = parsed.careFreeText
-    .split(/\n|;/)
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
+  // Texto livre que repete um pictograma vira o pictograma (sem duplicar no
+  // painel); linhas e conjunto limitados para a ficha aceitar.
+  const careNotes = parseCareNotes(
+    parsed.careFreeText
+      .split(/\n|;/)
+      .map((line) => line.trim().slice(0, ARRIVAL_CARE_LINE_MAX))
+      .filter((line) => line !== "")
+      .join("\n"),
+  );
+  const careSymbols = [...new Set([...parsed.careSymbols.filter(isCareSymbolKey), ...careNotes.symbols])];
+  const careFreeText: string[] = [];
+  let careChars = 0;
+  for (const line of careNotes.freeText) {
+    if (careChars + line.length > ARRIVAL_CARE_TOTAL_MAX) {
+      warnings.push("Cuidados em texto longos demais: parte ficou de fora — complete na ficha.");
+      break;
+    }
+    careFreeText.push(line);
+    careChars += line.length + 1;
+  }
 
   const supplierName = parsed.supplierName?.trim().slice(0, 120) || null;
 
@@ -271,6 +321,7 @@ export function normalizeArrivalProposal(raw: unknown, opts: { categories: reado
     totalQuantity,
     unitCostCents,
     totalCostCents,
+    unconfirmedCostCents,
     costBasis,
     supplierName,
     weightGrams,

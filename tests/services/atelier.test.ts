@@ -40,8 +40,8 @@ beforeEach(async () => {
   sdb = db as unknown as DbOrTx;
   provider = new FakeMessagingProvider();
   storage = new FakeFileStorage();
-  // Sem roteiro, o fake devolve o JSON da ficha pela foto (outro formato):
-  // a interpretação falha e a chegada cai na ficha simples — como no C-A.
+  // Sem roteiro, o fake devolve a chegada mínima (nome pelo recado, sem
+  // grade, sem custo): a ficha nasce simples, como no C-A.
   assistant = new FakeSalesAssistant();
   vi.stubEnv("ADAPTER_MODE", "fake");
   await db.insert(schema.settings).values([
@@ -400,7 +400,7 @@ describe("processAtelierIntake", () => {
     expect(assistant.extractions[0].system).toContain("Vestidos (slug: vestidos)");
 
     const [product] = await db.select().from(schema.products).where(eq(schema.products.id, result.productId));
-    expect(product).toMatchObject({ name: "Longo Dunas", status: "draft", composition: "100% linho", careNotes: "hand_wash\nSecar à sombra", attributesSchema: ["cor", "tamanho"] });
+    expect(product).toMatchObject({ name: "Longo Dunas", status: "draft", composition: "100% linho", careNotes: "hand_wash\ndry_shade", attributesSchema: ["cor", "tamanho"] });
     expect(product.description).toContain("Vestido longo de linho");
     const [category] = await db.select().from(schema.categories);
     expect(product.categoryId).toBe(category.id);
@@ -463,6 +463,52 @@ describe("processAtelierIntake", () => {
     expect((intake.parsed as { failed: string }).failed).toBe("ia_indisponivel");
     expect(intake.status).toBe("done");
     expect(provider.sentMessages[0].body).toContain("Rascunho pronto · Longo Dunas · 2 fotos · sem a grade (a inteligência não respondeu)");
+  });
+
+  it("sem tempo para a inteligência (prazo do worker curto): nem chama, ficha simples com aviso", async () => {
+    const { conversationId, noteId } = await seedArrival();
+    const result = await processAtelierIntake(
+      sdb,
+      provider,
+      storage,
+      assistant,
+      { conversationId, triggerWaMessageId: noteId, deadlineAt: new Date(clock.now().getTime() + 15_000) },
+      clock,
+    );
+    expect(result).toMatchObject({ created: true, name: "Longo Dunas", interpreted: false });
+    expect(assistant.extractions).toHaveLength(0);
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect((intake.parsed as { failed: string }).failed).toBe("sem_tempo");
+    expect(provider.sentMessages[0].body).toContain("sem a grade");
+  });
+
+  it("chegada antiga com produto criado e sem leitura gravada: a inteligência não é chamada na retomada", async () => {
+    const { conversationId, photoIds, noteId } = await seedArrival();
+    const first = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in first)) throw new Error("esperava created");
+    await db
+      .update(schema.atelierIntakes)
+      .set({ status: "failed", parsed: null, uploadedWaMessageIds: [photoIds[0]] })
+      .where(eq(schema.atelierIntakes.triggerWaMessageId, noteId));
+    const again = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true, productId: first.productId, interpreted: false });
+    expect(assistant.extractions).toHaveLength(1);
+    const audits = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "atelier.intake"));
+    expect(audits.at(-1)?.after).toMatchObject({ interpretationFailed: "sem_interpretacao", variants: 1 });
+  });
+
+  it("a leitura da inteligência fica gravada antes do produto: retomada não paga de novo", async () => {
+    assistant.enqueueExtraction(ARRIVAL_JSON);
+    const { conversationId, noteId } = await seedArrival();
+    provider.simulateDisconnect();
+    await expect(processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock)).rejects.toThrow();
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect((intake.parsed as { proposal: { colors: string[] } | null }).proposal?.colors).toEqual(["Areia", "Terra"]);
+    provider.simulateReconnect();
+    const again = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true, interpreted: true });
+    expect(assistant.extractions).toHaveLength(1);
+    expect(provider.sentMessages[0].body).toContain("2 cores × 4 tamanhos");
   });
 
   it("SKU da grade que já existe no catálogo ganha sufixo, o resto fica", async () => {

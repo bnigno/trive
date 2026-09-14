@@ -11,7 +11,7 @@
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { AssistantUnavailableError, type SalesAssistant } from "@/adapters/assistant";
+import { AssistantUnavailableError, type BotImageInput, type SalesAssistant } from "@/adapters/assistant";
 import type { FileStorage } from "@/adapters/storage";
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import type { MessagingProvider } from "@/adapters/zapi";
@@ -70,9 +70,13 @@ import { sendToOwner, siteBaseUrl, type SendWaMessageResult } from "@/services/w
 /** Foto original da câmera (a ficha reduz depois); acima disso a foto fica de fora. */
 export const ATELIER_PHOTO_MAX_BYTES = 12 * 1024 * 1024;
 /** Cada download tem este teto; a função da fila tem 60 s para tudo. */
-export const ATELIER_DOWNLOAD_TIMEOUT_MS = 12_000;
+export const ATELIER_DOWNLOAD_TIMEOUT_MS = 10_000;
 /** A inteligência lê o recado e as fotos dentro disto; passou, a ficha nasce simples. */
-export const ARRIVAL_MODEL_BUDGET_MS = 30_000;
+export const ARRIVAL_MODEL_BUDGET_MS = 25_000;
+/** Depois da inteligência ainda vêm o produto, as fotos e o aviso: reserva de tempo. */
+export const ARRIVAL_AFTER_MODEL_RESERVE_MS = 12_000;
+/** Com menos que isto para a inteligência, nem chama: a ficha nasce simples e a dona não espera à toa. */
+export const ARRIVAL_MODEL_MIN_BUDGET_MS = 6_000;
 const DEFAULT_ARRIVAL_MODEL = "claude-sonnet-5";
 export const ATELIER_DRAFT_TEMPLATE = "owner_atelier_draft";
 export const ATELIER_HELP_TEMPLATE = "owner_atelier_help";
@@ -302,6 +306,8 @@ export const atelierIntakePayloadSchema = z.object({
   triggerWaMessageId: z.uuid(),
   /** Tentativas já esgotadas antes desta (0 na primeira; como o worker conta). */
   attempt: z.number().int().min(0).default(0),
+  /** Até quando o worker da fila deixa esta chegada rodar (a inteligência se encolhe para caber). */
+  deadlineAt: z.date().optional(),
 });
 
 export type ProcessAtelierIntakeResult =
@@ -354,33 +360,69 @@ async function withUniqueSkus<T extends { sku: string }>(db: DbOrTx, name: strin
 export async function interpretArrival(
   db: DbOrTx,
   assistant: SalesAssistant,
-  input: { note: string; images: readonly Buffer[]; now: () => Date },
+  input: {
+    note: string;
+    images: readonly Buffer[];
+    now: () => Date;
+    /** Até quando a chegada inteira precisa terminar (o worker da fila tem um teto). */
+    deadlineAt?: Date;
+  },
 ): Promise<AtelierParsed> {
   const startedAt = input.now().getTime();
   const elapsed = () => input.now().getTime() - startedAt;
-  const [settingsMap, categoryRows, storeMap, suppliers] = await Promise.all([
-    getSettingsMap(db as unknown as ServiceDb, ["store_name", "store_manifesto", "bot_model"]),
-    db.select({ id: categories.id, name: categories.name, slug: categories.slug }).from(categories).orderBy(asc(categories.name)),
-    getStoreMap(db as unknown as ServiceDb),
-    listSuppliers(db as unknown as ServiceDb),
-  ]);
-  const text = (key: string): string => (typeof settingsMap[key] === "string" ? (settingsMap[key] as string) : "");
-  const model = text("bot_model").trim() !== "" ? text("bot_model").trim() : DEFAULT_ARRIVAL_MODEL;
-  const base: AtelierParsed = { proposal: null, suggestedPriceCents: null, model, usage: null, estimatedCostUsdCents: 0, ms: 0, failed: null };
+  const base: AtelierParsed = {
+    proposal: null,
+    suggestedPriceCents: null,
+    model: DEFAULT_ARRIVAL_MODEL,
+    usage: null,
+    estimatedCostUsdCents: 0,
+    ms: 0,
+    failed: null,
+  };
 
-  // Foto que o sharp não abre (HEIC…) fica de fora do modelo; o recado basta.
-  const prepared = await Promise.allSettled(input.images.map((data) => prepareImageForModel(data)));
-  const images = prepared.flatMap((outcome) =>
-    outcome.status === "fulfilled" ? [{ mediaType: outcome.value.mediaType, base64: outcome.value.base64 }] : [],
-  );
-  const system = buildArrivalPrompt({
-    storeName: text("store_name").trim() !== "" ? text("store_name").trim() : "TRIVÉ",
-    manifesto: text("store_manifesto"),
-    categories: categoryRows.map((row) => ({ name: row.name, slug: row.slug })),
-    knownColors: storeMap.colors,
-    knownSizes: storeMap.sizes,
-    knownSuppliers: suppliers.map((supplier) => supplier.name),
-  });
+  // O tempo que sobra para a inteligência, descontada a reserva do que vem
+  // depois; pouco demais = nem chama (a ficha nasce simples).
+  const budgetMs = input.deadlineAt
+    ? Math.min(ARRIVAL_MODEL_BUDGET_MS, input.deadlineAt.getTime() - startedAt - ARRIVAL_AFTER_MODEL_RESERVE_MS)
+    : ARRIVAL_MODEL_BUDGET_MS;
+  if (budgetMs < ARRIVAL_MODEL_MIN_BUDGET_MS) {
+    console.warn(`[atelier] sem tempo para a inteligência (${budgetMs} ms): ficha simples`);
+    return { ...base, failed: "sem_tempo", ms: elapsed() };
+  }
+
+  let system: string;
+  let categoryRows: { id: string; name: string; slug: string }[];
+  let model = DEFAULT_ARRIVAL_MODEL;
+  let images: BotImageInput[] = [];
+  try {
+    const [settingsMap, rows, storeMap, suppliers] = await Promise.all([
+      getSettingsMap(db as unknown as ServiceDb, ["store_name", "store_manifesto", "bot_model"]),
+      db.select({ id: categories.id, name: categories.name, slug: categories.slug }).from(categories).orderBy(asc(categories.name)),
+      getStoreMap(db as unknown as ServiceDb),
+      listSuppliers(db as unknown as ServiceDb),
+    ]);
+    categoryRows = rows;
+    const text = (key: string): string => (typeof settingsMap[key] === "string" ? (settingsMap[key] as string) : "");
+    model = text("bot_model").trim() !== "" ? text("bot_model").trim() : DEFAULT_ARRIVAL_MODEL;
+    // Foto que o sharp não abre (HEIC…) fica de fora do modelo; o recado basta.
+    const prepared = await Promise.allSettled(input.images.map((data) => prepareImageForModel(data)));
+    images = prepared.flatMap((outcome) =>
+      outcome.status === "fulfilled" ? [{ mediaType: outcome.value.mediaType, base64: outcome.value.base64 }] : [],
+    );
+    system = buildArrivalPrompt({
+      storeName: text("store_name").trim() !== "" ? text("store_name").trim() : "TRIVÉ",
+      manifesto: text("store_manifesto"),
+      categories: categoryRows.map((row) => ({ name: row.name, slug: row.slug })),
+      knownColors: storeMap.colors,
+      knownSizes: storeMap.sizes,
+      knownSuppliers: suppliers.map((supplier) => supplier.name),
+    });
+  } catch (error) {
+    // Leitura de apoio falhou (banco): a ficha nasce simples, nunca trava.
+    console.warn("[atelier] apoio da inteligência indisponível:", error instanceof Error ? error.message : error);
+    return { ...base, model, failed: "ia_erro", ms: elapsed() };
+  }
+  base.model = model;
 
   const controller = new AbortController();
   let extraction;
@@ -392,10 +434,9 @@ export async function interpretArrival(
         userText: arrivalUserText(input.note),
         model,
         jsonSchema: ARRIVAL_JSON_SCHEMA,
-        maxTokens: 2048,
         signal: controller.signal,
       }),
-      ARRIVAL_MODEL_BUDGET_MS,
+      budgetMs,
       () => controller.abort(),
     );
   } catch (error) {
@@ -455,7 +496,7 @@ export async function processAtelierIntake(
   input: z.input<typeof atelierIntakePayloadSchema>,
   clock: { now?: () => Date } = {},
 ): Promise<ProcessAtelierIntakeResult> {
-  const { conversationId, triggerWaMessageId, attempt } = atelierIntakePayloadSchema.parse(input);
+  const { conversationId, triggerWaMessageId, attempt, deadlineAt } = atelierIntakePayloadSchema.parse(input);
   const now = clock.now ?? (() => new Date());
   const startedAt = now();
 
@@ -546,11 +587,17 @@ export async function processAtelierIntake(
   }
   if (available.length === 0 && uploaded.size === 0) return fail("fotos_indisponiveis");
 
-  // A inteligência lê o recado e as fotos UMA vez, antes de criar o produto;
-  // a retomada reaproveita o que ficou gravado em `parsed`.
-  let interpreted = intake.productId ? parseAtelierParsed(intake.parsed) : null;
+  // A inteligência lê o recado e as fotos UMA vez, antes de criar o produto,
+  // e a leitura é gravada na hora (fora da transação do produto): a retomada
+  // reaproveita, e com produto já criado nunca se chama de novo — a grade
+  // é a que o produto tem.
+  let interpreted = parseAtelierParsed(intake.parsed);
+  if (!interpreted && intake.productId) {
+    interpreted = { proposal: null, suggestedPriceCents: null, model: "", usage: null, estimatedCostUsdCents: 0, ms: 0, failed: "sem_interpretacao" };
+  }
   if (!interpreted) {
-    interpreted = await interpretArrival(db, assistant, { note, images: available.map((item) => item.data), now });
+    interpreted = await interpretArrival(db, assistant, { note, images: available.map((item) => item.data), now, deadlineAt });
+    await markIntake(db, intake.id, { parsed: interpreted }, now());
   }
   const proposal = interpreted.proposal;
   const name = proposal?.name || draftNameFromNote(note, startedAt);
@@ -575,23 +622,42 @@ export async function processAtelierIntake(
         }
       }
       const stored = interpreted;
+      const simpleDescription = note ? `Recado da chegada: ${note}`.slice(0, 1200) : undefined;
+      const fullInput = {
+        name,
+        description: proposal?.description || simpleDescription,
+        composition: proposal?.composition || undefined,
+        careNotes: proposal ? (formatCareNotes(proposal.careSymbols, proposal.careFreeText) ?? undefined) : undefined,
+        fitNotes: proposal?.fitNotes || undefined,
+        categoryId: proposal?.categoryId ?? undefined,
+        attributesSchema: grid.axes,
+        variants,
+        userId,
+      };
       // Produto e vínculo com a chegada na MESMA transação: uma queda entre
-      // os dois não deixa um rascunho órfão que a retomada duplicaria.
-      productId = await db.transaction(async (tx) => {
-        const created = await createProduct(tx as unknown as ServiceDb, {
+      // os dois não deixa um rascunho órfão que a retomada duplicaria. Se a
+      // ficha recusar a proposta (texto além do limite, valor torto), a peça
+      // nasce simples em vez de travar a chegada.
+      const create = (productInput: Parameters<typeof createProduct>[1]) =>
+        db.transaction(async (tx) => {
+          const created = await createProduct(tx as unknown as ServiceDb, productInput);
+          await markIntake(tx, intake.id, { productId: created.product.id, note, noteKind, parsed: stored }, now());
+          return created.product.id;
+        });
+      try {
+        productId = await create(fullInput);
+      } catch (error) {
+        if (!proposal || !(error instanceof z.ZodError || (error instanceof Error && error.name === "ServiceError"))) throw error;
+        console.warn("[atelier] a ficha recusou a proposta; peça simples:", error instanceof Error ? error.message : error);
+        stored.failed = "ficha_recusou";
+        stored.proposal = null;
+        productId = await create({
           name,
-          description: proposal?.description || (note ? `Recado da chegada: ${note}`.slice(0, 1200) : undefined),
-          composition: proposal?.composition || undefined,
-          careNotes: proposal ? (formatCareNotes(proposal.careSymbols, proposal.careFreeText) ?? undefined) : undefined,
-          fitNotes: proposal?.fitNotes || undefined,
-          categoryId: proposal?.categoryId ?? undefined,
-          attributesSchema: grid.axes,
-          variants,
+          description: simpleDescription,
+          variants: await withUniqueSkus(db, name, [{ sku: buildSku(skuBaseFromName(name), []), attributes: {}, initialQuantity: 0 }]),
           userId,
         });
-        await markIntake(tx, intake.id, { productId: created.product.id, note, noteKind, parsed: stored }, now());
-        return created.product.id;
-      });
+      }
     }
 
     let failedPhotos = pendingPhotos.length - available.length;
