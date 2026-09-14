@@ -183,7 +183,7 @@ const FIT_LABEL: Record<Fit, string> = { justo: "mais justo", fluido: "mais flui
 const BUYS_FOR_LABEL: Record<BuysFor, string> = { mim: "para ela mesma", presente: "para presentear", os_dois: "para ela e para presentear" };
 
 /** Linhas para o caderninho da vendedora; [] quando não há nada. */
-export function renderProfileNote(profile: StyleProfile, palette?: string | null): string[] {
+export function renderProfileNote(profile: StyleProfile, palette?: string | null, opts: { hasBody?: boolean } = {}): string[] {
   const lines: string[] = [];
   const sizes = SIZE_KEYS.filter((key) => profile.sizes[key]).map((key) => `${SIZE_LABEL[key]} ${profile.sizes[key]}`);
   const parts: string[] = [];
@@ -193,6 +193,8 @@ export function renderProfileNote(profile: StyleProfile, palette?: string | null
   if (profile.fit) parts.push(`caimento ${FIT_LABEL[profile.fit]}`);
   if (profile.occasions.length > 0) parts.push(`ocasiões: ${profile.occasions.map((o) => OCCASION_LABELS[o].toLowerCase()).join(", ")}`);
   if (profile.buysFor) parts.push(`compra ${BUYS_FOR_LABEL[profile.buysFor]}`);
+  // As medidas nunca entram aqui (dado do corpo fica fora do histórico); só o fato de existirem.
+  if (opts.hasBody) parts.push("medidas do corpo guardadas");
   if (parts.length === 0) return lines;
   lines.push(`Cartela de estilo${palette ? ` "${palette}"` : ""}: ${parts.join("; ")} — use o tamanho como filtro sem perguntar de novo.`);
   return lines;
