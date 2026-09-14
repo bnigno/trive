@@ -12,13 +12,16 @@ import type { Fit } from "@/core/style/profile";
 export const BODY_KEYS = ["bustCm", "waistCm", "hipsCm"] as const;
 export type BodyKey = (typeof BODY_KEYS)[number];
 
-const bodyCm = z.number().min(40, "Medida em cm: mínimo 40.").max(200, "Medida em cm: máximo 200.");
+/** Contornos adultos em cm: abaixo disto é numeração de roupa (42, 44…), não medida. */
+export const BODY_MIN_CM: Record<BodyKey, number> = { bustCm: 60, waistCm: 50, hipsCm: 60 };
+export const BODY_MAX_CM = 200;
+const BODY_ERROR = "Medida em centímetros de contorno (busto a partir de 60, cintura de 50, quadril de 60; até 200) — 42 é numeração, não cm.";
 
 export const bodyMeasurementsSchema = z
   .object({
-    bustCm: bodyCm.optional(),
-    waistCm: bodyCm.optional(),
-    hipsCm: bodyCm.optional(),
+    bustCm: z.number({ error: BODY_ERROR }).min(BODY_MIN_CM.bustCm, BODY_ERROR).max(BODY_MAX_CM, BODY_ERROR).optional(),
+    waistCm: z.number({ error: BODY_ERROR }).min(BODY_MIN_CM.waistCm, BODY_ERROR).max(BODY_MAX_CM, BODY_ERROR).optional(),
+    hipsCm: z.number({ error: BODY_ERROR }).min(BODY_MIN_CM.hipsCm, BODY_ERROR).max(BODY_MAX_CM, BODY_ERROR).optional(),
   })
   .refine((value) => BODY_KEYS.some((key) => value[key] !== undefined), { message: "Informe ao menos uma medida." });
 

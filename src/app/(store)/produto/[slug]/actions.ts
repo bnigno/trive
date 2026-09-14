@@ -8,7 +8,7 @@ import type { SameDayPromise } from "@/core/shipping/delivery-windows";
 import { getDb } from "@/db/client";
 import { toE164BR } from "@/lib/phone";
 import { computeTotalWeightGrams, quoteSameDayPromise } from "@/services/store-catalog";
-import { BODY_LABELS, EASE_LABELS } from "@/core/style/fit";
+import { BODY_LABELS, BODY_MAX_CM, BODY_MIN_CM, EASE_LABELS } from "@/core/style/fit";
 import { adviseSizeForProduct, type FitAdviceView } from "@/services/fit-advice";
 import { requestStockAlert } from "@/services/stock-alerts";
 import { forgetBodyMeasurements, saveBodyMeasurements } from "@/services/style-profiles";
@@ -117,12 +117,13 @@ export async function fitAdviceAction(input: { slug: string; token: string; body
   }
 }
 
+const BODY_MSG = "Medidas em centímetros de contorno (busto a partir de 60, cintura de 50, quadril de 60; até 200) — 42 é numeração, não cm.";
 const saveBodySchema = z.object({
   token: z.uuid(),
   bodyToken: z.uuid().nullable().optional(),
-  bustCm: z.coerce.number().min(40).max(200).optional(),
-  waistCm: z.coerce.number().min(40).max(200).optional(),
-  hipsCm: z.coerce.number().min(40).max(200).optional(),
+  bustCm: z.coerce.number({ error: BODY_MSG }).min(BODY_MIN_CM.bustCm, BODY_MSG).max(BODY_MAX_CM, BODY_MSG).optional(),
+  waistCm: z.coerce.number({ error: BODY_MSG }).min(BODY_MIN_CM.waistCm, BODY_MSG).max(BODY_MAX_CM, BODY_MSG).optional(),
+  hipsCm: z.coerce.number({ error: BODY_MSG }).min(BODY_MIN_CM.hipsCm, BODY_MSG).max(BODY_MAX_CM, BODY_MSG).optional(),
 });
 
 export async function saveBodyMeasurementsAction(input: {
@@ -134,7 +135,7 @@ export async function saveBodyMeasurementsAction(input: {
 }): Promise<{ ok: true; bodyToken: string } | { ok: false; message: string }> {
   const cleaned = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== "" && value !== undefined));
   const parsed = saveBodySchema.safeParse(cleaned);
-  if (!parsed.success) return { ok: false, message: "Medidas em centímetros, entre 40 e 200." };
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? BODY_MSG };
   const { token, bodyToken, ...body } = parsed.data;
   if (Object.keys(body).length === 0) return { ok: false, message: "Informe ao menos uma medida." };
   try {

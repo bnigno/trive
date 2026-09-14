@@ -106,7 +106,11 @@ export async function saveBodyMeasurements(
   if (viaSite && current.hasBody !== null && (!input.bodyToken || input.bodyToken !== current.bodyToken)) {
     return { saved: false, bodyToken: null, reason: "sem_credencial" };
   }
-  const bodyToken = current.bodyToken ?? randomUUID();
+  // A credencial só sobrevive quando a gravação foi provada por ela (site com
+  // o token certo). Pela Lia ou pelo painel, gira: um navegador que tivesse
+  // semeado medidas com o telefone de outra pessoa perde o acesso ao que ela
+  // contou de verdade.
+  const bodyToken = viaSite && input.bodyToken !== undefined && input.bodyToken === current.bodyToken ? current.bodyToken : randomUUID();
   const updated = await db
     .update(customerProfiles)
     .set({ bodyMeasurements: body, bodyMeasuredAt: now, bodyToken, updatedAt: now })

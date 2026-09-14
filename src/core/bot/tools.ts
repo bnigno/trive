@@ -25,6 +25,7 @@ export const BOT_TOOL_NAMES = [
   "liberar_reserva",
   "avisar_quando_voltar",
   "atualizar_cartela",
+  "sugerir_tamanho",
   "montar_look",
   "anotar",
   "registrar_foto_com_a_peca",
@@ -110,7 +111,11 @@ export type BotToolInputs = {
     caimento?: "justo" | "fluido" | "tanto_faz";
     ocasioes?: ("trabalho" | "dia_a_dia" | "festa" | "casamento" | "viagem" | "praia" | "jantar")[];
     compra_para?: "mim" | "presente" | "os_dois";
+    /** Medidas do corpo em cm (40–200) — ficam em coluna própria, nunca no histórico. */
+    medidas?: { busto_cm?: number; cintura_cm?: number; quadril_cm?: number; apagar?: true };
   };
+  /** "Será que o M me serve?": a folga em cm por tamanho e a recomendação, pelas medidas da cartela. */
+  sugerir_tamanho: { produto: string };
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
   /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
@@ -572,8 +577,32 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           maxItems: 7,
         },
         compra_para: { type: "string", enum: ["mim", "presente", "os_dois"] },
+        medidas: {
+          type: "object",
+          description: "Medidas do corpo que ELA contou agora, em centímetros (40–200). Nunca invente nem estime pela foto.",
+          properties: {
+            busto_cm: { type: "number", description: "Contorno do busto em cm." },
+            cintura_cm: { type: "number", description: "Contorno da cintura em cm." },
+            quadril_cm: { type: "number", description: "Contorno do quadril em cm." },
+            apagar: { type: "boolean", enum: [true], description: "true quando ela pedir para apagar as medidas guardadas." },
+          },
+          additionalProperties: false,
+        },
       },
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "sugerir_tamanho",
+    description:
+      "Ela pergunta se um tamanho serve ('o M me serve?', 'qual tamanho eu pego?'): compara as medidas do corpo guardadas na cartela com a tabela da peça e devolve como cada tamanho fica (folga em cm) e o recomendado. Sem medidas na cartela, a ferramenta diz — aí pergunte busto, cintura e quadril em cm e guarde com atualizar_cartela.medidas antes de chamar de novo. Fale em folga (centímetros que sobram), nunca repita as medidas do corpo dela.",
+    input_schema: {
+      type: "object",
+      properties: {
+        produto: { type: "string", description: "Nome, slug ou SKU da peça (o mesmo de detalhar_produto)." },
+      },
+      required: ["produto"],
       additionalProperties: false,
     },
   },
@@ -864,8 +893,19 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
         .max(7)
         .optional(),
       compra_para: z.enum(["mim", "presente", "os_dois"]).optional(),
+      medidas: z
+        .strictObject({
+          busto_cm: z.number().min(60, "Busto em cm de contorno (a partir de 60) — 42 é numeração, não cm.").max(200).optional(),
+          cintura_cm: z.number().min(50, "Cintura em cm de contorno (a partir de 50) — 42 é numeração, não cm.").max(200).optional(),
+          quadril_cm: z.number().min(60, "Quadril em cm de contorno (a partir de 60) — 42 é numeração, não cm.").max(200).optional(),
+          apagar: z.literal(true).optional(),
+        })
+        .optional(),
     })
     .refine((value) => Object.keys(value).length > 0, { message: "Passe ao menos um campo da cartela." }),
+  sugerir_tamanho: z.strictObject({
+    produto: z.string().trim().min(1).max(120),
+  }),
   montar_look: z.strictObject({
     produto: z.string().min(1),
     orcamento_reais: z.number().int().min(1).optional(),
