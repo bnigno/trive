@@ -493,10 +493,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     });
   },
   // Turno do bot de vendas IA sobre uma conversa. runBotTurn trata os skips
-  // (bot desligado, conversa assumida, AssistantUnavailableError) devolvendo
-  // { skipped } SEM lançar — o evento fica done e não entra em retry-loop.
-  // Qualquer throw residual (banco, provedor) propaga de propósito:
-  // retry/backoff/DLQ da fila agem, com idempotência via dedupe do enqueue.
+  // (bot desligado, conversa assumida, já respondida) devolvendo { skipped }
+  // SEM lançar — o evento fica done. Modelo indisponível de passagem (429,
+  // 5xx, rede) relança até a penúltima tentativa do modelo
+  // (BOT_TURN_MODEL_ATTEMPTS, dentro da política padrão da fila); na última
+  // (ou em chave/crédito/modelo errado) o turno faz o plano B e devolve sem
+  // lançar. Qualquer throw residual (banco, provedor) propaga de propósito:
+  // retry/backoff/DLQ da fila agem, com idempotência via dedupe.
   // Retorno combinado: o turno PROATIVO da Lia no horário. Fora da janela
   // re-enfileira datado; conversa humana/fechada/SAIR cancela o combinado;
   // modelo fora do ar relança (política própria, 3 tentativas).
@@ -525,11 +528,11 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "wa.bot_turn": async (event) => {
     const payload = waBotTurnPayloadSchema.parse(event.payload);
-    await runBotTurn(
+    const result = await runBotTurn(
       getDb(),
       getSalesAssistant(),
       getMessagingProvider(),
-      { conversationId: payload.conversationId },
+      { conversationId: payload.conversationId, attempt: event.attempts },
       {
         cards: {
           storage: getFileStorage(),
@@ -537,6 +540,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
         },
       },
     );
+    console.info(`[wa.bot_turn] ${payload.conversationId} → ${JSON.stringify(result)}`);
   },
   // Resposta de cliente → encaminha ao dono (humano responde; bot desligado
   // ou conversa assumida).

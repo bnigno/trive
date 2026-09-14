@@ -13,6 +13,7 @@ import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { runBotTurn } from "@/services/wa-bot";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { nextMessageStamp } from "../helpers/clock";
 
 const PHONE = "+5511999998888";
 const PHOTO_URL = "https://cdn.z-api.example/img/print.jpg";
@@ -77,7 +78,7 @@ async function addInbound(
       deliveredAt: new Date(),
       ...(opts.mediaUrl ? { mediaUrl: opts.mediaUrl } : {}),
       ...(opts.mediaMeta !== undefined ? { mediaMeta: opts.mediaMeta } : {}),
-      createdAt: new Date(Date.now() - (opts.ageMs ?? 60_000) + sequence * 1000),
+      createdAt: opts.ageMs !== undefined ? new Date(Date.now() - opts.ageMs) : nextMessageStamp(),
     })
     .returning({ id: schema.waMessages.id });
   return message.id;
@@ -91,7 +92,7 @@ async function addOutbound(conversationId: string, body: string): Promise<void> 
     body,
     status: "sent",
     dedupeKey: `wa.bot:${conversationId}:${sequence}`,
-    createdAt: new Date(Date.now() - 60_000 + sequence * 1000),
+    createdAt: nextMessageStamp(),
   });
 }
 

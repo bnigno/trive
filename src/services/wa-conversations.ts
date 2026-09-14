@@ -21,6 +21,7 @@ import {
 import { auditLog, customers, orders, waConversations, waMessages, waFollowups } from "@/db/schema";
 import { sameE164 } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { isBotEnabled } from "@/services/wa-bot";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 import { listOpenAlertsByPhone } from "@/services/stock-alerts";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
@@ -728,11 +729,16 @@ export async function takeOverWaConversation(
   return { status: "human" };
 }
 
-/** Dono devolve a conversa ao bot: reabre e limpa o silêncio pós-handoff. */
+/**
+ * Dono devolve a conversa ao bot: reabre, limpa o silêncio pós-handoff e, se
+ * a cliente escreveu depois da última saída (ficou esperando enquanto a
+ * conversa estava com a equipe), enfileira o turno para a Lia responder
+ * agora — não só quando ela escrever de novo.
+ */
 export async function returnWaConversationToBot(
   db: DbOrTx,
   input: z.input<typeof actorSchema>,
-): Promise<{ status: "open" }> {
+): Promise<{ status: "open"; botTurnQueued: boolean }> {
   const parsed = actorSchema.parse(input);
   const conversation = await loadConversationForAction(
     db,
@@ -752,7 +758,28 @@ export async function returnWaConversationToBot(
     before: { status: conversation.status },
     after: { status: "open", botDisabledUntil: null },
   });
-  return { status: "open" };
+  const [lastMessage] = await db
+    .select({ id: waMessages.id, direction: waMessages.direction, body: waMessages.body })
+    .from(waMessages)
+    .where(eq(waMessages.conversationId, conversation.id))
+    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+    .limit(1);
+  // SAIR/PARAR é comando (o aviso de saída responde a ele), não pergunta.
+  const pending = lastMessage?.direction === "inbound" && !isOptOutCommand(lastMessage.body ?? "");
+  if (!pending || !(await isBotEnabled(db))) return { status: "open", botTurnQueued: false };
+  const queued = await enqueueOutboxEvent(db, {
+    eventType: "wa.bot_turn",
+    dedupeKey: `wa.bot_turn:return:${lastMessage.id}`,
+    aggregateType: "wa_conversation",
+    aggregateId: conversation.id,
+    payload: { conversationId: conversation.id },
+  });
+  return { status: "open", botTurnQueued: queued !== null };
+}
+
+function isOptOutCommand(text: string): boolean {
+  const keyword = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+  return keyword === "SAIR" || keyword === "PARAR";
 }
 
 /**

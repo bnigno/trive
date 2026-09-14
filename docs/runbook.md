@@ -415,6 +415,33 @@ do designer em mãos, a troca é um PR de quem programa:
 O nome escrito no logo é fixo (TRIVÉ). Se a loja for renomeada no painel, o
 letreiro some sozinho e volta o nome em texto.
 
+## A Lia passou a conversa com "Assistente de IA indisponível"
+
+O motivo entre parênteses diz o que a API da Anthropic respondeu:
+
+- **limite de uso da API (429)** ou **API da Anthropic instável (5xx)**: passageiro.
+  A Lia já tentou 5 vezes (5 s, 10 s, 20 s, 40 s) antes de transferir. Se vira
+  rotina, a conta está no nível de uso mais baixo da Anthropic: em
+  platform.claude.com → Limites de taxa, o nível sobe com o gasto acumulado
+  (ou pedindo à Anthropic).
+- **teto de gasto da API atingido (429)** / **limite de gasto configurado na
+  conta**: o gasto do mês bateu no teto (da Anthropic ou o que foi definido
+  em Limites) — não passa sozinho até o mês virar ou o limite subir.
+- **sem crédito na API da Anthropic** / **problema de cobrança**: comprar
+  créditos em platform.claude.com → Faturamento (e ligar a recarga
+  automática para não repetir).
+- **chave da API inválida (401)** / **sem permissão (403)**: a
+  `ANTHROPIC_API_KEY` da Vercel foi trocada ou revogada — gerar outra no
+  console e atualizar a variável (deploy de novo).
+- **modelo não encontrado (404)**: o modelo escolhido em Vendedora & WhatsApp
+  não existe nessa conta — voltar para o padrão.
+
+Em qualquer caso, a cliente recebeu "atendimento automático indisponível — já
+chamei a equipe". Depois de resolver, **Devolver à Lia** na conversa: se ela
+escreveu enquanto isso, a Lia responde na hora. O detalhe técnico (status,
+código, tentativa) fica no audit `wa.bot_turn_failed` e nos logs da Vercel
+(`[assistant] falha na API da Anthropic`).
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

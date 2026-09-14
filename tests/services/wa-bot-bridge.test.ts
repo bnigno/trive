@@ -14,6 +14,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { consumeSiteCartByCode, createSiteCart } from "@/services/site-carts";
 import { runBotTurn } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { nextMessageStamp } from "../helpers/clock";
 
 let db: TestDb;
 let sdb: DbOrTx;
@@ -85,7 +86,7 @@ async function addInbound(conversationId: string, body: string): Promise<string>
       body,
       status: "delivered",
       deliveredAt: new Date(),
-      createdAt: new Date(Date.now() - 60_000 + inboundSequence * 1000),
+      createdAt: nextMessageStamp(),
     })
     .returning({ id: schema.waMessages.id });
   return message.id;

@@ -8,7 +8,7 @@
 // Memória: o "caderninho" (src/core/bot/memory.ts) vive em
 // wa_conversations.bot_state e entra no turno como primeira mensagem, fora do
 // prompt de sistema — que se mantém idêntico entre turnos para o cache valer.
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getAdapterMode } from "@/adapters/adapter-mode";
 import {
   AssistantUnavailableError,
@@ -481,6 +481,28 @@ export async function loadTurnHistory(
   return { history, recentImages, media: { images: images.size, audios: pending.filter((row) => row.kind === "audio").length }, lastInboundAt };
 }
 
+/**
+ * A Lia já respondeu a esta inbound? Pelo marcador determinístico da entrega
+ * (dedupe da resposta ou da primeira mídia, gravados na mesma transação), e
+ * não pela ordem das mensagens: uma saída automática (template de pedido,
+ * lembrete, cartão que chegou tarde) depois da mensagem dela não é resposta,
+ * e created_at nasce com o início da transação, que pode embaralhar duas
+ * mensagens em segundos.
+ */
+async function hasBotReplyFor(tx: DbOrTx, conversationId: string, inboundId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ id: waMessages.id })
+    .from(waMessages)
+    .where(
+      and(
+        eq(waMessages.conversationId, conversationId),
+        inArray(waMessages.dedupeKey, [`wa.bot_reply:${inboundId}`, `wa.bot_media:${inboundId}:0`]),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 // ---------------------------------------------------------------------------
 // deliverBotTurn — a entrega do turno: mídia antes do texto, até 3 balões,
 // cortesia pós-transferência; cada envio com dedupe determinístico derivado
@@ -596,14 +618,24 @@ export async function deliverBotTurn(
 // última wa_message inbound (retry da fila nunca duplica resposta).
 // ---------------------------------------------------------------------------
 
+/**
+ * Quantas vezes o turno tenta o modelo antes do plano B quando a falha é
+ * passageira (limite por minuto, 5xx, rede). Vale só para o modelo: a fila
+ * segue a política padrão do evento (banco/provedor fora do ar continuam
+ * tentando por mais tempo, sem transferir ninguém).
+ */
+export const BOT_TURN_MODEL_ATTEMPTS = 5;
+
 export async function runBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { conversationId: string },
+  input: { conversationId: string; attempt?: number },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunBotTurnResult> {
   const { conversationId } = input;
+  // `attempt` = tentativas ANTERIORES da fila (0 na primeira).
+  const lastModelAttempt = (input.attempt ?? 0) + 1 >= BOT_TURN_MODEL_ATTEMPTS;
 
   return db.transaction(async (tx) => {
     const [conversation] = await tx
@@ -635,6 +667,13 @@ export async function runBotTurn(
       .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
       .limit(1);
     if (!lastInbound) return { skipped: "sem_mensagem_inbound" };
+
+    // Cada mensagem dela enfileira um turno, mas o primeiro que roda responde
+    // a tudo o que chegou até ali: os seguintes (e o retry da fila) acham a
+    // última inbound respondida e não rodam o modelo de novo — era isso que
+    // estourava o limite por minuto da API e mandava a conversa para a
+    // equipe à toa.
+    if (await hasBotReplyFor(tx, conversationId, lastInbound.id)) return { skipped: "ja_respondida" };
 
     const now = new Date();
     const loaded = await loadTurnHistory(tx, provider, { conversation, now });
@@ -676,6 +715,27 @@ export async function runBotTurn(
       turn = await assistant.respondTurn({ system, history, model, executeTool });
     } catch (error) {
       if (error instanceof AssistantUnavailableError) {
+        // Falha passageira (limite por minuto, 5xx, rede): relança — a fila
+        // tenta de novo com espera, a transação desfaz o que as ferramentas
+        // anotaram e nada saiu para a cliente. Só na última tentativa do
+        // modelo (ou em falha que não melhora sozinha: chave, crédito,
+        // modelo) vem o plano B.
+        if (error.retryable && !lastModelAttempt) throw error;
+        const reason = `Assistente de IA indisponível (${error.reason})`;
+        await tx.insert(auditLog).values({
+          actorType: "system",
+          actorId: null,
+          action: "wa.bot_turn_failed",
+          entityType: "wa_conversation",
+          entityId: conversationId,
+          after: {
+            inboundId: lastInbound.id,
+            attempt: (input.attempt ?? 0) + 1,
+            status: error.status ?? null,
+            code: error.code ?? null,
+            reason: error.reason,
+          },
+        });
         // Plano B: avisa o cliente, transfere para humano (audit + aviso ao
         // dono) e encerra o turno sem propagar — o evento da fila conclui.
         // Em copiloto nada sai para a cliente por conta própria: só a transferência.
@@ -695,7 +755,7 @@ export async function runBotTurn(
             phoneE164: conversation.phoneE164,
             lastInboundId: lastInbound.id,
           },
-          "Assistente de IA indisponível",
+          reason,
         );
         return { replied: true, handedOff: true };
       }
