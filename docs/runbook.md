@@ -201,8 +201,9 @@ aviso por conversa a cada meia hora, no máximo. Ferramentas com efeito
 rodam em copiloto — a Lia diz que a equipe cuida; para fechar a venda,
 volte a conversa para *sozinha* ou faça pelo painel. Consultas e caderninho
 (sacola, cartela, nota) continuam. Responder à mão em copiloto NÃO assume a
-conversa (ela continua sugerindo); a nova mensagem da cliente supera a
-sugestão pendente (o cartão mostra "há X min"). O retorno combinado em
+conversa (ela continua sugerindo); a nova mensagem da cliente, a sua resposta à mão, assumir a conversa ou
+voltar para "sozinha" superam a sugestão pendente (o cartão mostra "há X
+min"); o aviso no seu WhatsApp é por balde de meia hora do relógio. O retorno combinado em
 copiloto também vira sugestão. Produção: migração 0041 e
 `scripts/sync-seed.ts --settings bot_mode`.
 

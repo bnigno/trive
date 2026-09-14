@@ -92,7 +92,7 @@ import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
-import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode } from "./wa-suggestions";
+import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode, supersedePendingSuggestions } from "./wa-suggestions";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -702,7 +702,9 @@ export async function runBotTurn(
         ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
         : [];
       if (bubbles.length === 0 && attachments.length === 0) {
-        // Sem sugestão: a cliente não pode ficar no vácuo sem ninguém saber.
+        // Sem sugestão: a antiga (de outra mensagem) perde o sentido e a
+        // cliente não pode ficar no vácuo sem ninguém saber.
+        await supersedePendingSuggestions(tx, conversationId, now);
         await enqueueSuggestionNotice(tx, { conversationId, phoneE164: conversation.phoneE164, customerName: customer?.fullName ?? null, now, empty: true });
         return { replied: false, handedOff: false };
       }
