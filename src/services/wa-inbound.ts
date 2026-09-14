@@ -31,6 +31,9 @@ import {
   openAtelierIntake,
   routeOwnerInbound,
 } from "@/services/atelier";
+import { feedbackHandledBy, feedbackHistoryText, parseFeedbackRowId } from "@/core/orders/feedback";
+import { recordDeliveryFeedback } from "@/services/delivery-feedback";
+import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
 import { isOwnerPhone } from "@/services/wa-messaging";
@@ -133,7 +136,9 @@ export type ProcessZapiInboundResult =
   // orientação de como mandar.
   | { action: "atelier_queued"; conversationId: string; waMessageId: string }
   | { action: "atelier_photo"; conversationId: string; waMessageId: string }
-  | { action: "atelier_help"; conversationId: string; waMessageId: string };
+  | { action: "atelier_help"; conversationId: string; waMessageId: string }
+  // Resposta ao "Chegou bem?" que vai direto para a equipe (defeito / falar).
+  | { action: "feedback_handoff"; conversationId: string; waMessageId: string };
 
 export type InboundRoute = "bot_queued" | "forwarded" | "atelier_queued" | "atelier_help";
 
@@ -657,6 +662,46 @@ export async function processZapiInbound(
         waMessageId: message.id,
         optedOut: customer !== undefined,
       } as const;
+    }
+
+    // "Chegou bem?": o toque na lista volta como feedback:<resposta>:<pedido>.
+    // A resposta é gravada na linha do pedido (só do telefone que recebeu a
+    // pergunta) e vira texto com contexto; grande/pequeno/amei caem na Lia,
+    // defeito e "falar" vão direto para a equipe.
+    const feedbackRow = parseFeedbackRowId(parsed.listResponseMessage?.selectedRowId);
+    if (feedbackRow) {
+      const recorded = await recordDeliveryFeedback(tx, {
+        orderId: feedbackRow.orderId,
+        answer: feedbackRow.answer,
+        phoneE164,
+        waMessageId: message.id,
+        now,
+      });
+      if (recorded.recorded && recorded.context) {
+        const contextText = feedbackHistoryText(recorded.context);
+        await tx.update(waMessages).set({ body: contextText }).where(eq(waMessages.id, message.id));
+        if (feedbackHandledBy(feedbackRow.answer) === "human") {
+          await handOffToHuman(
+            tx,
+            { conversationId: conversation.id, phoneE164, lastInboundId: message.id },
+            feedbackRow.answer === "defeito" ? "Veio com defeito (Chegou bem?)" : "Quer falar com alguém (Chegou bem?)",
+            contextText,
+          );
+          await markDone();
+          return { action: "feedback_handoff", conversationId: conversation.id, waMessageId: message.id } as const;
+        }
+        const route = await routeInboundMessage(tx, {
+          conversation,
+          phoneE164,
+          zapiMessageId: messageId,
+          text: contextText,
+          forwardText: contextText,
+          ...(customer ? { customerName: customer.fullName } : {}),
+          now,
+        });
+        await markDone();
+        return { action: route, conversationId: conversation.id, waMessageId: message.id } as const;
+      }
     }
 
     // A ponte do site: a mensagem trouxe "#K7F2" → a ponte vira caderninho

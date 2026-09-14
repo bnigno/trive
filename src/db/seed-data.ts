@@ -45,6 +45,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "handoff_auto_return_hours", value: 12 },
   { key: "drop_audience_limit", value: 60 },
   { key: "catalog_draft_enabled", value: true },
+  // "Chegou bem?": a lista tocável um dia depois da entrega.
+  { key: "feedback_ask_enabled", value: true },
   // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.
   { key: "atelier_enabled", value: true },
   { key: "edition_name", value: "" },
@@ -169,6 +171,15 @@ export const initialWaTemplates: Array<{
       "Se precisar de qualquer coisa com a peça, é só chamar.\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "pedido", "entrega", "recebido_por"],
+  },
+  {
+    key: "delivery_feedback_ask",
+    label: "Chegou bem? (lista 24 h após a entrega)",
+    bodyTemplate:
+      "{{nome}}, chegou bem? 🤎\n" +
+      "Conta pra gente como ficou {{peca}} do pedido #{{pedido}} — é um toque só.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "peca"],
   },
   {
     key: "order_recovery",

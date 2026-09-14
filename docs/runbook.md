@@ -127,6 +127,23 @@ e responde "Que bom que chegou 🤎" — nesse caso a resposta da Lia é o aviso
 nada mais sai pela fila. A Mesa de entrega e o card do dashboard destacam os **enviados há
 7+ dias sem confirmação**: confira o rastreio ou chame no WhatsApp.
 
+**Chegou bem?** — um dia depois da entrega (das 9h às 21h; fora disso fica
+para a abertura da janela), a cliente recebe UMA lista tocável: Amei · Ficou
+grande · Ficou pequeno · Veio com defeito · Quero falar com alguém. Uma vez
+por pedido, só com opt-in; o interruptor **Chegou bem?** fica na Central. O
+toque volta pelo webhook (`feedback:<resposta>:<pedido>`): **grande/pequeno**
+caem na Lia, que agradece, ajusta a cartela e transfere a troca com resumo;
+**defeito** e **falar** vão direto para você (conversa em "com você"). A
+ficha do pedido mostra o estado (card **Chegou bem?**); a ficha da peça ganha
+**Caimento pelas clientes** (por tamanho; uma opinião por cliente; peça sem
+eixo de tamanho conta como "único") e, a partir de 3 clientes com 60% na
+mesma direção, a vitrine avisa "Pelas clientes, o M tende a vestir pequeno".
+Se ela tocar de novo com outra opção, a última vale (a ficha e a conversa
+ficam iguais). Se a pergunta não sair (WhatsApp fora do ar, número sem
+WhatsApp), a ficha continua "ainda não perguntado" — nada fica "perguntado"
+sem ter saído. Produção: migração 0038 e
+`scripts/sync-seed.ts --settings feedback_ask_enabled --templates delivery_feedback_ask`.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

@@ -24,6 +24,7 @@ import {
 } from "@/services/atelier";
 import { atelierCardPayloadSchema, renderAndSendAtelierCard } from "@/services/atelier-card";
 import { sendDeliveredWa } from "@/services/delivery";
+import { askDeliveryFeedback, feedbackAskPayloadSchema, scheduleDeliveryFeedback } from "@/services/delivery-feedback";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -572,8 +573,18 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // cliente, uma vez; skips não lançam.
   "order.delivered": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    // "Chegou bem?" um dia depois da entrega — agendado ANTES do aviso, para
+    // um provedor fora do ar não engolir a pergunta (dedupe por pedido: o
+    // retry não agenda duas vezes).
+    await scheduleDeliveryFeedback(getDb(), { orderId, now: new Date() });
     const result = await sendDeliveredWa(getDb(), getMessagingProvider(), getFileStorage(), { orderId });
     console.info(`[order.delivered] ${orderId} → ${JSON.stringify(result)}`);
+  },
+  // "Chegou bem?": a lista tocável, na janela; skips não lançam.
+  "wa.feedback_ask": async (event) => {
+    const { orderId } = feedbackAskPayloadSchema.parse(event.payload);
+    const result = await askDeliveryFeedback(getDb(), getMessagingProvider(), { orderId });
+    console.info(`[wa.feedback_ask] ${orderId} → ${JSON.stringify(result)}`);
   },
   // Cancelado (pela dona ou pela expiração da reserva): a cliente recebe o
   // motivo em linguagem humana e o link do pedido (só com opt-in).
