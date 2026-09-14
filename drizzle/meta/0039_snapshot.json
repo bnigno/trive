@@ -1,5 +1,5 @@
 {
-  "id": "1396514c-da25-4b97-b8d4-646705e1d611",
+  "id": "c85c68e1-4c8a-4dc8-aa48-9e544bb78a24",
   "prevId": "1b10d7df-f690-4a62-9002-2efe3ade775c",
   "version": "7",
   "dialect": "postgresql",
@@ -3802,6 +3802,37 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_looks_customer_idx": {
+          "name": "customer_looks_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customer_looks_photo_message_idx": {
+          "name": "customer_looks_photo_message_idx",
+          "columns": [
+            {
+              "expression": "photo_wa_message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"customer_looks\".\"photo_wa_message_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}

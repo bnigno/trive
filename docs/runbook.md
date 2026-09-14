@@ -157,9 +157,15 @@ confirmação curta pela fila — sem turno da Lia. Só entra na vitrine
 dela E a sua aprovação** em **/admin/produtos/quem-vestiu** (o painel avisa
 "Fotos aguardando aprovação"). Recusar é final; **Retirar** tira da vitrine
 para sempre. A cliente retira quando quiser ("tira minha foto" → a Lia chama
-`retirar_minha_foto`) e "esquecer minha cartela" também retira tudo. Foto de
-cliente é dado pessoal: bucket público com caminho por uuid, nunca listado;
-o interruptor **Quem já vestiu** fica na Central. Produção: migração 0039 e
+`retirar_minha_foto`, pelo telefone E pelo cadastro dela) e "Esquecer tudo"
+na ficha da cliente no painel também retira; pelo site, "esquecer minha
+cartela" NÃO mexe nas fotos (o token da cartela não prova posse do número).
+Retirar apaga `photo.jpg` e `card.jpg` do bucket e pede a revalidação da
+página da peça pela fila (`store.revalidate`). Se ela tocar "Prefiro que não"
+depois do "sim", a última resposta vale e a foto sai da página na hora. A
+mesma foto nunca vira duas linhas (UNIQUE por mensagem). Foto de cliente é
+dado pessoal: bucket público com caminho por uuid, nunca listado; o
+interruptor **Quem já vestiu** fica na Central. Produção: migração 0039 e
 `scripts/sync-seed.ts --settings customer_looks_enabled`.
 
 ## Entrega por motoboy: rota do dia e "Saiu"

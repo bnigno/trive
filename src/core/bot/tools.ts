@@ -113,7 +113,8 @@ export type BotToolInputs = {
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
   /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
-  registrar_foto_com_a_peca: { produto: string };
+  /** `foto` = qual das fotos recentes dela (1 = a primeira, 2 = a segunda…); omitida = a última. */
+  registrar_foto_com_a_peca: { produto: string; foto?: number };
   retirar_minha_foto: Record<string, never>;
   transferir_para_atendente: { motivo: string; resumo?: string };
 };
@@ -615,13 +616,18 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "registrar_foto_com_a_peca",
     description:
-      "A cliente mandou NESTA mensagem uma foto dela USANDO uma peça da maison que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça. Nunca chame para print do Instagram, foto de outra marca, peça no cabide ou foto sem a peça.",
+      "A cliente mandou há pouco uma foto DELA usando uma peça da maison que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça e, se ela mandou mais de uma foto, qual delas (foto: 1 = a primeira). Nunca chame para print do Instagram, foto de outra marca, peça no cabide, foto de outra pessoa ou foto sem a peça.",
     input_schema: {
       type: "object",
       properties: {
         produto: {
           type: "string",
           description: "Slug ou nome exato da peça que aparece na foto (o mesmo de detalhar_produto).",
+        },
+        foto: {
+          type: "integer",
+          minimum: 1,
+          description: "Qual das fotos recentes dela: 1 = a primeira, 2 = a segunda… Omita para a última.",
         },
       },
       required: ["produto"],
@@ -850,6 +856,7 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   }),
   registrar_foto_com_a_peca: z.strictObject({
     produto: z.string().trim().min(1).max(120),
+    foto: z.number().int().min(1).max(10).optional(),
   }),
   retirar_minha_foto: z.strictObject({}),
   transferir_para_atendente: z.strictObject({

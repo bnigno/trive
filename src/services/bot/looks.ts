@@ -4,7 +4,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 
 import type { BotToolInputs } from "@/core/bot/tools";
-import { lookDisplayName } from "@/core/looks/consent";
+import { lookCardTitle, lookDisplayName } from "@/core/looks/consent";
 import { customers, orderItems, orders, productVariants } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
@@ -22,10 +22,14 @@ export async function execRegistrarFotoComAPeca(
   if (!(await isCustomerLooksEnabled(db))) {
     return { ok: false, text: "O 'Quem já vestiu' está desligado: só elogie a foto, sem prometer cartão nem página." };
   }
-  const photo = ctx.pendingImages?.at(-1);
-  if (!photo) {
-    return { ok: false, text: "Não há foto nesta mensagem. Se ela quiser aparecer, peça a foto usando a peça — e chame de novo quando chegar." };
+  const photos = ctx.recentImages ?? [];
+  if (photos.length === 0) {
+    return { ok: false, text: "Não há foto recente dela que eu consiga ver. Se ela quiser aparecer, peça a foto usando a peça — e chame de novo quando chegar." };
   }
+  if (input.foto !== undefined && input.foto > photos.length) {
+    return { ok: false, text: `Ela mandou ${photos.length === 1 ? "1 foto" : `${photos.length} fotos`} recentes: passe foto entre 1 e ${photos.length}.` };
+  }
+  const photo = input.foto !== undefined ? photos[input.foto - 1] : photos[photos.length - 1];
   const resolved = await resolveProductDetail(db, input.produto, { customerId: ctx.customerId });
   if (resolved.kind !== "found") {
     return {
@@ -59,7 +63,7 @@ export async function execRegistrarFotoComAPeca(
     }
   }
   const displayName = lookDisplayName(customer?.fullName);
-  await registerCustomerLook(db, {
+  const registered = await registerCustomerLook(db, {
     customerId,
     phoneE164: ctx.phoneE164,
     productId: resolved.detail.id,
@@ -69,15 +73,20 @@ export async function execRegistrarFotoComAPeca(
     photoWaMessageId: photo.waMessageId,
     now: ctx.now ?? new Date(),
   });
+  if (!registered.created) {
+    return { ok: true, text: "Essa foto já estava guardada: o cartão e a pergunta já foram (ou estão a caminho). Não registre de novo; se ela quiser outra peça no cartão, peça uma foto nova." };
+  }
+  const more = photos.length > 1 ? ` (registrei a ${input.foto ?? photos.length}ª das ${photos.length} fotos recentes)` : "";
   return {
     ok: true,
-    text: `Foto guardada. Em instantes ela recebe o cartão "${displayName} veste ${resolved.detail.name}" e a pergunta se pode aparecer na página da peça — diga só que o cartão está chegando; NÃO pergunte sobre a página (a lista faz isso) e não peça outra foto.${orderId ? "" : " Não achei pedido dela com essa peça: a equipe confere antes de publicar."}`,
+    text: `Foto guardada${more}. Em instantes ela recebe o cartão "${lookCardTitle(displayName, resolved.detail.name)}" e a pergunta se pode aparecer na página da peça — diga só que o cartão está chegando; NÃO pergunte sobre a página (a lista faz isso) e não peça outra foto.${orderId ? "" : " Não achei pedido dela com essa peça: a equipe confere antes de publicar."}`,
   };
 }
 
 export async function execRetirarMinhaFoto(db: DbOrTx, ctx: BotExecutorContext): Promise<ToolResult> {
   if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
-  const { revoked, wasPublic } = await revokeCustomerLooksByPhone(db, { phoneE164: ctx.phoneE164, source: "lia", now: ctx.now ?? new Date() });
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  const { revoked, wasPublic } = await revokeCustomerLooksByPhone(db, { phoneE164: ctx.phoneE164, customerId, source: "lia", now: ctx.now ?? new Date() });
   if (revoked === 0) return { ok: true, text: "Não havia foto dela guardada nem na página. Confirme que não há nada publicado." };
   if (wasPublic === 0) return { ok: true, text: "Nenhuma foto dela estava na página; as que estavam guardadas foram retiradas. Confirme em 1 frase, sem pedir motivo." };
   return { ok: true, text: `${wasPublic === 1 ? "A foto dela saiu" : `${wasPublic} fotos dela saíram`} da página agora. Confirme em 1 frase, sem pedir motivo.` };

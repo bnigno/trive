@@ -5,7 +5,7 @@
 // revogação — a cliente pode retirar quando quiser (retirar_minha_foto,
 // "esquecer minha cartela") e a dona também.
 import { sql } from "drizzle-orm";
-import { check, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { productVariants, products } from "./catalog";
 import { customers } from "./customers";
@@ -51,6 +51,9 @@ export const customerLooks = pgTable(
       .on(table.productId)
       .where(sql`${table.consentAnswer} = 'sim' AND ${table.approvedAt} IS NOT NULL AND ${table.revokedAt} IS NULL`),
     index("customer_looks_phone_idx").on(table.phoneE164),
+    index("customer_looks_customer_idx").on(table.customerId),
+    // A mesma foto (mensagem) nunca vira duas linhas: o árbitro é o banco.
+    uniqueIndex("customer_looks_photo_message_idx").on(table.photoWaMessageId).where(sql`${table.photoWaMessageId} IS NOT NULL`),
     check("customer_looks_display_name_len", sql`char_length(${table.displayName}) <= 40`),
     check("customer_looks_consent_answer_check", sql`${table.consentAnswer} IS NULL OR ${table.consentAnswer} IN ('sim', 'nao')`),
     check("customer_looks_revoked_by_check", sql`${table.revokedBy} IS NULL OR ${table.revokedBy} IN ('customer', 'owner', 'lia', 'forget')`),

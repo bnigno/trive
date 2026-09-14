@@ -108,7 +108,7 @@ describe("registrar_foto_com_a_peca (executor)", () => {
       phoneE164: PHONE,
       customerId,
       lastInboundId: photoWaMessageId,
-      pendingImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }],
+      recentImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }],
       now: NOW,
     });
     const result = await executor("registrar_foto_com_a_peca", { produto: "longo-dunas" });
@@ -123,7 +123,7 @@ describe("registrar_foto_com_a_peca (executor)", () => {
     expect(events[0]).toMatchObject({ eventType: "wa.customer_look_card", dedupeKey: `wa.look_card:${look.id}` });
     expect(await listLooksMemoryLines(sdb, PHONE)).toEqual(["Foto dela com o Longo Dunas: aguardando a resposta dela."]);
 
-    const noPhoto = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, pendingImages: [] });
+    const noPhoto = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, recentImages: [] });
     expect((await noPhoto("registrar_foto_com_a_peca", { produto: "longo-dunas" })).ok).toBe(false);
     expect((await executor("registrar_foto_com_a_peca", { produto: "peca-que-nao-existe" })).ok).toBe(false);
 
@@ -137,11 +137,11 @@ describe("registrar_foto_com_a_peca (executor)", () => {
   it("no ensaio (dryRun) não grava nada; sem pedido com a peça avisa a Lia", async () => {
     const { productId } = await seedProduct();
     const { customerId, conversationId, photoWaMessageId } = await seedConversationWithPhoto({ productId });
-    const dry = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, pendingImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }], dryRun: true });
+    const dry = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, recentImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }], dryRun: true });
     expect((await dry("registrar_foto_com_a_peca", { produto: "longo-dunas" })).ok).toBe(true);
     expect(await db.select().from(schema.customerLooks)).toHaveLength(0);
 
-    const real = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, pendingImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }] });
+    const real = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, recentImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }] });
     const result = await real("registrar_foto_com_a_peca", { produto: "Longo Dunas" });
     expect(result.ok).toBe(true);
     expect(result.text).toContain("Não achei pedido dela com essa peça");
@@ -154,7 +154,7 @@ describe("wa.customer_look_card (fila)", () => {
   async function registered(): Promise<{ lookId: string; productId: string; customerId: string; conversationId: string }> {
     const { productId, variantId } = await seedProduct();
     const { customerId, conversationId, photoWaMessageId } = await seedConversationWithPhoto({ productId, variantId, delivered: true });
-    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, pendingImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }], now: NOW });
+    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, recentImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }], now: NOW });
     await executor("registrar_foto_com_a_peca", { produto: "longo-dunas" });
     const [look] = await db.select({ id: schema.customerLooks.id }).from(schema.customerLooks);
     return { lookId: look.id, productId, customerId, conversationId };
@@ -179,7 +179,8 @@ describe("wa.customer_look_card (fila)", () => {
     expect(provider.sentImages[0].caption).toContain("Ana, ficou lindo em você");
     expect(provider.sentOptionLists).toHaveLength(1);
     const list = provider.sentOptionLists[0];
-    expect(list.message).toContain("Posso mostrar essa foto na página do Longo Dunas");
+    expect(list.message).toContain("Posso mostrá-la na página do Longo Dunas");
+    expect(list.message).toContain("Guardei a sua foto");
     expect(list.options.map((option) => option.id)).toEqual([lookRowId("sim", lookId), lookRowId("nao", lookId)]);
 
     const [look] = await db.select().from(schema.customerLooks).where(eq(schema.customerLooks.id, lookId));
@@ -194,13 +195,52 @@ describe("wa.customer_look_card (fila)", () => {
     expect(provider.sentOptionLists).toHaveLength(1);
   });
 
-  it("foto que a Z-API não entrega mais: skip, sem cartão, a foto nunca vira pública", async () => {
+  it("download que falha RELANÇA (a fila tenta de novo); sem URL nenhuma é skip; nunca vira pública", async () => {
     const { lookId, productId } = await registered();
-    const result = await renderAndSendCustomerLookCard(sdb, provider, storage, render, { lookId });
-    expect(result).toEqual({ skipped: "foto_indisponivel" });
+    await expect(renderAndSendCustomerLookCard(sdb, provider, storage, render, { lookId })).rejects.toThrow();
     expect(provider.sentImages).toHaveLength(0);
+    // Na 2ª tentativa a Z-API respondeu: o cartão sai uma vez.
+    provider.setMediaFixture(PHOTO_URL, await photoJpeg(), "image/jpeg");
+    expect(await renderAndSendCustomerLookCard(sdb, provider, storage, render, { lookId })).toMatchObject({ sent: true });
+    expect(provider.sentImages).toHaveLength(1);
+
+    // Sem URL nenhuma (mensagem apagada): skip, sem retry.
+    const [message] = await db.select({ id: schema.waMessages.id }).from(schema.waMessages).where(eq(schema.waMessages.kind, "image"));
+    const [second] = await db
+      .insert(schema.customerLooks)
+      .values({ phoneE164: "+5511777770001", productId, displayName: "Bia", photoWaMessageId: null, createdAt: NOW, updatedAt: NOW })
+      .returning({ id: schema.customerLooks.id });
+    expect(message).toBeDefined();
+    expect(await renderAndSendCustomerLookCard(sdb, provider, storage, render, { lookId: second.id })).toEqual({ skipped: "foto_indisponivel" });
     expect(await listPublicLooksForProduct(sdb, productId)).toEqual([]);
     expect(await listPendingLooks(sdb)).toEqual([]);
+  });
+
+  it("a mesma foto registrada duas vezes vira UMA linha e UM evento; a Lia escolhe a foto por índice", async () => {
+    const { productId, variantId } = await seedProduct();
+    const { customerId, conversationId, photoWaMessageId } = await seedConversationWithPhoto({ productId, variantId, delivered: true });
+    const [older] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: "https://zapi.example/media/print.jpg", status: "delivered", zapiMessageId: "IMG-PRINT" })
+      .returning({ id: schema.waMessages.id });
+    const recentImages = [
+      { waMessageId: older.id, mediaUrl: "https://zapi.example/media/print.jpg" },
+      { waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL },
+    ];
+    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, recentImages, now: NOW });
+    const first = await executor("registrar_foto_com_a_peca", { produto: "longo-dunas", foto: 2 });
+    expect(first.ok).toBe(true);
+    expect(first.text).toContain("registrei a 2ª das 2 fotos");
+    const again = await executor("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    expect(again.ok).toBe(true);
+    expect(again.text).toContain("já estava guardada");
+    const looks = await db.select().from(schema.customerLooks);
+    expect(looks).toHaveLength(1);
+    expect(looks[0].photoWaMessageId).toBe(photoWaMessageId);
+    expect(await db.select().from(schema.outboxEvents)).toHaveLength(1);
+    const outOfRange = await executor("registrar_foto_com_a_peca", { produto: "longo-dunas", foto: 3 });
+    expect(outOfRange.ok).toBe(false);
+    expect(outOfRange.text).toContain("entre 1 e 2");
   });
 });
 
@@ -208,7 +248,7 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
   async function askedLook(): Promise<{ lookId: string; productId: string; conversationId: string }> {
     const { productId, variantId } = await seedProduct();
     const { customerId, conversationId, photoWaMessageId } = await seedConversationWithPhoto({ productId, variantId, delivered: true });
-    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, pendingImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }], now: NOW });
+    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId, lastInboundId: photoWaMessageId, recentImages: [{ waMessageId: photoWaMessageId, mediaUrl: PHOTO_URL }], now: NOW });
     await executor("registrar_foto_com_a_peca", { produto: "longo-dunas" });
     const [look] = await db.select({ id: schema.customerLooks.id }).from(schema.customerLooks);
     provider.setMediaFixture(PHOTO_URL, await photoJpeg(), "image/jpeg");
@@ -245,7 +285,7 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
     expect(look.consentWaMessageId).toBe(inbound.id);
     const events = await db.select().from(schema.outboxEvents);
     expect(events.some((event) => event.eventType === "wa.bot_turn")).toBe(false);
-    const ack = events.find((event) => event.dedupeKey === `wa.look_consent_ack:${lookId}`);
+    const ack = events.find((event) => event.dedupeKey === `wa.look_consent_ack:${lookId}:sim`);
     expect(ack?.eventType).toBe("wa.send");
     expect((ack?.payload as { body: string }).body).toContain("assim que a equipe conferir");
 
@@ -265,13 +305,21 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
     expect(await countPendingLooks(sdb)).toBe(0);
     expect(await listLooksMemoryLines(sdb, PHONE)).toEqual(["Foto dela com o Longo Dunas: na página da peça."]);
 
-    expect(await revokeCustomerLook(sdb, { lookId, userId: user.id, source: "owner", now: NOW })).toEqual({ revoked: true });
+    expect(await revokeCustomerLook(sdb, { lookId, userId: user.id, source: "owner", now: NOW }, storage)).toEqual({ revoked: true });
     expect(await listPublicLooksForProduct(sdb, productId)).toEqual([]);
+    // Retirar apaga os arquivos do bucket e pede a revalidação da página da peça.
+    expect(storage.has(lookPhotoStoragePath(lookId))).toBe(false);
+    expect(storage.has(lookCardStoragePath(lookId))).toBe(false);
+    const [gone] = await db.select().from(schema.customerLooks).where(eq(schema.customerLooks.id, lookId));
+    expect(gone.photoPath).toBeNull();
+    const revalidate = (await db.select().from(schema.outboxEvents)).filter((event) => event.eventType === "store.revalidate");
+    expect(revalidate).toHaveLength(1);
+    expect(revalidate[0].payload).toEqual({ paths: ["/produto/longo-dunas"] });
     const audits = await db.select().from(schema.auditLog);
     expect(audits.map((row) => row.action)).toEqual(expect.arrayContaining(["look.approve", "look.revoke"]));
   });
 
-  it("'Prefiro que não' fica só entre nós; outro telefone não responde pela cliente; o segundo toque não muda nada", async () => {
+  it("'Prefiro que não' fica só entre nós; outro telefone não responde pela cliente; mudar de ideia vale (a última resposta) e tira da vitrine; o mesmo toque repetido não muda nada", async () => {
     const { lookId } = await askedLook();
     const other = await tap("MSG-LOOK-2", lookRowId("sim", lookId), "Sim, pode", "5511888880000");
     expect(other.action).not.toBe("look_consent");
@@ -282,14 +330,28 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
     [look] = await db.select().from(schema.customerLooks).where(eq(schema.customerLooks.id, lookId));
     expect(look.consentAnswer).toBe("nao");
     expect(await listPendingLooks(sdb)).toEqual([]);
-    const ack = (await db.select().from(schema.outboxEvents)).find((event) => event.dedupeKey === `wa.look_consent_ack:${lookId}`);
+    const ack = (await db.select().from(schema.outboxEvents)).find((event) => event.dedupeKey === `wa.look_consent_ack:${lookId}:nao`);
     expect((ack?.payload as { body: string }).body).toContain("fica só entre nós");
 
-    const again = await tap("MSG-LOOK-4", lookRowId("sim", lookId), "Sim, pode");
-    expect(again.action).not.toBe("look_consent");
+    // O mesmo toque de novo: nada muda.
+    expect(await recordLookConsent(sdb, { lookId, phoneE164: PHONE, answer: "nao", waMessageId: look.consentWaMessageId as string, now: NOW })).toBeNull();
+
+    // Ela muda de ideia: "Sim, pode" vale; a dona aprova; depois "Prefiro que não" tira da vitrine na hora.
+    expect((await tap("MSG-LOOK-4", lookRowId("sim", lookId), "Sim, pode")).action).toBe("look_consent");
     [look] = await db.select().from(schema.customerLooks).where(eq(schema.customerLooks.id, lookId));
-    expect(look.consentAnswer).toBe("nao");
-    expect(await recordLookConsent(sdb, { lookId, phoneE164: PHONE, answer: "sim", waMessageId: look.consentWaMessageId as string, now: NOW })).toBeNull();
+    expect(look.consentAnswer).toBe("sim");
+    const [user] = await db.insert(schema.users).values({ id: "00000000-0000-4000-8000-00000000d0a1", email: "dona2@trive.test", role: "owner", fullName: "Dona" }).returning({ id: schema.users.id });
+    expect(await approveCustomerLook(sdb, { lookId, userId: user.id, now: NOW })).toEqual({ approved: true });
+    const [product] = await db.select({ id: schema.products.id }).from(schema.products);
+    expect(await countPublicLooksForProduct(sdb, product.id)).toBe(1);
+    expect((await tap("MSG-LOOK-4b", lookRowId("nao", lookId), "Prefiro que não")).action).toBe("look_consent");
+    expect(await countPublicLooksForProduct(sdb, product.id)).toBe(0);
+    const changed = (await db.select().from(schema.waMessages).where(eq(schema.waMessages.zapiMessageId, "MSG-LOOK-4b")))[0];
+    expect(changed.body).toContain("Prefiro que não");
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events.some((event) => event.eventType === "store.revalidate")).toBe(true);
+    const ack2 = events.find((event) => event.dedupeKey === `wa.look_consent_ack:${lookId}:nao`);
+    expect((ack2?.payload as { body: string }).body).toContain("fica só entre nós");
   });
 
   it("recusada pela dona não entra; 'esquecer minha cartela' e retirar_minha_foto retiram tudo do telefone", async () => {
@@ -305,7 +367,9 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
     await tap("MSG-LOOK-6", lookRowId("sim", second), "Sim, pode");
     await approveCustomerLook(sdb, { lookId: second, userId: user.id, now: NOW });
     expect(await countPublicLooksForProduct(sdb, productId)).toBe(1);
-    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: lookId });
+    // Ela trocou de número: a conversa nova tem outro telefone, mas o cadastro é o mesmo.
+    const [customer] = await db.select({ id: schema.customers.id }).from(schema.customers).where(eq(schema.customers.phoneE164, PHONE));
+    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: "+5511777770000", customerId: customer.id, lastInboundId: lookId });
     const removed = await executor("retirar_minha_foto", {});
     expect(removed.ok).toBe(true);
     expect(removed.text).toContain("saiu da página");
@@ -319,10 +383,15 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
     await approveCustomerLook(sdb, { lookId: third, userId: user.id, now: NOW });
     expect(await countPublicLooksForProduct(sdb, productId)).toBe(1);
     const profile = await saveStyleProfile(sdb, { phoneE164: PHONE, patch: { sizes: { vestido: "M" } }, source: "lia", consent: true });
-    await forgetStyleProfile(sdb, { profileId: profile.id });
+    // Pelo site (token da cartela, sem prova de posse) as fotos ficam; pelo painel, saem.
+    await forgetStyleProfile(sdb, { siteToken: profile.siteToken });
+    expect(await countPublicLooksForProduct(sdb, productId)).toBe(1);
+    const again = await saveStyleProfile(sdb, { phoneE164: PHONE, patch: { sizes: { vestido: "M" } }, source: "lia", consent: true });
+    await forgetStyleProfile(sdb, { profileId: again.id, userId: user.id });
     expect(await countPublicLooksForProduct(sdb, productId)).toBe(0);
     const [revoked] = await db.select().from(schema.customerLooks).where(eq(schema.customerLooks.id, third));
     expect(revoked.revokedBy).toBe("forget");
+    expect(revoked.photoPath).toBeNull();
   });
 
   async function askedLookAgain(productId: string, conversationId: string): Promise<string> {
@@ -330,7 +399,7 @@ describe("consentimento pelo webhook, aprovação e vitrine", () => {
       .insert(schema.waMessages)
       .values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: PHOTO_URL, status: "delivered", zapiMessageId: `IMG-${Math.random().toString(36).slice(2, 8)}` })
       .returning({ id: schema.waMessages.id });
-    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: message.id, pendingImages: [{ waMessageId: message.id, mediaUrl: PHOTO_URL }], now: NOW });
+    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: message.id, recentImages: [{ waMessageId: message.id, mediaUrl: PHOTO_URL }], now: NOW });
     await executor("registrar_foto_com_a_peca", { produto: "longo-dunas" });
     // A recém-registrada é a única ainda sem resposta.
     const looks = await db.select({ id: schema.customerLooks.id, consentAnswer: schema.customerLooks.consentAnswer }).from(schema.customerLooks).where(eq(schema.customerLooks.productId, productId));

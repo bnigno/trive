@@ -25,6 +25,8 @@ import {
 import { atelierCardPayloadSchema, renderAndSendAtelierCard } from "@/services/atelier-card";
 import { sendDeliveredWa } from "@/services/delivery";
 import { customerLookCardPayloadSchema, renderAndSendCustomerLookCard } from "@/services/customer-looks";
+
+const storeRevalidatePayloadSchema = z.object({ paths: z.array(z.string().regex(/^\/[a-z0-9\-/]*$/i)).min(1).max(10) });
 import { askDeliveryFeedback, feedbackAskPayloadSchema, scheduleDeliveryFeedback } from "@/services/delivery-feedback";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
@@ -580,6 +582,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     await scheduleDeliveryFeedback(getDb(), { orderId, now: new Date() });
     const result = await sendDeliveredWa(getDb(), getMessagingProvider(), getFileStorage(), { orderId });
     console.info(`[order.delivered] ${orderId} → ${JSON.stringify(result)}`);
+  },
+  // A vitrine é ISR: quem tira algo da página (foto retirada, consentimento
+  // desfeito) pede a revalidação pela fila — fora do runtime do Next só avisa.
+  "store.revalidate": async (event) => {
+    const { paths } = storeRevalidatePayloadSchema.parse(event.payload);
+    await revalidateQuietly(paths, `store.revalidate (event ${event.id})`);
   },
   // "Quem já vestiu": baixa a foto dela, desenha o cartão "Ana veste …",
   // manda e faz a pergunta de consentimento (dedupe por foto). Foto que a

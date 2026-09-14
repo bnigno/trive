@@ -32,4 +32,6 @@ ALTER TABLE "customer_looks" ADD CONSTRAINT "customer_looks_photo_wa_message_id_
 ALTER TABLE "customer_looks" ADD CONSTRAINT "customer_looks_consent_wa_message_id_wa_messages_id_fk" FOREIGN KEY ("consent_wa_message_id") REFERENCES "public"."wa_messages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "customer_looks" ADD CONSTRAINT "customer_looks_approved_by_users_id_fk" FOREIGN KEY ("approved_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "customer_looks_product_public_idx" ON "customer_looks" USING btree ("product_id") WHERE "customer_looks"."consent_answer" = 'sim' AND "customer_looks"."approved_at" IS NOT NULL AND "customer_looks"."revoked_at" IS NULL;--> statement-breakpoint
-CREATE INDEX "customer_looks_phone_idx" ON "customer_looks" USING btree ("phone_e164");
+CREATE INDEX "customer_looks_phone_idx" ON "customer_looks" USING btree ("phone_e164");--> statement-breakpoint
+CREATE INDEX "customer_looks_customer_idx" ON "customer_looks" USING btree ("customer_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "customer_looks_photo_message_idx" ON "customer_looks" USING btree ("photo_wa_message_id") WHERE "customer_looks"."photo_wa_message_id" IS NOT NULL;

@@ -39,9 +39,9 @@ export function lookConsentOptions(lookId: string): Array<{ id: string; title: s
   ];
 }
 
-/** A pergunta que vai com a lista, depois do cartão. */
+/** A pergunta que vai com a lista, depois do cartão — deixa claro que a foto já está guardada e que ela retira quando quiser. */
 export function lookConsentBody(productName: string): string {
-  return `Posso mostrar essa foto na página do ${productName}, em “Quem já vestiu”, com o seu primeiro nome? Você retira quando quiser — é só me pedir.`;
+  return `Guardei a sua foto para montar o cartão. Posso mostrá-la na página do ${productName}, em “Quem já vestiu”, com o seu primeiro nome? Você retira quando quiser — é só me pedir (e aí apago a foto também).`;
 }
 
 /** Só com o "sim" dela, a aprovação da dona e sem retirada. */
@@ -52,19 +52,22 @@ export function isLookPublic(look: { consentAnswer: string | null; approvedAt: D
 /** O primeiro nome, com inicial maiúscula e no teto do banco ("Ana", "Maria Clara" → "Maria"). */
 export function lookDisplayName(fullName: string | null | undefined): string {
   const first = (fullName ?? "").trim().split(/\s+/)[0] ?? "";
-  if (first === "") return "Cliente";
+  if (first === "") return LOOK_DISPLAY_NAME_FALLBACK;
   const pretty = first.charAt(0).toLocaleUpperCase("pt-BR") + first.slice(1).toLocaleLowerCase("pt-BR");
   return pretty.slice(0, LOOK_DISPLAY_NAME_MAX);
 }
 
-/** "Ana veste Longo Dunas". */
+export const LOOK_DISPLAY_NAME_FALLBACK = "Cliente";
+
+/** "Ana veste Longo Dunas" — sem nome, "Uma cliente veste Longo Dunas". */
 export function lookCardTitle(displayName: string, productName: string): string {
-  return `${displayName} veste ${productName}`;
+  return `${displayName === LOOK_DISPLAY_NAME_FALLBACK ? "Uma cliente" : displayName} veste ${productName}`;
 }
 
 /** A legenda do cartão no WhatsApp dela. */
 export function lookCardCaption(displayName: string, productName: string): string {
-  return `${displayName}, ficou lindo em você 🤎 Fizemos este cartão com a sua foto no ${productName} — é seu, para guardar ou postar.`;
+  const greeting = displayName === LOOK_DISPLAY_NAME_FALLBACK ? "Ficou lindo em você" : `${displayName}, ficou lindo em você`;
+  return `${greeting} 🤎 Fizemos este cartão com a sua foto no ${productName} — é seu, para guardar ou postar.`;
 }
 
 /** O que a Lia (e o painel) leem no histórico quando o toque volta. */
@@ -72,9 +75,10 @@ export function lookConsentHistoryText(answer: LookConsentAnswer, productName: s
   return `[resposta a "${LOOK_CONSENT_TITLE}" da foto com ${productName}]: ${LOOK_CONSENT_TITLES[answer]}`;
 }
 
-/** A confirmação curta que sai pela fila depois do toque. */
-export function lookConsentAckText(answer: LookConsentAnswer): string {
-  return answer === "sim"
-    ? "Obrigada 🤎 A foto entra na página assim que a equipe conferir. Se mudar de ideia, é só me pedir para retirar."
-    : "Tudo bem, fica só entre nós 🤎 O cartão é seu.";
+/** A confirmação curta que sai pela fila depois do toque (`changed` = ela mudou de ideia). */
+export function lookConsentAckText(answer: LookConsentAnswer, changed = false): string {
+  if (answer === "sim") {
+    return "Obrigada 🤎 A foto entra na página assim que a equipe conferir. Se mudar de ideia, é só me pedir para retirar.";
+  }
+  return changed ? "Tudo bem, retirei 🤎 A foto não aparece na página; o cartão continua seu." : "Tudo bem, fica só entre nós 🤎 O cartão é seu.";
 }

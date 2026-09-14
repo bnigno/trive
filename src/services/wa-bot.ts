@@ -79,6 +79,7 @@ import type {
 } from "./bot/shared";
 import { execCotarFrete } from "./bot/shipping";
 import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
+import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { execAnotar, execAtualizarCartela, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -402,12 +403,21 @@ export async function runBotTurn(
       // O turno enfileirado pela transcrição responde a tudo de uma vez.
       return { skipped: "aguardando_transcricao" };
     }
-    const pendingImages = pending
+    const imageUrls = pending
       .filter((row) => row.kind === "image" && row.mediaUrl)
       .slice(-MAX_IMAGES_PER_TURN)
-      .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }));
-    const imageUrls = pendingImages.map((row) => row.mediaUrl);
+      .map((row) => row.mediaUrl as string);
     const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
+    // Fotos recentes para registrar_foto_com_a_peca: as deste turno só se a
+    // Lia as viu de fato; as de antes (dentro da janela) valem mesmo sem
+    // anexo — "foto → qual peça? → ela responde".
+    const recentImages = mediaEnabled
+      ? rows
+          .filter((row) => row.direction === "inbound" && row.kind === "image" && row.mediaUrl && now.getTime() - row.createdAt.getTime() <= LOOK_PHOTO_WINDOW_MS)
+          .filter((row) => !pending.some((p) => p.id === row.id) || images.has(row.mediaUrl as string))
+          .slice(-MAX_IMAGES_PER_TURN)
+          .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }))
+      : [];
 
     const messages: BotChatMessage[] = rows.map((message) => {
       if (message.direction !== "inbound") {
@@ -464,7 +474,7 @@ export async function runBotTurn(
       lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
       cepLookup: getCepLookup(),
-      pendingImages,
+      recentImages,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
 

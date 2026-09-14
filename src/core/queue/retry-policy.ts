@@ -49,6 +49,7 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // que não abre não melhora com o tempo.
   "wa.atelier_card": { maxAttempts: 2, baseDelayMs: 10_000, maxDelayMs: 30_000 },
   "wa.customer_look_card": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
+  "store.revalidate": { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
 };
 
 export function getRetryPolicy(eventType: string): RetryPolicy {
