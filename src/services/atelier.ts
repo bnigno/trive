@@ -11,9 +11,19 @@
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { AssistantUnavailableError, type SalesAssistant } from "@/adapters/assistant";
 import type { FileStorage } from "@/adapters/storage";
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import type { MessagingProvider } from "@/adapters/zapi";
+import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
+import { expandArrivalGrid } from "@/core/atelier/grid";
+import {
+  ARRIVAL_JSON_SCHEMA,
+  normalizeArrivalProposal,
+  parseAtelierParsed,
+  type AtelierParsed,
+} from "@/core/atelier/proposal";
+import { arrivalUserText, buildArrivalPrompt } from "@/core/atelier/prompt";
 import {
   INTAKE_GRACE_MS,
   INTAKE_LATE_PHOTO_MS,
@@ -27,17 +37,21 @@ import {
 } from "@/core/atelier/batch";
 import { draftNameFromNote } from "@/core/atelier/name";
 import {
+  arrivalDetailsLine,
   atelierDraftVars,
   atelierHelpReasonText,
   isAtelierHelpReason,
   type AtelierHelpReason,
 } from "@/core/atelier/reply";
+import { formatCareNotes } from "@/core/catalog/care";
 import { buildSku, dedupeSkus, skuBaseFromName } from "@/core/catalog/sku";
+import type { SelectedVariant } from "@/core/catalog/variant-grid";
 import { getRetryPolicy } from "@/core/queue/retry-policy";
 import { INBOUND_MEDIA_MARKERS } from "@/core/whatsapp/media";
 import {
   atelierIntakes,
   auditLog,
+  categories,
   productVariants,
   settings,
   users,
@@ -46,13 +60,20 @@ import {
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { addProductImage, createProduct, type ServiceDb } from "@/services/catalog";
-import { isBotMediaEnabled } from "@/services/wa-media";
+import { suggestPriceForCost, type PricingDb } from "@/services/pricing";
+import { getSettingsMap } from "@/services/settings";
+import { getStoreMap } from "@/services/store-catalog";
+import { listSuppliers } from "@/services/suppliers";
+import { isBotMediaEnabled, prepareImageForModel } from "@/services/wa-media";
 import { sendToOwner, siteBaseUrl, type SendWaMessageResult } from "@/services/wa-messaging";
 
 /** Foto original da câmera (a ficha reduz depois); acima disso a foto fica de fora. */
 export const ATELIER_PHOTO_MAX_BYTES = 12 * 1024 * 1024;
 /** Cada download tem este teto; a função da fila tem 60 s para tudo. */
 export const ATELIER_DOWNLOAD_TIMEOUT_MS = 12_000;
+/** A inteligência lê o recado e as fotos dentro disto; passou, a ficha nasce simples. */
+export const ARRIVAL_MODEL_BUDGET_MS = 30_000;
+const DEFAULT_ARRIVAL_MODEL = "claude-sonnet-5";
 export const ATELIER_DRAFT_TEMPLATE = "owner_atelier_draft";
 export const ATELIER_HELP_TEMPLATE = "owner_atelier_help";
 
@@ -284,7 +305,7 @@ export const atelierIntakePayloadSchema = z.object({
 });
 
 export type ProcessAtelierIntakeResult =
-  | { created: true; intakeId: string; productId: string; name: string; photos: number; failedPhotos: number }
+  | { created: true; intakeId: string; productId: string; name: string; photos: number; failedPhotos: number; interpreted: boolean }
   | { skipped: "ja_processado" | "mensagem_inexistente" | "desligado" }
   | { failed: "sem_fotos" | "fotos_indisponiveis" | "sem_usuario"; intakeId: string };
 
@@ -292,9 +313,12 @@ function isLastAttempt(attempt: number): boolean {
   return attempt + 1 >= getRetryPolicy("wa.atelier_intake").maxAttempts;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("tempo esgotado")), ms);
+    const timer = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error("tempo esgotado"));
+    }, ms);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -308,13 +332,91 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function uniqueSkuFor(db: DbOrTx, name: string): Promise<string> {
-  const base = buildSku(skuBaseFromName(name), []);
+/** SKUs da leva sem colidir com o que já existe no catálogo (sufixo -2, -3…). */
+async function withUniqueSkus<T extends { sku: string }>(db: DbOrTx, name: string, variants: readonly T[]): Promise<T[]> {
+  const base = skuBaseFromName(name);
   const taken = await db
     .select({ sku: productVariants.sku })
     .from(productVariants)
     .where(sql`${productVariants.sku} LIKE ${`${base}%`}`);
-  return dedupeSkus([base], new Set(taken.map((row) => row.sku)))[0];
+  const skus = dedupeSkus(
+    variants.map((variant) => variant.sku),
+    new Set(taken.map((row) => row.sku)),
+  );
+  return variants.map((variant, index) => ({ ...variant, sku: skus[index] }));
+}
+
+/**
+ * A inteligência lê o recado (fonte principal) e as fotos (apoio) e devolve
+ * a proposta da chegada. Qualquer falha (sem chave, demora, JSON torto) vira
+ * `failed` — a ficha nasce simples, como no C-A, nunca trava a chegada.
+ */
+export async function interpretArrival(
+  db: DbOrTx,
+  assistant: SalesAssistant,
+  input: { note: string; images: readonly Buffer[]; now: () => Date },
+): Promise<AtelierParsed> {
+  const startedAt = input.now().getTime();
+  const elapsed = () => input.now().getTime() - startedAt;
+  const [settingsMap, categoryRows, storeMap, suppliers] = await Promise.all([
+    getSettingsMap(db as unknown as ServiceDb, ["store_name", "store_manifesto", "bot_model"]),
+    db.select({ id: categories.id, name: categories.name, slug: categories.slug }).from(categories).orderBy(asc(categories.name)),
+    getStoreMap(db as unknown as ServiceDb),
+    listSuppliers(db as unknown as ServiceDb),
+  ]);
+  const text = (key: string): string => (typeof settingsMap[key] === "string" ? (settingsMap[key] as string) : "");
+  const model = text("bot_model").trim() !== "" ? text("bot_model").trim() : DEFAULT_ARRIVAL_MODEL;
+  const base: AtelierParsed = { proposal: null, suggestedPriceCents: null, model, usage: null, estimatedCostUsdCents: 0, ms: 0, failed: null };
+
+  // Foto que o sharp não abre (HEIC…) fica de fora do modelo; o recado basta.
+  const prepared = await Promise.allSettled(input.images.map((data) => prepareImageForModel(data)));
+  const images = prepared.flatMap((outcome) =>
+    outcome.status === "fulfilled" ? [{ mediaType: outcome.value.mediaType, base64: outcome.value.base64 }] : [],
+  );
+  const system = buildArrivalPrompt({
+    storeName: text("store_name").trim() !== "" ? text("store_name").trim() : "TRIVÉ",
+    manifesto: text("store_manifesto"),
+    categories: categoryRows.map((row) => ({ name: row.name, slug: row.slug })),
+    knownColors: storeMap.colors,
+    knownSizes: storeMap.sizes,
+    knownSuppliers: suppliers.map((supplier) => supplier.name),
+  });
+
+  const controller = new AbortController();
+  let extraction;
+  try {
+    extraction = await withTimeout(
+      assistant.extractFromPhotos({
+        system,
+        images,
+        userText: arrivalUserText(input.note),
+        model,
+        jsonSchema: ARRIVAL_JSON_SCHEMA,
+        maxTokens: 2048,
+        signal: controller.signal,
+      }),
+      ARRIVAL_MODEL_BUDGET_MS,
+      () => controller.abort(),
+    );
+  } catch (error) {
+    const failed =
+      error instanceof AssistantUnavailableError
+        ? "ia_indisponivel"
+        : error instanceof Error && error.message === "tempo esgotado"
+          ? "ia_demorou"
+          : "ia_erro";
+    console.warn(`[atelier] inteligência não respondeu (${failed}):`, error instanceof Error ? error.message : error);
+    return { ...base, failed, ms: elapsed() };
+  }
+  const usage = extraction.usage;
+  const estimatedCostUsdCents = estimateUsageCostUsdCents(usage, model);
+  try {
+    const proposal = normalizeArrivalProposal(extraction.json, { categories: categoryRows });
+    return { ...base, proposal, usage, estimatedCostUsdCents, ms: elapsed() };
+  } catch (error) {
+    console.warn("[atelier] resposta da inteligência fora do formato:", error instanceof Error ? error.message : error);
+    return { ...base, usage, estimatedCostUsdCents, failed: "json_invalido", ms: elapsed() };
+  }
 }
 
 async function markIntake(
@@ -349,6 +451,7 @@ export async function processAtelierIntake(
   db: DbOrTx,
   provider: MessagingProvider,
   storage: FileStorage,
+  assistant: SalesAssistant,
   input: z.input<typeof atelierIntakePayloadSchema>,
   clock: { now?: () => Date } = {},
 ): Promise<ProcessAtelierIntakeResult> {
@@ -443,23 +546,50 @@ export async function processAtelierIntake(
   }
   if (available.length === 0 && uploaded.size === 0) return fail("fotos_indisponiveis");
 
-  const name = draftNameFromNote(note, startedAt);
+  // A inteligência lê o recado e as fotos UMA vez, antes de criar o produto;
+  // a retomada reaproveita o que ficou gravado em `parsed`.
+  let interpreted = intake.productId ? parseAtelierParsed(intake.parsed) : null;
+  if (!interpreted) {
+    interpreted = await interpretArrival(db, assistant, { note, images: available.map((item) => item.data), now });
+  }
+  const proposal = interpreted.proposal;
+  const name = proposal?.name || draftNameFromNote(note, startedAt);
   try {
     let productId: string;
     if (intake.productId) {
       productId = intake.productId;
     } else {
+      // Com proposta, a grade cor × tamanho com o custo por peça (o estoque
+      // entra no próximo passo do Ateliê); sem ela, a ficha simples.
+      const grid = proposal ? expandArrivalGrid(name, proposal) : { axes: [] as string[], variants: [] as SelectedVariant[] };
+      const variants = await withUniqueSkus(
+        db,
+        name,
+        grid.variants.length > 0 ? grid.variants : [{ sku: buildSku(skuBaseFromName(name), []), attributes: {}, initialQuantity: 0 }],
+      );
+      if (proposal?.unitCostCents) {
+        try {
+          interpreted.suggestedPriceCents = (await suggestPriceForCost(db as unknown as PricingDb, proposal.unitCostCents))?.priceCents ?? null;
+        } catch {
+          interpreted.suggestedPriceCents = null;
+        }
+      }
+      const stored = interpreted;
       // Produto e vínculo com a chegada na MESMA transação: uma queda entre
       // os dois não deixa um rascunho órfão que a retomada duplicaria.
-      const sku = await uniqueSkuFor(db, name);
       productId = await db.transaction(async (tx) => {
         const created = await createProduct(tx as unknown as ServiceDb, {
           name,
-          description: note ? `Recado da chegada: ${note}`.slice(0, 1200) : undefined,
-          variants: [{ sku, attributes: {} }],
+          description: proposal?.description || (note ? `Recado da chegada: ${note}`.slice(0, 1200) : undefined),
+          composition: proposal?.composition || undefined,
+          careNotes: proposal ? (formatCareNotes(proposal.careSymbols, proposal.careFreeText) ?? undefined) : undefined,
+          fitNotes: proposal?.fitNotes || undefined,
+          categoryId: proposal?.categoryId ?? undefined,
+          attributesSchema: grid.axes,
+          variants,
           userId,
         });
-        await markIntake(tx, intake.id, { productId: created.product.id, note, noteKind }, now());
+        await markIntake(tx, intake.id, { productId: created.product.id, note, noteKind, parsed: stored }, now());
         return created.product.id;
       });
     }
@@ -485,9 +615,12 @@ export async function processAtelierIntake(
     // O aviso sai ANTES do "done": se o provedor falhar, a chegada continua
     // por fechar e a retomada só reenvia (dedupe por chegada); "done" e o
     // audit entram uma vez só. WhatsApp desligado não é erro — fica anotado.
+    const detailsLine =
+      arrivalDetailsLine(proposal, interpreted.suggestedPriceCents) +
+      (interpreted.failed ? " · sem a grade (a inteligência não respondeu)" : "");
     const notice = await sendToOwner(db, provider, {
       templateKey: ATELIER_DRAFT_TEMPLATE,
-      vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}` }),
+      vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}`, details: detailsLine }),
       dedupeKey: `wa.atelier_draft:${intake.id}`,
     });
     const details = [
@@ -521,11 +654,17 @@ export async function processAtelierIntake(
         photos: photosOnProduct,
         failedPhotos,
         notice: "skipped" in notice ? notice.skipped : "sent",
+        interpreted: proposal !== null,
+        interpretationFailed: interpreted.failed,
+        model: interpreted.model,
+        usage: interpreted.usage,
+        estimatedCostUsdCents: interpreted.estimatedCostUsdCents,
+        variants: variantsCount(proposal),
         ms: now().getTime() - startedAt.getTime(),
       },
     });
 
-    return { created: true, intakeId: intake.id, productId, name, photos: photosOnProduct, failedPhotos };
+    return { created: true, intakeId: intake.id, productId, name, photos: photosOnProduct, failedPhotos, interpreted: proposal !== null };
   } catch (error) {
     // Erro de verdade (banco, storage, envio): a fila tenta de novo; na
     // última tentativa a dona fica sabendo em vez de esperar um rascunho.
@@ -546,21 +685,27 @@ export async function processAtelierIntake(
   }
 }
 
-/** A chegada que gerou este produto (selo "Chegou pelo WhatsApp" na ficha). */
+function variantsCount(proposal: AtelierParsed["proposal"]): number {
+  return proposal ? proposal.variantCount : 1;
+}
+
+/** A chegada que gerou este produto (bloco "Como chegou pelo WhatsApp" na ficha). */
 export async function getAtelierIntakeForProduct(
   db: DbOrTx,
   productId: string,
-): Promise<{ id: string; note: string; photosCount: number; createdAt: Date } | null> {
+): Promise<{ id: string; note: string; photosCount: number; createdAt: Date; parsed: AtelierParsed | null; errorDetail: string | null } | null> {
   const [row] = await db
     .select({
       id: atelierIntakes.id,
       note: atelierIntakes.note,
       photosCount: atelierIntakes.photosCount,
       createdAt: atelierIntakes.createdAt,
+      parsed: atelierIntakes.parsed,
+      errorDetail: atelierIntakes.errorDetail,
     })
     .from(atelierIntakes)
     .where(eq(atelierIntakes.productId, productId))
     .orderBy(desc(atelierIntakes.createdAt))
     .limit(1);
-  return row ?? null;
+  return row ? { ...row, parsed: parseAtelierParsed(row.parsed) } : null;
 }

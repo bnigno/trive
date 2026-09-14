@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { formatCentsBRL } from "@/lib/money";
+
 import {
   ATELIER_HELP_REASONS,
+  arrivalDetailsLine,
   atelierDraftVars,
   atelierHelpReasonText,
   isAtelierHelpReason,
@@ -19,7 +22,29 @@ describe("resposta do Ateliê", () => {
       peca: "Longo Dunas",
       fotos: "2 fotos",
       link: "https://x/admin/produtos/1",
+      detalhes: "",
     });
+  });
+
+  it("a linha de detalhes só diz o que se sabe", () => {
+    const full = {
+      colors: ["Areia", "Terra"],
+      sizes: ["P", "M", "G", "GG"],
+      quantityPerVariant: 3,
+      totalQuantity: 24,
+      unitCostCents: 12000,
+      totalCostCents: 288000,
+      costBasis: "per_piece" as const,
+      supplierName: "Aurora",
+    };
+    expect(arrivalDetailsLine(full, 28990)).toBe(
+      ` · 2 cores × 4 tamanhos · 3 de cada (24 peças) · custo ${formatCentsBRL(12000)} · sugerido ${formatCentsBRL(28990)} · Aurora`,
+    );
+    expect(arrivalDetailsLine({ ...full, colors: [], quantityPerVariant: null, totalQuantity: 10, unitCostCents: null, supplierName: null }, null)).toBe(
+      ` · 4 tamanhos · 10 peças · custo total ${formatCentsBRL(288000)}`,
+    );
+    expect(arrivalDetailsLine({ ...full, colors: [], sizes: [], quantityPerVariant: null, totalQuantity: null, unitCostCents: null, totalCostCents: null, supplierName: null }, null)).toBe("");
+    expect(arrivalDetailsLine(null, 100)).toBe("");
   });
 
   it("todo motivo de ajuda tem texto e é reconhecido pelo guard", () => {
