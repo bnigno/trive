@@ -80,17 +80,22 @@ export async function sameDayPromiseAction(input: {
 // veredito por tamanho. Controllers burros: Zod → um service.
 // ---------------------------------------------------------------------------
 
-const fitAdviceSchema = z.object({ slug: z.string().min(1), token: z.uuid() });
+const fitAdviceSchema = z.object({ slug: z.string().min(1), token: z.uuid(), bodyToken: z.uuid().nullable().optional() });
+
+/** Nunca o erro inteiro: a mensagem do Drizzle carrega os parâmetros (as medidas). */
+function quietLog(label: string, error: unknown): void {
+  console.error(label, error instanceof Error ? `${error.name}` : "erro");
+}
 
 export type FitAdviceResult =
   | { ok: true; kind: FitAdviceView["advice"]["kind"]; text: string; verdicts: { size: string; overall: string; points: { label: string; cm: number }[] }[]; recommended: string | null }
   | { ok: false; message: string };
 
-export async function fitAdviceAction(input: { slug: string; token: string }): Promise<FitAdviceResult> {
+export async function fitAdviceAction(input: { slug: string; token: string; bodyToken?: string | null }): Promise<FitAdviceResult> {
   const parsed = fitAdviceSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: "Abra a sua cartela de estilo primeiro." };
   try {
-    const view = await adviseSizeForProduct(getDb(), { slug: parsed.data.slug, siteToken: parsed.data.token });
+    const view = await adviseSizeForProduct(getDb(), { slug: parsed.data.slug, siteToken: parsed.data.token, bodyToken: parsed.data.bodyToken ?? null });
     const advice = view.advice;
     return {
       ok: true,
@@ -107,42 +112,57 @@ export async function fitAdviceAction(input: { slug: string; token: string }): P
       recommended: advice.kind === "advice" ? advice.recommended : null,
     };
   } catch (error) {
-    console.error("fitAdviceAction", error);
+    quietLog("fitAdviceAction", error);
     return { ok: false, message: "Não consegui calcular agora. Tente de novo em instantes." };
   }
 }
 
 const saveBodySchema = z.object({
   token: z.uuid(),
+  bodyToken: z.uuid().nullable().optional(),
   bustCm: z.coerce.number().min(40).max(200).optional(),
   waistCm: z.coerce.number().min(40).max(200).optional(),
   hipsCm: z.coerce.number().min(40).max(200).optional(),
 });
 
-export async function saveBodyMeasurementsAction(input: { token: string; bustCm?: number | string; waistCm?: number | string; hipsCm?: number | string }): Promise<{ ok: true } | { ok: false; message: string }> {
-  const cleaned = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== "" && value !== undefined && value !== null));
+export async function saveBodyMeasurementsAction(input: {
+  token: string;
+  bodyToken?: string | null;
+  bustCm?: number | string;
+  waistCm?: number | string;
+  hipsCm?: number | string;
+}): Promise<{ ok: true; bodyToken: string } | { ok: false; message: string }> {
+  const cleaned = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== "" && value !== undefined));
   const parsed = saveBodySchema.safeParse(cleaned);
   if (!parsed.success) return { ok: false, message: "Medidas em centímetros, entre 40 e 200." };
-  const { token, ...body } = parsed.data;
+  const { token, bodyToken, ...body } = parsed.data;
   if (Object.keys(body).length === 0) return { ok: false, message: "Informe ao menos uma medida." };
   try {
-    const { saved } = await saveBodyMeasurements(getDb(), { siteToken: token, body });
-    if (!saved) return { ok: false, message: "Não achei a sua cartela — faça o quiz de estilo de novo." };
-    return { ok: true };
+    const result = await saveBodyMeasurements(getDb(), { siteToken: token, bodyToken: bodyToken ?? null, body });
+    if (!result.saved || !result.bodyToken) {
+      return {
+        ok: false,
+        message:
+          result.reason === "sem_credencial"
+            ? "Suas medidas já estão guardadas em outro aparelho. Para trocar ou apagar, peça à vendedora no WhatsApp — ou apague por lá e cadastre de novo aqui."
+            : "Não achei a sua cartela — faça o quiz de estilo de novo.",
+      };
+    }
+    return { ok: true, bodyToken: result.bodyToken };
   } catch (error) {
-    console.error("saveBodyMeasurementsAction", error);
+    quietLog("saveBodyMeasurementsAction", error);
     return { ok: false, message: "Não consegui guardar agora. Tente de novo em instantes." };
   }
 }
 
-export async function forgetBodyMeasurementsAction(input: { token: string }): Promise<{ ok: boolean }> {
-  const token = z.uuid().safeParse(input.token);
-  if (!token.success) return { ok: false };
+export async function forgetBodyMeasurementsAction(input: { token: string; bodyToken?: string | null }): Promise<{ ok: boolean }> {
+  const parsed = z.object({ token: z.uuid(), bodyToken: z.uuid().nullable().optional() }).safeParse(input);
+  if (!parsed.success) return { ok: false };
   try {
-    const { forgotten } = await forgetBodyMeasurements(getDb(), { siteToken: token.data });
+    const { forgotten } = await forgetBodyMeasurements(getDb(), { siteToken: parsed.data.token, bodyToken: parsed.data.bodyToken ?? null });
     return { ok: forgotten };
   } catch (error) {
-    console.error("forgetBodyMeasurementsAction", error);
+    quietLog("forgetBodyMeasurementsAction", error);
     return { ok: false };
   }
 }

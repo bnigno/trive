@@ -8,7 +8,7 @@ import { useState, useSyncExternalStore, useTransition } from "react";
 
 import { Field } from "@/components/store/field";
 import { btnOutline, btnPrimary, inputBase } from "@/components/store/styles";
-import { readStoredStyle, storedStyleSnapshot, subscribeStoredStyle } from "@/lib/style-storage";
+import { readStoredStyle, storedStyleSnapshot, subscribeStoredStyle, writeStoredStyle } from "@/lib/style-storage";
 
 import { fitAdviceAction, forgetBodyMeasurementsAction, saveBodyMeasurementsAction, type FitAdviceResult } from "./actions";
 
@@ -21,10 +21,10 @@ export function FitAdvisor({ slug }: { slug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const ask = (token: string) => {
+  const ask = (token: string, bodyToken?: string) => {
     setError(null);
     startTransition(async () => {
-      const advice = await fitAdviceAction({ slug, token });
+      const advice = await fitAdviceAction({ slug, token, bodyToken: bodyToken ?? null });
       setResult(advice);
     });
   };
@@ -48,7 +48,7 @@ export function FitAdvisor({ slug }: { slug: string }) {
           className={btnOutline}
           onClick={() => {
             setOpen(true);
-            ask(stored.token);
+            ask(stored.token, stored.bodyToken);
           }}
         >
           Vai me servir?
@@ -62,7 +62,17 @@ export function FitAdvisor({ slug }: { slug: string }) {
   return (
     <div className="mt-3 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 p-4 font-store text-sm text-ink-800" aria-live="polite">
       {isPending && !result ? <p className="text-ink-500">Calculando…</p> : null}
-      {result && !result.ok ? <p className="text-claret-600">{result.message}</p> : null}
+      {result && !result.ok ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-claret-600">{result.message}</p>
+          <button type="button" className="text-xs text-ink-500 underline" onClick={() => ask(stored.token, stored.bodyToken)}>
+            Tentar de novo
+          </button>
+          <Link href="/estilo" className="text-xs text-ink-500 underline">
+            Refazer a cartela
+          </Link>
+        </div>
+      ) : null}
 
       {needsBody ? (
         <form
@@ -71,16 +81,18 @@ export function FitAdvisor({ slug }: { slug: string }) {
             event.preventDefault();
             setError(null);
             startTransition(async () => {
-              const saved = await saveBodyMeasurementsAction({ token: stored.token, ...form });
+              const saved = await saveBodyMeasurementsAction({ token: stored.token, bodyToken: stored.bodyToken ?? null, ...form });
               if (!saved.ok) {
                 setError(saved.message);
                 return;
               }
-              ask(stored.token);
+              // A credencial das medidas fica só neste navegador, ao lado do token da cartela.
+              writeStoredStyle({ ...stored, bodyToken: saved.bodyToken });
+              ask(stored.token, saved.bodyToken);
             });
           }}
         >
-          <p>Me conta suas medidas, em centímetros — ficam guardadas na sua cartela, uma vez só, e você apaga quando quiser.</p>
+          <p>Me conta suas medidas, em centímetros — ficam guardadas na sua cartela, uma vez só, e você apaga quando quiser. Só este aparelho (e a vendedora, no seu WhatsApp) consegue lê-las.</p>
           <div className="grid grid-cols-3 gap-3">
             {(["bustCm", "waistCm", "hipsCm"] as const).map((key) => (
               <Field key={key} label={key === "bustCm" ? "Busto" : key === "waistCm" ? "Cintura" : "Quadril"}>
@@ -125,7 +137,8 @@ export function FitAdvisor({ slug }: { slug: string }) {
             className="self-start text-xs text-ink-500 underline"
             onClick={() =>
               startTransition(async () => {
-                await forgetBodyMeasurementsAction({ token: stored.token });
+                await forgetBodyMeasurementsAction({ token: stored.token, bodyToken: stored.bodyToken ?? null });
+                writeStoredStyle({ ...stored, bodyToken: undefined });
                 setResult(null);
                 setForm({ bustCm: "", waistCm: "", hipsCm: "" });
                 ask(stored.token);

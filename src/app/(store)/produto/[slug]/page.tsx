@@ -210,7 +210,9 @@ export default async function ProdutoPage({ params }: Props) {
           {!isSizeChartEmpty(sizeChart) || fitSignals.length > 0 ? (
             <DetailsSheet title="Medidas (cm)">
               {!isSizeChartEmpty(sizeChart) ? <SizeChartTable chart={sizeChart} /> : null}
-              {!isSizeChartEmpty(sizeChart) ? <FitAdvisor slug={product.slug} /> : null}
+              {sizeChart.some((row) => row.measurements.bust !== undefined || row.measurements.waist !== undefined || row.measurements.hip !== undefined) ? (
+                <FitAdvisor slug={product.slug} />
+              ) : null}
               {fitSignals.length > 0 ? (
                 <ul className="mt-3 flex flex-col gap-1 font-store text-sm text-ink-700">
                   {fitSignals.map((row) => (

@@ -6,6 +6,8 @@ export interface StoredStyle {
   token: string;
   paletteName: string;
   savedAt: string;
+  /** A credencial das medidas do corpo — só o navegador que gravou a tem. */
+  bodyToken?: string;
 }
 
 export function readStoredStyle(): StoredStyle | null {
@@ -14,7 +16,12 @@ export function readStoredStyle(): StoredStyle | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredStyle>;
     if (typeof parsed.token !== "string" || typeof parsed.paletteName !== "string") return null;
-    return { token: parsed.token, paletteName: parsed.paletteName, savedAt: String(parsed.savedAt ?? "") };
+    return {
+      token: parsed.token,
+      paletteName: parsed.paletteName,
+      savedAt: String(parsed.savedAt ?? ""),
+      ...(typeof parsed.bodyToken === "string" ? { bodyToken: parsed.bodyToken } : {}),
+    };
   } catch {
     return null;
   }

@@ -30,6 +30,8 @@ export const customerProfiles = pgTable(
     /** Medidas do corpo (busto/cintura/quadril em cm) — coluna própria, fora do perfil de estilo; nunca no histórico da Lia. */
     bodyMeasurements: jsonb("body_measurements"),
     bodyMeasuredAt: timestamp("body_measured_at", { withTimezone: true }),
+    /** Credencial própria das medidas: sai UMA vez para o navegador que gravou (o token da cartela não prova posse). */
+    bodyToken: uuid("body_token"),
     forgottenAt: timestamp("forgotten_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

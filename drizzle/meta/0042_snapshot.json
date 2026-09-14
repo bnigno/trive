@@ -1,5 +1,5 @@
 {
-  "id": "ed5d527b-c80f-4e87-959f-862d7a0741aa",
+  "id": "85d5c6e5-7968-47be-b311-6e3a0fb60ff8",
   "prevId": "c91b736c-0b35-4f5c-b8bb-a54d5d112892",
   "version": "7",
   "dialect": "postgresql",
@@ -4284,6 +4284,12 @@
         "body_measured_at": {
           "name": "body_measured_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "body_token": {
+          "name": "body_token",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },

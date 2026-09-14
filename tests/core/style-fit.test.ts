@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SizeChartRow } from "@/core/catalog/measurements";
-import { adviseSize, bodyMeasurementsSchema, easeOf, renderSizeAdvice } from "@/core/style/fit";
+import { adviseSize, bodyMeasurementsSchema, chartIsHalfWidth, easeOf, renderSizeAdvice } from "@/core/style/fit";
 
 // Longo Dunas: P/M/G com busto, cintura e quadril; o G só tem comprimento.
 const CHART: SizeChartRow[] = [
@@ -17,9 +17,10 @@ describe("easeOf", () => {
     expect(easeOf(94, 88)).toEqual({ ease: "certo", cm: 6 });
     expect(easeOf(100, 88)).toEqual({ ease: "fluido", cm: 12 });
     expect(easeOf(110, 88)).toEqual({ ease: "folgado", cm: 22 });
-    // Tabela "a meio" (largura da peça deitada): 47 contra um busto de 88 é 94 de circunferência.
-    expect(easeOf(47, 88)).toEqual({ ease: "certo", cm: 6 });
-    expect(easeOf(44, 88)).toEqual({ ease: "marca", cm: 0 });
+    // easeOf compara circunferências; quem decide "a meio" é a tabela inteira.
+    expect(chartIsHalfWidth([{ size: "P", measurements: { bust: 47, waist: 36, hip: 50 } }])).toBe(true);
+    expect(chartIsHalfWidth(CHART)).toBe(false);
+    expect(chartIsHalfWidth([{ size: "Único", measurements: { length: 110 } }])).toBe(false);
   });
 });
 
@@ -48,6 +49,38 @@ describe("adviseSize", () => {
     // Corpo maior que tudo: nada serve → sem recomendação.
     const big = adviseSize({ bustCm: 120, waistCm: 100, hipsCm: 120 }, CHART, null);
     expect(big).toMatchObject({ kind: "advice", recommended: null });
+  });
+
+  it("a convenção é da tabela inteira: 'a meio' dobra todas as linhas; corpo plus contra circunferência aperta de verdade", () => {
+    const half: SizeChartRow[] = [
+      { size: "P", measurements: { bust: 50, waist: 45, hip: 55 } },
+      { size: "M", measurements: { bust: 53, waist: 48, hip: 58 } },
+      { size: "G", measurements: { bust: 56, waist: 51, hip: 61 } },
+    ];
+    const fluid = adviseSize({ bustCm: 84, waistCm: 66, hipsCm: 92 }, half, "fluido");
+    expect(fluid).toMatchObject({ kind: "advice", recommended: "P" });
+    if (fluid.kind !== "advice") return;
+    // +16/+24/+18: a cintura puxa para "folgado" — mas nada aperta (antes, a heurística por ponto dizia "aperta").
+    expect(fluid.verdicts[0]).toMatchObject({ size: "P", overall: "folgado" });
+    expect(fluid.verdicts[0].points.map((point) => point.cm)).toEqual([16, 24, 18]);
+    // Tabela em circunferência com corpo maior que tudo: aperta, sem inventar folga.
+    const plus = adviseSize({ waistCm: 110 }, CHART, null);
+    expect(plus).toMatchObject({ kind: "advice", recommended: null });
+    if (plus.kind !== "advice") return;
+    expect(plus.verdicts.every((verdict) => verdict.overall === "aperta")).toBe(true);
+  });
+
+  it("empate marca/fluido pende para o desconforto; entre iguais, o mais confortável", () => {
+    const chart: SizeChartRow[] = [
+      { size: "P", measurements: { bust: 100, waist: 74, hip: 98 } },
+      { size: "M", measurements: { bust: 104, waist: 80, hip: 104 } },
+    ];
+    const advice = adviseSize({ bustCm: 88, waistCm: 72, hipsCm: 96 }, chart, "fluido");
+    expect(advice).toMatchObject({ kind: "advice", recommended: "M" });
+    if (advice.kind !== "advice") return;
+    expect(advice.verdicts[0]).toMatchObject({ size: "P", overall: "marca" });
+    expect(advice.verdicts[1]).toMatchObject({ size: "M", overall: "fluido" });
+    expect(renderSizeAdvice(advice)).toContain("o P marca na cintura e no quadril");
   });
 
   it("a frase é determinística e em português", () => {

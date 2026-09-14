@@ -236,7 +236,11 @@ recomendação segue o caimento da cartela (justo/fluido/tanto faz). Peça só
 com comprimento na tabela não compara. "Apagar minhas medidas" apaga só as
 medidas; "esquecer a cartela" apaga tudo. Os números NUNCA entram no
 histórico da Lia, no painel ou na trilha — só o fato de existirem ("medidas
-guardadas"). Produção: migração 0042; sem setting.
+guardadas"). Tabela "a meio" (largura da peça deitada, ex.: busto 47) é
+dobrada antes de comparar — a convenção é da tabela inteira. As medidas têm
+credencial própria: só o aparelho que gravou (e a vendedora, pelo WhatsApp)
+lê, troca ou apaga; o token da cartela sozinho não basta. Produção:
+migração 0042; sem setting.
 
 ## Entrega por motoboy: rota do dia e "Saiu"
 

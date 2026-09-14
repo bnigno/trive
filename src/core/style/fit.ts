@@ -44,16 +44,20 @@ export const EASE_LABELS: Record<Ease, string> = {
 
 /**
  * "Peça deitada" ora é a circunferência (busto 92), ora a largura de lado a
- * lado (busto 46). Abaixo de 65% do corpo só pode ser a largura: dobra.
+ * lado (busto 46). A convenção é da TABELA inteira, nunca de um ponto: se a
+ * maior medida de busto/cintura/quadril da tabela fica abaixo de 65 cm, ela
+ * está a meio e todas as linhas são dobradas. Nenhuma circunferência de
+ * roupa adulta é menor que isso; nenhuma largura a meio é maior.
  */
-export const HALF_WIDTH_RATIO = 0.65;
+export const HALF_WIDTH_MAX_CM = 65;
 
-export function garmentCircumference(garmentCm: number, bodyCm: number): { cm: number; halfWidth: boolean } {
-  return garmentCm < bodyCm * HALF_WIDTH_RATIO ? { cm: garmentCm * 2, halfWidth: true } : { cm: garmentCm, halfWidth: false };
+export function chartIsHalfWidth(chart: readonly SizeChartRow[]): boolean {
+  const values = chart.flatMap((row) => [row.measurements.bust, row.measurements.waist, row.measurements.hip]).filter((value): value is number => value !== undefined);
+  return values.length > 0 && Math.max(...values) < HALF_WIDTH_MAX_CM;
 }
 
 export function easeOf(garmentCm: number, bodyCm: number): { ease: Ease; cm: number } {
-  const cm = Math.round(garmentCircumference(garmentCm, bodyCm).cm - bodyCm);
+  const cm = Math.round(garmentCm - bodyCm);
   if (cm < 0) return { ease: "aperta", cm };
   if (cm < 4) return { ease: "marca", cm };
   if (cm <= 10) return { ease: "certo", cm };
@@ -78,9 +82,21 @@ export type SizeAdvice =
 const EASE_RANK: Record<Ease, number> = { aperta: 0, marca: 1, certo: 2, fluido: 3, folgado: 4 };
 
 function worst(points: readonly { ease: Ease }[]): Ease {
-  // "aperta" manda; depois o mais longe de "certo".
+  // "aperta" manda; depois o mais longe de "certo"; no empate, o lado do
+  // desconforto (marca antes de fluido) — quem lê "fluido" não espera marcar.
   if (points.some((point) => point.ease === "aperta")) return "aperta";
-  return points.reduce<Ease>((acc, point) => (Math.abs(EASE_RANK[point.ease] - 2) > Math.abs(EASE_RANK[acc] - 2) ? point.ease : acc), "certo");
+  return points.reduce<Ease>((acc, point) => {
+    const distance = Math.abs(EASE_RANK[point.ease] - 2);
+    const current = Math.abs(EASE_RANK[acc] - 2);
+    if (distance > current) return point.ease;
+    if (distance === current && EASE_RANK[point.ease] < EASE_RANK[acc]) return point.ease;
+    return acc;
+  }, "certo");
+}
+
+/** Quantos pontos "certo" — desempate entre tamanhos com o mesmo veredito. */
+function comfort(verdict: SizeVerdict): number {
+  return verdict.points.filter((point) => point.ease === "certo").length;
 }
 
 /** O que cada caimento preferido considera ideal, em ordem de preferência. */
@@ -93,6 +109,7 @@ const PREFERRED: Record<Fit, Ease[]> = {
 export function adviseSize(body: BodyMeasurements | null, chart: readonly SizeChartRow[], fit: Fit | null): SizeAdvice {
   if (!body || BODY_KEYS.every((key) => body[key] === undefined)) return { kind: "no_body" };
   if (chart.length === 0) return { kind: "no_chart" };
+  const factor = chartIsHalfWidth(chart) ? 2 : 1;
   const verdicts: SizeVerdict[] = [];
   for (const row of chart) {
     const points: SizeVerdict["points"] = [];
@@ -100,7 +117,7 @@ export function adviseSize(body: BodyMeasurements | null, chart: readonly SizeCh
       const bodyValue = body[key];
       const garment = row.measurements[CHART_KEY[key]];
       if (bodyValue === undefined || garment === undefined) continue;
-      const { ease, cm } = easeOf(garment, bodyValue);
+      const { ease, cm } = easeOf(garment * factor, bodyValue);
       points.push({ key, ease, cm });
     }
     if (points.length === 0) continue;
@@ -110,9 +127,10 @@ export function adviseSize(body: BodyMeasurements | null, chart: readonly SizeCh
   const wanted = PREFERRED[fit ?? "tanto_faz"];
   let recommended: string | null = null;
   for (const ease of wanted) {
-    const hit = verdicts.find((verdict) => verdict.overall === ease);
-    if (hit) {
-      recommended = hit.size;
+    // Entre os tamanhos com o mesmo veredito, o mais confortável (mais pontos "certo").
+    const hits = verdicts.filter((verdict) => verdict.overall === ease);
+    if (hits.length > 0) {
+      recommended = hits.reduce((best, verdict) => (comfort(verdict) > comfort(best) ? verdict : best), hits[0]).size;
       break;
     }
   }
@@ -139,8 +157,8 @@ export function renderSizeAdvice(advice: SizeAdvice): string {
       return `o ${verdict.size} aperta ${tight}`.trim();
     }
     if (verdict.overall === "marca") {
-      const marks = verdict.points.filter((point) => point.ease === "marca").map((point) => BODY_LABELS[point.key]).join(" e ");
-      return `o ${verdict.size} marca ${marks ? `${marks === "busto" || marks === "quadril" ? "o" : "a"} ${marks}` : ""}`.trim();
+      const marks = verdict.points.filter((point) => point.ease === "marca").map((point) => BODY_WHERE[point.key]).join(" e ");
+      return `o ${verdict.size} marca ${marks}`.trim();
     }
     return `no ${verdict.size} ${EASE_LABELS[verdict.overall]} (${detail})`;
   });

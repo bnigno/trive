@@ -2,6 +2,8 @@
 // do que já se sabia, vínculo ao cadastro quando existe, consentimento que
 // nunca rebaixa e "esquecer" que zera tudo. A edição para a cliente vem do
 // core (buildEditionForProfile) sobre os fatos vendáveis do catálogo.
+import { randomUUID } from "node:crypto";
+
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
 
@@ -83,21 +85,34 @@ function profileCondition(ref: ProfileRef) {
   return null;
 }
 
-/** Grava (ou troca) as medidas da cartela. Sem cartela ativa, não há onde guardar. */
+/**
+ * Grava (ou troca) as medidas da cartela. Sem cartela ativa, não há onde
+ * guardar. Pelo SITE, trocar medidas que já existem exige o `bodyToken`
+ * (a credencial que saiu para o navegador que gravou): o token da cartela
+ * sai para quem digita o telefone no quiz e não prova posse. Pelo telefone
+ * (a Lia) e pelo painel a prova de posse é a própria conversa/login.
+ */
 export async function saveBodyMeasurements(
   db: DbOrTx,
-  input: ProfileRef & { body: BodyMeasurements; userId?: string; now?: Date },
-): Promise<{ saved: boolean }> {
+  input: ProfileRef & { body: BodyMeasurements; bodyToken?: string | null; userId?: string; now?: Date },
+): Promise<{ saved: boolean; bodyToken: string | null; reason?: "sem_cartela" | "sem_credencial" }> {
   const condition = profileCondition(input);
-  if (!condition) return { saved: false };
+  if (!condition) return { saved: false, bodyToken: null, reason: "sem_cartela" };
   const body = bodyMeasurementsSchema.parse(input.body);
   const now = input.now ?? new Date();
+  const [current] = await db.select({ id: customerProfiles.id, bodyToken: customerProfiles.bodyToken, hasBody: customerProfiles.bodyMeasurements }).from(customerProfiles).where(condition).limit(1);
+  if (!current) return { saved: false, bodyToken: null, reason: "sem_cartela" };
+  const viaSite = input.siteToken !== undefined && input.phoneE164 === undefined && !input.userId;
+  if (viaSite && current.hasBody !== null && (!input.bodyToken || input.bodyToken !== current.bodyToken)) {
+    return { saved: false, bodyToken: null, reason: "sem_credencial" };
+  }
+  const bodyToken = current.bodyToken ?? randomUUID();
   const updated = await db
     .update(customerProfiles)
-    .set({ bodyMeasurements: body, bodyMeasuredAt: now, updatedAt: now })
-    .where(condition)
+    .set({ bodyMeasurements: body, bodyMeasuredAt: now, bodyToken, updatedAt: now })
+    .where(eq(customerProfiles.id, current.id))
     .returning({ id: customerProfiles.id });
-  if (updated.length === 0) return { saved: false };
+  if (updated.length === 0) return { saved: false, bodyToken: null, reason: "sem_cartela" };
   // A trilha diz QUE mudou, nunca os números.
   await db.insert(auditLog).values({
     actorType: input.userId ? "user" : "customer",
@@ -107,27 +122,34 @@ export async function saveBodyMeasurements(
     entityId: updated[0].id,
     after: { measuredAt: now.toISOString(), keys: BODY_KEYS.filter((key) => body[key] !== undefined) },
   });
-  return { saved: true };
+  return { saved: true, bodyToken };
 }
 
-export async function getBodyMeasurements(db: DbOrTx, ref: ProfileRef): Promise<{ body: BodyMeasurements; measuredAt: Date | null } | null> {
+/**
+ * Lê as medidas. Pelo site exige o `bodyToken` (sem ele, para aquele
+ * navegador é como se não houvesse medidas); pelo telefone/painel, não.
+ */
+export async function getBodyMeasurements(db: DbOrTx, ref: ProfileRef & { bodyToken?: string | null }): Promise<{ body: BodyMeasurements; measuredAt: Date | null } | null> {
   const condition = profileCondition(ref);
   if (!condition) return null;
-  const [row] = await db.select({ body: customerProfiles.bodyMeasurements, measuredAt: customerProfiles.bodyMeasuredAt }).from(customerProfiles).where(condition).limit(1);
+  const [row] = await db.select({ body: customerProfiles.bodyMeasurements, measuredAt: customerProfiles.bodyMeasuredAt, bodyToken: customerProfiles.bodyToken }).from(customerProfiles).where(condition).limit(1);
   const parsed = bodyMeasurementsSchema.safeParse(row?.body ?? {});
   if (!row || !parsed.success) return null;
+  const viaSite = ref.siteToken !== undefined && ref.phoneE164 === undefined;
+  if (viaSite && (!ref.bodyToken || ref.bodyToken !== row.bodyToken)) return null;
   return { body: parsed.data, measuredAt: row.measuredAt };
 }
 
-/** "Apagar minhas medidas": só as medidas; a cartela fica. */
-export async function forgetBodyMeasurements(db: DbOrTx, ref: ProfileRef & { userId?: string }): Promise<{ forgotten: boolean }> {
+/** "Apagar minhas medidas": só as medidas; a cartela fica. Pelo site exige o `bodyToken`. */
+export async function forgetBodyMeasurements(db: DbOrTx, ref: ProfileRef & { bodyToken?: string | null; userId?: string }): Promise<{ forgotten: boolean }> {
   const condition = profileCondition(ref);
   if (!condition) return { forgotten: false };
+  const viaSite = ref.siteToken !== undefined && ref.phoneE164 === undefined && !ref.userId;
   const now = new Date();
   const updated = await db
     .update(customerProfiles)
-    .set({ bodyMeasurements: null, bodyMeasuredAt: null, updatedAt: now })
-    .where(and(condition, isNotNull(customerProfiles.bodyMeasurements)))
+    .set({ bodyMeasurements: null, bodyMeasuredAt: null, bodyToken: null, updatedAt: now })
+    .where(and(condition, isNotNull(customerProfiles.bodyMeasurements), ...(viaSite ? [eq(customerProfiles.bodyToken, ref.bodyToken ?? "00000000-0000-0000-0000-000000000000")] : [])))
     .returning({ id: customerProfiles.id });
   if (updated.length === 0) return { forgotten: false };
   await db.insert(auditLog).values({
@@ -273,7 +295,7 @@ export async function forgetStyleProfile(
   const now = new Date();
   const updated = await db
     .update(customerProfiles)
-    .set({ profile: {}, paletteName: null, bodyMeasurements: null, bodyMeasuredAt: null, forgottenAt: now, updatedAt: now })
+    .set({ profile: {}, paletteName: null, bodyMeasurements: null, bodyMeasuredAt: null, bodyToken: null, forgottenAt: now, updatedAt: now })
     .where(and(condition, isNull(customerProfiles.forgottenAt)))
     .returning({ id: customerProfiles.id, phoneE164: customerProfiles.phoneE164, customerId: customerProfiles.customerId });
   if (updated.length === 0) return { forgotten: false };
