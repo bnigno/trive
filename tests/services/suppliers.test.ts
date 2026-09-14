@@ -2,15 +2,10 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
-import {
-  createSupplier,
-  deactivateSupplier,
-  getSupplierDetail,
-  listSuppliers,
-  updateSupplier,
-} from "@/services/suppliers";
+import { createSupplier, deactivateSupplier, findOrCreateSupplierByName, findSupplierByName, getSupplierDetail, listSuppliers, matchSupplierByName, updateSupplier } from "@/services/suppliers";
 import {
   createTestDb,
+  createTestSupplier,
   createTestVariant,
   FIXED_USER_ID,
   type TestDb,
@@ -264,5 +259,39 @@ describe("listSuppliers / getSupplierDetail", () => {
     await expect(
       getSupplierDetail(db, "00000000-0000-4000-8000-0000000000ff"),
     ).rejects.toThrow("Fornecedor não encontrado.");
+  });
+});
+
+describe("findSupplierByName (Ateliê)", () => {
+  it("acha sem acento e caixa; prefixo único também; ambíguo não chuta", async () => {
+    const aurora = await createTestSupplier(db, { name: "Áurora Confecções" });
+    await createTestSupplier(db, { name: "Aurora Tecidos" });
+    await createTestSupplier(db, { name: "Maria Modas" });
+    expect(await findSupplierByName(db, "aurora confeccoes")).toMatchObject({ id: aurora });
+    expect(await findSupplierByName(db, "Aurora")).toBeNull();
+    expect(await matchSupplierByName(db, "Aurora")).toMatchObject({ status: "ambiguous" });
+    // Ambíguo não cria um terceiro "Aurora".
+    expect(await findOrCreateSupplierByName(db, { name: "Aurora", userId: FIXED_USER_ID })).toEqual({ ambiguous: ["Aurora Tecidos", "Áurora Confecções"] });
+    expect(await db.select().from(schema.suppliers)).toHaveLength(3);
+    expect((await findSupplierByName(db, "maria"))?.name).toBe("Maria Modas");
+    // Cadastro curto dentro de um nome maior não casa ("Ana" ≠ "Ana Paula Ateliê");
+    // cadastro com corpo casa por fronteira de palavra.
+    await createTestSupplier(db, { name: "Ana" });
+    expect(await findSupplierByName(db, "Ana Paula Ateliê")).toBeNull();
+    expect((await findSupplierByName(db, "Maria Modas Ltda"))?.name).toBe("Maria Modas");
+    expect(await findSupplierByName(db, "Maria Modasx")).toBeNull();
+    expect(await findSupplierByName(db, "x")).toBeNull();
+    expect(await findSupplierByName(db, "Zé")).toBeNull();
+  });
+
+  it("findOrCreateSupplierByName cria o fornecedor quando não existe (com audit) e não duplica", async () => {
+    const created = await findOrCreateSupplierByName(db, { name: "  Nova  Aurora ", userId: FIXED_USER_ID });
+    expect(created).toMatchObject({ name: "Nova Aurora", created: true });
+    const again = await findOrCreateSupplierByName(db, { name: "nova aurora", userId: FIXED_USER_ID });
+    expect(again).toMatchObject({ id: created && "id" in created ? created.id : "?", created: false });
+    expect(await findOrCreateSupplierByName(db, { name: "ok", userId: FIXED_USER_ID })).toBeNull();
+    const rows = await db.select().from(schema.suppliers);
+    expect(rows.filter((row) => row.name === "Nova Aurora")).toHaveLength(1);
+    expect(rows.find((row) => row.name === "Nova Aurora")?.notes).toContain("Ateliê");
   });
 });

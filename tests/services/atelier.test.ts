@@ -19,7 +19,7 @@ import {
   openAtelierIntake,
   processAtelierIntake,
 } from "@/services/atelier";
-import { createTestDb, createTestFeeRuleAndPolicy, type TestDb } from "../helpers/db";
+import { createTestDb, createTestFeeRuleAndPolicy, createTestSupplier, type TestDb } from "../helpers/db";
 
 const OWNER = "+5591981037536";
 const NOW = new Date("2026-09-13T18:00:00Z");
@@ -411,10 +411,10 @@ describe("processAtelierIntake", () => {
       ["LONGO-DUNAS-AREI-P", "LONGO-DUNAS-AREI-M", "LONGO-DUNAS-AREI-G", "LONGO-DUNAS-AREI-GG", "LONGO-DUNAS-TERR-P", "LONGO-DUNAS-TERR-M", "LONGO-DUNAS-TERR-G", "LONGO-DUNAS-TERR-GG"].sort(),
     );
     expect(variants.every((variant) => variant.costCents === 12000 && variant.weightGrams === 320)).toBe(true);
-    // Estoque só no próximo passo: nada em mãos ainda.
+    // A chegada já lança o estoque dito ("três de cada") em cada variação.
     const levels = await db.select().from(schema.stockLevels);
-    expect(levels.every((level) => level.onHand === 0)).toBe(true);
-    expect(await db.select().from(schema.stockMovements)).toHaveLength(0);
+    expect(levels.every((level) => level.onHand === 3)).toBe(true);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
 
     const [intake] = await db.select().from(schema.atelierIntakes);
     expect(intake.status).toBe("done");
@@ -520,5 +520,134 @@ describe("processAtelierIntake", () => {
     if (!("created" in result)) throw new Error("esperava created");
     const variants = await db.select().from(schema.productVariants).where(eq(schema.productVariants.productId, result.productId));
     expect(variants.map((variant) => variant.sku).sort()).toEqual(["LONGO-DUNAS-AREI-P-2", "LONGO-DUNAS-TERR-P"]);
+  });
+
+  it("a chegada vira compra: fornecedor criado pelo nome, estoque com custo em cada variação, UMA conta a pagar e o cartão na fila", async () => {
+    await createTestFeeRuleAndPolicy(db);
+    assistant.enqueueExtraction(ARRIVAL_JSON);
+    const { conversationId, noteId } = await seedArrival("chegou o Longo Dunas da Aurora, areia e terra, do P ao GG, três de cada, custou 120");
+    const result = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in result)) throw new Error("esperava created");
+
+    const suppliersRows = await db.select().from(schema.suppliers);
+    expect(suppliersRows.map((row) => row.name)).toEqual(["Aurora"]);
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, result.productId));
+    expect(product.supplierId).toBe(suppliersRows[0].id);
+
+    const levels = await db.select().from(schema.stockLevels);
+    expect(levels).toHaveLength(8);
+    expect(levels.every((level) => level.onHand === 3)).toBe(true);
+    const movements = await db.select().from(schema.stockMovements);
+    expect(movements).toHaveLength(8);
+    expect(movements.every((movement) => movement.type === "purchase_in" && movement.unitCostCents === 12000 && movement.referenceId === suppliersRows[0].id)).toBe(true);
+    const entries = await db.select().from(schema.financialEntries);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ direction: "payable", category: "supplier", amountCents: 288000, status: "pending", supplierId: suppliersRows[0].id });
+    expect(entries[0].description).toBe("Compra: 24 peças de Longo Dunas — Aurora (Ateliê pelo WhatsApp)");
+
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake).toMatchObject({ status: "done", supplierId: suppliersRows[0].id, financialEntryId: entries[0].id });
+    expect(provider.sentMessages[0].body).toContain(`· a pagar ${formatCentsBRL(288000)}`);
+    const events = await db.select().from(schema.outboxEvents);
+    expect(events.map((event) => event.eventType)).toContain("wa.atelier_card");
+    expect(events.find((event) => event.eventType === "wa.atelier_card")?.payload).toEqual({ intakeId: intake.id });
+
+    const detail = await getAtelierIntakeForProduct(sdb, result.productId);
+    expect(detail?.supplier).toEqual({ id: suppliersRows[0].id, name: "Aurora" });
+    expect(detail?.payable).toMatchObject({ id: entries[0].id, amountCents: 288000, status: "pending" });
+
+    // Retomada (aviso caiu): nada dobra — nem movimento, nem conta, nem fornecedor.
+    await db.update(schema.atelierIntakes).set({ status: "failed" }).where(eq(schema.atelierIntakes.id, intake.id));
+    const again = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true });
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(1);
+    expect(await db.select().from(schema.suppliers)).toHaveLength(1);
+    const [after] = await db.select().from(schema.atelierIntakes);
+    expect(after.financialEntryId).toBe(entries[0].id);
+  });
+
+  it("custo total dito manda na conta a pagar; sem base de custo, o estoque entra sem custo e sem conta", async () => {
+    assistant.enqueueExtraction({ ...ARRIVAL_JSON, colors: ["Preto"], sizes: ["P", "M", "G"], sizeRange: null, quantityPerVariant: 2, costCents: 100000, costBasis: "total", categorySlug: null });
+    const { conversationId, noteId } = await seedArrival("saia preta P M G, duas de cada, mil reais o lote, da Aurora");
+    const first = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in first)) throw new Error("esperava created");
+    const [entry] = await db.select().from(schema.financialEntries);
+    // 6 peças a R$ 166,67 daria R$ 1.000,02: vale o total dito.
+    expect(entry.amountCents).toBe(100000);
+    expect((await db.select().from(schema.stockMovements)).every((movement) => movement.unitCostCents === 16667)).toBe(true);
+
+    provider.reset();
+    assistant.enqueueExtraction({ ...ARRIVAL_JSON, colors: ["Azul"], sizes: ["M"], sizeRange: null, quantityPerVariant: 4, costCents: 120000, costBasis: "unknown", supplierName: null, categorySlug: null, name: "Blusa Azul" });
+    // Mesma conversa da dona (uma aberta por telefone): as fotos de antes já têm dona.
+    const conversation2 = conversationId;
+    const noteId2 = await seedInbound(conversation2, { kind: "text", body: "blusa azul M, quatro, 1200", at: new Date(NOW.getTime() + 3_600_000), zapiId: "MSG-NOTE-B" });
+    provider.setMediaFixture("https://cdn.z-api/foto-b.jpg", await jpeg("#3355aa"), "image/jpeg");
+    await seedInbound(conversation2, { kind: "image", body: INBOUND_MEDIA_MARKERS.image, mediaUrl: "https://cdn.z-api/foto-b.jpg", at: new Date(NOW.getTime() + 3_600_000 - 30_000), zapiId: "MSG-FOTO-B" });
+    await openAtelierIntake(sdb, { conversationId: conversation2, phoneE164: OWNER, triggerWaMessageId: noteId2, zapiMessageId: "MSG-NOTE-B", kind: "text", body: "blusa azul M, quatro, 1200", now: new Date(NOW.getTime() + 3_600_000) });
+    const second = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId: conversation2, triggerWaMessageId: noteId2 }, { now: () => new Date(NOW.getTime() + 3_660_000) });
+    if (!("created" in second)) throw new Error("esperava created");
+    const blusaMoves = (await db.select().from(schema.stockMovements)).filter((movement) => movement.idempotencyKey?.includes(second.intakeId));
+    expect(blusaMoves).toHaveLength(1);
+    expect(blusaMoves[0]).toMatchObject({ quantityDelta: 4, unitCostCents: null, referenceId: null });
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(1);
+    expect(provider.sentMessages[0].body).toContain("(por peça ou o lote? confira)");
+    expect(provider.sentMessages[0].body).not.toContain("a pagar");
+  });
+
+  it("sem quantidade no recado: o fornecedor é ligado, mas o estoque fica para o painel", async () => {
+    assistant.enqueueExtraction({ ...ARRIVAL_JSON, quantityPerVariant: null, totalQuantity: null, costCents: null, costBasis: "unknown" });
+    const { conversationId, noteId } = await seedArrival("chegou o Longo Dunas da Aurora, areia e terra, do P ao GG");
+    const result = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in result)) throw new Error("esperava created");
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(0);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.supplierId).not.toBeNull();
+    const [audit] = (await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "atelier.intake"))).slice(-1);
+    expect(audit.after).toMatchObject({ purchase: { skipped: "sem_quantidade", movements: 0 } });
+    expect((intake.parsed as { purchase: { skipped: string } }).purchase.skipped).toBe("sem_quantidade");
+  });
+
+  it("fornecedor ambíguo: o estoque entra, o fornecedor e a conta ficam para a ficha, e a mensagem não mente", async () => {
+    await db.insert(schema.suppliers).values([{ name: "Aurora Confecções" }, { name: "Aurora Tecidos" }]);
+    assistant.enqueueExtraction(ARRIVAL_JSON);
+    const { conversationId, noteId } = await seedArrival();
+    const result = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in result)) throw new Error("esperava created");
+    expect(await db.select().from(schema.suppliers)).toHaveLength(2);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.supplierId).toBeNull();
+    expect(intake.errorDetail).toContain("estoque lançado (24 peças); fornecedor não ligado e conta a pagar não criada");
+    expect(intake.errorDetail).toContain("Aurora Confecções ou Aurora Tecidos");
+    expect(intake.errorDetail).not.toContain("compra não lançada");
+    expect(provider.sentMessages[0].body).not.toContain("a pagar");
+  });
+
+  it("retomada com fornecedor ligado depois de o estoque já ter entrado sem conta: a conta nasce com o nome do fornecedor", async () => {
+    await createTestFeeRuleAndPolicy(db);
+    // 1.ª passada sem fornecedor no recado: estoque entra, nenhuma conta.
+    assistant.enqueueExtraction({ ...ARRIVAL_JSON, supplierName: null });
+    const { conversationId, noteId } = await seedArrival();
+    const first = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId }, clock);
+    if (!("created" in first)) throw new Error("esperava created");
+    expect(await db.select().from(schema.financialEntries)).toHaveLength(0);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    // A dona liga o fornecedor à chegada (ou a 1.ª passada o achou mas caiu antes da conta) e a fila retoma.
+    const supplierId = await createTestSupplier(db, { name: "Aurora" });
+    await db.update(schema.atelierIntakes).set({ status: "failed", supplierId }).where(eq(schema.atelierIntakes.triggerWaMessageId, noteId));
+    const again = await processAtelierIntake(sdb, provider, storage, assistant, { conversationId, triggerWaMessageId: noteId, attempt: 1 }, clock);
+    expect(again).toMatchObject({ created: true });
+    const entries = await db.select().from(schema.financialEntries);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].description).toContain("— Aurora");
+    expect(entries[0].amountCents).toBe(288000);
+    expect(entries[0].supplierId).toBe(supplierId);
+    expect(await db.select().from(schema.stockMovements)).toHaveLength(8);
+    const [intake] = await db.select().from(schema.atelierIntakes);
+    expect(intake.financialEntryId).toBe(entries[0].id);
+    expect(assistant.extractions).toHaveLength(1);
   });
 });

@@ -352,6 +352,16 @@ export const atelierParsedSchema = z
     ms: z.number(),
     /** Por que a grade não saiu (a ficha nasceu simples, como no C-A). */
     failed: z.string().nullable(),
+    /** O que a compra fez (C-C): peças lançadas, o motivo de não lançar, o que falhou. */
+    purchase: z
+      .object({
+        movements: z.number(),
+        totalQuantity: z.number().nullable(),
+        skipped: z.string().nullable(),
+        supplierError: z.string().nullable(),
+        purchaseError: z.string().nullable(),
+      })
+      .optional(),
   })
   .loose();
 

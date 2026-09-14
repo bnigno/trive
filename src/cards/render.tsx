@@ -175,6 +175,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
   const { width, height } = cardDimensions(data.kind);
   const isPost = data.kind === "post" || data.kind === "story";
   const isDropStory = data.kind === "drop_story";
+  const isAtelier = data.kind === "atelier";
   return (
     <div
       style={{
@@ -259,6 +260,38 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
             </div>
           </div>
         </div>
+      ) : data.kind === "atelier" ? (
+        // O cartão do ateliê: a peça recém-chegada e o resumo em três linhas.
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 28, width }}>
+          <Frame
+            item={data.hero}
+            width={cardFrameSize("atelier", "hero", 1).width}
+            height={cardFrameSize("atelier", "hero", 1).height}
+            nameSize={34}
+            priceSize={30}
+            showName={false}
+          />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "0 80px" }}>
+            {data.lines.map((line, index) => (
+              <div
+                key={index}
+                style={{
+                  display: "flex",
+                  fontFamily: index === 0 ? SERIF : SANS,
+                  fontStyle: index === 0 ? "italic" : "normal",
+                  fontWeight: index === 0 ? 500 : 400,
+                  fontSize: index === 0 ? 40 : 28,
+                  letterSpacing: index === 0 ? 0 : 1.5,
+                  lineHeight: 1.2,
+                  color: index === 0 ? C.ink700 : C.gold800,
+                  textAlign: "center",
+                }}
+              >
+                {normalizeReceiptText(line)}
+              </div>
+            ))}
+          </div>
+        </div>
       ) : data.kind === "post" || data.kind === "story" ? (
         <Frame
           item={data.hero}
@@ -326,7 +359,7 @@ function Card({ data, lockup }: { data: CardData; lockup: string }) {
       </div>
       <Footer
         storeName={data.storeName}
-        line={isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
+        line={isAtelier ? "Revise a ficha no painel." : isDropStory ? "O link está na bio." : isPost ? "A peça inteira está no link da bio." : WA_FOOTER_LINE}
       />
     </div>
   );

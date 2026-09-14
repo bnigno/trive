@@ -44,6 +44,7 @@ import {
   type AtelierHelpReason,
 } from "@/core/atelier/reply";
 import { formatCareNotes } from "@/core/catalog/care";
+import { formatCentsBRL } from "@/lib/money";
 import { buildSku, dedupeSkus, skuBaseFromName } from "@/core/catalog/sku";
 import type { SelectedVariant } from "@/core/catalog/variant-grid";
 import { getRetryPolicy } from "@/core/queue/retry-policy";
@@ -52,13 +53,17 @@ import {
   atelierIntakes,
   auditLog,
   categories,
+  financialEntries,
   productVariants,
   settings,
+  suppliers,
   users,
   waConversations,
   waMessages,
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { enqueueAtelierCard } from "@/services/atelier-card";
+import { receiveArrivalPurchase, type ArrivalPurchaseResult } from "@/services/atelier-purchase";
 import { addProductImage, createProduct, type ServiceDb } from "@/services/catalog";
 import { suggestPriceForCost, type PricingDb } from "@/services/pricing";
 import { getSettingsMap } from "@/services/settings";
@@ -599,7 +604,7 @@ export async function processAtelierIntake(
     interpreted = await interpretArrival(db, assistant, { note, images: available.map((item) => item.data), now, deadlineAt });
     await markIntake(db, intake.id, { parsed: interpreted }, now());
   }
-  const proposal = interpreted.proposal;
+  let proposal = interpreted.proposal;
   const name = proposal?.name || draftNameFromNote(note, startedAt);
   try {
     let productId: string;
@@ -651,6 +656,8 @@ export async function processAtelierIntake(
         console.warn("[atelier] a ficha recusou a proposta; peça simples:", error instanceof Error ? error.message : error);
         stored.failed = "ficha_recusou";
         stored.proposal = null;
+        // Sem a grade não há compra pela grade: a proposta some daqui em diante.
+        proposal = null;
         productId = await create({
           name,
           description: simpleDescription,
@@ -678,12 +685,32 @@ export async function processAtelierIntake(
     }
     const photosOnProduct = uploaded.size;
 
+    // A chegada vira compra (fornecedor do recado, estoque com custo em cada
+    // variação, UMA conta a pagar) — idempotente por chegada; o que falhar
+    // aqui fica anotado e não derruba o rascunho.
+    const purchase: ArrivalPurchaseResult = await receiveArrivalPurchase(db, {
+      intakeId: intake.id,
+      productId,
+      productName: name,
+      proposal,
+      existing: { supplierId: intake.supplierId, financialEntryId: intake.financialEntryId },
+      userId,
+      now,
+    });
+
     // O aviso sai ANTES do "done": se o provedor falhar, a chegada continua
     // por fechar e a retomada só reenvia (dedupe por chegada); "done" e o
     // audit entram uma vez só. WhatsApp desligado não é erro — fica anotado.
     const detailsLine =
       arrivalDetailsLine(proposal, interpreted.suggestedPriceCents) +
-      (interpreted.failed ? " · sem a grade (a inteligência não respondeu)" : "");
+      (purchase.payableCents !== null ? ` · a pagar ${formatCentsBRL(purchase.payableCents)}` : "") +
+      (purchase.purchaseError ? " · compra NÃO lançada (veja a ficha)" : "") +
+      (purchase.supplierError ? " · fornecedor por escolher na ficha" : "") +
+      (interpreted.failed === "ficha_recusou"
+        ? " · a ficha recusou a grade: peça simples (complete no painel)"
+        : interpreted.failed
+          ? " · sem a grade (a inteligência não respondeu)"
+          : "");
     const notice = await sendToOwner(db, provider, {
       templateKey: ATELIER_DRAFT_TEMPLATE,
       vars: atelierDraftVars({ name, photos: photosOnProduct, link: `${siteBaseUrl()}/admin/produtos/${productId}`, details: detailsLine }),
@@ -692,42 +719,73 @@ export async function processAtelierIntake(
     const details = [
       failedPhotos > 0 ? `${failedPhotos} foto(s) ficaram de fora` : null,
       "skipped" in notice ? `aviso não enviado: ${notice.skipped}` : null,
+      purchase.supplierError
+        ? `${purchase.movements > 0 ? `estoque lançado (${purchase.totalQuantity ?? purchase.movements} peças); ` : ""}fornecedor não ligado e conta a pagar não criada — ${purchase.supplierError}`
+        : null,
+      purchase.purchaseError ? `compra não lançada — ${purchase.purchaseError}` : null,
     ].filter((line): line is string => line !== null);
+    // O que a compra fez fica com a leitura, para a ficha contar a história certa.
+    const parsedWithPurchase: AtelierParsed = {
+      ...interpreted,
+      purchase: {
+        movements: purchase.movements,
+        totalQuantity: purchase.totalQuantity,
+        skipped: purchase.skipped,
+        supplierError: purchase.supplierError,
+        purchaseError: purchase.purchaseError,
+      },
+    };
 
-    await markIntake(
-      db,
-      intake.id,
-      {
-        status: "done",
-        productId,
-        photosCount: photosOnProduct,
-        errorDetail: details.length > 0 ? details.join("; ") : null,
-        processedAt: now(),
-      },
-      now(),
-    );
-    await db.insert(auditLog).values({
-      actorType: "system",
-      actorId: null,
-      action: "atelier.intake",
-      entityType: "atelier_intake",
-      entityId: intake.id,
-      after: {
-        productId,
-        name,
-        noteKind,
-        noteChars: note.length,
-        photos: photosOnProduct,
-        failedPhotos,
-        notice: "skipped" in notice ? notice.skipped : "sent",
-        interpreted: proposal !== null,
-        interpretationFailed: interpreted.failed,
-        model: interpreted.model,
-        usage: interpreted.usage,
-        estimatedCostUsdCents: interpreted.estimatedCostUsdCents,
-        variants: variantsCount(proposal),
-        ms: now().getTime() - startedAt.getTime(),
-      },
+    // "done", o audit e o cartão (fila) na MESMA transação.
+    await db.transaction(async (tx) => {
+      await markIntake(
+        tx,
+        intake.id,
+        {
+          status: "done",
+          productId,
+          photosCount: photosOnProduct,
+          errorDetail: details.length > 0 ? details.join("; ") : null,
+          parsed: parsedWithPurchase,
+          processedAt: now(),
+        },
+        now(),
+      );
+      await tx.insert(auditLog).values({
+        actorType: "system",
+        actorId: null,
+        action: "atelier.intake",
+        entityType: "atelier_intake",
+        entityId: intake.id,
+        after: {
+          productId,
+          name,
+          noteKind,
+          noteChars: note.length,
+          photos: photosOnProduct,
+          failedPhotos,
+          notice: "skipped" in notice ? notice.skipped : "sent",
+          interpreted: proposal !== null,
+          interpretationFailed: interpreted.failed,
+          model: interpreted.model,
+          usage: interpreted.usage,
+          estimatedCostUsdCents: interpreted.estimatedCostUsdCents,
+          variants: variantsCount(proposal),
+          purchase: {
+            supplierId: purchase.supplierId,
+            supplierCreated: purchase.supplierCreated,
+            financialEntryId: purchase.financialEntryId,
+            payableCents: purchase.payableCents,
+            totalQuantity: purchase.totalQuantity,
+            movements: purchase.movements,
+            skipped: purchase.skipped,
+            supplierError: purchase.supplierError,
+            purchaseError: purchase.purchaseError,
+          },
+          ms: now().getTime() - startedAt.getTime(),
+        },
+      });
+      if (photosOnProduct > 0) await enqueueAtelierCard(tx, intake.id);
     });
 
     return { created: true, intakeId: intake.id, productId, name, photos: photosOnProduct, failedPhotos, interpreted: proposal !== null };
@@ -759,7 +817,17 @@ function variantsCount(proposal: AtelierParsed["proposal"]): number {
 export async function getAtelierIntakeForProduct(
   db: DbOrTx,
   productId: string,
-): Promise<{ id: string; note: string; photosCount: number; createdAt: Date; parsed: AtelierParsed | null; errorDetail: string | null } | null> {
+): Promise<{
+  id: string;
+  note: string;
+  photosCount: number;
+  createdAt: Date;
+  parsed: AtelierParsed | null;
+  errorDetail: string | null;
+  supplier: { id: string; name: string } | null;
+  payable: { id: string; amountCents: number; status: string } | null;
+  cardPath: string | null;
+} | null> {
   const [row] = await db
     .select({
       id: atelierIntakes.id,
@@ -768,10 +836,29 @@ export async function getAtelierIntakeForProduct(
       createdAt: atelierIntakes.createdAt,
       parsed: atelierIntakes.parsed,
       errorDetail: atelierIntakes.errorDetail,
+      cardPath: atelierIntakes.cardPath,
+      supplierId: suppliers.id,
+      supplierName: suppliers.name,
+      payableId: financialEntries.id,
+      payableCents: financialEntries.amountCents,
+      payableStatus: financialEntries.status,
     })
     .from(atelierIntakes)
+    .leftJoin(suppliers, eq(suppliers.id, atelierIntakes.supplierId))
+    .leftJoin(financialEntries, eq(financialEntries.id, atelierIntakes.financialEntryId))
     .where(eq(atelierIntakes.productId, productId))
     .orderBy(desc(atelierIntakes.createdAt))
     .limit(1);
-  return row ? { ...row, parsed: parseAtelierParsed(row.parsed) } : null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    note: row.note,
+    photosCount: row.photosCount,
+    createdAt: row.createdAt,
+    parsed: parseAtelierParsed(row.parsed),
+    errorDetail: row.errorDetail,
+    supplier: row.supplierId && row.supplierName ? { id: row.supplierId, name: row.supplierName } : null,
+    payable: row.payableId && row.payableCents !== null && row.payableStatus ? { id: row.payableId, amountCents: row.payableCents, status: row.payableStatus } : null,
+    cardPath: row.cardPath,
+  };
 }

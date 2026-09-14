@@ -393,3 +393,72 @@ export async function getSupplierDetail(db: ServiceDb, supplierId: string) {
 
   return { ...supplier, products: linkedProducts, recentPurchases, payables };
 }
+
+// ---------------------------------------------------------------------------
+// Ateliê pelo WhatsApp: fornecedor pelo nome dito no recado
+// ---------------------------------------------------------------------------
+
+function normalizeName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type SupplierNameMatch =
+  | { status: "found"; supplier: { id: string; name: string } }
+  | { status: "ambiguous"; candidates: { id: string; name: string }[] }
+  | { status: "none" };
+
+/**
+ * "da Aurora" → o fornecedor Aurora: igual sem acento/caixa primeiro; senão
+ * um único que comece (ou seja começo) do nome dito. Dois candidatos
+ * ("Aurora Confecções" e "Aurora Tecidos" para "Aurora") = ambíguo: não
+ * chuta nem cria um terceiro.
+ */
+export async function matchSupplierByName(db: ServiceDb, name: string): Promise<SupplierNameMatch> {
+  const target = normalizeName(name);
+  if (target.length < 2) return { status: "none" };
+  const rows = await db
+    .select({ id: suppliers.id, name: suppliers.name })
+    .from(suppliers)
+    .where(isNull(suppliers.deletedAt))
+    .orderBy(suppliers.name);
+  const exact = rows.find((row) => normalizeName(row.name) === target);
+  if (exact) return { status: "found", supplier: exact };
+  // O recado abrevia o cadastro ("Aurora" → "Aurora Confecções"). O inverso
+  // (cadastro curto dentro de um nome maior) só com fronteira de palavra e
+  // cadastro com corpo — "Ana" nunca vira "Ana Paula Ateliê".
+  const partial = rows.filter((row) => {
+    const candidate = normalizeName(row.name);
+    return candidate.startsWith(target) || (candidate.length >= 6 && target.startsWith(`${candidate} `));
+  });
+  if (partial.length === 1) return { status: "found", supplier: partial[0] };
+  if (partial.length > 1) return { status: "ambiguous", candidates: partial };
+  return { status: "none" };
+}
+
+export async function findSupplierByName(db: ServiceDb, name: string): Promise<{ id: string; name: string } | null> {
+  const match = await matchSupplierByName(db, name);
+  return match.status === "found" ? match.supplier : null;
+}
+
+/**
+ * O fornecedor do recado: o achado; ou criado na hora quando não existe
+ * (nome com 3+ letras). Nome ambíguo NÃO cria: devolve os candidatos para
+ * a dona escolher na ficha.
+ */
+export async function findOrCreateSupplierByName(
+  db: ServiceDb,
+  input: { name: string; userId: string },
+): Promise<{ id: string; name: string; created: boolean } | { ambiguous: string[] } | null> {
+  const match = await matchSupplierByName(db, input.name);
+  if (match.status === "found") return { ...match.supplier, created: false };
+  if (match.status === "ambiguous") return { ambiguous: match.candidates.map((candidate) => candidate.name) };
+  const name = input.name.trim().replace(/\s+/g, " ").slice(0, 120);
+  if (name.replace(/[^\p{L}]/gu, "").length < 3) return null;
+  const supplier = await createSupplier(db, { name, notes: "Criado pelo Ateliê pelo WhatsApp.", userId: input.userId });
+  return { id: supplier.id, name: supplier.name, created: true };
+}

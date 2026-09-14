@@ -246,6 +246,13 @@
       "when": 1789342829135,
       "tag": "0034_even_exiles",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1789345460470,
+      "tag": "0035_far_shen",
+      "breakpoints": true
     }
   ]
 }

@@ -378,6 +378,156 @@ export async function receivePurchase(
 }
 
 // ---------------------------------------------------------------------------
+// 1c. receivePurchaseBatch — UMA compra com várias variações (Ateliê)
+// ---------------------------------------------------------------------------
+
+const receivePurchaseBatchSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        variantId: z.uuid(),
+        quantity: z.number().int().positive(),
+        unitCostCents: z.number().int().positive().nullable(),
+      }),
+    )
+    .min(1),
+  /** Sem fornecedor: só o estoque entra (não há a quem pagar). */
+  supplierId: z.uuid().nullable(),
+  description: z.string().trim().min(1).max(500),
+  /** Chave de idempotência por linha = prefixo + variação: rodar de novo não dobra. */
+  idempotencyPrefix: z.string().trim().min(1),
+  note: z.string().min(1).optional(),
+  dueDate: z.iso.date().optional(),
+  /** O total pago quando é ele que se sabe (vale mais que peça × custo arredondado). */
+  amountCents: z.number().int().positive().optional(),
+  /** Quem chama sabe que ainda não há conta desta compra: cria mesmo que as linhas já tenham entrado (retomada). */
+  payableMissing: z.boolean().optional(),
+  userId: z.uuid(),
+});
+
+export type ReceivePurchaseBatchInput = z.input<typeof receivePurchaseBatchSchema>;
+
+/**
+ * N movimentos purchase_in (um por variação, com custo no ledger) e UMA
+ * conta a pagar ao fornecedor pelo total — tudo numa transação. Reentrada
+ * (retry da fila) encontra as chaves de idempotência e não lança nada de
+ * novo, nem a conta.
+ */
+export async function receivePurchaseBatch(
+  db: DbOrTx,
+  input: ReceivePurchaseBatchInput,
+): Promise<{ movementIds: string[]; skipped: number; financialEntryId: string | null; amountCents: number }> {
+  const parsed = receivePurchaseBatchSchema.parse(input);
+
+  return db.transaction(async (tx) => {
+    let supplierName: string | null = null;
+    if (parsed.supplierId) {
+      const [supplier] = await tx
+        .select({ id: suppliers.id, name: suppliers.name })
+        .from(suppliers)
+        .where(and(eq(suppliers.id, parsed.supplierId), isNull(suppliers.deletedAt)))
+        .limit(1);
+      if (!supplier) throw new ServiceError("SUPPLIER_NOT_FOUND", "Fornecedor não encontrado.");
+      supplierName = supplier.name;
+    }
+
+    const movementIds: string[] = [];
+    let skipped = 0;
+    let amountCents = 0;
+    for (const line of parsed.lines) {
+      const idempotencyKey = `${parsed.idempotencyPrefix}:${line.variantId}`;
+      if (line.unitCostCents !== null) amountCents += line.quantity * line.unitCostCents;
+      const [existing] = await tx
+        .select({ id: stockMovements.id })
+        .from(stockMovements)
+        .where(eq(stockMovements.idempotencyKey, idempotencyKey))
+        .limit(1);
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+      await assertVariantExists(tx, line.variantId);
+      const before = await lockLevel(tx, line.variantId);
+      const after = applyMovement(before, { type: "purchase_in", quantityDelta: line.quantity });
+      const [movement] = await tx
+        .insert(stockMovements)
+        .values({
+          productVariantId: line.variantId,
+          type: "purchase_in",
+          quantityDelta: line.quantity,
+          unitCostCents: line.unitCostCents,
+          referenceType: parsed.supplierId ? "supplier" : null,
+          referenceId: parsed.supplierId,
+          idempotencyKey,
+          note: parsed.note ?? null,
+          createdBy: parsed.userId,
+        })
+        .returning({ id: stockMovements.id });
+      await updateLevel(tx, line.variantId, after);
+      await maybeEnqueueRestocked(tx, line.variantId, before, after, movement.id);
+      if (line.unitCostCents !== null) {
+        await tx.insert(variantCosts).values({
+          productVariantId: line.variantId,
+          costCents: line.unitCostCents,
+          source: "purchase",
+          note: parsed.note ?? null,
+          createdBy: parsed.userId,
+        });
+        await tx
+          .update(productVariants)
+          .set({ costCents: line.unitCostCents, updatedAt: sql`now()` })
+          .where(eq(productVariants.id, line.variantId));
+      }
+      movementIds.push(movement.id);
+    }
+
+    // A conta a pagar nasce junto com os movimentos; numa reentrada (linhas já
+    // lançadas) só quando quem chama garante que ela ainda não existe.
+    let financialEntryId: string | null = null;
+    const payableCents = parsed.amountCents ?? amountCents;
+    const wantsPayable = skipped === 0 || parsed.payableMissing === true;
+    if (parsed.supplierId && payableCents > 0 && wantsPayable) {
+      const [entry] = await tx
+        .insert(financialEntries)
+        .values({
+          direction: "payable",
+          category: "supplier",
+          description: parsed.description,
+          amountCents: payableCents,
+          status: "pending",
+          dueDate: parsed.dueDate ?? null,
+          supplierId: parsed.supplierId,
+          createdBy: parsed.userId,
+        })
+        .returning({ id: financialEntries.id });
+      financialEntryId = entry.id;
+    }
+
+    if (movementIds.length > 0) {
+      await tx.insert(auditLog).values({
+        actorType: "user",
+        actorId: parsed.userId,
+        action: "purchase.receive_batch",
+        entityType: "financial_entry",
+        entityId: financialEntryId,
+        after: {
+          lines: parsed.lines.length,
+          movements: movementIds.length,
+          supplierId: parsed.supplierId,
+          supplierName,
+          amountCents: payableCents,
+          financialEntryId,
+          description: parsed.description,
+        },
+        reason: parsed.note ?? null,
+      });
+    }
+
+    return { movementIds, skipped, financialEntryId, amountCents: payableCents };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 2. adjustStock
 // ---------------------------------------------------------------------------
 

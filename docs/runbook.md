@@ -183,6 +183,20 @@ recado, 1 variação) e a mensagem avisa "sem a grade"; o bloco "Chegou pelo
 WhatsApp" na ficha mostra o que foi entendido e os avisos. Template
 atualizado em produção com `--templates owner_atelier_draft --force-templates`.
 
+A chegada também **vira compra** no mesmo passo: o fornecedor do recado
+("da Aurora") é achado pelo nome (sem acento/caixa; prefixo único) ou criado
+na hora e ligado à ficha; a quantidade dita ("três de cada") entra como
+`purchase_in` em cada variação com o custo por peça; nasce **uma** conta a
+pagar pendente pelo total (o total dito manda quando é ele que se sabe) em
+**/admin/financeiro**, ligada ao fornecedor. Sem quantidade não há compra (a
+dona lança pelo painel); sem base de custo o estoque entra sem custo e sem
+conta; reentrada não dobra nada (chave por chegada + variação). Depois do
+"Rascunho pronto" chega um **cartão** noir/ouro com a foto da peça e as três
+linhas do resumo (grade, peças · custo, fornecedor · a pagar), legenda com o
+link — template `owner_atelier_card`, evento `wa.atelier_card` (2 tentativas;
+sem foto na ficha, não há cartão). Produção: migração 0035 e
+`scripts/sync-seed.ts --templates owner_atelier_card`.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

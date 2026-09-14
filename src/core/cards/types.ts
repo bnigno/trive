@@ -72,7 +72,25 @@ export interface DropStoryCardData {
   siteLine: string;
 }
 
-export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData | DropStoryCardData;
+/**
+ * O cartão do Ateliê (4:5): a foto da peça que acabou de chegar e o resumo
+ * da chegada em três linhas ("2 cores × 4 tamanhos", "24 peças · custo R$
+ * 120,00", "Aurora · a pagar R$ 2.880,00"). Vai só para o WhatsApp da dona.
+ */
+export interface AtelierCardData {
+  kind: "atelier";
+  storeName: string;
+  eyebrow: string;
+  title: string;
+  /** priceLabel = "sugerido R$ 289,90" (ou vazio). */
+  hero: CardItem;
+  lines: string[];
+}
+
+export type CardData = CatalogCardData | LookCardData | PostCardData | StoryCardData | DropStoryCardData | AtelierCardData;
+
+export const ATELIER_EYEBROW = "ATELIÊ · RASCUNHO PRONTO";
+export const ATELIER_CARD_MAX_LINES = 3;
 
 /** Tela de cada formato, em px. O WhatsApp usa 4:5; os stories são 9:16. */
 export function cardDimensions(kind: CardData["kind"]): { width: number; height: number } {
@@ -135,6 +153,8 @@ export function cardFrameSize(
   // Post e story: a peça ocupa a tela, com respiro para a faixa noir (≈223),
   // o título, o nome/preço da moldura e o rodapé — senão a arte sai cortada.
   if (kind === "post") return { width: 540, height: 720 };
+  // Ateliê: a peça grande com respiro para as três linhas do resumo.
+  if (kind === "atelier") return { width: 480, height: 640 };
   if (kind === "story") return { width: 900, height: 1200 };
   // Story do lançamento: uma peça grande, ou duas/três lado a lado, com
   // respiro para a faixa, o título, a frase e o endereço da estreia.

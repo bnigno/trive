@@ -283,6 +283,12 @@ export const initialWaTemplates: Array<{
     variables: ["peca", "fotos", "detalhes", "link"],
   },
   {
+    key: "owner_atelier_card",
+    label: "[interno] Ateliê: cartão do rascunho (legenda)",
+    bodyTemplate: "🧵 {{peca}}{{detalhes}}\n{{link}}",
+    variables: ["peca", "detalhes", "link"],
+  },
+  {
     key: "owner_atelier_help",
     label: "[interno] Ateliê: como cadastrar",
     bodyTemplate:

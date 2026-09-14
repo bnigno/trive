@@ -45,6 +45,9 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // resposta no WhatsApp; foto que não baixa não melhora com o tempo, então
   // poucas tentativas e curtas — na última, o serviço avisa a dona.
   "wa.atelier_intake": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
+  // Cartão do rascunho para a dona: melhor esforço (o texto já foi); foto
+  // que não abre não melhora com o tempo.
+  "wa.atelier_card": { maxAttempts: 2, baseDelayMs: 10_000, maxDelayMs: 30_000 },
 };
 
 export function getRetryPolicy(eventType: string): RetryPolicy {
