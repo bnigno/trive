@@ -52,6 +52,14 @@ export function deliveryLine(input: { deliveredAt: Date; receivedBy: string | nu
   return input.receivedBy ? `${when}, recebido por ${input.receivedBy}` : when;
 }
 
+/** Enviado há tanto tempo sem confirmação que merece um olhar da dona. */
+export const STALE_SHIPMENT_DAYS = 7;
+
+export function isStaleShipment(shippedAt: Date | null, now: Date, days = STALE_SHIPMENT_DAYS): boolean {
+  if (!shippedAt) return false;
+  return now.getTime() - shippedAt.getTime() >= days * 86_400_000;
+}
+
 /** O detalhe do passo "Entregue" na linha do tempo: "Recebido por Maria". */
 export function deliveredStepDetail(receivedBy: string | null): string | null {
   return receivedBy ? `Recebido por ${receivedBy}` : null;

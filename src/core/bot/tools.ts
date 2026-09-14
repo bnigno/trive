@@ -18,6 +18,7 @@ export const BOT_TOOL_NAMES = [
   "historico_de_compras",
   "criar_pedido",
   "status_do_pedido",
+  "confirmar_entrega",
   "enviar_chave_pix",
   "avisar_dono",
   "reservar_peca",
@@ -92,6 +93,8 @@ export type BotToolInputs = {
     presente?: { para: string; bilhete?: string; entregar_ate?: string };
   };
   status_do_pedido: { numero_do_pedido?: number };
+  /** A cliente disse que o pedido chegou: o pedido enviado vira entregue. */
+  confirmar_entrega: { numero_do_pedido?: number };
   enviar_chave_pix: { numero_do_pedido?: number };
   avisar_dono: { mensagem: string };
   reservar_peca: { sku: string; quantidade?: number };
@@ -446,6 +449,22 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "confirmar_entrega",
+    description:
+      "A cliente disse que o pedido CHEGOU ('chegou', 'recebi', 'já está comigo'): marca o pedido enviado desta conversa como entregue. Passe numero_do_pedido se ela informar; omita para o último pedido enviado. Nunca chame por conta própria — só quando ela disser que recebeu.",
+    input_schema: {
+      type: "object",
+      properties: {
+        numero_do_pedido: {
+          type: "integer",
+          description: "Número do pedido informado pela cliente. Omita para o último pedido enviado.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "enviar_chave_pix",
     description:
       "Envia a chave Pix da loja para a cliente pagar por transferência manual quando houver problema com o link. SÓ ofereça se a ferramenta confirmar disponibilidade; o dono confirma o recebimento manualmente.",
@@ -752,6 +771,9 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   buscar_cadastro: z.strictObject({}),
   historico_de_compras: z.strictObject({}),
   status_do_pedido: z.strictObject({
+    numero_do_pedido: z.number().int().min(1).optional(),
+  }),
+  confirmar_entrega: z.strictObject({
     numero_do_pedido: z.number().int().min(1).optional(),
   }),
   enviar_chave_pix: z.strictObject({

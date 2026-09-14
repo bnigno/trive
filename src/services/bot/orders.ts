@@ -33,6 +33,7 @@ import {
 } from "@/services/store-orders";
 import { ensurePaymentPreference, isMpEnabled } from "@/services/store-payments";
 import { orderPublicUrl } from "@/services/wa-messaging";
+import { confirmDeliveryForCustomer, lastShipmentMemoryLine } from "@/services/delivery";
 
 import { resolveVariantBySku } from "./catalog";
 import { loadSavedRegistration, resolveSavedIdentity } from "./customer";
@@ -438,6 +439,36 @@ export async function execStatusDoPedido(
   return { ok: true, text: lines.join("\n") };
 }
 
+export async function execConfirmarEntrega(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: BotToolInputs["confirmar_entrega"],
+): Promise<ToolResult> {
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  if (!customerId) {
+    return { ok: false, text: "Ainda não encontrei pedidos para este número de WhatsApp. Se o pedido foi feito com outro telefone, posso chamar a equipe." };
+  }
+  const result = await confirmDeliveryForCustomer(db, { customerId, orderNumber: input.numero_do_pedido, source: "lia" });
+  if (!result.ok) {
+    if (result.reason === "nao_encontrado") {
+      return {
+        ok: false,
+        text: input.numero_do_pedido !== undefined ? `Não encontrei o pedido #${input.numero_do_pedido} neste número de WhatsApp.` : "Ainda não encontrei pedidos para este número de WhatsApp.",
+      };
+    }
+    return {
+      ok: false,
+      text: `O pedido #${result.orderNumber} está "${ORDER_STATUS_LABELS[result.status ?? ""] ?? result.status}", não "enviado": só um pedido enviado vira entregue. Se ela recebeu mesmo assim, avise a equipe com avisar_dono.`,
+    };
+  }
+  return {
+    ok: true,
+    text: result.already
+      ? `O pedido #${result.orderNumber} já estava marcado como entregue.`
+      : `Pedido #${result.orderNumber} marcado como entregue (confirmado pela cliente). Responda curto e pergunte se a peça ficou boa.`,
+  };
+}
+
 /**
  * Últimos pedidos de uma cliente com as peças (nome do pedido + variação
  * atual da combinação). Rascunho fica de fora (nunca chegou a ser pedido).
@@ -510,6 +541,16 @@ export async function execHistoricoDeCompras(
  * Linha "Compras anteriores" do caderninho: a compra paga mais recente e
  * quantas compras pagas o telefone tem. Null para quem nunca comprou.
  */
+/** A linha do caderninho sobre o último pedido enviado (para a Lia confirmar a entrega). */
+export async function shipmentMemoryLineFor(
+  db: DbOrTx,
+  ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
+): Promise<string | null> {
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  if (!customerId) return null;
+  return lastShipmentMemoryLine(db, customerId);
+}
+
 export async function purchaseMemoryLineFor(
   db: DbOrTx,
   ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,

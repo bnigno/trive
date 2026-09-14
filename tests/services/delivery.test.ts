@@ -11,10 +11,14 @@ import * as schema from "@/db/schema";
 import { initialWaTemplates } from "@/db/seed-data";
 import type { DbOrTx } from "@/queue/enqueue";
 import {
+  confirmDeliveryByToken,
+  confirmDeliveryForCustomer,
   countOrdersAwaitingDelivery,
   deliverOrderWithPhoto,
   deliveryPhotoStoragePath,
+  lastShipmentMemoryLine,
   listOrdersAwaitingDelivery,
+  listStaleShipments,
   sendDeliveredWa,
 } from "@/services/delivery";
 import { createStoreOrder, getPublicOrder, type CreateStoreOrderInput } from "@/services/store-orders";
@@ -239,5 +243,68 @@ describe("listOrdersAwaitingDelivery", () => {
     expect(await countOrdersAwaitingDelivery(sdb)).toBe(4);
     await deliverOrderWithPhoto(sdb, storage, { orderId: shipped.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
     expect(await countOrdersAwaitingDelivery(sdb)).toBe(3);
+  });
+});
+
+describe("confirmDeliveryByToken / confirmDeliveryForCustomer / listStaleShipments", () => {
+  it("pela página: enviado vira entregue assinado pela cliente, uma vez; pago não vira; token inválido não acha", async () => {
+    const { orderId, publicToken } = await createOrder();
+    const first = await confirmDeliveryByToken(sdb, { publicToken });
+    expect(first).toEqual({ ok: true, orderId, orderNumber: expect.any(Number), already: false });
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId));
+    expect(order.status).toBe("delivered");
+    expect(order.deliveryConfirmedBy).toBe("customer");
+    expect(order.deliveredPhotoPath).toBeNull();
+    expect(await confirmDeliveryByToken(sdb, { publicToken })).toMatchObject({ ok: true, already: true });
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "order.delivered"))).toHaveLength(1);
+    const audits = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "order.delivery_confirmed"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0].after).toMatchObject({ source: "customer" });
+
+    const paid = await createOrder({ status: "paid" });
+    expect(await confirmDeliveryByToken(sdb, { publicToken: paid.publicToken })).toMatchObject({ ok: false, reason: "nao_enviado", status: "paid" });
+    expect(await confirmDeliveryByToken(sdb, { publicToken: "00000000-0000-4000-8000-000000000001" })).toEqual({ ok: false, reason: "nao_encontrado" });
+  });
+
+  it("pela Lia: só pedidos da cliente; sem número pega o último enviado; com número, aquele; assina 'lia'", async () => {
+    const a = await createOrder();
+    const b = await createOrder();
+    const [orderA] = await db.select().from(schema.orders).where(eq(schema.orders.id, a.orderId));
+    const [orderB] = await db.select().from(schema.orders).where(eq(schema.orders.id, b.orderId));
+    const customerId = orderA.customerId as string;
+    const latest = await confirmDeliveryForCustomer(sdb, { customerId, source: "lia" });
+    expect(latest).toMatchObject({ ok: true, orderId: b.orderId, already: false });
+    const [after] = await db.select().from(schema.orders).where(eq(schema.orders.id, b.orderId));
+    expect(after.deliveryConfirmedBy).toBe("lia");
+    const byNumber = await confirmDeliveryForCustomer(sdb, { customerId, orderNumber: orderA.orderNumber, source: "lia" });
+    expect(byNumber).toMatchObject({ ok: true, orderId: a.orderId });
+    expect(await confirmDeliveryForCustomer(sdb, { customerId, orderNumber: orderB.orderNumber + 100, source: "lia" })).toEqual({ ok: false, reason: "nao_encontrado" });
+    // Outra cliente não enxerga estes pedidos.
+    expect(await confirmDeliveryForCustomer(sdb, { customerId: "00000000-0000-4000-8000-000000000002", source: "lia" })).toEqual({ ok: false, reason: "nao_encontrado" });
+  });
+
+  it("enviados há 7+ dias sem confirmação, os mais antigos primeiro; entregue some", async () => {
+    const old = await createOrder();
+    const older = await createOrder();
+    const fresh = await createOrder();
+    await db.update(schema.orders).set({ shippedAt: new Date("2026-09-01T10:00:00Z") }).where(eq(schema.orders.id, old.orderId));
+    await db.update(schema.orders).set({ shippedAt: new Date("2026-08-20T10:00:00Z") }).where(eq(schema.orders.id, older.orderId));
+    await db.update(schema.orders).set({ shippedAt: new Date("2026-09-12T10:00:00Z") }).where(eq(schema.orders.id, fresh.orderId));
+    const now = new Date("2026-09-13T10:00:00Z");
+    const stale = await listStaleShipments(sdb, { now });
+    expect(stale.map((row) => row.id)).toEqual([older.orderId, old.orderId]);
+    expect(stale[0].days).toBe(24);
+    await confirmDeliveryByToken(sdb, { publicToken: older.publicToken });
+    expect((await listStaleShipments(sdb, { now })).map((row) => row.id)).toEqual([old.orderId]);
+  });
+
+  it("a linha do caderninho fala do último pedido enviado e some quando entregue", async () => {
+    const { orderId, publicToken } = await createOrder();
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId));
+    const line = await lastShipmentMemoryLine(sdb, order.customerId as string);
+    expect(line).toContain(`Último pedido: #${order.orderNumber} enviado em 11/09`);
+    expect(line).toContain("confirmar_entrega");
+    await confirmDeliveryByToken(sdb, { publicToken });
+    expect(await lastShipmentMemoryLine(sdb, order.customerId as string)).toBeNull();
   });
 });

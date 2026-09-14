@@ -9,10 +9,30 @@ import { z } from "zod";
 
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import { getDb } from "@/db/client";
+import { confirmDeliveryByToken } from "@/services/delivery";
 import {
   ensurePaymentPreferenceByToken,
   isMpEnabled,
 } from "@/services/store-payments";
+
+/**
+ * "Chegou!": quem tem o link do pedido enviado confirma que recebeu — o
+ * pedido vira entregue pela máquina de estados (sem foto). Efeito é só o
+ * status; token inválido volta para a home.
+ */
+export async function confirmDeliveryAction(token: string): Promise<void> {
+  const parsedToken = z.uuid().safeParse(token);
+  if (!parsedToken.success) redirect("/");
+  let outcome = "chegou";
+  try {
+    const result = await confirmDeliveryByToken(getDb(), { publicToken: parsedToken.data });
+    if (!result.ok) outcome = "nao";
+  } catch (error) {
+    console.error("confirmDeliveryAction: não foi possível confirmar a entrega.", error);
+    outcome = "nao";
+  }
+  redirect(`/pedido/${parsedToken.data}?chegou=${outcome === "chegou" ? "1" : "0"}`);
+}
 
 export async function payNowAction(token: string): Promise<void> {
   // Token inválido nunca vai parar em URL de redirect (nem no serviço).

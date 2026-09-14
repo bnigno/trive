@@ -53,11 +53,13 @@ import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/c
 import { execBuscarCadastro } from "./bot/customer";
 import { execAvisarQuandoVoltar, execLiberarReserva, execReservarPeca } from "./bot/holds";
 import {
+  execConfirmarEntrega,
   execCriarPedido,
   execEnviarChavePix,
   execHistoricoDeCompras,
   execStatusDoPedido,
   purchaseMemoryLineFor,
+  shipmentMemoryLineFor,
 } from "./bot/orders";
 import { execAvisarDono, execTransferir, handOffToHuman } from "./bot/owner";
 import {
@@ -218,6 +220,8 @@ export function buildToolExecutor(
         return execHistoricoDeCompras(db, ctx);
       case "criar_pedido":
         return execCriarPedido(db, ctx, parsed.data as BotToolInputs["criar_pedido"]);
+      case "confirmar_entrega":
+        return execConfirmarEntrega(db, ctx, parsed.data as BotToolInputs["confirmar_entrega"]);
       case "status_do_pedido":
         return execStatusDoPedido(
           db,
@@ -417,9 +421,13 @@ export async function runBotTurn(
       };
     });
     const state = parseBotState(conversation.botState);
-    const [memoryLines, purchaseLine, bridgeLine] = await Promise.all([
+    const [memoryLines, purchaseLine, shipmentLine, bridgeLine] = await Promise.all([
       loadMemoryLines(tx, conversation.phoneE164),
       purchaseMemoryLineFor(tx, {
+        customerId: conversation.customerId,
+        phoneE164: conversation.phoneE164,
+      }),
+      shipmentMemoryLineFor(tx, {
         customerId: conversation.customerId,
         phoneE164: conversation.phoneE164,
       }),
@@ -433,6 +441,7 @@ export async function runBotTurn(
       lines: [
         ...memoryLines,
         ...(purchaseLine ? [purchaseLine] : []),
+        ...(shipmentLine ? [shipmentLine] : []),
         ...(bridgeLine ? [bridgeLine] : []),
       ],
       now,

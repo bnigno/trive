@@ -8,7 +8,8 @@ import { PageHeader } from "@/components/ui/page-header";
 import { PAYMENT_METHOD_LABELS_SHORT, type PaymentMethod } from "@/core/orders/payment-methods";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
-import { listOrdersAwaitingDelivery } from "@/services/delivery";
+import { listOrdersAwaitingDelivery, listStaleShipments } from "@/services/delivery";
+import { STALE_SHIPMENT_DAYS } from "@/core/orders/delivery";
 import { formatDateTimeSP } from "../format";
 import { DeliverForm } from "../[id]/deliver-form";
 
@@ -21,7 +22,8 @@ export const metadata: Metadata = { title: "Mesa de entrega" };
 // a um toque. Sem regra aqui: tudo vem de listOrdersAwaitingDelivery.
 export default async function EntregarPage() {
   await requireUser();
-  const rows = await listOrdersAwaitingDelivery(getDb());
+  const [rows, stale] = await Promise.all([listOrdersAwaitingDelivery(getDb()), listStaleShipments(getDb())]);
+  const staleIds = new Set(stale.map((row) => row.id));
 
   return (
     <div className="flex flex-col gap-6">
@@ -34,6 +36,29 @@ export default async function EntregarPage() {
           </Link>
         }
       />
+
+      {stale.length > 0 ? (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-900 dark:bg-amber-950/40" aria-label="Enviados sem confirmação">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Enviados há {STALE_SHIPMENT_DAYS}+ dias sem confirmação · {stale.length}
+          </h2>
+          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+            A cliente ainda não tocou em “Chegou!” nem disse à Lia que recebeu. Vale conferir o rastreio ou chamar no WhatsApp.
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {stale.map((row) => (
+              <li key={row.id}>
+                <Link href={`/admin/pedidos/${row.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                  #{row.orderNumber}
+                </Link>{" "}
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  {row.customerName} · há {row.days} dias{row.trackingCode ? ` · ${row.trackingCode}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {rows.length === 0 ? (
         <EmptyState title="Nada para entregar agora." hint="Quando um pedido sair (Correios ou motoboy que já saiu) ou for pago em dinheiro na entrega, ele aparece aqui com a câmera pronta." />
@@ -61,6 +86,7 @@ export default async function EntregarPage() {
                     {row.trackingCode ? <span>rastreio {row.trackingCode}</span> : null}
                     {row.paymentMethod ? <span>{PAYMENT_METHOD_LABELS_SHORT[row.paymentMethod as PaymentMethod] ?? row.paymentMethod}</span> : null}
                     {row.shippedAt ? <span>enviado {formatDateTimeSP(row.shippedAt)}</span> : row.paidAt ? <span>pago {formatDateTimeSP(row.paidAt)}</span> : null}
+                    {staleIds.has(row.id) ? <Badge tone="warning">sem confirmação há {STALE_SHIPMENT_DAYS}+ dias</Badge> : null}
                   </p>
                 </div>
                 <Money cents={row.totalCents} />

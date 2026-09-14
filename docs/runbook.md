@@ -117,6 +117,15 @@ sem reenviar. A câmera aparece no pedido enviado, no pago em dinheiro na
 entrega e no motoboy que já saiu; pedido pago pelos Correios embala primeiro. Produção: migração 0037 e
 `scripts/sync-seed.ts --templates order_delivered`.
 
+**Chegou!** — pelos Correios a cliente confirma sozinha: na página pública do
+pedido enviado há o botão **Chegou!** (quem tem o link marca; o efeito é só o
+status, `delivery_confirmed_by = customer`) e, no WhatsApp, se ela disser
+"chegou"/"recebi", a Lia chama `confirmar_entrega` (só pedido **enviado** da
+cliente daquela conversa; `delivery_confirmed_by = lia`) e responde "Que bom
+que chegou 🤎". Nos dois casos a cliente recebe o texto de `order_delivered`
+(sem foto). A Mesa de entrega e o card do dashboard destacam os **enviados há
+7+ dias sem confirmação**: confira o rastreio ou chame no WhatsApp.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa
