@@ -26,6 +26,7 @@ export function CourierTracking({ token, initial, storeWhatsappUrl }: { token: s
     if (isTrackingFinal(initial.state)) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
+    let inFlight = false;
     const controller = new AbortController();
     const schedule = (ms: number) => {
       if (stopped) return;
@@ -36,8 +37,16 @@ export function CourierTracking({ token, initial, storeWhatsappUrl }: { token: s
         schedule(POLL_MS);
         return;
       }
+      if (inFlight) return;
+      inFlight = true;
       try {
         const response = await fetch(`/pedido/${token}/rastreio`, { cache: "no-store", signal: controller.signal });
+        // 404 = a saída foi cancelada pela loja (a parada sumiu): estado final, sem mais perguntas.
+        if (response.status === 404) {
+          setView((current) => ({ ...current, state: "finished", courier: null, distanceKm: null, etaMinutes: null }));
+          setOffline(false);
+          return;
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const parsed = trackingViewJsonSchema.parse(await response.json());
         setView(parsed);
@@ -48,10 +57,12 @@ export function CourierTracking({ token, initial, storeWhatsappUrl }: { token: s
         if (controller.signal.aborted) return;
         setOffline(true);
         schedule(POLL_ERROR_MS);
+      } finally {
+        inFlight = false;
       }
     };
     const onVisible = () => {
-      if (!document.hidden && !stopped) {
+      if (!document.hidden && !stopped && !inFlight) {
         clearTimeout(timer);
         void poll();
       }

@@ -5,7 +5,7 @@
 // cada 5 s enquanto a saída está aberta (setTimeout encadeado, pausa com a
 // aba escondida) e depois recarrega a página quando o status muda.
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { LiveMap } from "@/components/ui/live-map";
 import { signalAgeLabel } from "@/core/delivery/positions";
@@ -15,11 +15,23 @@ import { runLiveSchema, type RunLive } from "./poll/schema";
 const POLL_MS = 5_000;
 const POLL_ERROR_MS = 20_000;
 
+const noop = () => () => {};
+/** Só no cliente: o "há N min" não pode nascer no HTML do servidor (hidratação divergente). */
+function useMounted(): boolean {
+  return useSyncExternalStore(noop, () => true, () => false);
+}
+
+function stopsKey(live: RunLive): string {
+  return live.stops.map((s) => `${s.sequence}:${s.status}`).join(",");
+}
+
 export function RunLiveMap({ runId, initial }: { runId: string; initial: RunLive }) {
   const router = useRouter();
   const [live, setLive] = useState<RunLive>(initial);
   const [now, setNow] = useState(() => Date.now());
-  const statusRef = useRef(initial.status);
+  const [sessionLost, setSessionLost] = useState(false);
+  const mounted = useMounted();
+  const keyRef = useRef(`${initial.status}|${stopsKey(initial)}`);
   const open = live.status === "ready" || live.status === "en_route";
 
   useEffect(() => {
@@ -37,12 +49,18 @@ export function RunLiveMap({ runId, initial }: { runId: string; initial: RunLive
       }
       try {
         const response = await fetch(`/admin/pedidos/saidas/${runId}/poll`, { cache: "no-store", signal: controller.signal });
+        if (response.status === 401) {
+          setSessionLost(true);
+          return;
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const parsed = runLiveSchema.parse(await response.json());
         setLive(parsed);
         setNow(Date.now());
-        if (parsed.status !== statusRef.current) {
-          statusRef.current = parsed.status;
+        // Status da saída OU de uma parada mudou: a lista e os botões (RSC) recarregam.
+        const key = `${parsed.status}|${stopsKey(parsed)}`;
+        if (key !== keyRef.current) {
+          keyRef.current = key;
           router.refresh();
         }
         if (parsed.status === "finished" || parsed.status === "canceled") return;
@@ -62,7 +80,8 @@ export function RunLiveMap({ runId, initial }: { runId: string; initial: RunLive
   const pins = live.stops.flatMap((stop) => {
     const point = stop.deliveredPoint ?? stop.destination;
     if (!point) return [];
-    return [{ ...point, label: String(stop.sequence), tone: stop.status === "delivered" ? ("done" as const) : stop.status === "failed" ? ("failed" as const) : ("pending" as const) }];
+    const tone = stop.status === "delivered" ? ("done" as const) : stop.status === "failed" ? ("failed" as const) : stop.status === "canceled" ? ("muted" as const) : ("pending" as const);
+    return [{ ...point, label: String(stop.sequence), tone }];
   });
   const withoutPin = live.stops.filter((stop) => !stop.destination && !stop.deliveredPoint).map((stop) => stop.sequence);
   const seenAt = live.lastPosition ? new Date(live.lastPosition.seenAt) : null;
@@ -79,7 +98,8 @@ export function RunLiveMap({ runId, initial }: { runId: string; initial: RunLive
         ariaLabel="Mapa da saída"
       />
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        {seenAt ? `Última posição ${signalAgeLabel(seenAt, new Date(now))}` : "Sem posição ainda"}
+        {sessionLost ? "Sessão expirada — recarregue a página para voltar a acompanhar. " : ""}
+        {seenAt ? (mounted ? `Última posição ${signalAgeLabel(seenAt, new Date(now))}` : "Última posição …") : "Sem posição ainda"}
         {live.lastPosition?.accuracyM ? ` (±${Math.round(live.lastPosition.accuracyM)} m)` : ""}
         {" · "}pinos: {pins.length} de {live.stops.length} paradas
         {withoutPin.length ? ` — sem endereço no mapa: ${withoutPin.map((n) => `#${n}`).join(", ")} (geocodificação em andamento ou endereço sem cobertura)` : ""}

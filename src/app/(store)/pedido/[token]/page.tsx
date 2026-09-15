@@ -148,8 +148,9 @@ export default async function OrderPage({
   const isPixManual = order.paymentMethod === "pix_manual";
 
   // Saída do motoboy com GPS: a leitura pública (sem endereço) — só para
-  // pedido de motoboy, e só enquanto vale mostrar algo (a caminho / falhou).
-  const tracking = order.deliveryWindowLabel ? await getTrackingForOrder(db, token) : null;
+  // pedido de motoboy ainda por entregar (a cliente pode ter tocado "Chegou!"
+  // antes do motoboy fechar a parada), e só enquanto vale mostrar algo.
+  const tracking = order.deliveryWindowLabel && !isCanceled && order.status !== "delivered" ? await getTrackingForOrder(db, token) : null;
   const showCourier = tracking !== null && tracking.state !== "delivered" && tracking.state !== "finished";
 
   const settings = isPendingPayment || showCourier
@@ -163,8 +164,12 @@ export default async function OrderPage({
   const mpEnabled =
     isPendingPayment && !isCash && !isPixManual ? await isMpEnabled(db) : false;
 
-  const whatsappLink = isPendingPayment || showCourier
+  const whatsappLink = isPendingPayment
     ? waMeLink(settings["store_whatsapp"], order.orderNumber)
+    : null;
+  // Na Sheet do motoboy o assunto é a entrega, não o pagamento.
+  const deliveryWhatsappLink = showCourier
+    ? waMeUrl(settings["store_whatsapp"], `Olá! É sobre a entrega do pedido #${order.orderNumber}`)
     : null;
 
   const journey = buildOrderJourney({
@@ -289,12 +294,6 @@ export default async function OrderPage({
               ) : null}
             </Sheet>
           )}
-
-          {showCourier && tracking ? (
-            <Sheet eyebrow="Seu motoboy" headingId="motoboy-title" aria-labelledby="motoboy-title">
-              <CourierTracking token={token} initial={serializeTrackingView(tracking)} storeWhatsappUrl={whatsappLink} />
-            </Sheet>
-          ) : null}
 
           {giftNoteUrl ? (
             <Sheet
@@ -453,6 +452,20 @@ export default async function OrderPage({
               ) : null}
               {justConfirmed ? (
                 <p className="mt-4 font-display text-lg text-espresso-900 italic">Que bom que chegou 🤎 Esperamos que a peça fique linda em você.</p>
+              ) : null}
+            </Sheet>
+          ) : showCourier && tracking ? (
+            // Um bloco só sobre a entrega: o motoboy no mapa e, embaixo, o "Chegou!".
+            <Sheet eyebrow="Seu motoboy" headingId="chegou-title" aria-labelledby="chegou-title">
+              <CourierTracking token={token} initial={serializeTrackingView(tracking)} storeWhatsappUrl={deliveryWhatsappLink} />
+              {order.status === "shipped" && tracking.state !== "failed" ? (
+                <form action={confirmAction} className="mt-6 border-t border-ivory-200 pt-5">
+                  <button type="submit" className={btnPrimary}>
+                    Chegou!
+                  </button>
+                  <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a TRIVÉ.</p>
+                  {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
+                </form>
               ) : null}
             </Sheet>
           ) : order.status === "shipped" ? (

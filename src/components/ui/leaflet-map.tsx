@@ -6,7 +6,7 @@
 // SSR): o Leaflet mexe em `window` ao importar.
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface MapPoint {
   lat: number;
@@ -15,8 +15,8 @@ export interface MapPoint {
 
 export interface MapPin extends MapPoint {
   label: string;
-  /** done = entregue, failed = não entregue, pending = por entregar. */
-  tone: "pending" | "done" | "failed";
+  /** done = entregue, failed = não entregue, pending = por entregar, muted = cancelada. */
+  tone: "pending" | "done" | "failed" | "muted";
 }
 
 export interface LeafletMapProps {
@@ -24,7 +24,7 @@ export interface LeafletMapProps {
   courier: (MapPoint & { radiusM: number | null }) | null;
   pins?: MapPin[];
   trail?: MapPoint[];
-  /** O mapa acompanha o motoboy a cada atualização. */
+  /** O mapa acompanha o motoboy quando ele se move — até a pessoa arrastar o mapa (botão "Centralizar" religa). */
   follow?: boolean;
   /** Centro inicial sem motoboy (ex.: a loja); sem nada, Belém. */
   fallbackCenter?: MapPoint;
@@ -44,7 +44,7 @@ const courierIcon = L.divIcon({
 });
 
 function pinIcon(pin: MapPin): L.DivIcon {
-  const color = pin.tone === "done" ? "#33573f" : pin.tone === "failed" ? "#7c3129" : "#6f561b";
+  const color = pin.tone === "done" ? "#33573f" : pin.tone === "failed" ? "#7c3129" : pin.tone === "muted" ? "#806c64" : "#6f561b";
   return L.divIcon({
     className: "",
     html: `<span class="live-map-pin" style="--pin:${color}">${escapeHtml(pin.label)}</span>`,
@@ -65,6 +65,8 @@ export function LeafletMap({ courier, pins = [], trail = [], follow = true, fall
   const pinsLayerRef = useRef<L.LayerGroup | null>(null);
   const trailRef = useRef<L.Polyline | null>(null);
   const fittedRef = useRef(false);
+  const lastFollowedRef = useRef<string | null>(null);
+  const [userMoved, setUserMoved] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -75,6 +77,8 @@ export function LeafletMap({ courier, pins = [], trail = [], follow = true, fall
     L.control.zoom({ position: "bottomright" }).addTo(map);
     pinsLayerRef.current = L.layerGroup().addTo(map);
     trailRef.current = L.polyline([], { color: "#6f561b", weight: 3, opacity: 0.6, dashArray: "6 6" }).addTo(map);
+    // Arrastou o mapa: para de seguir o motoboy até tocar em "Centralizar".
+    map.on("dragstart", () => setUserMoved(true));
     mapRef.current = map;
     return () => {
       map.remove();
@@ -83,6 +87,8 @@ export function LeafletMap({ courier, pins = [], trail = [], follow = true, fall
       courierAreaRef.current = null;
       pinsLayerRef.current = null;
       trailRef.current = null;
+      fittedRef.current = false;
+      lastFollowedRef.current = null;
     };
     // Só na montagem: as atualizações vêm pelos efeitos abaixo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,8 +120,21 @@ export function LeafletMap({ courier, pins = [], trail = [], follow = true, fall
       courierAreaRef.current?.remove();
       courierAreaRef.current = null;
     }
-    if (follow) map.panTo(latLng, { animate: true, duration: 0.6 });
-  }, [courier, follow]);
+    // Só recentra quando a posição realmente mudou e a pessoa não arrastou o mapa.
+    const key = `${courier.lat.toFixed(5)},${courier.lng.toFixed(5)}`;
+    if (follow && !userMoved && key !== lastFollowedRef.current) {
+      lastFollowedRef.current = key;
+      map.panTo(latLng, { animate: true, duration: 0.6 });
+    }
+  }, [courier, follow, userMoved]);
+
+  const recenter = () => {
+    const map = mapRef.current;
+    if (!map || !courier) return;
+    setUserMoved(false);
+    lastFollowedRef.current = `${courier.lat.toFixed(5)},${courier.lng.toFixed(5)}`;
+    map.panTo([courier.lat, courier.lng], { animate: true, duration: 0.6 });
+  };
 
   useEffect(() => {
     const map = mapRef.current;
@@ -135,8 +154,17 @@ export function LeafletMap({ courier, pins = [], trail = [], follow = true, fall
   }, [trail]);
 
   return (
-    <div className={className}>
-      <div ref={containerRef} role="img" aria-label={ariaLabel ?? "Mapa"} className="h-full w-full" />
+    <div className={`${className ?? ""} relative`}>
+      <div ref={containerRef} role="region" aria-label={ariaLabel ?? "Mapa"} className="h-full w-full" />
+      {follow && userMoved && courier ? (
+        <button
+          type="button"
+          onClick={recenter}
+          className="absolute top-2 left-2 z-[500] rounded-full border border-ivory-300 bg-ivory-50/95 px-3 py-1.5 text-xs font-medium text-ink-900 shadow"
+        >
+          Centralizar no motoboy
+        </button>
+      ) : null}
       <style>{`
         .live-map-courier{position:relative;display:block;width:28px;height:28px}
         .live-map-courier-pulse{position:absolute;inset:0;border-radius:9999px;background:#c9a55a;opacity:.35;animation:live-map-pulse 1.8s ease-out infinite}
