@@ -96,6 +96,10 @@ export class FakeMessagingProvider implements MessagingProvider {
     if (!this.connected) {
       throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
     }
+    // Paridade com o real: número sem conversa → a Z-API responde 4xx.
+    if (this.nonexistentPhones.has(input.fromE164)) {
+      throw new Error("Z-API respondeu HTTP 404 em /read-message.");
+    }
     this.readReceipts.push({ ...input });
   }
 

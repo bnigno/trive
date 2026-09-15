@@ -290,12 +290,13 @@ describe("runBotTurn", () => {
     await addInbound(conversationId, "Oi!");
     provider.setPhoneExists(PHONE, false);
     assistant.enqueueScript({
-      replyTemplate: "Oi! Que bom te ver por aqui.\n---\n" + "Temos vestidos, blusas e saias — me conta o que você procura, a ocasião e o seu tamanho, que eu separo as opções certas para você. ".repeat(2),
+      // 1º balão com > 80 caracteres: teto de 2 s (first); o 2º, longo, 3 s (next).
+      replyTemplate: "Oi! Que bom te ver por aqui — me conta o que você procura, a ocasião e o seu tamanho que eu separo as opções certas.\n---\n" + "Temos vestidos, blusas e saias — me conta o que você procura, a ocasião e o seu tamanho, que eu separo as opções certas para você. ".repeat(2),
     });
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(result).toEqual({ replied: true, handedOff: false });
     expect(provider.sentMessages).toHaveLength(2);
-    expect(provider.sentMessages[0].typingSeconds).toBe(1);
+    expect(provider.sentMessages[0].typingSeconds).toBe(2);
     expect(provider.sentMessages[1].typingSeconds).toBe(3);
   });
 

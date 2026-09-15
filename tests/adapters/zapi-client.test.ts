@@ -6,6 +6,7 @@ type RecordedCall = {
   url: string;
   method: string | undefined;
   body: unknown;
+  signal?: AbortSignal;
 };
 
 /** Fetch fake injetável: grava as chamadas e responde o payload configurado. */
@@ -16,6 +17,7 @@ function createFakeFetch(payload: unknown, status = 200) {
       url: String(input),
       method: init?.method,
       body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      signal: init?.signal ?? undefined,
     });
     return new Response(JSON.stringify(payload), { status });
   }) as typeof fetch;
@@ -62,6 +64,12 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
     expect(calls[0]?.url).toMatch(/\/read-message$/);
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.body).toEqual({ phone: "5511999990000", messageId: "3EB0ABC" });
+    // Com timeout de verdade: o signal chega ao fetch (uma Z-API pendurada
+    // não pode segurar o turno) — os envios não levam signal.
+    expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
+    const sending = createFakeFetch({ messageId: "m" });
+    await new ZapiMessagingProvider(sending.fetchFn).sendText({ toE164: "+5511999990000", body: "oi" });
+    expect(sending.calls[0]?.signal).toBeUndefined();
 
     const failing = createFakeFetch({}, 500);
     await expect(

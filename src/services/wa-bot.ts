@@ -633,6 +633,8 @@ export async function deliverBotTurn(
       ...customerRef,
       dedupeKey: `wa.bot_handoff_notice:${dedupeBase}`,
       requireOptIn: false,
+      verifyPhone,
+      typingSeconds: typingSecondsFor(HANDOFF_COURTESY_REPLY, "next"),
     });
   }
   return { replied, firstWaMessageId, firstSentAt };
@@ -746,17 +748,16 @@ export async function runBotTurn(
     const now = new Date();
     // Copiloto (loja ou só esta conversa): a Lia pensa, a dona manda.
     const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
-    // ✓✓ azul na mensagem dela enquanto o modelo pensa — só quando é a Lia
-    // que vai responder (conversa com a equipe/copiloto/silenciada já saíram
-    // acima). Em paralelo com o preparo; falhar não atrapalha o turno.
-    const readMark = copilot ? Promise.resolve() : markInboundRead(provider, conversation.phoneE164, lastInbound.zapiMessageId);
 
     const loaded = await loadTurnHistory(tx, provider, { conversation, now });
-    if ("skipped" in loaded) {
-      await readMark;
-      return loaded;
-    }
+    if ("skipped" in loaded) return loaded;
     const { history, recentImages, media } = loaded;
+
+    // ✓✓ azul na mensagem dela enquanto o modelo pensa — só quando é a Lia
+    // que vai responder AGORA (conversa com a equipe/copiloto/silenciada e
+    // "aguardando transcrição" já saíram acima: lido sem resposta seria pior
+    // que não lido). Em paralelo com o prompt; falhar não atrapalha o turno.
+    const readMark = copilot ? Promise.resolve() : markInboundRead(provider, conversation.phoneE164, lastInbound.zapiMessageId);
 
     const { system, model } = await buildBotPromptBundle(tx);
     if (copilot) {
