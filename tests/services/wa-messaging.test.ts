@@ -471,6 +471,19 @@ describe("phoneExists (número sem WhatsApp)", () => {
       const [msg] = await db.select().from(schema.waMessages);
       expect(msg.status).toBe("failed");
       expect(msg.errorDetail).toContain("sem WhatsApp");
+
+      // verifyPhone: false (resposta a quem acabou de escrever) não consulta e envia, com o "digitando".
+      const sent = await sendTemplateMessage(sdb, provider, {
+        bodyOverride: "Resposta da Lia",
+        phoneE164: "+5511900009999",
+        dedupeKey: "wa.teste_inexistente:2",
+        requireOptIn: false,
+        verifyPhone: false,
+        typingSeconds: 2,
+      });
+      expect(sent).toMatchObject({ sent: true });
+      expect(provider.sentMessages).toHaveLength(1);
+      expect(provider.sentMessages[0]).toMatchObject({ body: "Resposta da Lia", typingSeconds: 2 });
     } finally {
       await close();
     }

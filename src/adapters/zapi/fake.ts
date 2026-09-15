@@ -14,6 +14,7 @@ export type FakeSentMessage = {
   providerMessageId: string;
   toE164: string;
   body: string;
+  typingSeconds?: number;
 };
 
 // PNG 1x1 transparente — QR code fake para os fluxos de pareamento no admin.
@@ -50,6 +51,7 @@ export class FakeMessagingProvider implements MessagingProvider {
       providerMessageId,
       toE164: message.toE164,
       body: message.body,
+      ...(message.typingSeconds !== undefined ? { typingSeconds: message.typingSeconds } : {}),
     });
     return { providerMessageId };
   }
@@ -85,6 +87,16 @@ export class FakeMessagingProvider implements MessagingProvider {
 
   async phoneExists(toE164: string): Promise<boolean> {
     return !this.nonexistentPhones.has(toE164);
+  }
+
+  /** Mensagens recebidas marcadas como lidas (✓✓ azul), na ordem. */
+  readonly readReceipts: { fromE164: string; providerMessageId: string }[] = [];
+
+  async markAsRead(input: { fromE164: string; providerMessageId: string }): Promise<void> {
+    if (!this.connected) {
+      throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
+    }
+    this.readReceipts.push({ ...input });
   }
 
   // Mídias "recebidas": os testes semeiam por URL; URL desconhecida simula a
@@ -125,6 +137,7 @@ export class FakeMessagingProvider implements MessagingProvider {
     this.sentImages.length = 0;
     this.sentAudios.length = 0;
     this.sentOptionLists.length = 0;
+    this.readReceipts.length = 0;
     this.connected = true;
     this.sequence = 0;
     this.runId = Math.random().toString(36).slice(2, 8);

@@ -33,6 +33,42 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
     vi.unstubAllEnvs();
   });
 
+  it("sendText com typingSeconds manda delayTyping e delayMessage: 1; sem, nenhum dos dois", async () => {
+    const { calls, fetchFn } = createFakeFetch({ messageId: "mid-t" });
+    const provider = new ZapiMessagingProvider(fetchFn);
+    await provider.sendText({ toE164: "+5511999990000", body: "Oi!", typingSeconds: 2 });
+    expect(calls[0]?.body).toEqual({ phone: "5511999990000", message: "Oi!", delayTyping: 2, delayMessage: 1 });
+    await provider.sendText({ toE164: "+5511999990000", body: "Oi!" });
+    expect(calls[1]?.body).toEqual({ phone: "5511999990000", message: "Oi!" });
+    // Fora da faixa da Z-API (1–15): cortado.
+    await provider.sendText({ toE164: "+5511999990000", body: "Oi!", typingSeconds: 40 });
+    expect(calls[2]?.body).toMatchObject({ delayTyping: 15, delayMessage: 1 });
+  });
+
+  it("sendAudio com typingSeconds manda delayTyping ('gravando áudio…'); a lista só tira o atraso aleatório", async () => {
+    const { calls, fetchFn } = createFakeFetch({ messageId: "mid-a" });
+    const provider = new ZapiMessagingProvider(fetchFn);
+    await provider.sendAudio({ toE164: "+5511999990000", audioUrl: "https://cdn.test/nota.ogg", typingSeconds: 3 });
+    expect(calls[0]?.body).toEqual({ phone: "5511999990000", audio: "https://cdn.test/nota.ogg", waveform: true, delayTyping: 3, delayMessage: 1 });
+    await provider.sendOptionList({ toE164: "+5511999990000", message: "Toque", title: "Peças", buttonLabel: "Ver", options: [{ id: "a", title: "A" }] });
+    expect(calls[1]?.body).toMatchObject({ delayMessage: 1 });
+    expect(calls[1]?.body).not.toHaveProperty("delayTyping");
+  });
+
+  it("markAsRead faz POST /read-message com phone sem '+' e messageId, com timeout; HTTP >= 400 lança", async () => {
+    const { calls, fetchFn } = createFakeFetch({ value: true });
+    const provider = new ZapiMessagingProvider(fetchFn);
+    await provider.markAsRead({ fromE164: "+5511999990000", providerMessageId: "3EB0ABC" });
+    expect(calls[0]?.url).toMatch(/\/read-message$/);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({ phone: "5511999990000", messageId: "3EB0ABC" });
+
+    const failing = createFakeFetch({}, 500);
+    await expect(
+      new ZapiMessagingProvider(failing.fetchFn).markAsRead({ fromE164: "+5511999990000", providerMessageId: "x" }),
+    ).rejects.toThrow(/HTTP 500/);
+  });
+
   it("sendImage faz POST /send-image com phone sem '+', image e caption", async () => {
     const { calls, fetchFn } = createFakeFetch({ messageId: "mid-1" });
     const provider = new ZapiMessagingProvider(fetchFn);
@@ -114,6 +150,7 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
     expect(calls[0]?.body).toEqual({
       phone: "5511999990000",
       message: "Como quer receber?",
+      delayMessage: 1,
       optionList: {
         title: "Entrega",
         buttonLabel: "Ver opções",

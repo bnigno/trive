@@ -22,7 +22,7 @@ import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memo
 import { copilotBlockedText, isToolBlockedInCopilot } from "@/core/bot/copilot";
 import { BOT_TOOL_INPUT_SCHEMAS, type BotToolInputs, type ToolExecutor } from "@/core/bot/tools";
 import { buildBotSystemPrompt, DEFAULT_SELLER_NAME, truncateForWhatsApp } from "@/core/bot/prompt";
-import { splitBotReply } from "@/core/bot/reply";
+import { CURATOR_AUDIO_RECORDING_SECONDS, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
 import { isBridgeFresh } from "@/core/bot/site-bridge";
 import { renderStoreMap } from "@/core/bot/store-map";
 import {
@@ -489,6 +489,16 @@ export async function loadTurnHistory(
  * e created_at nasce com o início da transação, que pode embaralhar duas
  * mensagens em segundos.
  */
+/** ✓✓ azul na mensagem dela: cosmético e best-effort — nunca derruba o turno. */
+async function markInboundRead(provider: MessagingProvider, phoneE164: string, zapiMessageId: string | null): Promise<void> {
+  if (!zapiMessageId) return;
+  try {
+    await provider.markAsRead({ fromE164: phoneE164, providerMessageId: zapiMessageId });
+  } catch (error) {
+    console.warn("[wa-bot] não marcou a mensagem como lida", error instanceof Error ? error.message : error);
+  }
+}
+
 async function hasBotReplyFor(tx: DbOrTx, conversationId: string, inboundId: string): Promise<boolean> {
   const rows = await tx
     .select({ id: waMessages.id })
@@ -519,9 +529,12 @@ export async function deliverBotTurn(
     attachments: readonly BotAttachment[];
     bubbles: readonly string[];
     handedOff: boolean;
+    /** false quando ela acabou de escrever: o número existe, poupa uma ida à Z-API por balão. */
+    verifyPhone?: boolean;
   },
 ): Promise<{ replied: boolean; firstWaMessageId: string | null; firstSentAt: number | null }> {
   const { conversation, dedupeBase, attachments, bubbles } = input;
+  const verifyPhone = input.verifyPhone ?? true;
   const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
   const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
   // Lista e foto ANTES do texto (o cliente vê e depois o convite); a voz da
@@ -548,6 +561,7 @@ export async function deliverBotTurn(
           ...customerRef,
           dedupeKey: mediaDedupeKey,
           requireOptIn: false,
+          verifyPhone,
         });
       } else if (attachment.kind === "audio") {
         sent = await sendMediaMessage(tx, provider, {
@@ -558,6 +572,9 @@ export async function deliverBotTurn(
           ...customerRef,
           dedupeKey: mediaDedupeKey,
           requireOptIn: false,
+          verifyPhone,
+          // "Gravando áudio…" antes da voz da curadora.
+          typingSeconds: CURATOR_AUDIO_RECORDING_SECONDS,
         });
       } else {
         sent = await sendMediaMessage(tx, provider, {
@@ -568,6 +585,7 @@ export async function deliverBotTurn(
           ...customerRef,
           dedupeKey: mediaDedupeKey,
           requireOptIn: false,
+          verifyPhone,
         });
       }
       if ("sent" in sent) firstSentAt ??= Date.now();
@@ -585,12 +603,16 @@ export async function deliverBotTurn(
   let replied = false;
   let firstWaMessageId: string | null = null;
   for (const [index, bubble] of bubbles.entries()) {
+    const body = truncateForWhatsApp(bubble);
     const sent = await sendTemplateMessage(tx, provider, {
-      bodyOverride: truncateForWhatsApp(bubble),
+      bodyOverride: body,
       phoneE164: conversation.phoneE164,
       ...customerRef,
       dedupeKey: index === 0 ? replyDedupeKey : `${replyDedupeKey}:${index}`,
       requireOptIn: false,
+      verifyPhone,
+      // "Digitando…" por 1–3 s antes de cada balão.
+      typingSeconds: typingSecondsFor(body, index === 0 ? "first" : "next"),
     });
     if ("sent" in sent) {
       replied = true;
@@ -702,7 +724,7 @@ export async function runBotTurn(
     if (!(await isBotEnabled(tx))) return { skipped: "desabilitado" };
 
     const [lastInbound] = await tx
-      .select({ id: waMessages.id, createdAt: waMessages.createdAt })
+      .select({ id: waMessages.id, createdAt: waMessages.createdAt, zapiMessageId: waMessages.zapiMessageId })
       .from(waMessages)
       .where(
         and(
@@ -722,13 +744,21 @@ export async function runBotTurn(
     if (await hasBotReplyFor(tx, conversationId, lastInbound.id)) return { skipped: "ja_respondida" };
 
     const now = new Date();
+    // Copiloto (loja ou só esta conversa): a Lia pensa, a dona manda.
+    const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
+    // ✓✓ azul na mensagem dela enquanto o modelo pensa — só quando é a Lia
+    // que vai responder (conversa com a equipe/copiloto/silenciada já saíram
+    // acima). Em paralelo com o preparo; falhar não atrapalha o turno.
+    const readMark = copilot ? Promise.resolve() : markInboundRead(provider, conversation.phoneE164, lastInbound.zapiMessageId);
+
     const loaded = await loadTurnHistory(tx, provider, { conversation, now });
-    if ("skipped" in loaded) return loaded;
+    if ("skipped" in loaded) {
+      await readMark;
+      return loaded;
+    }
     const { history, recentImages, media } = loaded;
 
     const { system, model } = await buildBotPromptBundle(tx);
-    // Copiloto (loja ou só esta conversa): a Lia pensa, a dona manda.
-    const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
     if (copilot) {
       // Reentrada da fila (mesma inbound): a sugestão já existe — nada de
       // rodar o modelo e as ferramentas de estado de novo.
@@ -780,6 +810,7 @@ export async function runBotTurn(
       };
     };
     let modelMs = 0;
+    await readMark;
     try {
       turn = await assistant.respondTurn({ system, history, model, executeTool, deadlineAt: modelDeadline });
       modelMs = Date.now() - startedAt;
@@ -818,6 +849,7 @@ export async function runBotTurn(
             ...customerRef,
             dedupeKey: replyDedupeKey,
             requireOptIn: false,
+            verifyPhone: false,
           });
         }
         await handOffToHuman(
@@ -902,6 +934,8 @@ export async function runBotTurn(
       attachments,
       bubbles,
       handedOff: turn.handedOff,
+      // Ela acabou de escrever: o número tem WhatsApp.
+      verifyPhone: false,
     });
     await writeTurnAudit({ deliveryMs: Date.now() - deliveryStartedAt, firstSentAt });
     return { replied, handedOff: turn.handedOff };

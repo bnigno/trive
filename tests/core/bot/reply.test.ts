@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fixVocabulary, polishBotReply, splitBotReply } from "@/core/bot/reply";
+import { CURATOR_AUDIO_RECORDING_SECONDS, fixVocabulary, polishBotReply, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
 
 describe("fixVocabulary", () => {
   it("troca menu e cardápio por catálogo, preservando a caixa e o plural", () => {
@@ -82,5 +82,27 @@ describe("stripInternalMarkers (anotações internas nunca chegam à cliente)", 
     const { stripInternalMarkers } = await import("@/core/bot/reply");
     expect(stripInternalMarkers("Tem no [M] e no [G].")).toBe("Tem no [M] e no [G].");
     expect(stripInternalMarkers("[ok] combinado")).toBe("[ok] combinado");
+  });
+});
+
+describe("typingSecondsFor (\"digitando…\" antes do balão)", () => {
+  it("1 s por ~40 caracteres, mínimo 1 s", () => {
+    expect(typingSecondsFor("oi", "first")).toBe(1);
+    expect(typingSecondsFor("", "next")).toBe(1);
+    expect(typingSecondsFor("x".repeat(40), "next")).toBe(1);
+    expect(typingSecondsFor("x".repeat(41), "next")).toBe(2);
+  });
+
+  it("o primeiro balão fica curto (ela já pensou); os seguintes um pouco mais", () => {
+    const longo = "x".repeat(400);
+    expect(typingSecondsFor(longo, "first")).toBe(2);
+    expect(typingSecondsFor(longo, "next")).toBe(3);
+    expect(typingSecondsFor("x".repeat(160), "first")).toBe(2);
+    expect(typingSecondsFor("x".repeat(100), "next")).toBe(3);
+  });
+
+  it("a nota da curadora mostra 'gravando áudio…' por alguns segundos", () => {
+    expect(CURATOR_AUDIO_RECORDING_SECONDS).toBeGreaterThanOrEqual(1);
+    expect(CURATOR_AUDIO_RECORDING_SECONDS).toBeLessThanOrEqual(15);
   });
 });

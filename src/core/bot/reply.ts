@@ -83,3 +83,19 @@ export function splitBotReply(text: string): string[] {
     partes.slice(MAX_BUBBLES - 1).join("\n\n"),
   ];
 }
+
+// "Digitando…" antes de cada balão: a Z-API mostra o status por N segundos e
+// só então entrega a mensagem. É sensação, não simulação — 1 s por ~40
+// caracteres, curto no primeiro balão (ela já "pensou" enquanto o modelo
+// rodava) e um pouco mais nos seguintes.
+export const TYPING_CHARS_PER_SECOND = 40;
+export const TYPING_FIRST_MAX_SECONDS = 2;
+export const TYPING_NEXT_MAX_SECONDS = 3;
+/** "Gravando áudio…" antes da nota da curadora. */
+export const CURATOR_AUDIO_RECORDING_SECONDS = 3;
+
+export function typingSecondsFor(text: string, position: "first" | "next"): number {
+  const max = position === "first" ? TYPING_FIRST_MAX_SECONDS : TYPING_NEXT_MAX_SECONDS;
+  const seconds = Math.ceil(text.trim().length / TYPING_CHARS_PER_SECOND);
+  return Math.min(max, Math.max(1, seconds));
+}

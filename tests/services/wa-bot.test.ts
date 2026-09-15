@@ -271,6 +271,10 @@ describe("runBotTurn", () => {
     expect(provider.sentMessages).toHaveLength(1);
     expect(provider.sentMessages[0].toE164).toBe(PHONE);
     expect(provider.sentMessages[0].body).toBe("Olá! Como posso ajudar? 😊");
+    // "Digitando…" curto antes do balão; ✓✓ azul na mensagem dela.
+    expect(provider.sentMessages[0].typingSeconds).toBe(1);
+    const [inbound] = await db.select({ zapiMessageId: schema.waMessages.zapiMessageId }).from(schema.waMessages).where(eq(schema.waMessages.direction, "inbound"));
+    expect(provider.readReceipts).toEqual([{ fromE164: PHONE, providerMessageId: inbound.zapiMessageId }]);
 
     const outbound = await outboundMessages(conversationId);
     expect(outbound).toHaveLength(1);
@@ -279,6 +283,20 @@ describe("runBotTurn", () => {
     expect(outbound[0].dedupeKey).toMatch(/^wa\.bot_reply:/);
     // Um kick depois do commit (sem id).
     expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: {} }]);
+  });
+
+  it("responde mesmo se a consulta de número disser que ele não tem WhatsApp (ela acabou de escrever); balões seguintes com mais 'digitando'", async () => {
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "Oi!");
+    provider.setPhoneExists(PHONE, false);
+    assistant.enqueueScript({
+      replyTemplate: "Oi! Que bom te ver por aqui.\n---\n" + "Temos vestidos, blusas e saias — me conta o que você procura, a ocasião e o seu tamanho, que eu separo as opções certas para você. ".repeat(2),
+    });
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(provider.sentMessages).toHaveLength(2);
+    expect(provider.sentMessages[0].typingSeconds).toBe(1);
+    expect(provider.sentMessages[1].typingSeconds).toBe(3);
   });
 
   it("roteiro completo: listar → detalhar → criar_pedido cria pedido 'whatsapp' com reserva e link", async () => {

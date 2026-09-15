@@ -15,6 +15,18 @@ describe("FakeMessagingProvider (contrato MessagingProvider)", () => {
     expect(provider.sendOptionList).toBeTypeOf("function");
     expect(provider.getSessionStatus).toBeTypeOf("function");
     expect(provider.getQrCode).toBeTypeOf("function");
+    expect(provider.markAsRead).toBeTypeOf("function");
+  });
+
+  it("markAsRead registra o ✓✓ azul; sendText guarda typingSeconds; reset limpa", async () => {
+    const provider = new FakeMessagingProvider();
+    await provider.markAsRead({ fromE164: "+5511999990000", providerMessageId: "MSG-1" });
+    await provider.sendText({ toE164: "+5511999990000", body: "oi", typingSeconds: 2 });
+    expect(provider.readReceipts).toEqual([{ fromE164: "+5511999990000", providerMessageId: "MSG-1" }]);
+    expect(provider.sentMessages[0]).toMatchObject({ typingSeconds: 2 });
+    provider.reset();
+    expect(provider.readReceipts).toEqual([]);
+    expect(provider.sentMessages).toEqual([]);
   });
 
   it("getMessagingProvider devolve o fake quando ADAPTER_MODE não é 'real'", () => {

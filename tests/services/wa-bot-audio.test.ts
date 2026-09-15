@@ -180,7 +180,7 @@ describe("turno da Lia com áudio", () => {
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(result).toMatchObject({ replied: true });
     expect(provider.sentAudios).toHaveLength(1);
-    expect(provider.sentAudios[0]).toMatchObject({ toE164: PHONE, audioUrl: AUDIO_URL });
+    expect(provider.sentAudios[0]).toMatchObject({ toE164: PHONE, audioUrl: AUDIO_URL, typingSeconds: 3 });
     expect(provider.sentMessages).toHaveLength(1);
     // O texto saiu antes da voz (contador compartilhado do fake): "segue a voz dela" e aí o áudio.
     expect(provider.sentMessages[0].providerMessageId < provider.sentAudios[0].providerMessageId).toBe(true);

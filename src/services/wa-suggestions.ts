@@ -305,6 +305,8 @@ export async function sendApprovedSuggestion(
       attachments: row.finalBubbles ? [] : pending.attachments,
       bubbles,
       handedOff: false,
+      // A cliente escreveu e a dona aprovou: o número existe.
+      verifyPhone: false,
     });
     return { sent: true, replied: delivered.replied };
   });

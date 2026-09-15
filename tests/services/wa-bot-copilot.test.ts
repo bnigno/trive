@@ -82,6 +82,8 @@ describe("turno em copiloto", () => {
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(result).toMatchObject({ suggested: true });
     expect(provider.sentMessages).toHaveLength(0);
+    // Em copiloto a Lia não marca a mensagem como lida: quem responde é a dona.
+    expect(provider.readReceipts).toEqual([]);
     const pending = await getPendingSuggestion(sdb, conversationId);
     expect(pending).not.toBeNull();
     expect(pending!.inboundMessageId).toBe(inboundId);
