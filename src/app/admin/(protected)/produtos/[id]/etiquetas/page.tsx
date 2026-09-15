@@ -235,20 +235,22 @@ export default async function ProductLabelsPage({
           <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Como imprimir frente e verso em casa</h2>
           <ol className="list-decimal space-y-2 pl-5 text-zinc-700 dark:text-zinc-300">
             <li>
-              {silhouette ? "Papel fotográfico A4 na bandeja de trás, lado brilhante para cima. " : "Papel cartão A4 na bandeja de trás, lado da frente para cima. "}
-              Clique em <strong>Imprimir frentes</strong>: no diálogo, tamanho <strong>A4</strong>, escala <strong>100 %</strong>, margens padrão (a página já é sem margem), frente e verso <strong>desligado</strong>
+              {silhouette
+                ? "Papel: o melhor é fotográfico FOSCO DUPLA FACE A4 (220 g) — o verso imprime bem e o sensor da plotter não sofre com reflexo. No glossy de uma face só, o verso sai no dorso sem revestimento: imprima o verso como papel comum. Folhas na bandeja de trás com o lado de imprimir para cima. "
+                : "Papel cartão A4 na bandeja de trás, lado da frente para cima. "}
+              Clique em <strong>Imprimir frentes</strong>: tamanho <strong>A4</strong>, escala <strong>100 %</strong>, margens padrão (a página já é sem margem), frente e verso <strong>desligado</strong>.
               {silhouette ? (
                 <>
-                  , tipo de papel <strong>Photo Paper Glossy</strong> e qualidade <strong>normal ou alta</strong> — no rascunho as marcas saem claras e a plotter não lê
+                  {" "}
+                  Tipo de papel e qualidade ficam no diálogo da impressora, não no do Chrome: clique em <em>Imprimir usando a caixa de diálogo do sistema…</em> (⌥⌘P) → <em>Configurações de impressão</em> → tipo <strong>Photo Paper Glossy</strong> (ou <em>Premium Presentation Paper Matte</em> no fosco) e qualidade <strong>normal ou alta</strong> — no rascunho as marcas saem claras e a plotter não lê.
                 </>
               ) : null}
-              .
             </li>
             <li>
-              Pegue a pilha como saiu e <strong>vire o bloco inteiro de uma vez, como quem fecha um livro</strong> (pela lateral) — não folha por folha e não de cabeça para baixo. Coloque de volta na bandeja, lado em branco para cima.
+              Pegue a pilha como saiu e <strong>vire o bloco inteiro de uma vez, como quem fecha um livro</strong> (pela lateral) — não folha por folha e não de cabeça para baixo. De volta na bandeja de trás, lado em branco para cima e o <strong>topo da folha entrando primeiro</strong> (o rodapé &ldquo;folha n de N&rdquo; fica para cima, do lado de fora).
             </li>
             <li>
-              Clique em <strong>Imprimir versos</strong>, com as mesmas opções. No rodapé de cada folha, &ldquo;folha 2 · frente&rdquo; e &ldquo;folha 2 · verso&rdquo; têm de estar na mesma folha.
+              Clique em <strong>Imprimir versos</strong>, com as mesmas opções{silhouette ? " (no glossy de uma face, tipo de papel comum)" : ""}. Conferência: em cada folha, &ldquo;folha 2 · frente&rdquo; e &ldquo;folha 2 · verso&rdquo; na mesma folha <strong>e na mesma borda</strong> — se saíram em bordas opostas, a pilha entrou girada.
             </li>
           </ol>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -273,7 +275,7 @@ export default async function ProductLabelsPage({
                 Baixe o <strong>arquivo de corte (DXF)</strong> acima. No <strong>Silhouette Studio</strong> (Basic serve): <em>Preferências</em> → unidades em <strong>mm</strong>; em <em>Importação</em>, DXF <strong>&ldquo;As Is&rdquo;</strong> (não &ldquo;Fit to Page&rdquo;).
               </li>
               <li>
-                Abra o DXF. <em>Configuração de página</em>: tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <strong>marcas de registro ligadas, nos valores padrão</strong> (tecla M ou &ldquo;Restaurar padrões&rdquo; — não mova as marcas). Selecione tudo → <strong>X 0, Y 0</strong> → apague o retângulo grande (a folha, camada PAGINA). As 4 molduras devem cair na área sem hachura e as marcas da tela devem coincidir com as impressas na folha.
+                Abra o DXF. <em>Configuração de página</em>: tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <strong>marcas de registro ligadas</strong> (Tipo 1), clique em <em>Restaurar padrões</em> e confira os valores: recuos <strong>15,9 mm</strong> (esquerda, cima, direita) e <strong>26 mm</strong> (embaixo), comprimento <strong>20 mm</strong>, espessura <strong>0,5 mm</strong> — não mova as marcas. Selecione tudo e confira no painel <em>Transformar</em> que a seleção mede <strong>210 × 297 mm</strong> (o retângulo grande é a folha; se vier em outro tamanho, digite 210 com a proporção travada); ponto de referência no canto <strong>superior esquerdo</strong> → <strong>X 0, Y 0</strong> → apague o retângulo grande (camada PAGINA). As 4 molduras devem cair na área sem hachura e as marcas da tela devem coincidir com as impressas na folha.
               </li>
               <li>
                 <em>Salvar como</em> <strong>&ldquo;TRIVÉ tags.studio3&rdquo;</strong>. Pronto: esse arquivo vale para sempre.
@@ -292,7 +294,7 @@ export default async function ProductLabelsPage({
             </ol>
           </div>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            <strong>&ldquo;Não leu as marcas&rdquo;</strong>: luz forte por cima da máquina em vez de lateral; papel glossy reflete no sensor — cole um adesivo branco fosco nos cantos das marcas antes de imprimir, ou troque por papel fotográfico <strong>fosco dupla face 220 g</strong> (o verso também sai melhor); marcas claras → qualidade normal ou alta; se insistir, <em>registro manual</em> no Studio.
+            <strong>&ldquo;Não leu as marcas&rdquo;</strong>: luz forte por cima da máquina em vez de lateral; papel glossy reflete no sensor — cole um adesivo branco fosco nos cantos das marcas antes de imprimir, ou use o fotográfico <strong>fosco dupla face</strong>; marcas claras → qualidade normal ou alta; se insistir, <em>registro manual</em> no Studio.
           </p>
         </div>
       ) : null}

@@ -63,7 +63,7 @@ describe("área útil e posições", () => {
     expect(3 * 55 + 2 * SILHOUETTE_GRID.gapMm).toBeGreaterThan(area.widthMm);
   });
 
-  it("4 tags de 55 × 90 centradas na área útil, sem sobreposição, dentro da área e da largura de corte de 203 mm", () => {
+  it("4 tags de 55 × 90 centradas na PÁGINA (não na área útil assimétrica), dentro da área útil e da largura de corte de 203 mm", () => {
     const positions = silhouetteTagPositions(TAG);
     expect(positions).toHaveLength(4);
     expect(positions.map((p) => [p.row, p.col])).toEqual([
@@ -82,22 +82,32 @@ describe("área útil e posições", () => {
     }
     expect(positions[1].xMm - positions[0].xMm).toBeCloseTo(55 + SILHOUETTE_GRID.gapMm, 2);
     expect(positions[2].yMm - positions[0].yMm).toBeCloseTo(90 + SILHOUETTE_GRID.gapMm, 2);
-    // Centrada: mesma folga dos dois lados.
-    expect(positions[0].xMm - area.xMm).toBeCloseTo(area.xMm + area.widthMm - (positions[1].xMm + TAG.widthMm), 1);
+    // Centrada na página: mesma margem dos dois lados — é o que faz a folha virada cair sobre si mesma.
+    expect(positions[0].xMm).toBe(47);
+    expect(PAGE_A4.widthMm - (positions[1].xMm + TAG.widthMm)).toBe(47);
+    expect(positions[0].yMm).toBe(55.5);
+    expect(PAGE_A4.heightMm - (positions[2].yMm + TAG.heightMm)).toBe(55.5);
   });
 
-  it("tag que não cabe lança", () => {
+  it("tag que não cabe lança (larga demais; alta demais para a área útil mesmo cabendo na página)", () => {
     expect(() => silhouetteTagPositions({ widthMm: 90, heightMm: 90 })).toThrow(/não cabe/);
+    expect(() => silhouetteTagPositions({ widthMm: 55, heightMm: 125 })).toThrow(/não cabe/);
   });
 
-  it("o verso espelha as colunas (virar na borda longa) e mantém as linhas", () => {
+  it("o verso é a reflexão física da página (virar na borda longa): x' = 210 − x − 55, linha igual", () => {
     const front = silhouetteTagPositions(TAG);
-    const back = mirrorForBack(front);
+    const back = mirrorForBack(front, TAG);
+    for (let i = 0; i < front.length; i += 1) {
+      expect(PAGE_A4.widthMm - back[i].xMm - TAG.widthMm).toBeCloseTo(front[i].xMm, 2);
+      expect(back[i].yMm).toBe(front[i].yMm);
+    }
+    // Com a grade centrada, a reflexão é a troca de colunas.
     expect(back[0].xMm).toBe(front[1].xMm);
     expect(back[1].xMm).toBe(front[0].xMm);
-    expect(back[0].yMm).toBe(front[0].yMm);
-    expect(back[2].xMm).toBe(front[3].xMm);
     expect(back.map((p) => [p.row, p.col])).toEqual(front.map((p) => [p.row, p.col]));
+    // Grade fora do centro: a reflexão continua física, não uma troca de colunas.
+    const offCenter = [{ row: 0, col: 0, xMm: 30, yMm: 50 }, { row: 0, col: 1, xMm: 91, yMm: 50 }];
+    expect(mirrorForBack(offCenter, TAG).map((p) => p.xMm)).toEqual([125, 64]);
   });
 
   it("capacidade: 4 por folha no formato silhouette, 9 no a4; teto de 80", () => {

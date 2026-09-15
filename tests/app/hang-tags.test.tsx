@@ -167,9 +167,17 @@ describe("folha para a Silhouette (2 × 2, marcas de registro impressas na frent
     expect(html).toContain('data-sheet="1"');
     expect(html).toContain("data-marks");
     expect(html).toContain(`<rect x="${marks.square.xMm}" y="${marks.square.yMm}" width="5" height="5" fill="#000">`);
-    expect(html).toContain(`d="M${marks.topRight.cornerXMm - 20} ${marks.topRight.cornerYMm}H${marks.topRight.cornerXMm}V${marks.topRight.cornerYMm + 20}"`);
-    expect(html).toContain(`d="M${marks.bottomLeft.cornerXMm + 20} ${marks.bottomLeft.cornerYMm}H${marks.bottomLeft.cornerXMm}V${marks.bottomLeft.cornerYMm - 20}"`);
-    expect(html.match(/stroke-width="0.508"/g)).toHaveLength(2);
+    // Cada "L" são dois retângulos cheios com a borda EXTERNA no recuo e 20 mm de perna.
+    const tr = marks.topRight;
+    expect(html).toContain(`<rect x="${tr.cornerXMm - 20}" y="${tr.cornerYMm}" width="20" height="0.508" fill="#000">`);
+    expect(html).toContain(`<rect x="${tr.cornerXMm - 0.508}" y="${tr.cornerYMm}" width="0.508" height="20" fill="#000">`);
+    const bl = marks.bottomLeft;
+    expect(html).toContain(`<rect x="${bl.cornerXMm}" y="${bl.cornerYMm - 0.508}" width="20" height="0.508" fill="#000">`);
+    expect(html).toContain(`<rect x="${bl.cornerXMm}" y="${bl.cornerYMm - 20}" width="0.508" height="20" fill="#000">`);
+    // Nada de traço nas marcas: o svg data-marks só tem retângulos cheios.
+    const marksSvg = html.slice(html.indexOf("data-marks"), html.indexOf("</svg>", html.indexOf("data-marks")));
+    expect(marksSvg).not.toContain("stroke");
+    expect(marksSvg.match(/<rect /g)).toHaveLength(5);
     expect(html).toContain("data-guide");
     for (const p of positions) expect(html).toContain(`left:${p.xMm}mm;top:${p.yMm}mm`);
     expect(html.match(/hang-tag-front/g)).toHaveLength(4);
@@ -178,13 +186,15 @@ describe("folha para a Silhouette (2 × 2, marcas de registro impressas na frent
     expect(html).not.toContain('id="tag-wordmark"');
   });
 
-  it("verso: sem marcas (o corte lê a frente), colunas espelhadas — a 1ª tag vai para a posição da 2ª", () => {
+  it("verso: sem marcas (o corte lê a frente); a 1ª tag vai para o reflexo físico da sua posição (210 − x − 55), que é a posição da 2ª", () => {
     const html = sheet({ side: "back", index: 2 });
     expect(html).not.toContain("data-marks");
     expect(html).toContain("data-guide");
     const firstBack = html.indexOf("DUNAS-AREIA-1");
     const before = html.slice(0, firstBack);
-    expect(before.lastIndexOf(`left:${positions[1].xMm}mm;top:${positions[0].yMm}mm`)).toBeGreaterThan(before.lastIndexOf(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`));
+    const reflected = 210 - positions[0].xMm - 55;
+    expect(reflected).toBe(positions[1].xMm);
+    expect(before.lastIndexOf(`left:${reflected}mm;top:${positions[0].yMm}mm`)).toBeGreaterThan(before.lastIndexOf(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`));
     expect(html.match(/hang-tag-back/g)).toHaveLength(4);
   });
 

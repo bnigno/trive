@@ -459,10 +459,13 @@ já com a quantidade). Dois modelos:
     automático não existe. Por isso os botões são por lado: **Imprimir
     frentes** (todas as folhas), **virar a pilha inteira de uma vez, como quem
     fecha um livro** (pela lateral — não folha por folha, não de cabeça para
-    baixo), recolocar na bandeja com o lado em branco para cima e **Imprimir
-    versos** com as mesmas opções (funciona tanto se a impressora empilha
-    1→N como N→1). Escala 100 %. Primeiro uma folha de teste: contra a luz,
-    frente e verso têm de bater. "Frente e verso numa passada" é só para
+    baixo), recolocar na bandeja de trás com o lado em branco para cima e o
+    **topo da folha entrando primeiro** (o rodapé "folha n de N" fica para
+    cima, do lado de fora) e **Imprimir versos** com as mesmas opções
+    (funciona tanto se a impressora empilha 1→N como N→1). Conferência: os
+    rodapés da frente e do verso na mesma folha E na mesma borda — em bordas
+    opostas, a pilha entrou girada. Escala 100 %. Primeiro uma folha de
+    teste: contra a luz, frente e verso têm de bater. "Frente e verso numa passada" é só para
     teste em papel comum (frente e verso na borda longa). Corte pelas marcas
     dos cantos (régua + estilete) e fure na cruz do topo (furador de 4 a
     6 mm ou ilhós). O verso já vem espelhado — não mexa na ordem. Se a
@@ -477,27 +480,38 @@ já com a quantidade). Dois modelos:
     (quadrado + dois "L") no padrão do Studio (recuo 15,875 mm em cima,
     esquerda e direita, 26 mm embaixo; "L" de 20 mm, traço 0,5 mm), e a
     plotter lê essas marcas. Cabem **4 tags por folha** (as marcas ocupam as
-    margens). Impressão como no modo *Impressora comum* (frentes → virar a
-    pilha → versos), com papel **Photo Paper Glossy** e qualidade **normal ou
-    alta** (no rascunho as marcas saem claras e a plotter não lê); as marcas
-    só saem na frente, e o rodapé "folha n de N · frente/verso" confere se a
-    pilha virou certo. No Studio, **uma vez só**: *Preferências* → unidades
-    em mm e importação de DXF "As Is" (não "Fit to Page"); abrir o **DXF de
-    corte** (botão na tela — o mesmo para toda folha e toda peça); *Page
-    Setup* A4, base Portrait, **marcas de registro ligadas nos valores
-    padrão** (tecla M / "Restaurar padrões" — mover as marcas é o que mais
-    causa "não leu"); selecionar tudo, X 0 · Y 0, apagar o retângulo grande
-    (camada PAGINA); as 4 molduras têm de cair na área sem hachura e as
-    marcas da tela coincidir com as impressas; *Salvar como* "TRIVÉ
-    tags.studio3". **Cada vez**: folha na base com a frente (marcas) para
+    margens); a grade é centrada na página, e o verso é a reflexão física
+    (x' = 210 − x − 55) — centrar na área útil (assimétrica) deslocava o
+    verso 13 mm. Papel: o melhor é fotográfico **fosco dupla face 220 g**
+    (verso bom, sem reflexo no sensor); no glossy de uma face o verso vai no
+    dorso sem revestimento — imprimir o verso como papel comum. Impressão
+    como no modo *Impressora comum* (frentes → virar a pilha → versos). Tipo
+    de papel e qualidade ficam no diálogo do SISTEMA (no Chrome: "Imprimir
+    usando a caixa de diálogo do sistema…", ⌥⌘P → Configurações de
+    impressão): **Photo Paper Glossy** (ou Premium Presentation Paper Matte
+    no fosco) e qualidade **normal ou alta** (no rascunho as marcas saem
+    claras e a plotter não lê); as marcas só saem na frente, e o rodapé
+    "folha n de N · frente/verso" confere se a pilha virou certo. No Studio,
+    **uma vez só**: *Preferências* → unidades em mm e importação de DXF "As
+    Is" (não "Fit to Page"); abrir o **DXF de corte** (botão na tela — o
+    mesmo para toda folha e toda peça); *Page Setup* A4, base Portrait,
+    **marcas de registro ligadas** (Tipo 1) → "Restaurar padrões" e conferir
+    recuos 15,9 mm (esq./cima/dir.) e 26 mm (embaixo), comprimento 20 mm,
+    espessura 0,5 mm (mover as marcas é o que mais causa "não leu");
+    selecionar tudo, **conferir 210 × 297 mm** no painel Transformar (o
+    retângulo grande é a folha; se vier em outro tamanho, digitar 210 com a
+    proporção travada), ponto de referência no canto superior esquerdo,
+    X 0 · Y 0, apagar o retângulo grande (camada PAGINA); as 4 molduras têm
+    de cair na área sem hachura e as marcas da tela coincidir com as
+    impressas; *Salvar como* "TRIVÉ tags.studio3". **Cada vez**: folha na base com a frente (marcas) para
     cima, o quadrado no canto da seta, cobrindo a linha preta da grade;
     abrir "TRIVÉ tags.studio3" → *Enviar* (Cardstock/Photo Paper, AutoBlade).
     Numa folha com menos de 4 tags a plotter corta o resto em branco — sem
     prejuízo. Primeira vez: teste em papel comum (impressão + corte com
     pressão baixa). "Não leu as marcas": luz forte por cima (não lateral);
     glossy reflete — adesivo branco fosco nos cantos das marcas antes de
-    imprimir, ou papel fotográfico **fosco dupla face 220 g** (o verso também
-    sai melhor); se insistir, *registro manual* no Studio. As marcas, as
+    imprimir, ou o fotográfico fosco dupla face; se insistir, *registro
+    manual* no Studio. As marcas, as
     posições e o DXF ficam em `src/core/catalog/silhouette.ts`.
 - **Adesiva**: Pimaco A4355 (63,5 × 31 mm, 27 por folha), com SKU e preço. O
   fio cinza em volta de cada etiqueta é guia só na tela — não imprime.

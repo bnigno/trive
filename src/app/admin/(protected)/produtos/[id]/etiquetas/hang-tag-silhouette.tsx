@@ -10,20 +10,36 @@ import { CUT, mirrorForBack, PAGE_A4, silhouetteSafeArea, silhouetteTagPositions
 
 import { HangTagBack, HangTagFront, SheetFooter, TAG, TAG_INK } from "./hang-tag";
 
-const POSITIONS = silhouetteTagPositions({ widthMm: TAG.widthMm, heightMm: TAG.heightMm }, PAGE_A4);
-const BACK_POSITIONS = mirrorForBack(POSITIONS);
+const TAG_SIZE = { widthMm: TAG.widthMm, heightMm: TAG.heightMm };
+const POSITIONS = silhouetteTagPositions(TAG_SIZE, PAGE_A4);
+const BACK_POSITIONS = mirrorForBack(POSITIONS, TAG_SIZE, PAGE_A4);
 const SAFE = silhouetteSafeArea(PAGE_A4);
 const MARKS = studioRegistrationMarks(PAGE_A4);
 const GUIDE = "#c9c2b3";
 const FOOTER_Y_MM = 288;
 
-/** As três marcas de registro, pretas, do jeito que o sensor da plotter procura. Impressas só na frente. */
+/**
+ * As três marcas de registro, pretas, do jeito que o sensor da plotter
+ * procura: quadrado cheio e dois "L" desenhados como retângulos cheios (sem
+ * traço), com a borda externa exatamente no recuo e pernas de 20 mm.
+ * Impressas só na frente.
+ */
 function RegistrationMarks() {
   const { square, topRight, bottomLeft, thicknessMm } = MARKS;
   const w = PAGE_A4.widthMm;
   const h = PAGE_A4.heightMm;
-  const corner = (m: typeof topRight) =>
-    `M${m.cornerXMm + m.xDirection * m.lengthMm} ${m.cornerYMm}H${m.cornerXMm}V${m.cornerYMm + m.yDirection * m.lengthMm}`;
+  const legs = (m: typeof topRight) => {
+    const x0 = m.xDirection === 1 ? m.cornerXMm : m.cornerXMm - m.lengthMm;
+    const y0 = m.yDirection === 1 ? m.cornerYMm : m.cornerYMm - m.lengthMm;
+    const vx = m.xDirection === 1 ? m.cornerXMm : m.cornerXMm - thicknessMm;
+    const hy = m.yDirection === 1 ? m.cornerYMm : m.cornerYMm - thicknessMm;
+    return (
+      <>
+        <rect x={x0} y={hy} width={m.lengthMm} height={thicknessMm} fill="#000" />
+        <rect x={vx} y={y0} width={thicknessMm} height={m.lengthMm} fill="#000" />
+      </>
+    );
+  };
   return (
     <svg
       data-marks=""
@@ -32,8 +48,8 @@ function RegistrationMarks() {
       style={{ position: "absolute", inset: 0, width: `${w}mm`, height: `${h}mm`, pointerEvents: "none" }}
     >
       <rect x={square.xMm} y={square.yMm} width={square.sizeMm} height={square.sizeMm} fill="#000" />
-      <path d={corner(topRight)} fill="none" stroke="#000" strokeWidth={thicknessMm} strokeLinecap="square" strokeLinejoin="miter" />
-      <path d={corner(bottomLeft)} fill="none" stroke="#000" strokeWidth={thicknessMm} strokeLinecap="square" strokeLinejoin="miter" />
+      {legs(topRight)}
+      {legs(bottomLeft)}
     </svg>
   );
 }
