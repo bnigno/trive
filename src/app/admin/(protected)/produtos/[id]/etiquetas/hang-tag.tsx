@@ -332,3 +332,19 @@ export function HangTagBack({ label, crop = false }: { label: ProductLabel; crop
     </div>
   );
 }
+
+/**
+ * Rodapé discreto da folha, na sobra inferior: "loja · peça · folha n de N ·
+ * frente/verso". Serve para conferir, depois de imprimir, se a pilha virou
+ * certo (frente e verso da mesma folha têm o mesmo número).
+ */
+export function SheetFooter({ storeName, productName, index, total, side, topMm }: { storeName: string; productName: string; index: number; total: number; side: "front" | "back"; topMm: number }) {
+  return (
+    <div
+      data-footer=""
+      style={{ position: "absolute", left: 0, right: 0, top: `${topMm}mm`, textAlign: "center", fontFamily: SANS, fontSize: "7pt", letterSpacing: "0.06em", color: TAG_INK.mark }}
+    >
+      {storeName} · {productName} · folha {index} de {total} · {side === "front" ? "frente" : "verso"}
+    </div>
+  );
+}

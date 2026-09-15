@@ -1,5 +1,5 @@
-// A tag na Silhouette (puro): a área útil com as marcas do Studio, as 4
-// posições, o espelho do verso e o DXF de corte.
+// A tag na Silhouette (puro): as marcas de registro no padrão do Studio, a
+// área útil, as 4 posições, o espelho do verso e o DXF de corte.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,10 +10,47 @@ import {
   SILHOUETTE_GRID,
   silhouetteSafeArea,
   silhouetteTagPositions,
+  STUDIO_MARKS,
+  studioRegistrationMarks,
 } from "@/core/catalog/silhouette";
 import { LABELS_PER_SILHOUETTE_SHEET, labelsMaxTotal, labelsPerSheet } from "@/core/catalog/labels";
 
 const TAG = { widthMm: 55, heightMm: 90, holeCenterXMm: 27.5, holeCenterYMm: 8 };
+
+describe("marcas de registro (padrão do Studio, impressas por nós)", () => {
+  const marks = studioRegistrationMarks(PAGE_A4);
+
+  it("quadrado de 5 mm com o canto externo a 0,625\" das bordas; dois \"L\" de 20 mm × 0,5 mm com as pernas para dentro", () => {
+    expect(marks.square).toEqual({ xMm: 15.875, yMm: 15.875, sizeMm: 5 });
+    expect(marks.topRight).toEqual({ cornerXMm: 194.125, cornerYMm: 15.875, xDirection: -1, yDirection: 1, lengthMm: 20 });
+    // Embaixo o recuo padrão é maior (1,024"): a marca fica a 26 mm da borda.
+    expect(marks.bottomLeft).toEqual({ cornerXMm: 15.875, cornerYMm: 271, xDirection: 1, yDirection: -1, lengthMm: 20 });
+    expect(marks.thicknessMm).toBeCloseTo(0.508, 3);
+    expect(STUDIO_MARKS.lengthMm).toBe(20);
+  });
+
+  it("as marcas cabem na largura de corte da Portrait (203 mm) e na área imprimível da Epson (3 mm de margem)", () => {
+    expect(marks.topRight.cornerXMm + marks.thicknessMm).toBeLessThanOrEqual(203);
+    expect(marks.square.xMm).toBeGreaterThanOrEqual(3);
+    expect(marks.bottomLeft.cornerYMm + marks.thicknessMm).toBeLessThanOrEqual(PAGE_A4.heightMm - 3);
+  });
+
+  it("nenhuma marca chega a 5 mm de uma tag (a plotter varre em volta das marcas)", () => {
+    const clearance = 5;
+    const boxes = [
+      { x0: marks.square.xMm, y0: marks.square.yMm, x1: marks.square.xMm + marks.square.sizeMm, y1: marks.square.yMm + marks.square.sizeMm },
+      { x0: marks.topRight.cornerXMm - marks.topRight.lengthMm, y0: marks.topRight.cornerYMm, x1: marks.topRight.cornerXMm, y1: marks.topRight.cornerYMm + marks.topRight.lengthMm },
+      { x0: marks.bottomLeft.cornerXMm, y0: marks.bottomLeft.cornerYMm - marks.bottomLeft.lengthMm, x1: marks.bottomLeft.cornerXMm + marks.bottomLeft.lengthMm, y1: marks.bottomLeft.cornerYMm },
+    ];
+    for (const box of boxes) {
+      for (const p of silhouetteTagPositions(TAG)) {
+        const tooClose =
+          box.x1 + clearance > p.xMm && box.x0 - clearance < p.xMm + TAG.widthMm && box.y1 + clearance > p.yMm && box.y0 - clearance < p.yMm + TAG.heightMm;
+        expect(tooClose).toBe(false);
+      }
+    }
+  });
+});
 
 describe("área útil e posições", () => {
   it("em A4, com as marcas no padrão do Studio, sobra ~165 × 251 mm a partir de (29, 20)", () => {
@@ -26,7 +63,7 @@ describe("área útil e posições", () => {
     expect(3 * 55 + 2 * SILHOUETTE_GRID.gapMm).toBeGreaterThan(area.widthMm);
   });
 
-  it("4 tags de 55 × 90 centradas na área útil, sem sobreposição, dentro da área e da largura de corte de 203 mm", () => {
+  it("4 tags de 55 × 90 centradas na PÁGINA (não na área útil assimétrica), dentro da área útil e da largura de corte de 203 mm", () => {
     const positions = silhouetteTagPositions(TAG);
     expect(positions).toHaveLength(4);
     expect(positions.map((p) => [p.row, p.col])).toEqual([
@@ -45,22 +82,32 @@ describe("área útil e posições", () => {
     }
     expect(positions[1].xMm - positions[0].xMm).toBeCloseTo(55 + SILHOUETTE_GRID.gapMm, 2);
     expect(positions[2].yMm - positions[0].yMm).toBeCloseTo(90 + SILHOUETTE_GRID.gapMm, 2);
-    // Centrada: mesma folga dos dois lados.
-    expect(positions[0].xMm - area.xMm).toBeCloseTo(area.xMm + area.widthMm - (positions[1].xMm + TAG.widthMm), 1);
+    // Centrada na página: mesma margem dos dois lados — é o que faz a folha virada cair sobre si mesma.
+    expect(positions[0].xMm).toBe(47);
+    expect(PAGE_A4.widthMm - (positions[1].xMm + TAG.widthMm)).toBe(47);
+    expect(positions[0].yMm).toBe(55.5);
+    expect(PAGE_A4.heightMm - (positions[2].yMm + TAG.heightMm)).toBe(55.5);
   });
 
-  it("tag que não cabe lança", () => {
+  it("tag que não cabe lança (larga demais; alta demais para a área útil mesmo cabendo na página)", () => {
     expect(() => silhouetteTagPositions({ widthMm: 90, heightMm: 90 })).toThrow(/não cabe/);
+    expect(() => silhouetteTagPositions({ widthMm: 55, heightMm: 125 })).toThrow(/não cabe/);
   });
 
-  it("o verso espelha as colunas (virar na borda longa) e mantém as linhas", () => {
+  it("o verso é a reflexão física da página (virar na borda longa): x' = 210 − x − 55, linha igual", () => {
     const front = silhouetteTagPositions(TAG);
-    const back = mirrorForBack(front);
+    const back = mirrorForBack(front, TAG);
+    for (let i = 0; i < front.length; i += 1) {
+      expect(PAGE_A4.widthMm - back[i].xMm - TAG.widthMm).toBeCloseTo(front[i].xMm, 2);
+      expect(back[i].yMm).toBe(front[i].yMm);
+    }
+    // Com a grade centrada, a reflexão é a troca de colunas.
     expect(back[0].xMm).toBe(front[1].xMm);
     expect(back[1].xMm).toBe(front[0].xMm);
-    expect(back[0].yMm).toBe(front[0].yMm);
-    expect(back[2].xMm).toBe(front[3].xMm);
     expect(back.map((p) => [p.row, p.col])).toEqual(front.map((p) => [p.row, p.col]));
+    // Grade fora do centro: a reflexão continua física, não uma troca de colunas.
+    const offCenter = [{ row: 0, col: 0, xMm: 30, yMm: 50 }, { row: 0, col: 1, xMm: 91, yMm: 50 }];
+    expect(mirrorForBack(offCenter, TAG).map((p) => p.xMm)).toEqual([125, 64]);
   });
 
   it("capacidade: 4 por folha no formato silhouette, 9 no a4; teto de 80", () => {

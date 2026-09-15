@@ -14,7 +14,7 @@ import { HangTagSheet, HangTagSheets, SHEET_A4, SHEET_A4_MARGIN } from "@/app/ad
 import { LabelSheet, SHEET, SHEET_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/label-sheet";
 import { printCss } from "@/app/admin/(protected)/produtos/[id]/etiquetas/print-css";
 import { SilhouetteSheet } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-silhouette";
-import { silhouetteTagPositions } from "@/core/catalog/silhouette";
+import { silhouetteTagPositions, studioRegistrationMarks } from "@/core/catalog/silhouette";
 
 const URL_PECA = "https://trivemaison.com.br/produto/longo-dunas";
 
@@ -143,34 +143,76 @@ describe("etiqueta adesiva (Pimaco A4355)", () => {
   });
 });
 
-describe("folha para a Silhouette (2 × 2, fundo branco, sem marcas impressas)", () => {
-  const qr = { size: 33, d: "M0 0h1v1h-1z" };
+describe("rodapé da folha A4 (3 × 3)", () => {
+  it("com o nome da peça, cada folha diz o número e o lado na sobra de baixo; sem ele, nada muda", () => {
+    const html = renderToStaticMarkup(<HangTagSheets sheets={[[label(1)], [label(2)]]} storeName="TRIVÉ" productName="Vestido Dunas" />);
+    expect(html).toContain("TRIVÉ · Vestido Dunas · folha 1 de 2 · frente");
+    expect(html).toContain("TRIVÉ · Vestido Dunas · folha 2 de 2 · verso");
+    expect(html).toContain(`top:${297 - SHEET_A4_MARGIN.yMm + 1.5}mm`);
+    expect(renderToStaticMarkup(<HangTagSheets sheets={[[label(1)]]} storeName="TRIVÉ" />)).not.toContain("data-footer");
+  });
+});
+
+describe("folha para a Silhouette (2 × 2, marcas de registro impressas na frente)", () => {
   const four = [label(1), label(2), label(3), label(4)];
   const positions = silhouetteTagPositions({ widthMm: 55, heightMm: 90 });
+  const marks = studioRegistrationMarks();
+  const sheet = (props: Partial<Parameters<typeof SilhouetteSheet>[0]> & { side: "front" | "back" }) =>
+    renderToStaticMarkup(<SilhouetteSheet labels={four} storeName="TRIVÉ" productName="Vestido Dunas" index={1} total={3} {...props} />);
 
-  it("frente: 4 tags nas posições do núcleo, símbolos dentro da folha e o guia das marcas marcado para ficar fora da captura", () => {
-    const html = renderToStaticMarkup(<SilhouetteSheet labels={four} side="front" storeName="TRIVÉ" qr={qr} index={1} />);
+  it("frente: página de impressão com as três marcas pretas do Studio (quadrado 5 mm, dois L de 20 mm × 0,5 mm), 4 tags nas posições do núcleo e o guia só de tela", () => {
+    const html = sheet({ side: "front" });
+    expect(html).toContain('class="print-page silhouette-sheet');
     expect(html).toContain('data-side="front"');
     expect(html).toContain('data-sheet="1"');
-    expect(html).toContain("background:#ffffff");
-    expect(html).toContain('id="tag-wordmark"');
+    expect(html).toContain("data-marks");
+    expect(html).toContain(`<rect x="${marks.square.xMm}" y="${marks.square.yMm}" width="5" height="5" fill="#000">`);
+    // Cada "L" são dois retângulos cheios com a borda EXTERNA no recuo e 20 mm de perna.
+    const tr = marks.topRight;
+    expect(html).toContain(`<rect x="${tr.cornerXMm - 20}" y="${tr.cornerYMm}" width="20" height="0.508" fill="#000">`);
+    expect(html).toContain(`<rect x="${tr.cornerXMm - 0.508}" y="${tr.cornerYMm}" width="0.508" height="20" fill="#000">`);
+    const bl = marks.bottomLeft;
+    expect(html).toContain(`<rect x="${bl.cornerXMm}" y="${bl.cornerYMm - 0.508}" width="20" height="0.508" fill="#000">`);
+    expect(html).toContain(`<rect x="${bl.cornerXMm}" y="${bl.cornerYMm - 20}" width="0.508" height="20" fill="#000">`);
+    // Nada de traço nas marcas: o svg data-marks só tem retângulos cheios.
+    const marksSvg = html.slice(html.indexOf("data-marks"), html.indexOf("</svg>", html.indexOf("data-marks")));
+    expect(marksSvg).not.toContain("stroke");
+    expect(marksSvg.match(/<rect /g)).toHaveLength(5);
     expect(html).toContain("data-guide");
     for (const p of positions) expect(html).toContain(`left:${p.xMm}mm;top:${p.yMm}mm`);
     expect(html.match(/hang-tag-front/g)).toHaveLength(4);
     expect(html).not.toContain("DUNAS-AREIA");
+    // Os símbolos vêm uma vez por página (HangTagDefs), não por folha.
+    expect(html).not.toContain('id="tag-wordmark"');
   });
 
-  it("verso: colunas espelhadas — a 1ª tag vai para a posição da 2ª", () => {
-    const html = renderToStaticMarkup(<SilhouetteSheet labels={four} side="back" storeName="TRIVÉ" qr={qr} index={2} />);
+  it("verso: sem marcas (o corte lê a frente); a 1ª tag vai para o reflexo físico da sua posição (210 − x − 55), que é a posição da 2ª", () => {
+    const html = sheet({ side: "back", index: 2 });
+    expect(html).not.toContain("data-marks");
+    expect(html).toContain("data-guide");
     const firstBack = html.indexOf("DUNAS-AREIA-1");
     const before = html.slice(0, firstBack);
-    expect(before.lastIndexOf(`left:${positions[1].xMm}mm;top:${positions[0].yMm}mm`)).toBeGreaterThan(before.lastIndexOf(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`));
+    const reflected = 210 - positions[0].xMm - 55;
+    expect(reflected).toBe(positions[1].xMm);
+    expect(before.lastIndexOf(`left:${reflected}mm;top:${positions[0].yMm}mm`)).toBeGreaterThan(before.lastIndexOf(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`));
     expect(html.match(/hang-tag-back/g)).toHaveLength(4);
   });
 
+  it("rodapé na sobra inferior diz a folha e o lado, para conferir se a pilha virou certo", () => {
+    expect(sheet({ side: "front", index: 2 })).toContain("TRIVÉ · Vestido Dunas · folha 2 de 3 · frente");
+    expect(sheet({ side: "back", index: 2 })).toContain("TRIVÉ · Vestido Dunas · folha 2 de 3 · verso");
+    expect(sheet({ side: "front" })).toContain("top:288mm");
+  });
+
   it("folha parcial (1 tag) só ocupa a primeira posição", () => {
-    const html = renderToStaticMarkup(<SilhouetteSheet labels={[label(1)]} side="front" storeName="TRIVÉ" qr={qr} index={1} />);
+    const html = sheet({ side: "front", labels: [label(1)] });
     expect(html.match(/hang-tag-front/g)).toHaveLength(1);
     expect(html).toContain(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`);
+  });
+
+  it("o CSS de impressão esconde o outro lado quando o <html> pede um lado só, e o guia sempre", () => {
+    const css = printCss("A4");
+    expect(css).toContain('html[data-print-side="front"] .print-page[data-side="back"], html[data-print-side="back"] .print-page[data-side="front"] { display: none !important; }');
+    expect(css).toContain("[data-guide] { display: none !important; }");
   });
 });
