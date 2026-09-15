@@ -3,7 +3,7 @@
 // "Saiu" (paid → preparing → shipped numa transação só; o evento
 // order.shipped avisa a cliente "saiu da maison") e o reagendamento de uma
 // janela que passou. A regra de agrupamento é pura (core/shipping/route).
-import { and, asc, eq, inArray, isNotNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { OrderStatus } from "@/core/orders/state-machine";
@@ -16,7 +16,7 @@ import {
   type DeliveryWindowChoice,
 } from "@/core/shipping/delivery-windows";
 import { groupRouteOrders, isPaidAfterCutoff, type RouteOfDay } from "@/core/shipping/route";
-import { auditLog, customers, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
+import { auditLog, customers, deliveryStops, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
 import { isSpDayKey, spDayKey, spMinutesOfDay } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { ServiceError, transitionOrder } from "@/services/orders";
@@ -89,6 +89,9 @@ const routeStatusFilter = (includeShipped: boolean) =>
   or(
     inArray(orders.status, includeShipped ? [...ROUTE_STATUSES, "shipped"] : ROUTE_STATUSES),
     and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+    // Enviado mas sem marca de saída: voltou para a loja (reagendado depois
+    // de "não consegui entregar") — precisa sair de novo.
+    and(eq(orders.status, "shipped"), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NULL`),
   )!;
 
 /** "Longo Dunas · Areia · M ×1" por linha, e a contagem, por pedido. */
@@ -361,7 +364,9 @@ export async function listMotoboyWindows(db: DbOrTx): Promise<{ rateName: string
 /**
  * Troca a janela do pedido (ainda por sair) por outra de uma faixa de
  * motoboy ativa, em hoje ou num dia futuro. Não avisa a cliente: a dona
- * combina pelo WhatsApp (o link está na rota). Fica no audit.
+ * combina pelo WhatsApp (o link está na rota). Fica no audit. Pedido que
+ * saiu e voltou (a última parada da saída com GPS falhou) também pode: a
+ * marca de saída cai e ele volta para a rota.
  */
 export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof rescheduleSchema>): Promise<DeliveryWindowChoice> {
   const parsed = rescheduleSchema.parse(input);
@@ -376,8 +381,10 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     if (!order.deliveryWindow) throw new ServiceError("NOT_MOTOBOY", "Este pedido não é de motoboy.");
     const waitingCash = order.status === "pending_payment" && order.paymentMethod === "cash";
-    if (order.deliveryWindow.dispatchedAt || (!ROUTE_STATUSES.includes(order.status as OrderStatus) && !waitingCash)) {
-      throw new ServiceError("INVALID_TRANSITION", "Só um pedido que ainda não saiu pode ser reagendado.");
+    const cameBack = order.deliveryWindow.dispatchedAt ? await lastStopFailed(tx, order.id) : false;
+    const eligibleStatus = ROUTE_STATUSES.includes(order.status as OrderStatus) || waitingCash || (order.status === "shipped" && cameBack);
+    if ((order.deliveryWindow.dispatchedAt && !cameBack) || !eligibleStatus) {
+      throw new ServiceError("INVALID_TRANSITION", "Só um pedido que ainda não saiu (ou que voltou sem ser entregue) pode ser reagendado.");
     }
     const rates = await listMotoboyWindows(tx);
     const owner = rates.find((r) => r.rateName === order.deliveryWindow?.rateName && windowBelongsToRate(parsed.window, r.windows))
@@ -385,7 +392,8 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     if (!owner) throw new ServiceError("WINDOW_UNKNOWN", "Essa janela não existe mais nas faixas de motoboy.");
 
     const choice: DeliveryWindowChoice = { dayKey: parsed.dayKey, ...parsed.window };
-    const snapshot = { ...order.deliveryWindow, ...choice, rateName: owner.rateName, label: windowDateLabel(choice) };
+    const { dispatchedAt: _dispatchedAt, ...kept } = order.deliveryWindow;
+    const snapshot = { ...kept, ...choice, rateName: owner.rateName, label: windowDateLabel(choice) };
     await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: new Date() }).where(eq(orders.id, order.id));
     await tx.insert(auditLog).values({
       actorType: "user",
@@ -398,4 +406,15 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     });
     return choice;
   });
+}
+
+/** A última parada (não cancelada) do pedido numa saída com GPS falhou: a peça voltou para a loja. */
+async function lastStopFailed(db: DbOrTx, orderId: string): Promise<boolean> {
+  const [stop] = await db
+    .select({ status: deliveryStops.status })
+    .from(deliveryStops)
+    .where(and(eq(deliveryStops.orderId, orderId), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
+    .orderBy(desc(deliveryStops.createdAt))
+    .limit(1);
+  return stop?.status === "failed";
 }

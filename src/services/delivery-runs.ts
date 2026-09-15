@@ -738,6 +738,13 @@ export async function getTrackingForOrder(db: DbOrTx, publicToken: string, now =
     .select({ pending: count() })
     .from(deliveryStops)
     .where(and(eq(deliveryStops.runId, row.runId), eq(deliveryStops.status, "pending"), ne(deliveryStops.id, row.stopId)));
+  // A última OUTRA parada fechada (entregue ou não): o motoboy ainda está na porta dela.
+  const [lastClosed] = await db
+    .select({ at: deliveryStops.updatedAt })
+    .from(deliveryStops)
+    .where(and(eq(deliveryStops.runId, row.runId), inArray(deliveryStops.status, ["delivered", "failed"]), ne(deliveryStops.id, row.stopId)))
+    .orderBy(desc(deliveryStops.updatedAt))
+    .limit(1);
   return buildTrackingView({
     run: {
       status: row.runStatus as RunStatus,
@@ -754,6 +761,8 @@ export async function getTrackingForOrder(db: DbOrTx, publicToken: string, now =
       receivedBy: row.receivedBy,
     },
     otherStopsPending: pending,
+    otherStopClosedAgoMs: lastClosed ? Math.max(0, now.getTime() - lastClosed.at.getTime()) : null,
+    coarseSeed: row.runId,
     now,
   });
 }
@@ -1023,8 +1032,10 @@ const storedAddressSchema = z
 export const GEOCODE_SPACING_MS = 1_100;
 /** Paradas por execução do handler: cabe no orçamento da varredura (~8 × 3 s). */
 export const GEOCODE_MAX_STOPS_PER_RUN = 8;
-/** Com menos que isso até o prazo, não começa outra parada (pausa + 2 consultas de 5 s). */
-const GEOCODE_STOP_BUDGET_MS = 12_000;
+/** Com menos que isso até o prazo, não começa outra parada (pausa + 2 consultas de 5 s + pausa entre elas). */
+const GEOCODE_STOP_BUDGET_MS = 13_000;
+/** Rodadas do geocode por saída: ceil(30 paradas / 8) com folga. */
+export const GEOCODE_MAX_ROUNDS = 6;
 
 /**
  * Geocodifica as paradas sem coordenada, uma por vez, com pausa entre elas,
@@ -1036,12 +1047,24 @@ const GEOCODE_STOP_BUDGET_MS = 12_000;
 export async function geocodeRunStops(
   db: DbOrTx,
   geocoder: Geocoder,
-  input: { runId: string; sleep?: (ms: number) => Promise<void>; deadlineAt?: Date | null; maxStops?: number; now?: () => Date },
-): Promise<{ attempted: number; found: number; remaining: number }> {
+  input: {
+    runId: string;
+    /** Paradas já tentadas em rodadas anteriores: a rodada avança por tentativa, não por pino (senão, endereço sem cobertura vira loop). */
+    skipStopIds?: readonly string[];
+    sleep?: (ms: number) => Promise<void>;
+    deadlineAt?: Date | null;
+    maxStops?: number;
+    now?: () => Date;
+  },
+): Promise<{ attempted: number; found: number; remaining: number; attemptedIds: string[]; runOpen: boolean }> {
   const runId = z.uuid().parse(input.runId);
+  const skip = new Set(input.skipStopIds ?? []);
   const sleep = input.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   const clock = input.now ?? (() => new Date());
   const maxStops = input.maxStops ?? GEOCODE_MAX_STOPS_PER_RUN;
+  const [run] = await db.select({ status: deliveryRuns.status }).from(deliveryRuns).where(eq(deliveryRuns.id, runId)).limit(1);
+  const runOpen = run ? isRunOpen(run.status as RunStatus) : false;
+  if (!runOpen) return { attempted: 0, found: 0, remaining: 0, attemptedIds: [], runOpen };
   const rows = await db
     .select({ id: deliveryStops.id, destLat: deliveryStops.destLat, shippingAddress: orders.shippingAddress })
     .from(deliveryStops)
@@ -1049,18 +1072,20 @@ export async function geocodeRunStops(
     .where(eq(deliveryStops.runId, runId))
     .orderBy(asc(deliveryStops.sequence));
   const pending = rows.flatMap((row) => {
-    if (row.destLat !== null) return [];
+    if (row.destLat !== null || skip.has(row.id)) return [];
     const address = storedAddressSchema.safeParse(row.shippingAddress);
     if (!address.success || !address.data.street || !address.data.city) return [];
     return [{ id: row.id, address: address.data }];
   });
   let attempted = 0;
   let found = 0;
+  const attemptedIds: string[] = [];
   for (const row of pending) {
     if (attempted >= maxStops) break;
     if (input.deadlineAt && input.deadlineAt.getTime() - clock().getTime() < GEOCODE_STOP_BUDGET_MS) break;
     if (attempted > 0) await sleep(GEOCODE_SPACING_MS);
     attempted += 1;
+    attemptedIds.push(row.id);
     const point = await geocoder.geocode({
       street: row.address.street ?? "",
       number: row.address.number ?? "",
@@ -1073,7 +1098,7 @@ export async function geocodeRunStops(
     found += 1;
     await db.update(deliveryStops).set({ destLat: point.lat, destLng: point.lng, updatedAt: clock() }).where(eq(deliveryStops.id, row.id));
   }
-  return { attempted, found, remaining: pending.length - attempted };
+  return { attempted, found, remaining: pending.length - attempted, attemptedIds, runOpen };
 }
 
 export const POSITIONS_RETENTION_DAYS = 30;
@@ -1098,28 +1123,39 @@ export async function purgeOldDeliveryPositions(db: DbOrTx, input: { now?: Date;
 }
 
 export const STALE_RUN_HOURS = 24;
+/** Saída velha mas com posição/parada nas últimas 2 h ainda está em uso: não fecha. */
+export const STALE_RUN_IDLE_HOURS = 2;
 
 /**
- * Saída esquecida aberta (ninguém encerrou nem cancelou): depois de 24 h
- * fecha sozinha — encerra se não sobrou parada, cancela as pendentes se
- * sobrou — e avisa a dona. Sem isso, o link do motoboy e a posição dele
- * ficariam vivos indefinidamente.
+ * Saída esquecida aberta (ninguém encerrou nem cancelou): criada há mais de
+ * 24 h E parada há mais de 2 h (updated_at muda com posição, "Comecei" e
+ * cada parada fechada) fecha sozinha — encerra se não sobrou parada, cancela
+ * as pendentes se sobrou — e avisa a dona. Sem isso, o link do motoboy e a
+ * posição dele ficariam vivos indefinidamente.
  */
 export async function closeStaleDeliveryRuns(db: DbOrTx, input: { now?: Date; hours?: number } = {}): Promise<{ closed: number }> {
   const now = input.now ?? new Date();
   const cutoff = new Date(now.getTime() - (input.hours ?? STALE_RUN_HOURS) * 3_600_000);
+  const idleCutoff = new Date(now.getTime() - STALE_RUN_IDLE_HOURS * 3_600_000);
   const stale = await db
-    .select({ id: deliveryRuns.id, status: deliveryRuns.status, courierName: couriers.name })
+    .select({ id: deliveryRuns.id })
     .from(deliveryRuns)
-    .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
-    .where(and(inArray(deliveryRuns.status, ["ready", "en_route"]), lt(deliveryRuns.createdAt, cutoff)))
+    .where(and(inArray(deliveryRuns.status, ["ready", "en_route"]), lt(deliveryRuns.createdAt, cutoff), lt(deliveryRuns.updatedAt, idleCutoff)))
     .limit(50);
   let closed = 0;
-  for (const run of stale) {
-    await db.transaction(async (tx) => {
+  for (const candidate of stale) {
+    const done = await db.transaction(async (tx) => {
+      const [run] = await tx
+        .select({ id: deliveryRuns.id, status: deliveryRuns.status, courierName: couriers.name, updatedAt: deliveryRuns.updatedAt })
+        .from(deliveryRuns)
+        .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
+        .where(eq(deliveryRuns.id, candidate.id))
+        .for("update", { of: deliveryRuns });
+      if (!run || !isRunOpen(run.status as RunStatus) || run.updatedAt.getTime() >= idleCutoff.getTime()) return false;
       const stops = await tx.select({ status: deliveryStops.status }).from(deliveryStops).where(eq(deliveryStops.runId, run.id));
       const pending = stops.filter((s) => s.status === "pending").length;
       const finish = run.status === "en_route" && pending === 0;
+      assertRunTransition(run.status as RunStatus, finish ? "finished" : "canceled");
       if (finish) {
         await tx.update(deliveryRuns).set({ status: "finished", finishedAt: now, updatedAt: now }).where(eq(deliveryRuns.id, run.id));
       } else {
@@ -1145,10 +1181,11 @@ export async function closeStaleDeliveryRuns(db: DbOrTx, input: { now?: Date; ho
         action: finish ? "delivery_run.finish" : "delivery_run.cancel",
         entityType: "delivery_run",
         entityId: run.id,
-        reason: "Saída aberta há mais de 24 h.",
+        reason: "Saída aberta há mais de 24 h e parada há mais de 2 h.",
       });
+      return true;
     });
-    closed += 1;
+    if (done) closed += 1;
   }
   return { closed };
 }

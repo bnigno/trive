@@ -18,6 +18,8 @@ export const ARRIVING_MAX_ACCURACY_M = 100;
 export const POSITION_HIDE_AFTER_MS = 30 * 60_000;
 /** Casas decimais da posição enquanto há outras paradas por entregar (3 ≈ 110 m). */
 export const COARSE_DECIMALS = 3;
+/** Depois que outra parada fecha, o motoboy ainda está na porta dela: posição arredondada por mais um tempo. */
+export const COARSE_GRACE_MS = 10 * 60_000;
 
 export function etaMinutes(distanceKm: number): number {
   const minutes = ((distanceKm * ETA_ROAD_FACTOR) / ETA_SPEED_KMH) * 60;
@@ -63,6 +65,10 @@ export function buildTrackingView(input: {
   run: TrackingRunInput;
   stop: TrackingStopInput;
   otherStopsPending: number;
+  /** Há quanto tempo a última OUTRA parada da saída fechou (null = nenhuma fechou). */
+  otherStopClosedAgoMs?: number | null;
+  /** Semente do deslocamento da grade de arredondamento (a saída): ver coarsePoint. */
+  coarseSeed?: string;
   now: Date;
 }): TrackingView {
   const { run, stop, now } = input;
@@ -94,15 +100,13 @@ export function buildTrackingView(input: {
   const distanceKm = stop.destination ? round1(haversineKm(position, stop.destination)) : null;
   const preciseEnough = position.accuracyM === null || position.accuracyM <= ARRIVING_MAX_ACCURACY_M;
   const arriving = distanceKm !== null && distanceKm < ARRIVING_KM && signal !== "lost" && preciseEnough;
-  const coarse = input.otherStopsPending > 0;
+  const closedAgo = input.otherStopClosedAgoMs ?? null;
+  const coarse = input.otherStopsPending > 0 || (closedAgo !== null && closedAgo < COARSE_GRACE_MS);
+  const shown = coarse ? coarsePoint(position, input.coarseSeed ?? "") : position;
   return {
     ...base,
     state: arriving ? "arriving" : "en_route",
-    courier: {
-      lat: coarse ? roundTo(position.lat, COARSE_DECIMALS) : position.lat,
-      lng: coarse ? roundTo(position.lng, COARSE_DECIMALS) : position.lng,
-      accuracyM: position.accuracyM,
-    },
+    courier: { lat: shown.lat, lng: shown.lng, accuracyM: position.accuracyM },
     approximate: coarse || !preciseEnough,
     signal,
     updatedSecondsAgo,
@@ -118,6 +122,32 @@ function round1(value: number): number {
 function roundTo(value: number, decimals: number): number {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
+}
+
+/** FNV-1a de 32 bits → [0, 1). Determinístico por semente; sem aleatoriedade no core. */
+function hashUnit(seed: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash / 0x100000000;
+}
+
+/**
+ * A célula de ~110 m, com a grade deslocada por saída: sem o deslocamento, o
+ * jitter do GPS na fronteira de uma célula alterna entre duas e entrega a
+ * linha exata; com ele, cada saída tem uma grade própria e a fronteira não
+ * é conhecida de fora.
+ */
+export function coarsePoint(point: GeoPoint, seed: string): GeoPoint {
+  const cell = 10 ** -COARSE_DECIMALS;
+  const offLat = hashUnit(`${seed}:lat`) * cell;
+  const offLng = hashUnit(`${seed}:lng`) * cell;
+  return {
+    lat: roundTo(roundTo(point.lat + offLat, COARSE_DECIMALS) - offLat, 6),
+    lng: roundTo(roundTo(point.lng + offLng, COARSE_DECIMALS) - offLng, 6),
+  };
 }
 
 /** "2,1 km" / "850 m" para a legenda. */

@@ -2,7 +2,17 @@
 // "chegando", sinal perdido — e nunca o destino.
 import { describe, expect, it } from "vitest";
 
-import { buildTrackingView, COARSE_DECIMALS, distanceLabel, etaMinutes, POSITION_HIDE_AFTER_MS, type TrackingRunInput, type TrackingStopInput } from "@/core/delivery/tracking";
+import {
+  buildTrackingView,
+  COARSE_DECIMALS,
+  COARSE_GRACE_MS,
+  coarsePoint,
+  distanceLabel,
+  etaMinutes,
+  POSITION_HIDE_AFTER_MS,
+  type TrackingRunInput,
+  type TrackingStopInput,
+} from "@/core/delivery/tracking";
 
 const NOW = new Date("2026-09-18T18:00:00Z");
 const DEST = { lat: -1.4553, lng: -48.4933 };
@@ -78,17 +88,37 @@ describe("buildTrackingView", () => {
     expect(view.courier?.accuracyM).toBe(400);
   });
 
-  it("com outras paradas por entregar a posição vai arredondada (~110 m): o ponto exato seria a casa de outra cliente", () => {
+  it("com outras paradas por entregar a posição vai arredondada (~110 m, grade deslocada por saída): o ponto exato seria a casa de outra cliente", () => {
     const exact = { lat: -1.455312, lng: -48.493287 };
-    const view = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 2, now: NOW });
+    const view = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 2, coarseSeed: "saida-1", now: NOW });
     expect(view.approximate).toBe(true);
-    expect(view.courier).toEqual({ lat: -1.455, lng: -48.493, accuracyM: 8 });
-    expect(String(view.courier?.lat).split(".")[1]?.length ?? 0).toBeLessThanOrEqual(COARSE_DECIMALS);
+    expect(view.courier?.accuracyM).toBe(8);
+    expect(view.courier).not.toMatchObject({ lat: exact.lat, lng: exact.lng });
+    const cell = 10 ** -COARSE_DECIMALS;
+    expect(Math.abs(view.courier!.lat - exact.lat)).toBeLessThanOrEqual(cell);
+    expect(Math.abs(view.courier!.lng - exact.lng)).toBeLessThanOrEqual(cell);
+    // Determinístico por saída; outra saída, outra grade.
+    const again = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 2, coarseSeed: "saida-1", now: NOW });
+    expect(again.courier).toEqual(view.courier);
+    expect(coarsePoint(exact, "saida-2")).not.toEqual(coarsePoint(exact, "saida-1"));
+    // Jitter de 5 m na fronteira de uma célula "redonda" não alterna a célula deslocada.
+    const border = { lat: -1.4565, lng: -48.4935 };
+    expect(coarsePoint({ lat: border.lat + 0.00004, lng: border.lng }, "saida-1")).toEqual(coarsePoint({ lat: border.lat - 0.00004, lng: border.lng }, "saida-1"));
     // A distância e o ETA continuam calculados sobre a posição exata.
     expect(view.distanceKm).toBeCloseTo(0, 1);
     const alone = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 0, now: NOW });
     expect(alone.courier).toEqual({ ...exact, accuracyM: 8 });
     expect(alone.approximate).toBe(false);
+  });
+
+  it("depois que outra parada fecha, a posição continua arredondada por 10 min (o motoboy ainda está na porta dela)", () => {
+    const exact = { lat: -1.455312, lng: -48.493287 };
+    const justClosed = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 0, otherStopClosedAgoMs: 30_000, coarseSeed: "s", now: NOW });
+    expect(justClosed.approximate).toBe(true);
+    expect(justClosed.courier).not.toMatchObject({ lat: exact.lat });
+    const later = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 0, otherStopClosedAgoMs: COARSE_GRACE_MS, coarseSeed: "s", now: NOW });
+    expect(later.approximate).toBe(false);
+    expect(later.courier).toEqual({ ...exact, accuracyM: 8 });
   });
 
   it("sem amostra nova há mais de 30 min a posição some do link (saída esquecida aberta)", () => {
