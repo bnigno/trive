@@ -171,6 +171,12 @@ export default async function ProdutoDetalhePage({
         actions={
           <div className="flex items-center gap-4">
             <Link
+              href={`/admin/produtos/${id}/etiquetas`}
+              className="text-sm font-medium text-zinc-900 underline dark:text-zinc-100"
+            >
+              Etiquetas
+            </Link>
+            <Link
               href={`/admin/produtos/${id}/post`}
               className="text-sm font-medium text-zinc-900 underline dark:text-zinc-100"
             >

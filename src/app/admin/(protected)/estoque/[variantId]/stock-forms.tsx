@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import {
   Field,
@@ -23,10 +24,13 @@ export type SupplierOption = { id: string; name: string };
 
 export function ReceiveStockForm({
   variantId,
+  productId,
   supplierOptions,
   canBuy,
 }: {
   variantId: string;
+  /** Para o atalho "imprimir etiquetas" depois da entrada. */
+  productId: string;
   supplierOptions: SupplierOption[];
   /**
    * Compra (fornecedor, custo, conta a pagar) é do dono. Com `false` sobra a
@@ -123,6 +127,14 @@ export function ReceiveStockForm({
       </Field>
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
+      {state.labels ? (
+        <Link
+          href={`/admin/produtos/${productId}/etiquetas?${variantId}=${state.labels.quantity}`}
+          className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+        >
+          Imprimir {state.labels.quantity === 1 ? "1 etiqueta" : `${state.labels.quantity} etiquetas`} desta entrada →
+        </Link>
+      ) : null}
       <div>
         <SubmitButton pendingLabel="Registrando…">
           {isPurchase ? "Registrar compra" : "Registrar entrada"}

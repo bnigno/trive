@@ -155,6 +155,12 @@ export default async function StockVariantPage({
           <div className="flex items-center gap-3">
             <LowStockBadge available={available} threshold={threshold} />
             <Link
+              href={`/admin/produtos/${item.productId}/etiquetas?${item.variantId}=1`}
+              className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              Etiquetas
+            </Link>
+            <Link
               href={`/admin/produtos/${item.productId}`}
               className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
             >
@@ -203,6 +209,7 @@ export default async function StockVariantPage({
         <Card title="Registrar entrada">
           <ReceiveStockForm
             variantId={item.variantId}
+            productId={item.productId}
             supplierOptions={supplierOptions}
             canBuy={owner}
           />
