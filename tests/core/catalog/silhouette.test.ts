@@ -1,5 +1,5 @@
-// A tag na Silhouette (puro): a área útil com as marcas do Studio, as 4
-// posições, o espelho do verso e o DXF de corte.
+// A tag na Silhouette (puro): as marcas de registro no padrão do Studio, a
+// área útil, as 4 posições, o espelho do verso e o DXF de corte.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,10 +10,47 @@ import {
   SILHOUETTE_GRID,
   silhouetteSafeArea,
   silhouetteTagPositions,
+  STUDIO_MARKS,
+  studioRegistrationMarks,
 } from "@/core/catalog/silhouette";
 import { LABELS_PER_SILHOUETTE_SHEET, labelsMaxTotal, labelsPerSheet } from "@/core/catalog/labels";
 
 const TAG = { widthMm: 55, heightMm: 90, holeCenterXMm: 27.5, holeCenterYMm: 8 };
+
+describe("marcas de registro (padrão do Studio, impressas por nós)", () => {
+  const marks = studioRegistrationMarks(PAGE_A4);
+
+  it("quadrado de 5 mm com o canto externo a 0,625\" das bordas; dois \"L\" de 20 mm × 0,5 mm com as pernas para dentro", () => {
+    expect(marks.square).toEqual({ xMm: 15.875, yMm: 15.875, sizeMm: 5 });
+    expect(marks.topRight).toEqual({ cornerXMm: 194.125, cornerYMm: 15.875, xDirection: -1, yDirection: 1, lengthMm: 20 });
+    // Embaixo o recuo padrão é maior (1,024"): a marca fica a 26 mm da borda.
+    expect(marks.bottomLeft).toEqual({ cornerXMm: 15.875, cornerYMm: 271, xDirection: 1, yDirection: -1, lengthMm: 20 });
+    expect(marks.thicknessMm).toBeCloseTo(0.508, 3);
+    expect(STUDIO_MARKS.lengthMm).toBe(20);
+  });
+
+  it("as marcas cabem na largura de corte da Portrait (203 mm) e na área imprimível da Epson (3 mm de margem)", () => {
+    expect(marks.topRight.cornerXMm + marks.thicknessMm).toBeLessThanOrEqual(203);
+    expect(marks.square.xMm).toBeGreaterThanOrEqual(3);
+    expect(marks.bottomLeft.cornerYMm + marks.thicknessMm).toBeLessThanOrEqual(PAGE_A4.heightMm - 3);
+  });
+
+  it("nenhuma marca chega a 5 mm de uma tag (a plotter varre em volta das marcas)", () => {
+    const clearance = 5;
+    const boxes = [
+      { x0: marks.square.xMm, y0: marks.square.yMm, x1: marks.square.xMm + marks.square.sizeMm, y1: marks.square.yMm + marks.square.sizeMm },
+      { x0: marks.topRight.cornerXMm - marks.topRight.lengthMm, y0: marks.topRight.cornerYMm, x1: marks.topRight.cornerXMm, y1: marks.topRight.cornerYMm + marks.topRight.lengthMm },
+      { x0: marks.bottomLeft.cornerXMm, y0: marks.bottomLeft.cornerYMm - marks.bottomLeft.lengthMm, x1: marks.bottomLeft.cornerXMm + marks.bottomLeft.lengthMm, y1: marks.bottomLeft.cornerYMm },
+    ];
+    for (const box of boxes) {
+      for (const p of silhouetteTagPositions(TAG)) {
+        const tooClose =
+          box.x1 + clearance > p.xMm && box.x0 - clearance < p.xMm + TAG.widthMm && box.y1 + clearance > p.yMm && box.y0 - clearance < p.yMm + TAG.heightMm;
+        expect(tooClose).toBe(false);
+      }
+    }
+  });
+});
 
 describe("área útil e posições", () => {
   it("em A4, com as marcas no padrão do Studio, sobra ~165 × 251 mm a partir de (29, 20)", () => {

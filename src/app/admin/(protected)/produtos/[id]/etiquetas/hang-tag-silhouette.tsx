@@ -1,27 +1,47 @@
-// Folha A4 para a Silhouette Portrait (print & cut): 2 × 2 tags nas posições
-// que o núcleo calcula dentro da área útil das marcas de registro do Studio
-// — sem marcas nem linhas de corte impressas (o Studio imprime as marcas; o
-// corte vem do DXF). Fundo BRANCO: esta folha vira PNG que a impressora
-// imprime inteira. Na tela, um guia cinza (data-guide, fora da captura)
-// mostra onde o Studio põe as marcas e a área útil. Só apresentação.
+// Folha A4 para a Silhouette Portrait (print & cut), impressa AQUI pelo
+// navegador: 2 × 2 tags nas posições que o núcleo calcula e, na frente, as
+// MARCAS DE REGISTRO no padrão do Studio (quadrado + dois "L") — a plotter
+// lê as marcas impressas e corta pelo DXF. O verso não tem marcas (o corte
+// lê a frente). Na tela, um guia cinza (data-guide, some no papel) mostra a
+// área útil e por onde a plotter corta. Rodapé "folha n de N · frente/verso"
+// na sobra inferior, para conferir se a pilha virou certo. Só apresentação.
 import type { ProductLabel } from "@/core/catalog/labels";
-import { CUT, mirrorForBack, PAGE_A4, silhouetteSafeArea, silhouetteTagPositions, STUDIO_MARKS } from "@/core/catalog/silhouette";
-import type { QrSvg } from "@/receipts/qr";
+import { CUT, mirrorForBack, PAGE_A4, silhouetteSafeArea, silhouetteTagPositions, studioRegistrationMarks } from "@/core/catalog/silhouette";
 
-import { HangTagBack, HangTagDefs, HangTagFront, TAG } from "./hang-tag";
+import { HangTagBack, HangTagFront, SheetFooter, TAG, TAG_INK } from "./hang-tag";
 
 const POSITIONS = silhouetteTagPositions({ widthMm: TAG.widthMm, heightMm: TAG.heightMm }, PAGE_A4);
 const BACK_POSITIONS = mirrorForBack(POSITIONS);
 const SAFE = silhouetteSafeArea(PAGE_A4);
+const MARKS = studioRegistrationMarks(PAGE_A4);
 const GUIDE = "#c9c2b3";
+const FOOTER_Y_MM = 288;
 
-/** Onde o Studio desenha as marcas e por onde a plotter corta (só guia de tela): quadrado, dois "L" de 20 mm, área útil e os contornos. */
-function MarksGuide({ positions }: { positions: readonly { xMm: number; yMm: number }[] }) {
-  const i = STUDIO_MARKS.insetMm;
-  const b = STUDIO_MARKS.insetBottomMm;
+/** As três marcas de registro, pretas, do jeito que o sensor da plotter procura. Impressas só na frente. */
+function RegistrationMarks() {
+  const { square, topRight, bottomLeft, thicknessMm } = MARKS;
   const w = PAGE_A4.widthMm;
   const h = PAGE_A4.heightMm;
-  const len = 20;
+  const corner = (m: typeof topRight) =>
+    `M${m.cornerXMm + m.xDirection * m.lengthMm} ${m.cornerYMm}H${m.cornerXMm}V${m.cornerYMm + m.yDirection * m.lengthMm}`;
+  return (
+    <svg
+      data-marks=""
+      aria-hidden="true"
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ position: "absolute", inset: 0, width: `${w}mm`, height: `${h}mm`, pointerEvents: "none" }}
+    >
+      <rect x={square.xMm} y={square.yMm} width={square.sizeMm} height={square.sizeMm} fill="#000" />
+      <path d={corner(topRight)} fill="none" stroke="#000" strokeWidth={thicknessMm} strokeLinecap="square" strokeLinejoin="miter" />
+      <path d={corner(bottomLeft)} fill="none" stroke="#000" strokeWidth={thicknessMm} strokeLinecap="square" strokeLinejoin="miter" />
+    </svg>
+  );
+}
+
+/** Área útil e por onde a plotter corta (contornos e furos) — só guia de tela. */
+function CutGuide({ positions }: { positions: readonly { xMm: number; yMm: number }[] }) {
+  const w = PAGE_A4.widthMm;
+  const h = PAGE_A4.heightMm;
   return (
     <svg
       data-guide=""
@@ -29,9 +49,6 @@ function MarksGuide({ positions }: { positions: readonly { xMm: number; yMm: num
       viewBox={`0 0 ${w} ${h}`}
       style={{ position: "absolute", inset: 0, width: `${w}mm`, height: `${h}mm`, pointerEvents: "none" }}
     >
-      <rect x={i} y={i} width={5} height={5} fill={GUIDE} />
-      <path d={`M${w - i - len} ${i}h${len}v${len}`} fill="none" stroke={GUIDE} strokeWidth={1} />
-      <path d={`M${i} ${h - b - len}v${len}h${len}`} fill="none" stroke={GUIDE} strokeWidth={1} />
       <rect x={SAFE.xMm} y={SAFE.yMm} width={SAFE.widthMm} height={SAFE.heightMm} fill="none" stroke={GUIDE} strokeWidth={0.3} strokeDasharray="2 2" />
       {positions.map((p) => (
         <g key={`${p.xMm}-${p.yMm}`} fill="none" stroke={GUIDE} strokeWidth={0.25}>
@@ -47,27 +64,28 @@ export function SilhouetteSheet({
   labels,
   side,
   storeName,
-  qr,
+  productName,
   index,
+  total,
 }: {
   labels: readonly ProductLabel[];
   side: "front" | "back";
   storeName: string;
-  qr: QrSvg;
-  /** Número da folha (1-based): nomeia o arquivo e o botão. */
+  productName: string;
+  /** Número da folha (1-based) e quantas são: vai no rodapé. */
   index: number;
+  total: number;
 }) {
   const positions = side === "back" ? BACK_POSITIONS : POSITIONS;
   return (
     <section
-      className="silhouette-sheet w-fit shrink-0 shadow-md"
+      className="print-page silhouette-sheet w-fit shrink-0 shadow-md"
       data-side={side}
       data-sheet={index}
-      style={{ position: "relative", boxSizing: "border-box", width: `${PAGE_A4.widthMm}mm`, height: `${PAGE_A4.heightMm}mm`, background: "#ffffff", overflow: "hidden" }}
+      style={{ position: "relative", boxSizing: "border-box", width: `${PAGE_A4.widthMm}mm`, height: `${PAGE_A4.heightMm}mm`, background: TAG_INK.paper }}
     >
-      {/* Os símbolos dentro da folha: a captura em PNG clona só esta seção. */}
-      <HangTagDefs qr={qr} />
-      <MarksGuide positions={positions} />
+      {side === "front" ? <RegistrationMarks /> : null}
+      <CutGuide positions={positions} />
       {labels.map((label, i) => {
         const position = positions[i];
         if (!position) return null;
@@ -77,6 +95,7 @@ export function SilhouetteSheet({
           </div>
         );
       })}
+      <SheetFooter storeName={storeName} productName={productName} index={index} total={total} side={side} topMm={FOOTER_Y_MM} />
     </section>
   );
 }
