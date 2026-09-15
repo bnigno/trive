@@ -3,7 +3,7 @@
 // "Saiu" (paid → preparing → shipped numa transação só; o evento
 // order.shipped avisa a cliente "saiu da maison") e o reagendamento de uma
 // janela que passou. A regra de agrupamento é pura (core/shipping/route).
-import { and, asc, eq, inArray, isNotNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { OrderStatus } from "@/core/orders/state-machine";
@@ -16,7 +16,7 @@ import {
   type DeliveryWindowChoice,
 } from "@/core/shipping/delivery-windows";
 import { groupRouteOrders, isPaidAfterCutoff, type RouteOfDay } from "@/core/shipping/route";
-import { auditLog, customers, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
+import { auditLog, customers, deliveryStops, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
 import { isSpDayKey, spDayKey, spMinutesOfDay } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { ServiceError, transitionOrder } from "@/services/orders";
@@ -85,10 +85,46 @@ export function addressLineOf(raw: unknown): { line: string | null; postalCode: 
 
 /** Pago ou em separação — e o dinheiro na entrega, que fica "aguardando pagamento" até o motoboy voltar. */
 const ROUTE_STATUSES: OrderStatus[] = ["paid", "preparing"];
-const routeStatusFilter = () =>
-  or(inArray(orders.status, ROUTE_STATUSES), and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")))!;
+const routeStatusFilter = (includeShipped: boolean) =>
+  or(
+    inArray(orders.status, includeShipped ? [...ROUTE_STATUSES, "shipped"] : ROUTE_STATUSES),
+    and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+    // Enviado mas sem marca de saída: voltou para a loja (reagendado depois
+    // de "não consegui entregar") — precisa sair de novo.
+    and(eq(orders.status, "shipped"), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NULL`),
+  )!;
 
-export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
+/** "Longo Dunas · Areia · M ×1" por linha, e a contagem, por pedido. */
+export async function summarizeOrderItems(db: DbOrTx, orderIds: readonly string[]): Promise<Map<string, { count: number; lines: string[] }>> {
+  const itemsByOrder = new Map<string, { count: number; lines: string[] }>();
+  if (orderIds.length === 0) return itemsByOrder;
+  const items = await db
+    .select({
+      orderId: orderItems.orderId,
+      quantity: orderItems.quantity,
+      name: orderItems.nameSnapshot,
+      sku: orderItems.skuSnapshot,
+      attributes: productVariants.attributes,
+    })
+    .from(orderItems)
+    .leftJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
+    .where(inArray(orderItems.orderId, [...orderIds]));
+  for (const item of items) {
+    const entry = itemsByOrder.get(item.orderId) ?? { count: 0, lines: [] };
+    entry.count += item.quantity;
+    const attrs = item.attributes && typeof item.attributes === "object" ? Object.values(item.attributes as Record<string, string>).filter(Boolean) : [];
+    entry.lines.push([item.name, ...attrs].join(" · ") + (item.quantity > 1 ? ` ×${item.quantity}` : ""));
+    itemsByOrder.set(item.orderId, entry);
+  }
+  return itemsByOrder;
+}
+
+/**
+ * Os pedidos de motoboy por sair. `includeShipped` traz também os que já
+ * saíram (pagos viram 'shipped' no "Saiu"): é o que a saída com GPS aceita —
+ * o motoboy pode levar um pedido que a dona já marcou como saído.
+ */
+export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: boolean } = {}): Promise<RouteOrder[]> {
   const rows = await db
     .select({
       id: orders.id,
@@ -106,29 +142,11 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
-    .where(and(routeStatusFilter(), isNotNull(orders.deliveryWindow)))
+    .where(and(routeStatusFilter(options.includeShipped === true), isNotNull(orders.deliveryWindow)))
     .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
   if (rows.length === 0) return [];
 
-  const items = await db
-    .select({
-      orderId: orderItems.orderId,
-      quantity: orderItems.quantity,
-      name: orderItems.nameSnapshot,
-      sku: orderItems.skuSnapshot,
-      attributes: productVariants.attributes,
-    })
-    .from(orderItems)
-    .leftJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
-    .where(inArray(orderItems.orderId, rows.map((row) => row.id)));
-  const itemsByOrder = new Map<string, { count: number; lines: string[] }>();
-  for (const item of items) {
-    const entry = itemsByOrder.get(item.orderId) ?? { count: 0, lines: [] };
-    entry.count += item.quantity;
-    const attrs = item.attributes && typeof item.attributes === "object" ? Object.values(item.attributes as Record<string, string>).filter(Boolean) : [];
-    entry.lines.push([item.name, ...attrs].join(" · ") + (item.quantity > 1 ? ` ×${item.quantity}` : ""));
-    itemsByOrder.set(item.orderId, entry);
-  }
+  const itemsByOrder = await summarizeOrderItems(db, rows.map((row) => row.id));
 
   const result: RouteOrder[] = [];
   for (const row of rows) {
@@ -276,11 +294,18 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
  * (a dona passou pelo "Embalei"), shipped → delivered. O aviso "saiu" não
  * repete: shipped e out_for_delivery dividem a mesma chave de dedupe.
  */
+const completeSchema = z.object({
+  orderId: z.uuid(),
+  /** null = o motoboy, pela página da saída (a máquina registra o motivo). */
+  userId: z.uuid().nullable(),
+  reason: z.string().min(1).max(2000).optional(),
+});
+
 export async function completeDispatchedOrder(
   db: DbOrTx,
-  input: { orderId: string; userId: string },
+  input: z.input<typeof completeSchema>,
 ): Promise<{ orderId: string; orderNumber: number; from: OrderStatus; idempotent: boolean }> {
-  const parsed = dispatchSchema.parse(input);
+  const parsed = completeSchema.parse(input);
   return db.transaction(async (tx) => {
     const [order] = await tx
       .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, deliveryWindow: orders.deliveryWindow })
@@ -299,9 +324,9 @@ export async function completeDispatchedOrder(
       throw new ServiceError("PAYMENT_PENDING", "Registre o pagamento em dinheiro antes de marcar como entregue.");
     }
     if (from === "preparing") {
-      await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
+      await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId, reason: parsed.reason });
     }
-    await transitionOrder(tx, { orderId: order.id, to: "delivered", userId: parsed.userId });
+    await transitionOrder(tx, { orderId: order.id, to: "delivered", userId: parsed.userId, reason: parsed.reason });
     return { ...base, idempotent: false };
   });
 }
@@ -339,7 +364,9 @@ export async function listMotoboyWindows(db: DbOrTx): Promise<{ rateName: string
 /**
  * Troca a janela do pedido (ainda por sair) por outra de uma faixa de
  * motoboy ativa, em hoje ou num dia futuro. Não avisa a cliente: a dona
- * combina pelo WhatsApp (o link está na rota). Fica no audit.
+ * combina pelo WhatsApp (o link está na rota). Fica no audit. Pedido que
+ * saiu e voltou (a última parada da saída com GPS falhou) também pode: a
+ * marca de saída cai e ele volta para a rota.
  */
 export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof rescheduleSchema>): Promise<DeliveryWindowChoice> {
   const parsed = rescheduleSchema.parse(input);
@@ -354,8 +381,10 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     if (!order.deliveryWindow) throw new ServiceError("NOT_MOTOBOY", "Este pedido não é de motoboy.");
     const waitingCash = order.status === "pending_payment" && order.paymentMethod === "cash";
-    if (order.deliveryWindow.dispatchedAt || (!ROUTE_STATUSES.includes(order.status as OrderStatus) && !waitingCash)) {
-      throw new ServiceError("INVALID_TRANSITION", "Só um pedido que ainda não saiu pode ser reagendado.");
+    const cameBack = order.deliveryWindow.dispatchedAt ? await lastStopFailed(tx, order.id) : false;
+    const eligibleStatus = ROUTE_STATUSES.includes(order.status as OrderStatus) || waitingCash || (order.status === "shipped" && cameBack);
+    if ((order.deliveryWindow.dispatchedAt && !cameBack) || !eligibleStatus) {
+      throw new ServiceError("INVALID_TRANSITION", "Só um pedido que ainda não saiu (ou que voltou sem ser entregue) pode ser reagendado.");
     }
     const rates = await listMotoboyWindows(tx);
     const owner = rates.find((r) => r.rateName === order.deliveryWindow?.rateName && windowBelongsToRate(parsed.window, r.windows))
@@ -363,7 +392,8 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     if (!owner) throw new ServiceError("WINDOW_UNKNOWN", "Essa janela não existe mais nas faixas de motoboy.");
 
     const choice: DeliveryWindowChoice = { dayKey: parsed.dayKey, ...parsed.window };
-    const snapshot = { ...order.deliveryWindow, ...choice, rateName: owner.rateName, label: windowDateLabel(choice) };
+    const { dispatchedAt: _dispatchedAt, ...kept } = order.deliveryWindow;
+    const snapshot = { ...kept, ...choice, rateName: owner.rateName, label: windowDateLabel(choice) };
     await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: new Date() }).where(eq(orders.id, order.id));
     await tx.insert(auditLog).values({
       actorType: "user",
@@ -376,4 +406,15 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     });
     return choice;
   });
+}
+
+/** A última parada (não cancelada) do pedido numa saída com GPS falhou: a peça voltou para a loja. */
+async function lastStopFailed(db: DbOrTx, orderId: string): Promise<boolean> {
+  const [stop] = await db
+    .select({ status: deliveryStops.status })
+    .from(deliveryStops)
+    .where(and(eq(deliveryStops.orderId, orderId), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
+    .orderBy(desc(deliveryStops.createdAt))
+    .limit(1);
+  return stop?.status === "failed";
 }

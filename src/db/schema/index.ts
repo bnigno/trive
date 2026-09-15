@@ -32,3 +32,4 @@ export { deliveryFeedback } from "./feedback";
 export { customerLooks } from "./looks";
 export { waFollowups } from "./followups";
 export { waSuggestions } from "./suggestions";
+export { couriers, deliveryPositions, deliveryRuns, deliveryStops } from "./delivery";

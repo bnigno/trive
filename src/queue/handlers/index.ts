@@ -32,6 +32,8 @@ import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
 import { getMessagingProvider } from "@/adapters/zapi";
+import { getGeocoder } from "@/adapters/geocoding";
+import { GEOCODE_MAX_ROUNDS, geocodeRunStops } from "@/services/delivery-runs";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
@@ -548,6 +550,33 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       },
     );
     console.info(`[wa.bot_turn] ${payload.conversationId} → ${JSON.stringify(result)}`);
+  },
+  // Saída do motoboy: geocodifica os endereços das paradas (pino no mapa e
+  // distância para a cliente). Best-effort: o que não achar fica sem pino;
+  // uma parada por segundo, como o Nominatim pede.
+  // Poucas paradas por rodada e olho no prazo da varredura: o que sobrar
+  // volta para a fila como evento novo (idempotente: só as sem coordenada).
+  "delivery_run.geocode": async (event) => {
+    const { runId, round, skipStopIds } = z
+      .object({ runId: z.uuid(), round: z.number().int().min(0).default(0), skipStopIds: z.array(z.uuid()).max(200).default([]) })
+      .parse(event.payload);
+    const result = await geocodeRunStops(getDb(), getGeocoder(), { runId, skipStopIds, deadlineAt: event.deadlineAt ?? null });
+    console.info(`[delivery_run.geocode] ${runId} rodada ${round} → ${JSON.stringify({ ...result, attemptedIds: result.attemptedIds.length })}`);
+    if (!result.runOpen || result.remaining === 0) return;
+    if (result.attempted === 0) {
+      // Nem uma parada coube no prazo: devolve para a fila tentar de novo.
+      throw new Error(`[delivery_run.geocode] ${runId}: sem prazo para geocodificar (${result.remaining} paradas restantes)`);
+    }
+    if (round + 1 >= GEOCODE_MAX_ROUNDS) return;
+    // A rodada seguinte pula o que JÁ foi tentado (com ou sem pino): a lista
+    // encolhe de verdade e endereço sem cobertura não vira loop.
+    await enqueueOutboxEvent(getDb(), {
+      eventType: "delivery_run.geocode",
+      dedupeKey: `delivery_run.geocode:${runId}:${round + 1}`,
+      aggregateType: "delivery_run",
+      aggregateId: runId,
+      payload: { runId, round: round + 1, skipStopIds: [...skipStopIds, ...result.attemptedIds] },
+    });
   },
   // Resposta de cliente → encaminha ao dono (humano responde; bot desligado
   // ou conversa assumida).
