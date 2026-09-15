@@ -264,7 +264,10 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       }
 
       // Prazo do turno: sem tempo para mais uma chamada, a falha é passageira
-      // (a fila tenta de novo) — e uma chamada em curso é cortada no prazo.
+      // (a fila tenta de novo) — e uma chamada em curso é cortada no prazo
+      // pelo timeout do SDK (vira APIConnectionTimeoutError, passageira);
+      // nada de AbortSignal próprio: abort do usuário o SDK trata como
+      // definitivo, e aqui é só falta de tempo.
       const remainingMs = deadlineAt ? deadlineAt.getTime() - Date.now() : ANTHROPIC_TIMEOUT_MS;
       if (remainingMs < MIN_MODEL_CALL_MS) {
         throw new AssistantUnavailableError(`${UNAVAILABLE_MESSAGE} (tempo esgotado)`, {
@@ -272,10 +275,8 @@ export class ClaudeSalesAssistant implements SalesAssistant {
           reason: "tempo esgotado",
         });
       }
-      const callTimeoutMs = Math.min(ANTHROPIC_TIMEOUT_MS, remainingMs);
       const response = await client.messages.create(request, {
-        signal: AbortSignal.timeout(callTimeoutMs),
-        timeout: callTimeoutMs,
+        timeout: Math.min(ANTHROPIC_TIMEOUT_MS, remainingMs),
       });
       usage.inputTokens += response.usage.input_tokens;
       usage.outputTokens += response.usage.output_tokens;

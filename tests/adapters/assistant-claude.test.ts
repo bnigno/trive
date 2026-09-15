@@ -282,12 +282,12 @@ describe("ClaudeSalesAssistant", () => {
     spy.mockRestore();
   }, 20_000);
 
-  it("cada chamada leva signal e timeout do que sobra do prazo (nunca acima do teto do SDK)", async () => {
+  it("cada chamada leva o timeout do que sobra do prazo (nunca acima do teto do SDK) — sem AbortSignal, que o SDK trata como abort definitivo", async () => {
     const client = fakeClient([textMessage("oi")]);
     const create = client.messages.create as ReturnType<typeof vi.fn>;
     await new ClaudeSalesAssistant(client).respondTurn({ ...baseInput, deadlineAt: new Date(Date.now() + 8_000) });
     const options = create.mock.calls[0]?.[1] as { signal?: AbortSignal; timeout?: number };
-    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.signal).toBeUndefined();
     expect(options.timeout).toBeGreaterThan(5_000);
     expect(options.timeout).toBeLessThanOrEqual(8_000);
 
