@@ -486,12 +486,15 @@ já com a quantidade). Dois modelos:
     (verso bom, sem reflexo no sensor); no glossy de uma face o verso vai no
     dorso sem revestimento — imprimir o verso como papel comum. Impressão
     como no modo *Impressora comum* (frentes → virar a pilha → versos). Tipo
-    de papel e qualidade ficam no diálogo do SISTEMA (no Chrome: "Imprimir
-    usando a caixa de diálogo do sistema…", ⌥⌘P → Configurações de
-    impressão): **Photo Paper Glossy** (ou Premium Presentation Paper Matte
-    no fosco) e qualidade **normal ou alta** (no rascunho as marcas saem
-    claras e a plotter não lê); as marcas só saem na frente, e o rodapé
-    "folha n de N · frente/verso" confere se a pilha virou certo. No Studio,
+    de papel e qualidade ficam no diálogo do SISTEMA: na prévia do Chrome,
+    o link "Imprimir usando a caixa de diálogo do sistema…" (não o atalho de
+    teclado direto na página — sem o botão saem os dois lados); lá conferir
+    A4, 100 %, frente e verso DESMARCADO e, no painel da Epson (Opções da
+    Impressora), tipo **Premium Presentation Paper Matte** no fosco (ou
+    Photo Paper Glossy no glossy) e qualidade **normal ou alta** (no rascunho
+    as marcas saem claras e a plotter não lê); salvar como predefinição
+    "TRIVÉ tags". As marcas só saem na frente, e o rodapé "folha n de N ·
+    frente/verso" confere se a pilha virou certo. No Studio,
     **uma vez só**: *Preferências* → unidades em mm e importação de DXF "As
     Is" (não "Fit to Page"); abrir o **DXF de corte** (botão na tela — o
     mesmo para toda folha e toda peça); *Page Setup* A4, base Portrait,
@@ -502,13 +505,15 @@ já com a quantidade). Dois modelos:
     retângulo grande é a folha; se vier em outro tamanho, digitar 210 com a
     proporção travada), ponto de referência no canto superior esquerdo,
     X 0 · Y 0, apagar o retângulo grande (camada PAGINA); as 4 molduras têm
-    de cair na área sem hachura e as marcas da tela coincidir com as
-    impressas; *Salvar como* "TRIVÉ tags.studio3". **Cada vez**: folha na base com a frente (marcas) para
+    de cair na área sem hachura, as marcas da tela coincidir com as
+    impressas e o furo ficar perto do TOPO de cada moldura (embaixo = DXF
+    invertido, espelhar na vertical); *Salvar como* "TRIVÉ tags.studio3". **Cada vez**: folha na base com a frente (marcas) para
     cima, o quadrado no canto da seta, cobrindo a linha preta da grade;
     abrir "TRIVÉ tags.studio3" → *Enviar* (Cardstock/Photo Paper, AutoBlade).
     Numa folha com menos de 4 tags a plotter corta o resto em branco — sem
-    prejuízo. Primeira vez: teste em papel comum (impressão + corte com
-    pressão baixa). "Não leu as marcas": luz forte por cima (não lateral);
+    prejuízo. Primeira vez: teste em papel comum (frente e verso de uma
+    folha, contra a luz as tags do verso sobre as da frente, depois corte
+    com pressão baixa). "Não leu as marcas": luz forte por cima (não lateral);
     glossy reflete — adesivo branco fosco nos cantos das marcas antes de
     imprimir, ou o fotográfico fosco dupla face; se insistir, *registro
     manual* no Studio. As marcas, as

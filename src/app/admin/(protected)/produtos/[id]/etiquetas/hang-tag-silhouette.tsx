@@ -54,10 +54,11 @@ function RegistrationMarks() {
   );
 }
 
-/** Área útil e por onde a plotter corta (contornos e furos) — só guia de tela. */
-function CutGuide({ positions }: { positions: readonly { xMm: number; yMm: number }[] }) {
+/** Área útil e por onde a plotter corta (contornos e furos) — só guia de tela. No verso a área útil aparece refletida, como a folha virada. */
+function CutGuide({ positions, side }: { positions: readonly { xMm: number; yMm: number }[]; side: "front" | "back" }) {
   const w = PAGE_A4.widthMm;
   const h = PAGE_A4.heightMm;
+  const safeX = side === "back" ? w - SAFE.xMm - SAFE.widthMm : SAFE.xMm;
   return (
     <svg
       data-guide=""
@@ -65,7 +66,7 @@ function CutGuide({ positions }: { positions: readonly { xMm: number; yMm: numbe
       viewBox={`0 0 ${w} ${h}`}
       style={{ position: "absolute", inset: 0, width: `${w}mm`, height: `${h}mm`, pointerEvents: "none" }}
     >
-      <rect x={SAFE.xMm} y={SAFE.yMm} width={SAFE.widthMm} height={SAFE.heightMm} fill="none" stroke={GUIDE} strokeWidth={0.3} strokeDasharray="2 2" />
+      <rect x={safeX} y={SAFE.yMm} width={SAFE.widthMm} height={SAFE.heightMm} fill="none" stroke={GUIDE} strokeWidth={0.3} strokeDasharray="2 2" />
       {positions.map((p) => (
         <g key={`${p.xMm}-${p.yMm}`} fill="none" stroke={GUIDE} strokeWidth={0.25}>
           <rect x={p.xMm} y={p.yMm} width={TAG.widthMm} height={TAG.heightMm} rx={CUT.cornerRadiusMm} ry={CUT.cornerRadiusMm} />
@@ -101,7 +102,7 @@ export function SilhouetteSheet({
       style={{ position: "relative", boxSizing: "border-box", width: `${PAGE_A4.widthMm}mm`, height: `${PAGE_A4.heightMm}mm`, background: TAG_INK.paper }}
     >
       {side === "front" ? <RegistrationMarks /> : null}
-      <CutGuide positions={positions} />
+      <CutGuide positions={positions} side={side} />
       {labels.map((label, i) => {
         const position = positions[i];
         if (!position) return null;
