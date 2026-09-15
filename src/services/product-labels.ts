@@ -11,8 +11,8 @@ const getProductLabelSheetSchema = z.object({
   productId: z.uuid(),
   /** Tag de cabide (9 por folha) ou adesiva com preço (27 por folha). */
   model: z.enum(["cabide", "adesiva"]),
-  /** "grafica" = arquivo com um par por variação, sem teto de folhas. */
-  format: z.enum(["a4", "grafica"]).default("a4"),
+  /** "grafica" = arquivo com um par por variação, sem teto de folhas; "silhouette" = 4 por folha (marcas de registro). */
+  format: z.enum(["a4", "grafica", "silhouette"]).default("a4"),
   /** null = uma etiqueta por variação ativa. Chave = id da variação. */
   quantities: z.record(z.uuid(), z.number().int().min(0)).nullable(),
 });
@@ -45,6 +45,7 @@ export async function getProductLabelSheet(
   const productUrl = `${siteUrl()}/produto/${detail.slug}`;
   const plan = planProductLabels({
     model: parsed.model,
+    format: parsed.format,
     storeName,
     productName: detail.name,
     composition: detail.composition?.trim() || null,

@@ -145,6 +145,23 @@ describe("planProductLabels — tag de cabide", () => {
     expect(labelsMaxTotal("adesiva")).toBe(540);
   });
 
+  it("formato silhouette: folhas de 4 e teto de 80", () => {
+    const four = planProductLabels({
+      model: "cabide",
+      format: "silhouette",
+      storeName: "TRIVÉ",
+      productName: "Longo Dunas",
+      composition: null,
+      productUrl: PRODUCT_URL,
+      axes: AXES,
+      variants: [verdeP, verdeM],
+      quantities: { [verdeP.id]: 5, [verdeM.id]: 100 },
+    });
+    expect(four.sheets.map((sheet) => sheet.length)).toEqual([4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+    expect(four.labels).toHaveLength(80);
+    expect(four.truncated).toBe(true);
+  });
+
   it("reparte em folhas de 9 e corta em 180", () => {
     const result = plan({ [verdeP.id]: 20 }, undefined, "cabide");
     expect(result.sheets.map((sheet) => sheet.length)).toEqual([9, 9, 2]);

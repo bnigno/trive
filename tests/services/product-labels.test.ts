@@ -107,6 +107,12 @@ describe("getProductLabelSheet", () => {
     ]);
   });
 
+  it("silhouette: folhas de 4", async () => {
+    const { product, variants } = await seedProduct();
+    const sheet = await getProductLabelSheet(db, { productId: product.id, model: "cabide", format: "silhouette", quantities: { [variants[0].id]: 5 } });
+    expect(sheet.sheets.map((s) => s.length)).toEqual([4, 1]);
+  });
+
   it("produto inexistente lança", async () => {
     await expect(
       getProductLabelSheet(db, { productId: "00000000-0000-4000-8000-000000000000", model: "cabide", quantities: null }),
