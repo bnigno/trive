@@ -1,6 +1,6 @@
 // Etiquetas da peça para imprimir. Dois modelos: a TAG DE CABIDE (cartão de
 // 55 × 90 mm com a marca na frente e nome, cor/tamanho, referência e QR da
-// peça atrás — sem preço) e a ADESIVA (Avery 24 por folha, com preço). A tag
+// peça atrás — sem preço) e a ADESIVA (Pimaco A4355, 27 por folha, com preço). A tag
 // sai em folha A4 frente e verso ou no arquivo de gráfica (uma página por
 // lado). As quantidades vêm pela URL (?<idDaVariação>=<n>); sem nada, uma
 // por variação ativa. O form é GET: escolher só recarrega, não grava nada.
@@ -137,7 +137,7 @@ export default async function ProductLabelsPage({
           <h1 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-100">Etiquetas</h1>
           <p className="max-w-2xl text-sm text-zinc-500 dark:text-zinc-400">
             {model === "adesiva"
-              ? `Folha A4 com ${LABELS_PER_SHEET.adesiva} etiquetas de ${formatLabelSize} (Avery L7159 / Pimaco A4356, ou papel comum para recortar pelo fio cinza). Imprima em tamanho real — escala 100%, sem "ajustar à página".`
+              ? `Folha A4 com ${LABELS_PER_SHEET.adesiva} etiquetas de ${formatLabelSize} (Pimaco A4355). Imprima em tamanho real — escala 100%, sem "ajustar à página"; o fio cinza é guia só na tela, não sai no papel.`
               : format === "a4"
                 ? `Folha A4 com ${LABELS_PER_SHEET.cabide} tags de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)}, frente e verso. Papel cartão creme de 180–300 g. Imprima em frente e verso virando na borda longa, escala 100% — primeiro uma folha de teste, para conferir contra a luz se frente e verso batem. Corte pelas marcas dos cantos e fure na cruz do topo (furador de 4 a 6 mm ou ilhós).`
                 : `Arquivo para gráfica: uma página por lado, ${mm(PRESS_PAGE.widthMm)} × ${mm(PRESS_PAGE.heightMm)} (tag de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)} com ${mm(TAG.bleedMm)} de sangria e marcas de corte). Nada sangra: a gráfica escolhe o papel. Salve como PDF pelo Chrome (o Safari ignora o tamanho da página) e mande junto a lista de quantidades abaixo.`}
@@ -160,7 +160,7 @@ export default async function ProductLabelsPage({
             <span className="font-medium text-zinc-900 dark:text-zinc-100">Modelo</span>
             <Select name="modelo" defaultValue={model}>
               <option value="cabide">Tag de cabide — marca na frente, peça e QR atrás</option>
-              <option value="adesiva">Etiqueta adesiva — SKU e preço (Avery, 24 por folha)</option>
+              <option value="adesiva">Etiqueta adesiva — SKU e preço (Pimaco A4355, 27 por folha)</option>
             </Select>
           </label>
           {model === "cabide" ? (

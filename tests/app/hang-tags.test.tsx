@@ -11,6 +11,7 @@ import { qrSvgPath } from "@/receipts/qr";
 import { HangTagBack, HangTagDefs, HangTagFront, TAG } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag";
 import { HangTagPress, PRESS_PAGE } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-press";
 import { HangTagSheet, HangTagSheets, SHEET_A4, SHEET_A4_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-sheets";
+import { LabelSheet, SHEET, SHEET_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/label-sheet";
 import { printCss } from "@/app/admin/(protected)/produtos/[id]/etiquetas/print-css";
 
 const URL_PECA = "https://trivemaison.com.br/produto/longo-dunas";
@@ -118,5 +119,24 @@ describe("gráfica", () => {
     expect(printCss("A4")).toContain("size: A4");
     expect(printCss("A4")).toContain("aside, header, nav");
     expect(printCss("A4")).toContain(".print-page:last-child");
+  });
+});
+
+describe("etiqueta adesiva (Pimaco A4355)", () => {
+  it("a grade centrada reproduz o gabarito da folha: 3 × 9 de 63,5 × 31 mm, margens 7,15 / 9 mm", () => {
+    expect(SHEET).toMatchObject({ columns: 3, rows: 9, labelWidthMm: 63.5, labelHeightMm: 31, gapXMm: 2.6, gapYMm: 0 });
+    expect(SHEET_MARGIN.xMm).toBeCloseTo(7.15, 5);
+    expect(SHEET_MARGIN.yMm).toBeCloseTo(9, 5);
+  });
+
+  it("variação e SKU quebram linha em vez de sumir atrás do preço; o fio cinza não imprime", () => {
+    const html = renderToStaticMarkup(
+      <LabelSheet labels={[{ ...label(1, "VESTIDO-AUREA-MIDI-VERDE-OLIVA-GG"), variantLabel: "Verde-oliva escuro · GG", priceCents: 129990 }]} />,
+    );
+    expect(html).toContain("R$\u00a01.299,90");
+    expect(html).toContain("padding:9mm 7.15mm");
+    expect(html).toContain("overflow-wrap:anywhere");
+    expect(html).not.toContain("text-overflow:ellipsis");
+    expect(printCss("A4")).toContain(".label { border-color: transparent !important; }");
   });
 });

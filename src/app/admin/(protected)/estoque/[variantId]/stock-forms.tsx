@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
+import { LABELS_MAX_PER_VARIANT } from "@/core/catalog/labels";
 import {
   Field,
   FormError,
@@ -53,6 +54,17 @@ export function ReceiveStockForm({
   // e sugestão de reprecificação. Sem fornecedor, entrada simples como antes.
   const isPurchase = canBuy && supplierId !== "";
   const state = isPurchase ? purchaseState : receiveState;
+
+  // O atalho de etiquetas é da ÚLTIMA entrada registrada, seja compra ou
+  // entrada simples. Cada estado só muda quando a sua action termina, então
+  // guardar o que mudou por último (derivado durante o render, sem efeito)
+  // impede que alternar o fornecedor ressuscite o atalho de uma entrada antiga.
+  const [seen, setSeen] = useState({ receiveState, purchaseState, labels: null as { quantity: number } | null });
+  if (seen.receiveState !== receiveState || seen.purchaseState !== purchaseState) {
+    const latest = seen.receiveState !== receiveState ? receiveState : purchaseState;
+    setSeen({ receiveState, purchaseState, labels: latest.labels ?? null });
+  }
+  const labelQuantity = seen.labels ? Math.min(seen.labels.quantity, LABELS_MAX_PER_VARIANT) : 0;
 
   return (
     <form
@@ -127,12 +139,12 @@ export function ReceiveStockForm({
       </Field>
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
-      {state.labels ? (
+      {labelQuantity > 0 ? (
         <Link
-          href={`/admin/produtos/${productId}/etiquetas?${variantId}=${state.labels.quantity}`}
+          href={`/admin/produtos/${productId}/etiquetas?${variantId}=${labelQuantity}`}
           className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
         >
-          Imprimir {state.labels.quantity === 1 ? "1 tag" : `${state.labels.quantity} tags`} desta entrada →
+          Imprimir {labelQuantity === 1 ? "1 tag" : `${labelQuantity} tags`} desta entrada →
         </Link>
       ) : null}
       <div>

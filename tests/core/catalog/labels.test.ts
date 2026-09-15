@@ -1,5 +1,5 @@
 // Plano das etiquetas da peça: padrão de uma por variação ativa, quantidades
-// explícitas, tetos por folha, repartição em folhas (24 adesivas, 9 tags de
+// explícitas, tetos por folha, repartição em folhas (27 adesivas, 9 tags de
 // cabide), os modelos para a gráfica e o corpo do nome na tag.
 import { describe, expect, it } from "vitest";
 
@@ -119,9 +119,9 @@ describe("planProductLabels", () => {
     expect(result.truncated).toBe(true);
   });
 
-  it("reparte em folhas de 24", () => {
+  it("reparte em folhas de 27 (Pimaco A4355)", () => {
     const result = plan({ [verdeP.id]: 30 });
-    expect(result.sheets.map((sheet) => sheet.length)).toEqual([LABELS_PER_SHEET.adesiva, 6]);
+    expect(result.sheets.map((sheet) => sheet.length)).toEqual([LABELS_PER_SHEET.adesiva, 3]);
     expect(plan({ [verdeP.id]: 0 }).sheets).toEqual([]);
   });
 
@@ -138,11 +138,11 @@ describe("planProductLabels", () => {
 });
 
 describe("planProductLabels — tag de cabide", () => {
-  it("o teto é por folhas: 20 folhas de 9 tags (180) contra 20 de 24 adesivas (480)", () => {
+  it("o teto é por folhas: 20 folhas de 9 tags (180) contra 20 de 27 adesivas (540)", () => {
     expect(LABELS_MAX_SHEETS).toBe(20);
-    expect(LABELS_PER_SHEET).toEqual({ adesiva: 24, cabide: 9 });
+    expect(LABELS_PER_SHEET).toEqual({ adesiva: 27, cabide: 9 });
     expect(labelsMaxTotal("cabide")).toBe(180);
-    expect(labelsMaxTotal("adesiva")).toBe(480);
+    expect(labelsMaxTotal("adesiva")).toBe(540);
   });
 
   it("reparte em folhas de 9 e corta em 180", () => {

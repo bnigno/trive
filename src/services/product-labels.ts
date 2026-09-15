@@ -9,7 +9,7 @@ import { getStoreName } from "@/services/settings";
 
 const getProductLabelSheetSchema = z.object({
   productId: z.uuid(),
-  /** Tag de cabide (9 por folha) ou adesiva com preço (24 por folha). */
+  /** Tag de cabide (9 por folha) ou adesiva com preço (27 por folha). */
   model: z.enum(["cabide", "adesiva"]),
   /** "grafica" = arquivo com um par por variação, sem teto de folhas. */
   format: z.enum(["a4", "grafica"]).default("a4"),

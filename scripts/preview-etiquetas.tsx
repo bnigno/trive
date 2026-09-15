@@ -1,7 +1,7 @@
-// Prévia das tags de cabide sem banco: monta as páginas (folha A4 frente e
-// verso e o arquivo de gráfica) em HTML estático com as fontes da marca e,
-// se o Chrome estiver no lugar de sempre, gera os PDFs e um PNG e confere
-// tamanho de página, número de páginas e a leitura do QR.
+// Prévia das etiquetas sem banco: monta as páginas (folha A4 frente e verso,
+// o arquivo de gráfica e a folha adesiva) em HTML estático com as fontes da
+// marca e, se o Chrome estiver no lugar de sempre, gera os PDFs e PNGs e
+// confere tamanho de página e número de páginas.
 // Uso: npx tsx scripts/preview-etiquetas.tsx [pasta-de-saida]
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -12,6 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HangTagDefs } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag";
 import { HangTagPress } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-press";
 import { HangTagSheets } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-sheets";
+import { LabelSheet } from "@/app/admin/(protected)/produtos/[id]/etiquetas/label-sheet";
 import { printCss } from "@/app/admin/(protected)/produtos/[id]/etiquetas/print-css";
 import { planProductLabels } from "@/core/catalog/labels";
 import { qrSvgPath } from "@/receipts/qr";
@@ -72,7 +73,27 @@ async function main() {
   writeFileSync(a4, document("Tags A4", printCss("A4"), defs + renderToStaticMarkup(<HangTagSheets sheets={plan.sheets} storeName="TRIVÉ" />)));
   const press = join(out, "etiquetas-grafica.html");
   writeFileSync(press, document("Tags gráfica", printCss("61mm 96mm"), defs + renderToStaticMarkup(<HangTagPress designs={plan.designs} storeName="TRIVÉ" />)));
-  console.log(`html: ${a4}, ${press} (${plan.labels.length} tags, ${plan.sheets.length} folhas, ${plan.designs.length} modelos)`);
+  // Adesiva: nome comprido, variação de 3 eixos e preço de 4 dígitos disputando a largura.
+  const stickerPlan = planProductLabels({
+    model: "adesiva",
+    storeName: "Trivé Maison Féminine",
+    productName: "Vestido Longo Dunas em Linho com Fenda Lateral e Alças Ajustáveis",
+    composition: null,
+    productUrl: PRODUCT_URL,
+    axes: ["cor", "tamanho", "estampa"],
+    variants: variants.map((variant) => ({ ...variant, priceCents: 129990 })),
+    quantities: { [variants[0].id]: 20, [variants[2].id]: 10 },
+  });
+  const sticker = join(out, "etiquetas-adesiva.html");
+  writeFileSync(
+    sticker,
+    document(
+      "Etiquetas adesivas",
+      printCss("A4"),
+      stickerPlan.sheets.map((labels, index) => `<div class="print-page" data-sheet="${index}">${renderToStaticMarkup(<LabelSheet labels={labels} />)}</div>`).join(""),
+    ),
+  );
+  console.log(`html: ${a4}, ${press}, ${sticker} (${plan.labels.length} tags, ${plan.sheets.length} folhas, ${plan.designs.length} modelos; ${stickerPlan.labels.length} adesivas em ${stickerPlan.sheets.length} folhas)`);
 
   if (!existsSync(CHROME)) {
     console.log("Chrome não encontrado: abra os HTML e use Imprimir → Salvar como PDF.");
@@ -81,6 +102,7 @@ async function main() {
   for (const [name, html, expectPages, expectBox] of [
     ["etiquetas-a4", a4, plan.sheets.length * 2, "595.276×841.89"],
     ["etiquetas-grafica", press, plan.designs.length * 2, "172.913×272.126"],
+    ["etiquetas-adesiva", sticker, stickerPlan.sheets.length, "595.276×841.89"],
   ] as const) {
     const pdf = resolve(out, `${name}.pdf`);
     execFileSync(CHROME, [
@@ -98,18 +120,20 @@ async function main() {
     const ok = info.pages === expectPages && info.boxes.length === 1 && Math.abs(gotW - expectW) < 1 && Math.abs(gotH - expectH) < 1;
     console.log(`${ok ? "ok" : "CONFIRA"}: ${pdf} → ${info.pages} páginas (esperado ${expectPages}), MediaBox ${info.boxes.join(", ")} (esperado ≈ ${expectBox} pt)`);
   }
-  const png = resolve(out, "etiquetas-a4.png");
-  execFileSync(CHROME, [
-    "--headless=new",
-    "--disable-gpu",
-    "--hide-scrollbars",
-    "--force-device-scale-factor=2",
-    "--window-size=900,2400",
-    "--virtual-time-budget=8000",
-    `--screenshot=${png}`,
-    pathToFileURL(resolve(a4)).href,
-  ], { stdio: "ignore" });
-  console.log(`png: ${png}`);
+  for (const [name, html] of [["etiquetas-a4", a4], ["etiquetas-adesiva", sticker]] as const) {
+    const png = resolve(out, `${name}.png`);
+    execFileSync(CHROME, [
+      "--headless=new",
+      "--disable-gpu",
+      "--hide-scrollbars",
+      "--force-device-scale-factor=2",
+      "--window-size=900,2400",
+      "--virtual-time-budget=8000",
+      `--screenshot=${png}`,
+      pathToFileURL(resolve(html)).href,
+    ], { stdio: "ignore" });
+    console.log(`png: ${png}`);
+  }
 }
 
 main().catch((error) => {

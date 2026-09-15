@@ -11,10 +11,10 @@ export const LABELS_MAX_PER_VARIANT = 200;
 /** 20 folhas. Mais do que isso trava o diálogo de impressão sem avisar. */
 export const LABELS_MAX_SHEETS = 20;
 /**
- * Capacidade da folha A4: 3 × 8 adesivas de 63,5 × 33,9 mm (Avery L7159 /
- * Pimaco A4356) ou 3 × 3 tags de cabide de 55 × 90 mm.
+ * Capacidade da folha A4: 3 × 9 adesivas de 63,5 × 31 mm (Pimaco A4355) ou
+ * 3 × 3 tags de cabide de 55 × 90 mm.
  */
-export const LABELS_PER_SHEET: Record<LabelModel, number> = { adesiva: 24, cabide: 9 };
+export const LABELS_PER_SHEET: Record<LabelModel, number> = { adesiva: 27, cabide: 9 };
 
 export function labelsMaxTotal(model: LabelModel): number {
   return LABELS_PER_SHEET[model] * LABELS_MAX_SHEETS;

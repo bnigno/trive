@@ -11,6 +11,7 @@ export function printCss(pageSize: PrintPageSize): string {
   .print-page { box-shadow: none !important; margin: 0 !important; background: none !important; break-after: page; page-break-after: always; break-inside: avoid; }
   .print-page:last-child { break-after: auto; page-break-after: auto; }
   .label, .label-sheet { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .label { border-color: transparent !important; }
   @page { size: ${pageSize}; margin: 0; }
 }`;
 }

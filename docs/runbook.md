@@ -427,7 +427,8 @@ já com a quantidade). Dois modelos:
     corte), um par frente/verso por variação. Salve como PDF pelo **Chrome**
     (o Safari ignora o tamanho da página) e mande com a lista de quantidades
     que aparece na tela.
-- **Adesiva**: Avery L7159 / Pimaco A4356 (24 por folha), com SKU e preço.
+- **Adesiva**: Pimaco A4355 (63,5 × 31 mm, 27 por folha), com SKU e preço. O
+  fio cinza em volta de cada etiqueta é guia só na tela — não imprime.
 
 Tetos: 200 por variação e 20 folhas por vez. As medidas ficam em
 `src/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag.tsx` (tag) e
