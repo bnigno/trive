@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/db/schema";
 import { createProduct } from "@/services/catalog";
@@ -9,16 +9,19 @@ let db: TestDb;
 let close: () => Promise<void>;
 
 beforeEach(async () => {
+  vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://trivemaison.com.br");
   ({ db, close } = await createTestDb());
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await close();
 });
 
 async function seedProduct() {
   const { product, variants } = await createProduct(db, {
     name: "Longo Dunas",
+    composition: "100% linho",
     attributesSchema: ["cor", "tamanho"],
     variants: [
       { sku: "DUNAS-VERDE-P", attributes: { cor: "Verde", tamanho: "P" }, costCents: 9000 },
@@ -44,10 +47,12 @@ describe("getProductLabelSheet", () => {
     const { product } = await seedProduct();
     await db.insert(schema.settings).values({ key: "store_name", value: "Trivé Teste" });
 
-    const sheet = await getProductLabelSheet(db, { productId: product.id, quantities: null });
+    const sheet = await getProductLabelSheet(db, { productId: product.id, model: "adesiva", quantities: null });
 
     expect(sheet.productName).toBe("Longo Dunas");
     expect(sheet.storeName).toBe("Trivé Teste");
+    expect(sheet.productUrl).toBe(`https://trivemaison.com.br/produto/${product.slug}`);
+    expect(sheet.labels[0]).toMatchObject({ composition: "100% linho", productUrl: sheet.productUrl });
     // getProductDetail ordena pelo SKU: M antes de P.
     expect(sheet.labels.map((label) => [label.sku, label.variantLabel, label.priceCents])).toEqual([
       ["DUNAS-VERDE-M", "Verde · M", null],
@@ -62,6 +67,7 @@ describe("getProductLabelSheet", () => {
 
     const sheet = await getProductLabelSheet(db, {
       productId: product.id,
+      model: "adesiva",
       quantities: { [variants[1].id]: 5 },
     });
 
@@ -73,9 +79,23 @@ describe("getProductLabelSheet", () => {
     expect(sheet.storeName).toBe("TRIVÉ");
   });
 
+  it("tag de cabide: folhas de 9 e um modelo por variação pedida", async () => {
+    const { product, variants } = await seedProduct();
+    const sheet = await getProductLabelSheet(db, {
+      productId: product.id,
+      model: "cabide",
+      quantities: { [variants[0].id]: 12, [variants[1].id]: 3 },
+    });
+    expect(sheet.sheets.map((s) => s.length)).toEqual([9, 6]);
+    expect(sheet.designs.map((design) => [design.sku, design.quantity])).toEqual([
+      ["DUNAS-VERDE-M", 3],
+      ["DUNAS-VERDE-P", 12],
+    ]);
+  });
+
   it("produto inexistente lança", async () => {
     await expect(
-      getProductLabelSheet(db, { productId: "00000000-0000-4000-8000-000000000000", quantities: null }),
+      getProductLabelSheet(db, { productId: "00000000-0000-4000-8000-000000000000", model: "cabide", quantities: null }),
     ).rejects.toThrow();
   });
 });

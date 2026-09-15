@@ -1,14 +1,21 @@
 // Plano das etiquetas da peça: padrão de uma por variação ativa, quantidades
-// explícitas, tetos e repartição em folhas de 24.
+// explícitas, tetos por folha, repartição em folhas (24 adesivas, 9 tags de
+// cabide), os modelos para a gráfica e o corpo do nome na tag.
 import { describe, expect, it } from "vitest";
 
 import {
+  hangTagNameSizePt,
   LABELS_MAX_PER_VARIANT,
-  LABELS_MAX_TOTAL,
+  LABELS_MAX_SHEETS,
   LABELS_PER_SHEET,
+  labelsMaxTotal,
   planProductLabels,
+  type LabelModel,
   type LabelVariant,
 } from "@/core/catalog/labels";
+
+const LABELS_MAX_TOTAL = labelsMaxTotal("adesiva");
+const PRODUCT_URL = "https://trivemaison.com.br/produto/longo-dunas";
 
 const AXES = ["cor", "tamanho"] as const;
 
@@ -37,10 +44,14 @@ const terraP: LabelVariant = {
 function plan(
   quantities: Record<string, number> | null,
   variants: readonly LabelVariant[] = [verdeP, verdeM, terraP],
+  model: LabelModel = "adesiva",
 ) {
   return planProductLabels({
+    model,
     storeName: "TRIVÉ",
     productName: "Longo Dunas",
+    composition: "100% linho",
+    productUrl: PRODUCT_URL,
     axes: AXES,
     variants,
     quantities,
@@ -77,8 +88,11 @@ describe("planProductLabels", () => {
 
   it("produto sem eixos sai com rótulo vazio", () => {
     const result = planProductLabels({
+      model: "adesiva",
       storeName: "TRIVÉ",
       productName: "Bolsa Lua",
+      composition: null,
+      productUrl: PRODUCT_URL,
       axes: [],
       variants: [{ ...verdeP, attributes: {} }],
       quantities: null,
@@ -106,12 +120,54 @@ describe("planProductLabels", () => {
 
   it("reparte em folhas de 24", () => {
     const result = plan({ [verdeP.id]: 30 });
-    expect(result.sheets.map((sheet) => sheet.length)).toEqual([LABELS_PER_SHEET, 6]);
+    expect(result.sheets.map((sheet) => sheet.length)).toEqual([LABELS_PER_SHEET.adesiva, 6]);
     expect(plan({ [verdeP.id]: 0 }).sheets).toEqual([]);
   });
 
   it("lista os SKUs pedidos sem preço ativo", () => {
     expect(plan(null).withoutPrice).toEqual(["LONGO-VERDE-M"]);
     expect(plan({ [verdeP.id]: 1 }).withoutPrice).toEqual([]);
+  });
+
+  it("cada etiqueta leva a composição e a página da peça (o QR da tag)", () => {
+    const [label] = plan({ [verdeP.id]: 1 }).labels;
+    expect(label.composition).toBe("100% linho");
+    expect(label.productUrl).toBe(PRODUCT_URL);
+  });
+});
+
+describe("planProductLabels — tag de cabide", () => {
+  it("o teto é por folhas: 20 folhas de 9 tags (180) contra 20 de 24 adesivas (480)", () => {
+    expect(LABELS_MAX_SHEETS).toBe(20);
+    expect(LABELS_PER_SHEET).toEqual({ adesiva: 24, cabide: 9 });
+    expect(labelsMaxTotal("cabide")).toBe(180);
+    expect(labelsMaxTotal("adesiva")).toBe(480);
+  });
+
+  it("reparte em folhas de 9 e corta em 180", () => {
+    const result = plan({ [verdeP.id]: 20 }, undefined, "cabide");
+    expect(result.sheets.map((sheet) => sheet.length)).toEqual([9, 9, 2]);
+    const capped = plan({ [verdeP.id]: 100, [verdeM.id]: 100 }, undefined, "cabide");
+    expect(capped.labels).toHaveLength(180);
+    expect(capped.lines.map((line) => line.quantity)).toEqual([100, 80, 0]);
+    expect(capped.truncated).toBe(true);
+  });
+
+  it("modelos para a gráfica: um por variação pedida, na ordem, com a quantidade — inativa incluída se pedida", () => {
+    const result = plan({ [terraP.id]: 4, [verdeP.id]: 2 }, undefined, "cabide");
+    expect(result.designs.map((design) => [design.key, design.sku, design.quantity])).toEqual([
+      [verdeP.id, "LONGO-VERDE-P", 2],
+      [terraP.id, "LONGO-TERRA-P", 4],
+    ]);
+    expect(result.designs[0].productUrl).toBe(PRODUCT_URL);
+    expect(plan({ [verdeP.id]: 0 }, undefined, "cabide").designs).toEqual([]);
+  });
+});
+
+describe("hangTagNameSizePt", () => {
+  it("nome curto no corpo maior; nome comprido desce um degrau; caixa alta e muito comprido, dois", () => {
+    expect(hangTagNameSizePt("Longo Dunas")).toBe(13);
+    expect(hangTagNameSizePt("Vestido Longo Dunas em Linho com Fenda Lateral")).toBe(11.5);
+    expect(hangTagNameSizePt("VESTIDO LONGO DUNAS EM LINHO PURO COM FENDA LATERAL E ALÇAS AJUSTÁVEIS BORDADAS")).toBe(10);
   });
 });
