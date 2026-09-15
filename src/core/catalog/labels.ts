@@ -5,19 +5,28 @@
 import { variantLabel } from "./attributes";
 
 export type LabelModel = "cabide" | "adesiva";
+/** a4 = folha em casa; grafica = uma página por lado; silhouette = PNG para o Studio + corte na plotter. */
+export type LabelFormat = "a4" | "grafica" | "silhouette";
+export const LABEL_FORMATS: readonly LabelFormat[] = ["a4", "grafica", "silhouette"];
 
 /** Uma variação não pede mais do que isso de uma vez: acima é engano de digitação. */
 export const LABELS_MAX_PER_VARIANT = 200;
 /** 20 folhas. Mais do que isso trava o diálogo de impressão sem avisar. */
 export const LABELS_MAX_SHEETS = 20;
 /**
- * Capacidade da folha A4: 3 × 9 adesivas de 63,5 × 31 mm (Pimaco A4355) ou
- * 3 × 3 tags de cabide de 55 × 90 mm.
+ * Capacidade da folha A4: 3 × 9 adesivas de 63,5 × 31 mm (Pimaco A4355),
+ * 3 × 3 tags de cabide de 55 × 90 mm, ou 2 × 2 tags quando a folha leva as
+ * marcas de registro da Silhouette (as marcas comem as margens).
  */
 export const LABELS_PER_SHEET: Record<LabelModel, number> = { adesiva: 27, cabide: 9 };
+export const LABELS_PER_SILHOUETTE_SHEET = 4;
 
-export function labelsMaxTotal(model: LabelModel): number {
-  return LABELS_PER_SHEET[model] * LABELS_MAX_SHEETS;
+export function labelsPerSheet(model: LabelModel, format: LabelFormat = "a4"): number {
+  return model === "cabide" && format === "silhouette" ? LABELS_PER_SILHOUETTE_SHEET : LABELS_PER_SHEET[model];
+}
+
+export function labelsMaxTotal(model: LabelModel, format: LabelFormat = "a4"): number {
+  return labelsPerSheet(model, format) * LABELS_MAX_SHEETS;
 }
 
 export interface LabelVariant {
@@ -77,6 +86,8 @@ export interface LabelPlan {
  */
 export function planProductLabels(input: {
   model: LabelModel;
+  /** Decide o tamanho da folha (a4 9, silhouette 4); padrão a4. */
+  format?: LabelFormat;
   storeName: string;
   productName: string;
   composition: string | null;
@@ -87,7 +98,8 @@ export function planProductLabels(input: {
   /** false no arquivo de gráfica: lá não há folhas, a gráfica imprime a quantidade. */
   capTotal?: boolean;
 }): LabelPlan {
-  let remaining = input.capTotal === false ? Number.POSITIVE_INFINITY : labelsMaxTotal(input.model);
+  const format = input.format ?? "a4";
+  let remaining = input.capTotal === false ? Number.POSITIVE_INFINITY : labelsMaxTotal(input.model, format);
   let truncated = false;
   const lines: LabelLine[] = input.variants.map((variant) => {
     const wanted =
@@ -129,7 +141,7 @@ export function planProductLabels(input: {
     .filter((line) => line.quantity > 0)
     .map((line) => ({ ...labelOf(line, line.variantId), quantity: line.quantity }));
 
-  const perSheet = LABELS_PER_SHEET[input.model];
+  const perSheet = labelsPerSheet(input.model, format);
   const sheets: ProductLabel[][] = [];
   for (let start = 0; start < labels.length; start += perSheet) {
     sheets.push(labels.slice(start, start + perSheet));

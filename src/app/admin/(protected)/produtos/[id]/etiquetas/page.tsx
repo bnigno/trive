@@ -4,6 +4,7 @@
 // sai em folha A4 frente e verso ou no arquivo de gráfica (uma página por
 // lado). As quantidades vêm pela URL (?<idDaVariação>=<n>); sem nada, uma
 // por variação ativa. O form é GET: escolher só recarrega, não grava nada.
+import { Fragment } from "react";
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Jost } from "next/font/google";
 import Link from "next/link";
@@ -13,7 +14,8 @@ import { z } from "zod";
 import { PrintButton } from "@/components/admin/print-button";
 import { Button, Input, Select } from "@/components/ui/form";
 import { Money } from "@/components/ui/money";
-import { LABELS_MAX_PER_VARIANT, LABELS_MAX_SHEETS, LABELS_PER_SHEET, labelsMaxTotal, type LabelModel } from "@/core/catalog/labels";
+import { LABELS_MAX_PER_VARIANT, LABELS_MAX_SHEETS, LABELS_PER_SHEET, labelsMaxTotal, labelsPerSheet, type LabelModel } from "@/core/catalog/labels";
+import { hangTagCutDxf, PAGE_A4, silhouetteTagPositions } from "@/core/catalog/silhouette";
 import { getDb } from "@/db/client";
 import { qrSvgPath, qrVersion } from "@/receipts/qr";
 import { requireUser } from "@/services/auth";
@@ -23,6 +25,8 @@ import { HangTagDefs, TAG } from "./hang-tag";
 import { HangTagPress, PRESS_PAGE } from "./hang-tag-press";
 import { HangTagSheets } from "./hang-tag-sheets";
 import { LabelSheet, SHEET } from "./label-sheet";
+import { SilhouetteSheet } from "./hang-tag-silhouette";
+import { SilhouetteDownloads } from "./silhouette-downloads";
 import { printCss } from "./print-css";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +52,7 @@ const jost = Jost({
 
 const quantityParam = z.string().regex(/^\d{1,6}$/);
 const modelParam = z.enum(["cabide", "adesiva"]).catch("cabide");
-const formatParam = z.enum(["a4", "grafica"]).catch("a4");
+const formatParam = z.enum(["a4", "grafica", "silhouette"]).catch("a4");
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -93,8 +97,9 @@ export default async function ProductLabelsPage({
   }
 
   const total = sheet.labels.length;
-  const maxTotal = labelsMaxTotal(model);
-  const pages = model === "adesiva" ? sheet.sheets.length : format === "a4" ? sheet.sheets.length * 2 : sheet.designs.length * 2;
+  const maxTotal = labelsMaxTotal(model, format);
+  const silhouette = model === "cabide" && format === "silhouette";
+  const pages = model === "adesiva" ? sheet.sheets.length : format === "grafica" ? sheet.designs.length * 2 : sheet.sheets.length * 2;
   const warnings: string[] = [];
   if (model === "adesiva" && sheet.withoutPrice.length > 0) {
     warnings.push(
@@ -118,6 +123,12 @@ export default async function ProductLabelsPage({
   }
 
   const printLabel = model === "adesiva" ? "Imprimir etiquetas" : format === "a4" ? "Imprimir tags" : "Salvar PDF para a gráfica";
+  const cutTag = { widthMm: TAG.widthMm, heightMm: TAG.heightMm, holeCenterXMm: TAG.widthMm / 2, holeCenterYMm: TAG.holeCenterYMm };
+  const cutPositions = silhouette ? silhouetteTagPositions({ widthMm: TAG.widthMm, heightMm: TAG.heightMm }, PAGE_A4) : [];
+  const cutDxf = silhouette ? hangTagCutDxf({ page: PAGE_A4, positions: cutPositions, tag: cutTag }) : null;
+  // Última folha com menos de 4 tags: um DXF só com os contornos dela (senão a plotter corta cartões em branco).
+  const lastSheetCount = sheet.sheets.at(-1)?.length ?? 0;
+  const cutDxfLastSheet = silhouette && lastSheetCount > 0 && lastSheetCount < cutPositions.length ? hangTagCutDxf({ page: PAGE_A4, positions: cutPositions.slice(0, lastSheetCount), tag: cutTag }) : null;
   const summary =
     total === 0
       ? "Nenhuma etiqueta: escolha as quantidades acima."
@@ -127,7 +138,7 @@ export default async function ProductLabelsPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <style>{printCss(model === "cabide" && format === "grafica" ? "61mm 96mm" : "A4")}</style>
+      {silhouette ? null : <style>{printCss(model === "cabide" && format === "grafica" ? "61mm 96mm" : "A4")}</style>}
 
       <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
         <div>
@@ -140,10 +151,12 @@ export default async function ProductLabelsPage({
               ? `Folha A4 com ${LABELS_PER_SHEET.adesiva} etiquetas de ${formatLabelSize} (Pimaco A4355). Imprima em tamanho real — escala 100%, sem "ajustar à página"; o fio cinza é guia só na tela, não sai no papel.`
               : format === "a4"
                 ? `Folha A4 com ${LABELS_PER_SHEET.cabide} tags de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)}, frente e verso. Papel cartão creme de 180–300 g. Imprima em frente e verso virando na borda longa, escala 100% — primeiro uma folha de teste, para conferir contra a luz se frente e verso batem. Corte pelas marcas dos cantos e fure na cruz do topo (furador de 4 a 6 mm ou ilhós).`
-                : `Arquivo para gráfica: uma página por lado, ${mm(PRESS_PAGE.widthMm)} × ${mm(PRESS_PAGE.heightMm)} (tag de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)} com ${mm(TAG.bleedMm)} de sangria e marcas de corte). Nada sangra: a gráfica escolhe o papel. Salve como PDF pelo Chrome (o Safari ignora o tamanho da página) e mande junto a lista de quantidades abaixo.`}
+                : format === "silhouette"
+                  ? `Silhouette Portrait (print & cut): folha A4 com ${labelsPerSheet("cabide", "silhouette")} tags de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)} dentro da área que as marcas de registro do Studio deixam livre. Você baixa a frente e o verso em PNG e as linhas de corte em DXF; o Silhouette Studio imprime (com as marcas) e a plotter corta o contorno arredondado e o furo. Passo a passo abaixo.`
+                  : `Arquivo para gráfica: uma página por lado, ${mm(PRESS_PAGE.widthMm)} × ${mm(PRESS_PAGE.heightMm)} (tag de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)} com ${mm(TAG.bleedMm)} de sangria e marcas de corte). Nada sangra: a gráfica escolhe o papel. Salve como PDF pelo Chrome (o Safari ignora o tamanho da página) e mande junto a lista de quantidades abaixo.`}
           </p>
         </div>
-        {total > 0 ? <PrintButton label={printLabel} /> : null}
+        {total > 0 && !silhouette ? <PrintButton label={printLabel} /> : null}
       </div>
 
       {warnings.length > 0 ? (
@@ -168,6 +181,7 @@ export default async function ProductLabelsPage({
               <span className="font-medium text-zinc-900 dark:text-zinc-100">Impressão</span>
               <Select name="formato" defaultValue={format}>
                 <option value="a4">Impressora comum — folha A4 frente e verso</option>
+                <option value="silhouette">Silhouette Portrait — PNG para o Studio + corte DXF (4 por folha)</option>
                 <option value="grafica">Gráfica — PDF, uma tag por página</option>
               </Select>
             </label>
@@ -214,6 +228,38 @@ export default async function ProductLabelsPage({
         </div>
       </form>
 
+      {silhouette && total > 0 && cutDxf ? (
+        <div className="flex flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-4 text-sm print:hidden dark:border-zinc-800 dark:bg-zinc-900">
+          <div>
+            <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Arquivos para o Silhouette Studio</h2>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {sheet.sheets.length} {sheet.sheets.length === 1 ? "folha" : "folhas"} de até {labelsPerSheet("cabide", "silhouette")} tags. O DXF vale para todas as folhas cheias (as posições são fixas){cutDxfLastSheet ? "; a última folha, com menos tags, tem o DXF dela" : ""}.
+            </p>
+          </div>
+          <SilhouetteDownloads sheets={sheet.sheets.length} lastSheetCount={lastSheetCount} slug={sheet.productUrl.split("/").pop() ?? "peca"} dxf={cutDxf} dxfLastSheet={cutDxfLastSheet} />
+          <div>
+            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">Como cortar na Silhouette</h3>
+            <ol className="mt-2 list-decimal space-y-2 pl-5 text-zinc-700 dark:text-zinc-300">
+              <li>
+                No <strong>Silhouette Studio</strong> (Basic serve): <em>Preferences</em> → unidades em <strong>mm</strong> e, em <em>Import</em>, DXF <strong>&ldquo;As Is&rdquo;</strong> (não &ldquo;Fit to Page&rdquo;). <em>Page Setup</em> → tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <em>Registration Marks</em> → <strong>On</strong>, Type 1, valores <strong>padrão</strong> (não mova as marcas: é o que mais causa &ldquo;não leu&rdquo;).
+              </li>
+              <li>
+                <em>File → Open</em> o PNG da <strong>frente</strong>; no painel <em>Transform</em> confira <strong>largura 210 mm, altura 297 mm</strong> (a folha inteira — o arquivo já traz a resolução) e <strong>X 0, Y 0</strong>. <em>File → Open</em> o <strong>DXF</strong>; com tudo selecionado, confira <strong>210 × 297 mm</strong> no Transform (o retângulo grande é a folha; se vier em outro tamanho, digite 210 × 297 com a proporção travada), então X 0, Y 0 e apague o retângulo grande (camada PAGINA). As 4 molduras devem cair sobre as 4 tags — se não caírem, não imprima.
+              </li>
+              <li>
+                <em>File → Print</em> — o Studio imprime a frente <strong>com as marcas</strong>. Vire a folha <strong>na borda longa</strong>, troque o PNG pelo do <strong>verso</strong> (mesma posição 0, 0 · 210 × 297) e imprima de novo. Confira contra a luz se frente e verso batem.
+              </li>
+              <li>
+                Folha na base de corte com o canto das marcas no canto indicado pelo Studio, frente para cima. Material <em>Cardstock</em> (ou <em>Photo Paper</em>), AutoBlade, uma folha de teste primeiro. <em>Send</em>: a máquina lê as marcas e corta contorno e furo.
+              </li>
+              <li>
+                <strong>&ldquo;Não leu as marcas&rdquo;</strong> em papel fotográfico glossy é comum (o brilho reflete no sensor): diminua a luz sobre a máquina e tente de novo; se insistir, use o <em>registro manual</em> do Studio. O verso sai no lado fosco do papel fotográfico — legível, sem brilho.
+              </li>
+            </ol>
+          </div>
+        </div>
+      ) : null}
+
       {model === "cabide" && format === "grafica" && sheet.designs.length > 0 ? (
         <div className="rounded-lg border border-zinc-200 bg-white p-4 text-sm print:hidden dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Para a gráfica</h2>
@@ -246,14 +292,23 @@ export default async function ProductLabelsPage({
               </div>
             ))
           ) : (
-            <>
-              <HangTagDefs qr={qrSvgPath(sheet.productUrl)} />
-              {format === "a4" ? (
-                <HangTagSheets sheets={sheet.sheets} storeName={sheet.storeName} />
-              ) : (
-                <HangTagPress designs={sheet.designs} storeName={sheet.storeName} />
-              )}
-            </>
+            silhouette ? (
+              sheet.sheets.map((labels, index) => (
+                <Fragment key={index}>
+                  <SilhouetteSheet labels={labels} side="front" storeName={sheet.storeName} qr={qrSvgPath(sheet.productUrl)} index={index + 1} />
+                  <SilhouetteSheet labels={labels} side="back" storeName={sheet.storeName} qr={qrSvgPath(sheet.productUrl)} index={index + 1} />
+                </Fragment>
+              ))
+            ) : (
+              <>
+                <HangTagDefs qr={qrSvgPath(sheet.productUrl)} />
+                {format === "a4" ? (
+                  <HangTagSheets sheets={sheet.sheets} storeName={sheet.storeName} />
+                ) : (
+                  <HangTagPress designs={sheet.designs} storeName={sheet.storeName} />
+                )}
+              </>
+            )
           )}
         </div>
       ) : null}

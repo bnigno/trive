@@ -13,6 +13,8 @@ import { HangTagPress, PRESS_PAGE } from "@/app/admin/(protected)/produtos/[id]/
 import { HangTagSheet, HangTagSheets, SHEET_A4, SHEET_A4_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-sheets";
 import { LabelSheet, SHEET, SHEET_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/label-sheet";
 import { printCss } from "@/app/admin/(protected)/produtos/[id]/etiquetas/print-css";
+import { SilhouetteSheet } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-silhouette";
+import { silhouetteTagPositions } from "@/core/catalog/silhouette";
 
 const URL_PECA = "https://trivemaison.com.br/produto/longo-dunas";
 
@@ -138,5 +140,37 @@ describe("etiqueta adesiva (Pimaco A4355)", () => {
     expect(html).toContain("overflow-wrap:anywhere");
     expect(html).not.toContain("text-overflow:ellipsis");
     expect(printCss("A4")).toContain(".label { border-color: transparent !important; }");
+  });
+});
+
+describe("folha para a Silhouette (2 × 2, fundo branco, sem marcas impressas)", () => {
+  const qr = { size: 33, d: "M0 0h1v1h-1z" };
+  const four = [label(1), label(2), label(3), label(4)];
+  const positions = silhouetteTagPositions({ widthMm: 55, heightMm: 90 });
+
+  it("frente: 4 tags nas posições do núcleo, símbolos dentro da folha e o guia das marcas marcado para ficar fora da captura", () => {
+    const html = renderToStaticMarkup(<SilhouetteSheet labels={four} side="front" storeName="TRIVÉ" qr={qr} index={1} />);
+    expect(html).toContain('data-side="front"');
+    expect(html).toContain('data-sheet="1"');
+    expect(html).toContain("background:#ffffff");
+    expect(html).toContain('id="tag-wordmark"');
+    expect(html).toContain("data-guide");
+    for (const p of positions) expect(html).toContain(`left:${p.xMm}mm;top:${p.yMm}mm`);
+    expect(html.match(/hang-tag-front/g)).toHaveLength(4);
+    expect(html).not.toContain("DUNAS-AREIA");
+  });
+
+  it("verso: colunas espelhadas — a 1ª tag vai para a posição da 2ª", () => {
+    const html = renderToStaticMarkup(<SilhouetteSheet labels={four} side="back" storeName="TRIVÉ" qr={qr} index={2} />);
+    const firstBack = html.indexOf("DUNAS-AREIA-1");
+    const before = html.slice(0, firstBack);
+    expect(before.lastIndexOf(`left:${positions[1].xMm}mm;top:${positions[0].yMm}mm`)).toBeGreaterThan(before.lastIndexOf(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`));
+    expect(html.match(/hang-tag-back/g)).toHaveLength(4);
+  });
+
+  it("folha parcial (1 tag) só ocupa a primeira posição", () => {
+    const html = renderToStaticMarkup(<SilhouetteSheet labels={[label(1)]} side="front" storeName="TRIVÉ" qr={qr} index={1} />);
+    expect(html.match(/hang-tag-front/g)).toHaveLength(1);
+    expect(html).toContain(`left:${positions[0].xMm}mm;top:${positions[0].yMm}mm`);
   });
 });
