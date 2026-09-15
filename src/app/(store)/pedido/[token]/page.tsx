@@ -12,6 +12,7 @@ import { Monogram } from "@/components/store/brand/monogram";
 import { IconParcel } from "@/components/store/icons";
 import { NoirStage } from "@/components/store/noir-stage";
 import { Notice } from "@/components/store/order/notice";
+import { CourierTracking } from "@/components/store/order/courier-tracking";
 import { Sheet } from "@/components/store/order/sheet";
 import { TotalsList } from "@/components/store/order/totals";
 import { OrderJourney } from "@/components/store/order-journey";
@@ -25,11 +26,13 @@ import {
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { getFileStorage } from "@/adapters/storage";
+import { serializeTrackingView } from "@/core/delivery/tracking-json";
 import { buildOrderJourney } from "@/core/orders/journey";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
 import { waMeUrl } from "@/lib/phone";
+import { getTrackingForOrder } from "@/services/delivery-runs";
 import { getPublicOrder } from "@/services/store-orders";
 import { isMpEnabled } from "@/services/store-payments";
 import { getSettingsMap } from "@/services/settings";
@@ -144,7 +147,12 @@ export default async function OrderPage({
   const isCash = order.paymentMethod === "cash";
   const isPixManual = order.paymentMethod === "pix_manual";
 
-  const settings = isPendingPayment
+  // Saída do motoboy com GPS: a leitura pública (sem endereço) — só para
+  // pedido de motoboy, e só enquanto vale mostrar algo (a caminho / falhou).
+  const tracking = order.deliveryWindowLabel ? await getTrackingForOrder(db, token) : null;
+  const showCourier = tracking !== null && tracking.state !== "delivered" && tracking.state !== "finished";
+
+  const settings = isPendingPayment || showCourier
     ? await getSettingsMap(db, ["store_whatsapp", "store_pix_key"])
     : {};
   const pixKey =
@@ -155,7 +163,7 @@ export default async function OrderPage({
   const mpEnabled =
     isPendingPayment && !isCash && !isPixManual ? await isMpEnabled(db) : false;
 
-  const whatsappLink = isPendingPayment
+  const whatsappLink = isPendingPayment || showCourier
     ? waMeLink(settings["store_whatsapp"], order.orderNumber)
     : null;
 
@@ -281,6 +289,12 @@ export default async function OrderPage({
               ) : null}
             </Sheet>
           )}
+
+          {showCourier && tracking ? (
+            <Sheet eyebrow="Seu motoboy" headingId="motoboy-title" aria-labelledby="motoboy-title">
+              <CourierTracking token={token} initial={serializeTrackingView(tracking)} storeWhatsappUrl={whatsappLink} />
+            </Sheet>
+          ) : null}
 
           {giftNoteUrl ? (
             <Sheet
