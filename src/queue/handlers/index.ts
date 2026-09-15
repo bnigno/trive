@@ -214,6 +214,8 @@ export type OutboxEvent = {
   aggregateId: string | null;
   payload: Record<string, unknown>;
   attempts: number;
+  /** Quando entrou na fila (created_at da linha — o BEGIN da transação de quem enfileirou). */
+  createdAt: Date;
   /** Até quando o worker deixa este evento rodar (orçamento da varredura), quando há um. */
   deadlineAt?: Date;
 };
@@ -509,7 +511,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       getDb(),
       getSalesAssistant(),
       getMessagingProvider(),
-      { followupId, attempt: event.attempts },
+      { followupId, attempt: event.attempts, deadlineAt: event.deadlineAt ?? null },
       {
         cards: {
           storage: getFileStorage(),
@@ -532,7 +534,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       getDb(),
       getSalesAssistant(),
       getMessagingProvider(),
-      { conversationId: payload.conversationId, attempt: event.attempts },
+      {
+        conversationId: payload.conversationId,
+        attempt: event.attempts,
+        enqueuedAt: event.createdAt,
+        ...(event.deadlineAt ? { deadlineAt: event.deadlineAt } : {}),
+      },
       {
         cards: {
           storage: getFileStorage(),

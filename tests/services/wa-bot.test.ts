@@ -27,6 +27,11 @@ import {
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 import { nextMessageStamp } from "../helpers/clock";
 
+// Kicks para o Inngest: o turno dá um (sem id) depois do commit, para o que
+// enfileirou (cartão, aviso ao dono) sair em segundos; turno pulado não dá.
+const { kicks } = vi.hoisted(() => ({ kicks: [] as unknown[] }));
+vi.mock("@/inngest/client", () => ({ inngest: { send: async (event: unknown) => { kicks.push(event); return { ids: [] }; } } }));
+
 let db: TestDb;
 let close: () => Promise<void>;
 // PGlite (testes) e postgres-js (produção) divergem apenas no tipo de
@@ -44,6 +49,7 @@ const DUMMY_INBOUND_ID = "00000000-0000-4000-8000-00000000feed";
 const PIX_KEY = "pix@trive.com.br";
 
 beforeEach(async () => {
+  kicks.length = 0;
   ({ db, close } = await createTestDb());
   sdb = db as unknown as DbOrTx;
   assistant = new FakeSalesAssistant();
@@ -271,6 +277,8 @@ describe("runBotTurn", () => {
     expect(outbound[0].status).toBe("sent");
     expect(outbound[0].body).toBe("Olá! Como posso ajudar? 😊");
     expect(outbound[0].dedupeKey).toMatch(/^wa\.bot_reply:/);
+    // Um kick depois do commit (sem id).
+    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: {} }]);
   });
 
   it("roteiro completo: listar → detalhar → criar_pedido cria pedido 'whatsapp' com reserva e link", async () => {
@@ -506,6 +514,8 @@ describe("runBotTurn", () => {
     const second = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(second).toEqual({ skipped: "ja_respondida" });
     expect(assistant.turns).toHaveLength(1);
+    // Turno pulado não dá kick: só o do primeiro turno.
+    expect(kicks).toHaveLength(1);
 
     expect(provider.sentMessages).toHaveLength(1);
     expect(provider.sentMessages[0].body).toBe("Primeira resposta");

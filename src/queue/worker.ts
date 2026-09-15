@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import {
   classifyOutcome,
   getRetryPolicy,
+  handlerReserveMs,
   nextAttemptDelayMs,
 } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
@@ -18,6 +19,7 @@ type ClaimedRow = {
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
+  created_at: Date | string;
 };
 
 export type DrainOutboxOptions = {
@@ -32,6 +34,8 @@ export type DrainOutboxOptions = {
   budgetMs?: number;
   /** Relógio injetável para o orçamento (testes). */
   clock?: () => number;
+  /** Só esta linha (o kick com id reclama o alvo antes de qualquer outra). */
+  onlyId?: string;
 };
 
 export type DrainOutboxResult = {
@@ -42,10 +46,18 @@ export type DrainOutboxResult = {
   dead: number;
   /** Devolvidos à fila por falta de tempo neste lote. */
   released: number;
+  /** Ids devolvidos por falta de tempo — o kick pode pedir outra invocação para eles. */
+  releasedIds: string[];
 };
 
-/** Lease vencido: a função morreu no meio (timeout, deploy). Conta como tentativa. */
-const LEASE_EXPIRED_ERROR = "lease expired: worker did not finish within 5 minutes";
+/**
+ * Lease: passado esse tempo sem terminar, a função morreu no meio (timeout de
+ * 60 s da rota, deploy) e a linha volta para a fila. Dois minutos cobrem o
+ * pior handler com folga; era 5 e uma resposta da Lia ficava presa isso tudo.
+ */
+const LEASE_MINUTES = 2;
+const LEASE_EXPIRED_ERROR = `lease expired: worker did not finish within ${LEASE_MINUTES} minutes`;
+const LEASE_INTERVAL = sql.raw(`interval '${LEASE_MINUTES} minutes'`);
 
 /**
  * Processa um lote do outbox. Idempotente e seguro para execução
@@ -68,6 +80,7 @@ export async function drainOutbox(
     failed: 0,
     dead: 0,
     released: 0,
+    releasedIds: [],
   };
 
   // db.execute retorna { rows } no pg/PGlite e array no postgres.js — normalize.
@@ -82,7 +95,7 @@ export async function drainOutbox(
     SELECT id, event_type, attempts
     FROM outbox_events
     WHERE status = 'processing'
-      AND locked_at < now() - interval '5 minutes'
+      AND locked_at < now() - ${LEASE_INTERVAL}
     FOR UPDATE SKIP LOCKED
   `));
   for (const row of expiredRows) {
@@ -98,7 +111,7 @@ export async function drainOutbox(
             locked_by = NULL
         WHERE id = ${row.id}
           AND status = 'processing'
-          AND locked_at < now() - interval '5 minutes'
+          AND locked_at < now() - ${LEASE_INTERVAL}
           AND attempts = ${row.attempts}
       `);
     } else {
@@ -113,7 +126,7 @@ export async function drainOutbox(
             locked_by = NULL
         WHERE id = ${row.id}
           AND status = 'processing'
-          AND locked_at < now() - interval '5 minutes'
+          AND locked_at < now() - ${LEASE_INTERVAL}
           AND attempts = ${row.attempts}
       `);
     }
@@ -130,29 +143,41 @@ export async function drainOutbox(
       FROM outbox_events
       WHERE status IN ('pending', 'failed')
         AND next_attempt_at <= now()
+        ${options.onlyId ? sql`AND id = ${options.onlyId}` : sql``}
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )
     RETURNING id, event_type, aggregate_type, aggregate_id, payload,
-              attempts, max_attempts
+              attempts, max_attempts, created_at
   `));
   result.claimed = claimedRows.length;
 
+  const release = async (ids: string[]): Promise<void> => {
+    await db.execute(sql`
+      UPDATE outbox_events
+      SET status = 'pending',
+          locked_at = NULL,
+          locked_by = NULL
+      WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+        AND locked_by = ${workerId}
+    `);
+    result.released += ids.length;
+    result.releasedIds.push(...ids);
+  };
+
   for (const [index, row] of claimedRows.entries()) {
-    if (options.budgetMs !== undefined && clock() - startedAt > options.budgetMs) {
+    const elapsed = clock() - startedAt;
+    if (options.budgetMs !== undefined && elapsed > options.budgetMs) {
       // Sem tempo para este e os seguintes: de volta à fila, sem contar tentativa.
-      const remaining = claimedRows.slice(index).map((pending) => pending.id);
-      await db.execute(sql`
-        UPDATE outbox_events
-        SET status = 'pending',
-            locked_at = NULL,
-            locked_by = NULL
-        WHERE id IN (${sql.join(remaining.map((id) => sql`${id}`), sql`, `)})
-          AND locked_by = ${workerId}
-      `);
-      result.released = remaining.length;
+      await release(claimedRows.slice(index).map((pending) => pending.id));
       break;
+    }
+    if (options.budgetMs !== undefined && elapsed + handlerReserveMs(row.event_type) > options.budgetMs) {
+      // Este não cabe no que sobra (um turno da Lia precisa de ~32 s): volta
+      // à fila sem contar tentativa; os seguintes, mais curtos, ainda rodam.
+      await release([row.id]);
+      continue;
     }
     const event: OutboxEvent = {
       id: row.id,
@@ -161,6 +186,7 @@ export async function drainOutbox(
       aggregateId: row.aggregate_id,
       payload: row.payload,
       attempts: row.attempts,
+      createdAt: new Date(row.created_at),
       // O handler pode se encolher para caber no que sobra da varredura.
       ...(options.budgetMs !== undefined ? { deadlineAt: new Date(startedAt + options.budgetMs) } : {}),
     };

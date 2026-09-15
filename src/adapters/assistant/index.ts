@@ -24,6 +24,8 @@ export type RespondTurnInput = {
   history: BotChatMessage[];
   model: string;
   executeTool: ToolExecutor;
+  /** Prazo do turno: sem tempo para outra chamada, falha passageira ("tempo esgotado"). */
+  deadlineAt?: Date;
 };
 
 export type AssistantTurn = {

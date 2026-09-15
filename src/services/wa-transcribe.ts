@@ -19,7 +19,7 @@ import {
   parseWaMediaMeta,
 } from "@/core/whatsapp/media";
 import { auditLog, customers, waConversations, waMessages } from "@/db/schema";
-import type { DbOrTx } from "@/queue/enqueue";
+import { kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import { routeInboundMessage, type InboundRoute } from "@/services/wa-inbound";
 
 export const AUDIO_MAX_BYTES = 25 * 1024 * 1024;
@@ -116,7 +116,7 @@ export async function transcribeInboundAudio(
       ? { status: "done" as const, ms: durationMs, model: outcome.model, chars: outcome.text.length }
       : { status: (outcome.reason === "longo" ? "skipped" : "failed") as "skipped" | "failed", ms: durationMs, reason: outcome.reason };
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx): Promise<TranscribeInboundAudioResult> => {
     await tx
       .update(waMessages)
       .set({ body, mediaMeta: { ...meta, transcript } })
@@ -157,4 +157,7 @@ export async function transcribeInboundAudio(
       ? { transcribed: true, route, chars: outcome.text.length, durationMs }
       : { fallback: outcome.reason, route };
   });
+  // Turno da Lia enfileirado dentro da transação: o kick só depois do commit.
+  await kickOutbox();
+  return result;
 }

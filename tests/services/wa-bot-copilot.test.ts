@@ -94,6 +94,9 @@ describe("turno em copiloto", () => {
     expect(notice?.dedupeKey).toMatch(/^wa\.suggestion_notice:/);
     expect(await countPendingSuggestions(sdb)).toBe(1);
     expect((await listPendingSuggestions(sdb))[0]).toMatchObject({ conversationId, label: "(11) •••••-0000" });
+    // O audit do turno em copiloto tem os tempos, mas sem entrega (nada saiu).
+    const [trail] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.bot_turn"));
+    expect(trail.after).toMatchObject({ mode: "copilot", timings: { deliveryMs: null, inboundToFirstBubbleMs: null } });
 
     // Retry da fila (mesma inbound): a sugestão é a mesma, o modelo NÃO roda de novo, sem duplicar aviso.
     const turnsBefore = assistant.turns.length;

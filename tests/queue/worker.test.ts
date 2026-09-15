@@ -11,7 +11,7 @@ import { createTestDb, type TestDb } from "../helpers/db";
 
 // Handlers injetados: o teste decide quem falha e quem demora. O módulo real
 // puxa todos os adapters; aqui só interessa o comportamento do varredor.
-const handlers: Record<string, (event: { id: string; eventType: string }) => Promise<void>> = {};
+const handlers: Record<string, (event: { id: string; eventType: string; createdAt: Date }) => Promise<void>> = {};
 vi.mock("@/queue/handlers", () => ({
   resolveOutboxHandler: (eventType: string) => {
     const handler = handlers[eventType];
@@ -94,11 +94,16 @@ describe("drainOutbox — teto pela política", () => {
     expect(retried.nextAttemptAt.getTime()).toBeGreaterThan(now.getTime());
   });
 
-  it("handler que resolve marca done e limpa o lock", async () => {
-    handlers["order.receipt"] = async () => {};
+  it("handler que resolve marca done e limpa o lock; recebe createdAt (Date) para medir a espera na fila", async () => {
+    let seen: Date | null = null;
+    handlers["order.receipt"] = async (event) => {
+      seen = event.createdAt;
+    };
     const id = await insertEvent({ eventType: "order.receipt" });
     const result = await drainOutbox(asDb(), { limit: 10 });
     expect(result).toMatchObject({ claimed: 1, done: 1, failed: 0, dead: 0 });
+    expect(seen).toBeInstanceOf(Date);
+    expect(Date.now() - (seen as unknown as Date).getTime()).toBeLessThan(60_000);
     const row = await eventRow(id);
     expect(row.status).toBe("done");
     expect(row.processedAt).not.toBeNull();
@@ -106,7 +111,7 @@ describe("drainOutbox — teto pela política", () => {
   });
 });
 
-describe("drainOutbox — lease vencido", () => {
+describe("drainOutbox — lease vencido (2 min: nenhum handler sobrevive aos 60 s da rota)", () => {
   it("conta como tentativa pela política: product.published na 2ª vira dead; o padrão volta a failed com backoff", async () => {
     handlers["product.published"] = async () => {};
     handlers["order.receipt"] = async () => {};
@@ -114,13 +119,13 @@ describe("drainOutbox — lease vencido", () => {
       eventType: "product.published",
       status: "processing",
       attempts: 1,
-      lockedMinutesAgo: 6,
+      lockedMinutesAgo: 3,
     });
     const stuckReceipt = await insertEvent({
       eventType: "order.receipt",
       status: "processing",
       attempts: 0,
-      lockedMinutesAgo: 6,
+      lockedMinutesAgo: 3,
     });
     const fresh = await insertEvent({
       eventType: "order.receipt",
@@ -137,6 +142,7 @@ describe("drainOutbox — lease vencido", () => {
     expect(dead.status).toBe("dead");
     expect(dead.attempts).toBe(2);
     expect(dead.lastError).toContain("lease expired");
+    expect(dead.lastError).toContain("2 minutes");
     expect(dead.lockedBy).toBeNull();
 
     // Recuperado como failed com next_attempt_at no futuro: não é reprocessado neste lote.
@@ -184,6 +190,43 @@ describe("drainOutbox — orçamento de tempo do lote", () => {
     // O lote seguinte pega os dois na hora.
     const next = await drainOutbox(asDb(), { limit: 10 });
     expect(next).toMatchObject({ claimed: 2, done: 2, released: 0 });
+  });
+
+  it("turno da Lia sem ~32 s pela frente volta à fila sem contar tentativa; o vizinho curto ainda roda", async () => {
+    const ran: string[] = [];
+    handlers["wa.bot_turn"] = async (event) => {
+      ran.push(event.id);
+    };
+    handlers["order.receipt"] = async (event) => {
+      ran.push(event.id);
+    };
+    const turn = await insertEvent({ eventType: "wa.bot_turn" });
+    const receipt = await insertEvent({ eventType: "order.receipt" });
+
+    // 20 s de orçamento: o turno (reserva 32 s) não cabe; o comprovante (sem reserva) sim.
+    const result = await drainOutbox(asDb(), { limit: 10, budgetMs: 20_000, clock: () => 0 });
+    expect(result).toMatchObject({ claimed: 2, done: 1, released: 1, releasedIds: [turn] });
+    expect(ran).toEqual([receipt]);
+    const row = await eventRow(turn);
+    expect(row.status).toBe("pending");
+    expect(row.attempts).toBe(0);
+    expect(row.lockedBy).toBeNull();
+
+    // Com orçamento inteiro, o turno roda.
+    const next = await drainOutbox(asDb(), { limit: 10, budgetMs: 50_000, clock: () => 0 });
+    expect(next).toMatchObject({ claimed: 1, done: 1, released: 0 });
+  });
+
+  it("onlyId reclama só a linha pedida, mesmo com outras vencidas antes", async () => {
+    const ran: string[] = [];
+    handlers["order.receipt"] = async (event) => {
+      ran.push(event.id);
+    };
+    await insertEvent({ eventType: "order.receipt" });
+    const target = await insertEvent({ eventType: "order.receipt" });
+    const result = await drainOutbox(asDb(), { limit: 10, onlyId: target });
+    expect(result).toMatchObject({ claimed: 1, done: 1 });
+    expect(ran).toEqual([target]);
   });
 
   it("sem orçamento, o lote inteiro roda", async () => {

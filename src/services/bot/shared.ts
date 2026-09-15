@@ -161,20 +161,26 @@ export function makeCardEmitter(db: DbOrTx, ctx: BotExecutorContext): CardEmitte
       // Copiloto: um cartão pela fila sairia antes de a dona aprovar — sem cache, sem cartão.
       if (ctx.copilot) return false;
       if (!ctx.dryRun) {
-        await enqueueOutboxEvent(db, {
-          eventType: "wa.card_render",
-          dedupeKey: `wa.card:${ctx.lastInboundId}`,
-          aggregateType: "wa_conversation",
-          aggregateId: ctx.conversationId,
-          payload: {
-            conversationId: ctx.conversationId,
-            phoneE164: ctx.phoneE164,
-            customerId: ctx.customerId,
-            lastInboundId: ctx.lastInboundId,
-            caption: request.caption,
-            request: input,
+        // Sem kick: estamos dentro da transação do turno (aberta até o fim
+        // da entrega); runBotTurn dá o kick depois do commit.
+        await enqueueOutboxEvent(
+          db,
+          {
+            eventType: "wa.card_render",
+            dedupeKey: `wa.card:${ctx.lastInboundId}`,
+            aggregateType: "wa_conversation",
+            aggregateId: ctx.conversationId,
+            payload: {
+              conversationId: ctx.conversationId,
+              phoneE164: ctx.phoneE164,
+              customerId: ctx.customerId,
+              lastInboundId: ctx.lastInboundId,
+              caption: request.caption,
+              request: input,
+            },
           },
-        });
+          { kick: false },
+        );
         return "queued";
       }
       const card = await Promise.race([

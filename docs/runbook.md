@@ -93,9 +93,18 @@ em autenticação.
 ## Mensagem ou e-mail não chegou
 
 Mensagens e e-mails passam por uma fila com **retry automático** (tentativas
-repetidas com espera crescente) — atraso de minutos é normal. Se não chegar:
-**/admin/fila** → **Reprocessar** os itens em falha definitiva e ler o motivo
-mostrado no item.
+repetidas com espera crescente). O normal é sair em segundos (quem enfileira
+avisa o executor na hora); o cron de 1 minuto é a rede de segurança, então
+um atraso de até um minuto ainda é normal — minutos seguidos, não. Se não
+chegar: **/admin/fila** → **Reprocessar** os itens em falha definitiva e ler
+o motivo mostrado no item.
+
+Quanto a Lia demora: **Vendedora & WhatsApp → "Tempo de resposta"** mostra a
+mediana e o p90 de mensagem → primeiro balão nos últimos 7 dias, e onde o
+tempo foi (fila · preparo · modelo · entrega). Fila alta = o executor
+(Inngest) não está recebendo o aviso ou a função está caindo; modelo alto =
+a API da Anthropic lenta (vale testar o Haiku no Ensaio); entrega alta =
+Z-API lenta.
 
 E-mail de **recuperação de senha** não passa pela outbox (o payload é uma
 credencial e o feedback precisa ser imediato): reprocessar não se aplica — ver

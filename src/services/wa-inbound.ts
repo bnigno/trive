@@ -23,7 +23,7 @@ import {
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { INBOUND_MEDIA_MARKERS, type WaMediaMeta } from "@/core/whatsapp/media";
 import { isValidE164, toE164BR } from "@/lib/phone";
-import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { enqueueOutboxEvent, kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import {
   enqueueAtelierHelp,
   enqueueAtelierNudge,
@@ -315,13 +315,19 @@ export async function routeInboundMessage(
     (await isBotEnabled(tx));
 
   if (botEligible) {
-    await enqueueOutboxEvent(tx, {
-      eventType: "wa.bot_turn",
-      dedupeKey: `wa.bot_turn:${input.zapiMessageId}`,
-      aggregateType: "wa_conversation",
-      aggregateId: conversation.id,
-      payload: { conversationId: conversation.id },
-    });
+    // Sem kick aqui: a transação de quem chama ainda está aberta e o kick
+    // chegaria antes do commit. Quem chama dá o kick depois de commitar.
+    await enqueueOutboxEvent(
+      tx,
+      {
+        eventType: "wa.bot_turn",
+        dedupeKey: `wa.bot_turn:${input.zapiMessageId}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: { conversationId: conversation.id },
+      },
+      { kick: false },
+    );
     return "bot_queued";
   }
 
@@ -425,7 +431,7 @@ export async function processZapiInbound(
     return { action: "ignored", ignored: true };
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const insertedInbound = await tx
       .insert(inboundEvents)
       .values({
@@ -562,13 +568,17 @@ export async function processZapiInbound(
           mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || '{"transcript":{"status":"pending"}}'::jsonb`,
         })
         .where(eq(waMessages.id, message.id));
-      await enqueueOutboxEvent(tx, {
-        eventType: "wa.transcribe",
-        dedupeKey: `wa.transcribe:${messageId}`,
-        aggregateType: "wa_conversation",
-        aggregateId: conversation.id,
-        payload: { waMessageId: message.id },
-      });
+      await enqueueOutboxEvent(
+        tx,
+        {
+          eventType: "wa.transcribe",
+          dedupeKey: `wa.transcribe:${messageId}`,
+          aggregateType: "wa_conversation",
+          aggregateId: conversation.id,
+          payload: { waMessageId: message.id },
+        },
+        { kick: false },
+      );
     };
 
     const keyword = normalizeKeyword(text);
@@ -789,4 +799,8 @@ export async function processZapiInbound(
       waMessageId: message.id,
     } as const;
   });
+  // O kick só depois do commit: a linha do outbox já está visível para o
+  // outbox-kick e a resposta da Lia sai em segundos, não no cron seguinte.
+  if (result.action !== "duplicate") await kickOutbox();
+  return result;
 }

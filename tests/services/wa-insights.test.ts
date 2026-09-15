@@ -7,6 +7,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import {
   estimateUsdCents,
   getBotActivitySummary,
+  getBotResponseTimes,
   listRecentBotActivity,
 } from "@/services/wa-insights";
 import { createTestDb, createTestCustomer, type TestDb } from "../helpers/db";
@@ -150,5 +151,66 @@ describe("getBotActivitySummary / listRecentBotActivity", () => {
     });
     expect(activity[0]).toMatchObject({ kind: "order", who: "Maria da Silva" });
     expect(activity[0].title).toMatch(/^Pedido #\d+$/);
+  });
+});
+
+describe("getBotResponseTimes", () => {
+  const timings = (totalMs: number, extra: Partial<Record<string, number | null>> = {}) => ({
+    enqueuedAt: null,
+    queueWaitMs: 1_000,
+    prepMs: 500,
+    modelMs: totalMs - 2_000,
+    toolsMs: 100,
+    deliveryMs: 500,
+    totalMs,
+    inboundToFirstBubbleMs: totalMs + 1_000,
+    ...extra,
+  });
+  const turn = (after: Record<string, unknown>, createdAt = new Date()) => ({
+    actorType: "system" as const,
+    action: "wa.bot_turn",
+    entityType: "wa_conversation",
+    entityId: "00000000-0000-4000-8000-000000000001",
+    after,
+    createdAt,
+  });
+
+  it("sem turnos medidos: zero e nulos (a tela mostra o estado vazio)", async () => {
+    const times = await getBotResponseTimes(sdb);
+    expect(times.turns).toBe(0);
+    expect(times.p50.totalMs).toBeNull();
+    expect(times.p90.inboundToFirstBubbleMs).toBeNull();
+  });
+
+  it("mediana e p90 por trecho, só de turnos autônomos com tempos e dentro de 7 dias", async () => {
+    // Totais 10, 20, …, 100 s mais um de 50 s (11 linhas): p50 = 50 s, p90 = 90 s (percentile_cont).
+    // queueWaitMs: 5 linhas com 1 s, 5 com 3 s e uma null — null ignorado dá mediana 2 s;
+    // contado como 0 daria 1 s.
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      turn({ mode: "autonomous", timings: timings((i + 1) * 10_000, { queueWaitMs: i < 5 ? 1_000 : 3_000 }) }),
+    );
+    await db.insert(schema.auditLog).values([
+      ...rows,
+      // Sem timings (turno anterior ao PR), copiloto e velho demais: fora.
+      turn({ mode: "autonomous", durationMs: 999_999 }),
+      turn({ mode: "copilot", timings: timings(999_999) }),
+      turn({ mode: "autonomous", timings: timings(999_999) }, new Date(Date.now() - 8 * 86_400_000)),
+      // queueWaitMs desconhecido numa linha: os outros trechos ainda contam.
+      turn({ mode: "autonomous", timings: timings(50_000, { queueWaitMs: null }) }),
+    ]);
+
+    const times = await getBotResponseTimes(sdb);
+    expect(times.turns).toBe(11);
+    expect(times.p50.totalMs).toBe(50_000);
+    expect(times.p50.inboundToFirstBubbleMs).toBe(51_000);
+    expect(times.p50.queueWaitMs).toBe(2_000);
+    // Médias (a barra): total médio = (10+20+…+100+50)/11 = 54,5 s; fila média só das 10 linhas com valor.
+    expect(times.mean.totalMs).toBe(54_545);
+    expect(times.mean.prepMs).toBe(500);
+    expect(times.mean.queueWaitMs).toBe(2_000);
+    expect(times.p50.prepMs).toBe(500);
+    expect(times.p50.deliveryMs).toBe(500);
+    expect(times.p90.totalMs).toBe(90_000);
+    expect(times.p90.modelMs).toBe(88_000);
   });
 });

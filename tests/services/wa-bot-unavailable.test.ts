@@ -205,6 +205,26 @@ describe("modelo indisponível", () => {
     expect(audits.find((row) => row.action === "wa.bot_handoff")?.reason).toBe("Assistente de IA indisponível (sem crédito na API da Anthropic)");
   });
 
+  it("'tempo esgotado' (prazo do turno) é passageiro: relança na primeira, plano B na última — e o audit da falha leva os tempos", async () => {
+    const conversationId = await createConversation();
+    await addMessage(conversationId, "inbound", "Oi");
+    const timedOut = () =>
+      new AssistantUnavailableError("Assistente de IA indisponível no momento (tempo esgotado)", { retryable: true, reason: "tempo esgotado" });
+    assistant.enqueueScript(timedOut());
+    await expect(runBotTurn(sdb, assistant, provider, { conversationId, attempt: 0 })).rejects.toBeInstanceOf(AssistantUnavailableError);
+    expect(provider.sentMessages).toHaveLength(0);
+
+    assistant.enqueueScript(timedOut());
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId, attempt: BOT_TURN_MODEL_ATTEMPTS - 1, enqueuedAt: new Date(Date.now() - 2_000) });
+    expect(result).toEqual({ replied: true, handedOff: true });
+    const audits = await db.select().from(schema.auditLog);
+    expect(audits.find((row) => row.action === "wa.bot_handoff")?.reason).toBe("Assistente de IA indisponível (tempo esgotado)");
+    const failed = audits.find((row) => row.action === "wa.bot_turn_failed")?.after as { timings: { queueWaitMs: number; modelMs: number; deliveryMs: null } };
+    expect(failed.timings.queueWaitMs).toBeGreaterThanOrEqual(2_000);
+    expect(failed.timings.modelMs).toBeGreaterThanOrEqual(0);
+    expect(failed.timings.deliveryMs).toBeNull();
+  });
+
   it("erro genérico (sem os campos) segue como antes: plano B com a mensagem", async () => {
     const conversationId = await createConversation();
     await addMessage(conversationId, "inbound", "Oi");

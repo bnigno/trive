@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AssistantUnavailableError } from "@/adapters/assistant";
 import {
+  ANTHROPIC_MAX_RETRIES,
+  ANTHROPIC_TIMEOUT_MS,
   ClaudeSalesAssistant,
   type MessagesClient,
 } from "@/adapters/assistant/claude";
@@ -256,6 +258,44 @@ describe("ClaudeSalesAssistant", () => {
     const a = await failure({ messages: { create: async () => { throw new Anthropic.APIUserAbortError(); } } });
     expect(a.retryable).toBe(false);
     spy.mockRestore();
+  });
+
+  it("prazo do turno: sem tempo para outra chamada, devolve 'tempo esgotado' (passageiro) sem chamar de novo", async () => {
+    // 1ª chamada pede ferramenta (com 5,1 s de prazo ela ainda cabe); a
+    // ferramenta leva 200 ms e aí não sobram os 5 s mínimos para a 2ª.
+    const client = fakeClient([toolUseMessage("ver_sacola", {}), textMessage("nunca chega")]);
+    const slowTool: ToolExecutor = async (name) => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return { ok: true, text: `resultado de ${name}` };
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = await new ClaudeSalesAssistant(client)
+      .respondTurn({ ...baseInput, executeTool: slowTool, deadlineAt: new Date(Date.now() + 5_100) })
+      .then(
+        () => null,
+        (e: unknown) => e as AssistantUnavailableError,
+      );
+    expect(client.calls).toHaveLength(1);
+    expect(error).toBeInstanceOf(AssistantUnavailableError);
+    expect(error?.retryable).toBe(true);
+    expect(error?.reason).toBe("tempo esgotado");
+    spy.mockRestore();
+  }, 20_000);
+
+  it("cada chamada leva o timeout do que sobra do prazo (nunca acima do teto do SDK) — sem AbortSignal, que o SDK trata como abort definitivo", async () => {
+    const client = fakeClient([textMessage("oi")]);
+    const create = client.messages.create as ReturnType<typeof vi.fn>;
+    await new ClaudeSalesAssistant(client).respondTurn({ ...baseInput, deadlineAt: new Date(Date.now() + 8_000) });
+    const options = create.mock.calls[0]?.[1] as { signal?: AbortSignal; timeout?: number };
+    expect(options.signal).toBeUndefined();
+    expect(options.timeout).toBeGreaterThan(5_000);
+    expect(options.timeout).toBeLessThanOrEqual(8_000);
+
+    const client2 = fakeClient([textMessage("oi")]);
+    await new ClaudeSalesAssistant(client2).respondTurn(baseInput);
+    const options2 = (client2.messages.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as { timeout?: number };
+    expect(options2.timeout).toBe(ANTHROPIC_TIMEOUT_MS);
+    expect(ANTHROPIC_MAX_RETRIES).toBe(0);
   });
 
   it("sem chave e sem cliente injetado, falha como indisponível", async () => {

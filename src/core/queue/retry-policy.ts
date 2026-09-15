@@ -86,3 +86,19 @@ export function classifyOutcome(
 ): "retry" | "dead" {
   return attempts >= maxAttempts ? "dead" : "retry";
 }
+
+/**
+ * Quanto tempo um handler precisa ter pela frente para COMEÇAR dentro do
+ * orçamento de uma varredura (a rota do Inngest tem 60 s). Um turno da Lia
+ * leva até 35 s de modelo + 12 s de entrega; começar com menos que isso é
+ * ser morto no meio e prender a linha no lease. Sem entrada = pode começar
+ * com qualquer sobra (o orçamento só barra o que ainda não começou).
+ */
+export const HANDLER_RESERVE_MS: Record<string, number> = {
+  "wa.bot_turn": 32_000,
+  "wa.bot_followup": 32_000,
+};
+
+export function handlerReserveMs(eventType: string): number {
+  return HANDLER_RESERVE_MS[eventType] ?? 0;
+}

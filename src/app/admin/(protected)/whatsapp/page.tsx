@@ -21,9 +21,11 @@ import { getLastDigest } from "@/services/daily-digest";
 import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
 import {
   getBotActivitySummary,
+  getBotResponseTimes,
   listRecentBotActivity,
   type BotActivityEvent,
   type BotActivitySummary,
+  type BotResponseTimes,
 } from "@/services/wa-insights";
 import { siteBaseUrl } from "@/services/wa-messaging";
 import {
@@ -46,6 +48,7 @@ import {
 } from "./forms";
 import { QrAutoRefresh } from "./qr-auto-refresh";
 import { Rehearsal } from "./rehearsal";
+import { ResponseTimes } from "./response-times";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +82,7 @@ interface PageData {
   quickReplies: string;
   templates: WaTemplate[];
   summary: BotActivitySummary;
+  responseTimes: BotResponseTimes;
   activity: BotActivityEvent[];
   awaitingOwner: number;
   digestEnabled: boolean;
@@ -95,12 +99,13 @@ async function loadPageData(): Promise<PageData | null> {
   let settingsMap: Record<string, unknown>;
   let templates: WaTemplate[];
   let summary: BotActivitySummary;
+  let responseTimes: BotResponseTimes;
   let activity: BotActivityEvent[];
   let awaitingOwner: number;
   let lastDigestRow: Awaited<ReturnType<typeof getLastDigest>>;
   let campaignLinks: CampaignLink[];
   try {
-    [settingsMap, templates, summary, activity, awaitingOwner, lastDigestRow, campaignLinks] = await Promise.all([
+    [settingsMap, templates, summary, responseTimes, activity, awaitingOwner, lastDigestRow, campaignLinks] = await Promise.all([
       getSettingsMap(db, [
         "wa_enabled",
         "owner_whatsapp_phone",
@@ -126,6 +131,7 @@ async function loadPageData(): Promise<PageData | null> {
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
+      getBotResponseTimes(db),
       listRecentBotActivity(db, { limit: 8 }),
       countConversationsAwaitingOwner(db),
       getLastDigest(db),
@@ -176,6 +182,7 @@ async function loadPageData(): Promise<PageData | null> {
     quickReplies: text("wa_quick_replies"),
     templates,
     summary,
+    responseTimes,
     activity,
     awaitingOwner,
     digestEnabled: settingsMap["owner_digest_enabled"] !== false,
@@ -246,6 +253,7 @@ export default async function WhatsappPage() {
     quickReplies,
     templates,
     summary,
+    responseTimes,
     activity,
     awaitingOwner,
     digestEnabled,
@@ -455,6 +463,9 @@ export default async function WhatsappPage() {
         <div className="flex flex-col gap-6">
           <Card title={`Testar a ${sellerName}`}>
             <Rehearsal sellerName={sellerName} />
+          </Card>
+          <Card title={`Tempo de resposta da ${sellerName} (${responseTimes.windowDays} dias)`}>
+            <ResponseTimes times={responseTimes} sellerName={sellerName} />
           </Card>
           <Card title={`O que a ${sellerName} fez em ${summary.windowDays} dias`}>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">

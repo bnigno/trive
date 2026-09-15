@@ -10,8 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
-import { OPT_OUT_ACK_BODY, processZapiInbound } from "@/services/wa-inbound";
 import { createTestDb, type TestDb } from "../helpers/db";
+
+// O kick para o Inngest: o do turno da vendedora só pode sair DEPOIS do
+// commit (sem id — drena o que houver), nunca de dentro da transação.
+const kicks: unknown[] = [];
+vi.mock("@/inngest/client", () => ({ inngest: { send: async (event: unknown) => { kicks.push(event); return { ids: [] }; } } }));
+
+const { OPT_OUT_ACK_BODY, processZapiInbound } = await import("@/services/wa-inbound");
 
 const SECRET = "segredo-webhook-zapi";
 const PHONE_E164 = "+5511999990000";
@@ -40,6 +46,7 @@ describe("processZapiInbound → roteamento para o bot de vendas", () => {
   const originalSecret = process.env.ZAPI_WEBHOOK_SECRET;
 
   beforeEach(async () => {
+  kicks.length = 0;
     ({ db, close } = await createTestDb());
     sdb = db as unknown as DbOrTx;
     process.env.ZAPI_WEBHOOK_SECRET = SECRET;
@@ -96,6 +103,10 @@ describe("processZapiInbound → roteamento para o bot de vendas", () => {
       payload: { conversationId: conversation.id },
     });
     expect(outbox.some((e) => e.eventType === "wa.owner_forward")).toBe(false);
+
+    // Um kick só, depois do commit, sem o id do turno (o kick com id sairia
+    // de dentro da transação e não acharia a linha).
+    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: {} }]);
 
     // Mensagem inbound registrada e inbound_event fechado como sempre.
     const messages = await db.select().from(schema.waMessages);
@@ -217,6 +228,8 @@ describe("processZapiInbound → roteamento para o bot de vendas", () => {
 
     expect(first.action).toBe("bot_queued");
     expect(second).toEqual({ action: "duplicate", duplicate: true });
+    // A duplicata não dá kick.
+    expect(kicks).toHaveLength(1);
 
     expect(await db.select().from(schema.inboundEvents)).toHaveLength(1);
     expect(await db.select().from(schema.waMessages)).toHaveLength(1);
