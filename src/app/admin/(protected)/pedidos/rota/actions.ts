@@ -3,6 +3,7 @@
 // Zod na fronteira, um service por action, revalidação das telas que mostram
 // o pedido. Mensagens do service (pt-BR) sobem como estão.
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z, ZodError } from "zod";
 
 import { InvalidTransitionError } from "@/core/orders/state-machine";
@@ -10,6 +11,7 @@ import { deliveryWindowSchema } from "@/core/shipping/delivery-windows";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
 import { completeDispatchedOrder, dispatchOrder, rescheduleOrderWindow } from "@/services/delivery-routes";
+import { createDeliveryRun } from "@/services/delivery-runs";
 import { ServiceError } from "@/services/orders";
 
 export type FormState = { error?: string; success?: string };
@@ -81,4 +83,28 @@ export async function completeDispatchedOrderAction(_prev: FormState, formData: 
   } catch (error) {
     return friendlyError(error);
   }
+}
+
+const mountRunSchema = z.object({
+  courierId: z.uuid("Escolha o motoboy."),
+  orderIds: z.array(z.uuid()).min(1, "Marque pelo menos um pedido para a saída."),
+});
+
+/**
+ * "Montar saída": os pedidos marcados recebem o "Saiu" (a cliente é avisada
+ * na hora) e o motoboy recebe o link no WhatsApp. Depois, a página da saída.
+ */
+export async function createDeliveryRunAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  let runId: string;
+  try {
+    const { courierId, orderIds } = mountRunSchema.parse({ courierId: formData.get("courierId"), orderIds: formData.getAll("orderIds") });
+    const created = await createDeliveryRun(getDb(), { courierId, orderIds, userId: user.id });
+    runId = created.runId;
+    for (const stop of created.stops) revalidateRoute(stop.orderId);
+    revalidatePath("/admin/pedidos/saidas");
+  } catch (error) {
+    return friendlyError(error);
+  }
+  redirect(`/admin/pedidos/saidas/${runId}`);
 }

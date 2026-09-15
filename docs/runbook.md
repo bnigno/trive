@@ -315,6 +315,44 @@ janela de ontem aparece marcado com **Reagendar** — a nova janela não avisa a
 cliente sozinha: combine pelo link do WhatsApp do card. Template novo em
 produção entra com `scripts/sync-seed.ts --templates order_out_for_delivery`.
 
+## Saída do motoboy com GPS
+
+Uma **saída** é um motoboy com um grupo de pedidos. O motoboy recebe um link
+no WhatsApp, abre no celular (sem app), toca **Comecei a rota** e a página
+compartilha a posição dele enquanto entrega; a cliente acompanha pelo link
+do pedido que já recebe e você acompanha em **/admin/pedidos/saidas**.
+
+1. **Cadastre o motoboy** em **/admin/pedidos/motoboys** (nome + WhatsApp).
+   Se ele responder ao número da loja, a mensagem vem para você — nunca para
+   a Lia.
+2. Na **Rota do dia**, marque **Levar nesta saída** nos pedidos, escolha o
+   motoboy e **Montar saída**. Cada pedido recebe o "Saiu" de sempre (a
+   cliente é avisada na hora; quem já tinha saído não recebe de novo) e o
+   motoboy recebe o link. Os endereços são geocodificados pela fila em
+   ~1 min (OpenStreetMap, melhor esforço): sem coordenada, a cliente vê o
+   motoboy no mapa mas não a distância.
+3. Na página da saída: o link (para reenviar ou copiar), a última posição do
+   GPS, cada parada com a prova — hora, quem recebeu, ponto do GPS — e os
+   gestos **Encerrar** (só sem parada por entregar) e **Cancelar**.
+4. O motoboy marca **Entregue** (pergunta quem recebeu) ou **Não consegui**
+   (motivo). Pedido pago vira entregue e a cliente recebe "entregue às
+   17:42, recebido por Maria". **Dinheiro na entrega** fica aguardando: a
+   prova está na parada, você registra o pagamento no pedido e clica
+   **Entregue — o motoboy voltou**, como antes. **Não consegui** avisa você
+   no WhatsApp; o pedido continua como saído — combine com a cliente e
+   reagende.
+
+**Cancelar** uma saída fecha as paradas por entregar e mata o link; o "Saiu"
+dos pedidos **não volta** (a máquina não tem "desenviar") — cada um segue
+pelo fluxo manual. A trilha do GPS some em 30 dias (cron `delivery-positions-purge`
+às 07:00); a posição da entrega fica na parada como prova.
+
+Limites do GPS pelo navegador: no **Android/Chrome** a posição continua
+chegando com o Waze aberto por cima; no **iPhone** a página precisa ficar na
+frente (suporte de guidão). "Sem sinal há N min" na página da cliente é
+esperado quando o celular ficou no bolso; a entrega em si não depende disso.
+Depois de um deploy com cron novo: `curl -X PUT https://trivemaison.com.br/api/inngest`.
+
 ## Data marcada e Datas da cidade
 
 No checkout a cliente marca **"É para uma data?"** (dia + ocasião) e cada

@@ -11,9 +11,12 @@ import { getDb } from "@/db/client";
 import { waMeUrl } from "@/lib/phone";
 import { spDayLabel, spMinutesOfDay, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
 import { requireUser } from "@/services/auth";
+import { listCouriers } from "@/services/couriers";
 import { listMotoboyWindows, listRouteOfDay, paymentLabelOf, type RouteOrder } from "@/services/delivery-routes";
+import { listRunEligibleOrders } from "@/services/delivery-runs";
 import { formatDateTimeSP } from "../format";
-import { DispatchForm, RescheduleForm, type RescheduleChoice } from "./forms";
+import { DispatchForm, MountRunForm, RescheduleForm, type RescheduleChoice } from "./forms";
+import { MOUNT_RUN_FORM_ID } from "./mount-run";
 
 export const dynamic = "force-dynamic";
 
@@ -49,12 +52,27 @@ function statusBadge(order: RouteOrder) {
   return <Badge tone="warning">Pago</Badge>;
 }
 
-function OrderCard({ order, todayKey, choices, late }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean }) {
+/** O que a saída com GPS sabe de cada pedido: pode entrar, ou já está numa saída aberta. */
+type RunState = { eligible: boolean; openRunId: string | null; openRunCourier: string | null };
+type RunStates = Map<string, RunState>;
+
+function OrderCard({ order, todayKey, choices, late, run }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined }) {
   const wa = waMeUrl(order.phoneE164);
   const out = order.dispatchedAt !== null;
   const needsLook = !out && (late || order.paidAfterCutoff);
+  const canJoinRun = run?.eligible === true && run.openRunId === null;
   return (
     <li className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      {run?.openRunId ? (
+        <Link href={`/admin/pedidos/saidas/${run.openRunId}`} className="text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400">
+          🛵 Na saída de {run.openRunCourier} — acompanhar
+        </Link>
+      ) : canJoinRun ? (
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+          <input type="checkbox" name="orderIds" value={order.id} form={MOUNT_RUN_FORM_ID} className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500" />
+          Levar nesta saída
+        </label>
+      ) : null}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <Link href={`/admin/pedidos/${order.id}`} className="text-base font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
@@ -114,7 +132,7 @@ function OrderCard({ order, todayKey, choices, late }: { order: RouteOrder; toda
   );
 }
 
-function WindowSection({ group, todayKey, choices }: { group: RouteWindowGroup<RouteOrder>; todayKey: string; choices: RescheduleChoice[] }) {
+function WindowSection({ group, todayKey, choices, runs }: { group: RouteWindowGroup<RouteOrder>; todayKey: string; choices: RescheduleChoice[]; runs: RunStates }) {
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
@@ -122,7 +140,7 @@ function WindowSection({ group, todayKey, choices }: { group: RouteWindowGroup<R
       </h2>
       <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {group.orders.map((order) => (
-          <OrderCard key={order.id} order={order} todayKey={todayKey} choices={choices} late={false} />
+          <OrderCard key={order.id} order={order} todayKey={todayKey} choices={choices} late={false} run={runs.get(order.id)} />
         ))}
       </ul>
     </section>
@@ -136,8 +154,9 @@ export default async function RotaPage() {
   await requireUser();
   const db = getDb();
   const now = new Date();
-  const [route, rates] = await Promise.all([listRouteOfDay(db, { now }), listMotoboyWindows(db)]);
+  const [route, rates, eligible, couriers] = await Promise.all([listRouteOfDay(db, { now }), listMotoboyWindows(db), listRunEligibleOrders(db, { now }), listCouriers(db)]);
   const choices = rescheduleChoices(route.todayKey, spMinutesOfDay(now), rates);
+  const runs: RunStates = new Map(eligible.map((order) => [order.id, { eligible: true, openRunId: order.openRunId, openRunCourier: order.openRunCourier }]));
   const empty = route.out.length === 0 && route.late.length === 0 && route.today.length === 0 && route.upcoming.length === 0;
 
   return (
@@ -157,7 +176,21 @@ export default async function RotaPage() {
           title="Nenhuma entrega por motoboy na fila."
           hint="Pedidos pagos com janela de entrega aparecem aqui, agrupados por horário. A faixa Motoboy se cadastra em Frete."
         />
-      ) : null}
+      ) : (
+        <section className="sticky top-2 z-10 flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50/90 p-4 backdrop-blur dark:border-emerald-900 dark:bg-emerald-950/60">
+          <h2 className="text-sm font-semibold tracking-wide text-emerald-900 uppercase dark:text-emerald-200">
+            Montar saída com GPS{" "}
+            <span className="font-normal text-emerald-800/80 dark:text-emerald-300/80">· marque &ldquo;Levar nesta saída&rdquo; nos pedidos, escolha o motoboy e monte</span>
+          </h2>
+          <MountRunForm couriers={couriers.map((c) => ({ id: c.id, name: c.name }))} />
+          <p className="text-xs text-emerald-900/70 dark:text-emerald-300/70">
+            O motoboy recebe um link no WhatsApp com as paradas; a cliente acompanha pelo link do pedido.{" "}
+            <Link href="/admin/pedidos/saidas" className="font-medium hover:underline">
+              Saídas anteriores
+            </Link>
+          </p>
+        </section>
+      )}
 
       {route.out.length > 0 ? (
         <section className="flex flex-col gap-3">
@@ -166,7 +199,7 @@ export default async function RotaPage() {
           </h2>
           <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {route.out.map((order) => (
-              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late={false} />
+              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late={false} run={runs.get(order.id)} />
             ))}
           </ul>
         </section>
@@ -179,14 +212,14 @@ export default async function RotaPage() {
           </h2>
           <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {route.late.map((order) => (
-              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late />
+              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late run={runs.get(order.id)} />
             ))}
           </ul>
         </section>
       ) : null}
 
       {route.today.map((group) => (
-        <WindowSection key={group.label} group={group} todayKey={route.todayKey} choices={choices} />
+        <WindowSection key={group.label} group={group} todayKey={route.todayKey} choices={choices} runs={runs} />
       ))}
 
       {route.upcoming.map((day) => (
@@ -195,7 +228,7 @@ export default async function RotaPage() {
             {routeDayLabel(day.dayKey, route.todayKey, spWeekdayName)}
           </h2>
           {day.windows.map((group) => (
-            <WindowSection key={`${day.dayKey}-${group.label}`} group={group} todayKey={route.todayKey} choices={choices} />
+            <WindowSection key={`${day.dayKey}-${group.label}`} group={group} todayKey={route.todayKey} choices={choices} runs={runs} />
           ))}
         </section>
       ))}
