@@ -7,7 +7,6 @@ import { Card } from "@/components/ui/card";
 import { CopyField } from "@/components/ui/copy-field";
 import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
-import { signalAgeLabel } from "@/core/delivery/positions";
 import { FAILURE_REASON_LABELS, RUN_STATUS_LABELS, STOP_STATUS_LABELS, isRunOpen } from "@/core/delivery/state";
 import { getDb } from "@/db/client";
 import { waMeUrl } from "@/lib/phone";
@@ -35,7 +34,6 @@ export default async function SaidaPage({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   const run = await getDeliveryRun(getDb(), id);
   if (!run) notFound();
-  const now = new Date();
   const pending = run.stops.filter((stop) => stop.status === "pending").length;
   const open = isRunOpen(run.status);
   const courierWa = waMeUrl(run.courier.phoneE164);
@@ -78,7 +76,7 @@ export default async function SaidaPage({ params }: { params: Promise<{ id: stri
               <p className="text-zinc-500 dark:text-zinc-400">Último sinal do GPS</p>
               {run.lastPosition ? (
                 <p className="text-zinc-900 dark:text-zinc-100">
-                  {formatDateTimeSP(run.lastPosition.recordedAt)} <span className="text-zinc-500">({signalAgeLabel(run.lastPosition.recordedAt, now)})</span>
+                  {formatDateTimeSP(run.lastPosition.recordedAt)}
                   {" · "}
                   <a href={mapsLink(run.lastPosition)} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
                     ver no mapa

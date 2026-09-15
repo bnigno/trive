@@ -127,6 +127,7 @@ export function MountRunForm({ couriers }: { couriers: { id: string; name: strin
         <ConfirmButton
           variant="primary"
           disabled={selected === 0}
+          onMouseDown={() => setSelected(countSelected())}
           confirmMessage={`Montar a saída com ${label}? Cada cliente recebe "Saiu da TRIVÉ" no WhatsApp agora, e o motoboy recebe o link das paradas.`}
         >
           Montar saída · {label}

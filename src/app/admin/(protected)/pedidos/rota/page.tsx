@@ -56,11 +56,12 @@ function statusBadge(order: RouteOrder) {
 type RunState = { eligible: boolean; openRunId: string | null; openRunCourier: string | null };
 type RunStates = Map<string, RunState>;
 
-function OrderCard({ order, todayKey, choices, late, run }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined }) {
+function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined; hasCouriers: boolean }) {
   const wa = waMeUrl(order.phoneE164);
   const out = order.dispatchedAt !== null;
   const needsLook = !out && (late || order.paidAfterCutoff);
-  const canJoinRun = run?.eligible === true && run.openRunId === null;
+  // Sem motoboy cadastrado não existe o form "montar-saida": checkbox órfão confunde.
+  const canJoinRun = hasCouriers && run?.eligible === true && run.openRunId === null;
   return (
     <li className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       {run?.openRunId ? (
@@ -132,7 +133,7 @@ function OrderCard({ order, todayKey, choices, late, run }: { order: RouteOrder;
   );
 }
 
-function WindowSection({ group, todayKey, choices, runs }: { group: RouteWindowGroup<RouteOrder>; todayKey: string; choices: RescheduleChoice[]; runs: RunStates }) {
+function WindowSection({ group, todayKey, choices, runs, hasCouriers }: { group: RouteWindowGroup<RouteOrder>; todayKey: string; choices: RescheduleChoice[]; runs: RunStates; hasCouriers: boolean }) {
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
@@ -140,7 +141,7 @@ function WindowSection({ group, todayKey, choices, runs }: { group: RouteWindowG
       </h2>
       <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {group.orders.map((order) => (
-          <OrderCard key={order.id} order={order} todayKey={todayKey} choices={choices} late={false} run={runs.get(order.id)} />
+          <OrderCard key={order.id} order={order} todayKey={todayKey} choices={choices} late={false} run={runs.get(order.id)} hasCouriers={hasCouriers} />
         ))}
       </ul>
     </section>
@@ -157,6 +158,7 @@ export default async function RotaPage() {
   const [route, rates, eligible, couriers] = await Promise.all([listRouteOfDay(db, { now }), listMotoboyWindows(db), listRunEligibleOrders(db, { now }), listCouriers(db)]);
   const choices = rescheduleChoices(route.todayKey, spMinutesOfDay(now), rates);
   const runs: RunStates = new Map(eligible.map((order) => [order.id, { eligible: true, openRunId: order.openRunId, openRunCourier: order.openRunCourier }]));
+  const hasCouriers = couriers.length > 0;
   const empty = route.out.length === 0 && route.late.length === 0 && route.today.length === 0 && route.upcoming.length === 0;
 
   return (
@@ -180,7 +182,11 @@ export default async function RotaPage() {
         <section className="sticky top-2 z-10 flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50/90 p-4 backdrop-blur dark:border-emerald-900 dark:bg-emerald-950/60">
           <h2 className="text-sm font-semibold tracking-wide text-emerald-900 uppercase dark:text-emerald-200">
             Montar saída com GPS{" "}
-            <span className="font-normal text-emerald-800/80 dark:text-emerald-300/80">· marque &ldquo;Levar nesta saída&rdquo; nos pedidos, escolha o motoboy e monte</span>
+            {hasCouriers ? (
+              <span className="font-normal text-emerald-800/80 dark:text-emerald-300/80">· marque &ldquo;Levar nesta saída&rdquo; nos pedidos, escolha o motoboy e monte</span>
+            ) : (
+              <span className="font-normal text-emerald-800/80 dark:text-emerald-300/80">· precisa de um motoboy cadastrado</span>
+            )}
           </h2>
           <MountRunForm couriers={couriers.map((c) => ({ id: c.id, name: c.name }))} />
           <p className="text-xs text-emerald-900/70 dark:text-emerald-300/70">
@@ -199,7 +205,7 @@ export default async function RotaPage() {
           </h2>
           <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {route.out.map((order) => (
-              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late={false} run={runs.get(order.id)} />
+              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late={false} run={runs.get(order.id)} hasCouriers={hasCouriers} />
             ))}
           </ul>
         </section>
@@ -212,14 +218,14 @@ export default async function RotaPage() {
           </h2>
           <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {route.late.map((order) => (
-              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late run={runs.get(order.id)} />
+              <OrderCard key={order.id} order={order} todayKey={route.todayKey} choices={choices} late run={runs.get(order.id)} hasCouriers={hasCouriers} />
             ))}
           </ul>
         </section>
       ) : null}
 
       {route.today.map((group) => (
-        <WindowSection key={group.label} group={group} todayKey={route.todayKey} choices={choices} runs={runs} />
+        <WindowSection key={group.label} group={group} todayKey={route.todayKey} choices={choices} runs={runs} hasCouriers={hasCouriers} />
       ))}
 
       {route.upcoming.map((day) => (
@@ -228,7 +234,7 @@ export default async function RotaPage() {
             {routeDayLabel(day.dayKey, route.todayKey, spWeekdayName)}
           </h2>
           {day.windows.map((group) => (
-            <WindowSection key={`${day.dayKey}-${group.label}`} group={group} todayKey={route.todayKey} choices={choices} runs={runs} />
+            <WindowSection key={`${day.dayKey}-${group.label}`} group={group} todayKey={route.todayKey} choices={choices} runs={runs} hasCouriers={hasCouriers} />
           ))}
         </section>
       ))}
