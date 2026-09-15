@@ -14,7 +14,12 @@ import {
 import { InsufficientStockError, SignError } from "@/core/stock/ledger";
 import { parseBRLToCents } from "@/lib/money";
 
-export type StockFormState = { error?: string; success?: string };
+export type StockFormState = {
+  error?: string;
+  success?: string;
+  /** Entrada registrada: quantas etiquetas o form oferece para imprimir. */
+  labels?: { quantity: number };
+};
 
 /** Erros de negócio têm mensagem pt-BR pronta; o resto vira mensagem genérica. */
 function toErrorMessage(error: unknown): string {
@@ -87,6 +92,7 @@ export async function receiveStockAction(
       unitCostCents !== undefined
         ? "Entrada registrada. O custo do produto foi atualizado."
         : "Entrada registrada com sucesso.",
+    labels: { quantity: Number(quantityRaw) },
   };
 }
 
@@ -165,6 +171,7 @@ export async function receivePurchaseAction(
     success: repriced
       ? "Compra registrada: conta a pagar criada no financeiro e sugestão de reprecificação gerada em Preços."
       : "Compra registrada: conta a pagar criada no financeiro e custo do produto atualizado.",
+    labels: { quantity: Number(quantityRaw) },
   };
 }
 
