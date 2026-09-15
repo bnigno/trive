@@ -33,6 +33,8 @@ import { PackForm } from "./pack-form";
 import { DeliverForm } from "./deliver-form";
 import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
 import { getFeedbackForOrder } from "@/services/delivery-feedback";
+import { getStopForOrder } from "@/services/delivery-runs";
+import { FAILURE_REASON_LABELS, STOP_STATUS_LABELS } from "@/core/delivery/state";
 import { FEEDBACK_LABELS } from "@/core/orders/feedback";
 import { giftNoteUrl } from "@/services/gifts";
 import { editionCardsStatusByOrder } from "@/services/edition-cards";
@@ -70,6 +72,8 @@ export default async function PedidoDetalhePage({
   const order = await getOrderDetail(db, id);
   if (!order) notFound();
   const feedback = order.status === "delivered" || order.status === "refunded" ? await getFeedbackForOrder(db, id) : null;
+  // Saída do motoboy com GPS: a prova da entrega (hora, quem recebeu, ponto).
+  const stop = order.deliveryWindow ? await getStopForOrder(db, id) : null;
   const status = order.status as OrderStatus;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
@@ -302,6 +306,23 @@ export default async function PedidoDetalhePage({
                   <span className="text-right font-medium text-zinc-900 dark:text-zinc-100">
                     {order.deliveryWindow.rateName} — {order.deliveryWindow.label}
                     <span className="block text-xs font-normal text-zinc-500">pague até {order.deliveryWindow.cutoff.replace(/^0/, "").replace(":00", "h").replace(":", "h")}</span>
+                  </span>
+                </div>
+              ) : null}
+              {stop ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-zinc-500 dark:text-zinc-400">Motoboy</span>
+                  <span className="text-right text-zinc-900 dark:text-zinc-100">
+                    <Link href={`/admin/pedidos/saidas/${stop.runId}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                      Saída de {stop.courierName}
+                    </Link>
+                    <span className="block text-xs text-zinc-500">
+                      {stop.stopStatus === "delivered"
+                        ? `entregue ${stop.deliveredAt ? formatDateTimeSP(stop.deliveredAt) : ""}${stop.receivedBy ? `, recebido por ${stop.receivedBy}` : ""}${stop.deliveredPoint ? " · GPS ✓" : ""}`
+                        : stop.stopStatus === "failed"
+                          ? `não entregue: ${stop.failureReason ? FAILURE_REASON_LABELS[stop.failureReason] : ""}`
+                          : STOP_STATUS_LABELS[stop.stopStatus].toLowerCase()}
+                    </span>
                   </span>
                 </div>
               ) : null}
