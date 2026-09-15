@@ -13,6 +13,8 @@ export function PrintButton({ label = "Imprimir" }: { label?: string }) {
     setWaiting(true);
     try {
       await Promise.allSettled(Array.from(document.images).map((image) => image.decode()));
+      // Fontes da marca (next/font, display swap): sem isto o papel pode sair na fonte reserva.
+      await document.fonts.ready;
     } finally {
       setWaiting(false);
     }

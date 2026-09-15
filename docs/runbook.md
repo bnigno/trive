@@ -407,6 +407,34 @@ recado: **3 minutos** depois da primeira foto do lote a dona recebe "Recebi
 `owner_atelier_nudge`, evento `wa.atelier_nudge`, só se o recado ainda não
 chegou). Produção: `scripts/sync-seed.ts --templates owner_atelier_nudge`.
 
+## Etiquetas das peças (tag de cabide e adesiva)
+
+**Produtos → peça → Etiquetas** (ou, no estoque, o link depois de dar entrada,
+já com a quantidade). Dois modelos:
+
+- **Tag de cabide** (padrão): cartão de 55 × 90 mm, marca na frente; nome da
+  peça, cor/tamanho, referência, composição e o QR da peça no site atrás —
+  sem preço (o QR leva ao preço certo). Sem fundo impresso: o papel é o
+  fundo — use cartão creme de 180–300 g.
+  - *Impressora comum*: folha A4 com 9 tags, frente e verso. Imprima em
+    frente e verso **virando na borda longa**, escala 100 %. Primeiro uma
+    folha de teste: contra a luz, frente e verso têm de bater. Corte pelas
+    marcas dos cantos (régua + estilete) e fure na cruz do topo (furador de
+    4 a 6 mm ou ilhós). O verso já vem espelhado — não mexa na ordem. Se a
+    impressora não imprimir a linha de baixo (jato de tinta com margem
+    inferior grande), fique com 2 linhas por folha ou use o modo Gráfica.
+  - *Gráfica*: uma página por lado, 61 × 96 mm (3 mm de sangria + marcas de
+    corte), um par frente/verso por variação. Salve como PDF pelo **Chrome**
+    (o Safari ignora o tamanho da página) e mande com a lista de quantidades
+    que aparece na tela.
+- **Adesiva**: Pimaco A4355 (63,5 × 31 mm, 27 por folha), com SKU e preço. O
+  fio cinza em volta de cada etiqueta é guia só na tela — não imprime.
+
+Tetos: 200 por variação e 20 folhas por vez. As medidas ficam em
+`src/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag.tsx` (tag) e
+`label-sheet.tsx` (adesiva); `npx tsx scripts/preview-etiquetas.tsx` gera
+uma prévia com PDFs sem precisar do painel.
+
 ## Trocar o logo
 
 O site, os ícones, a imagem de compartilhamento (OG), os comprovantes, os
