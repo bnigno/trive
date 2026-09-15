@@ -12,6 +12,7 @@ import { Monogram } from "@/components/store/brand/monogram";
 import { IconParcel } from "@/components/store/icons";
 import { NoirStage } from "@/components/store/noir-stage";
 import { Notice } from "@/components/store/order/notice";
+import { CourierTracking } from "@/components/store/order/courier-tracking";
 import { Sheet } from "@/components/store/order/sheet";
 import { TotalsList } from "@/components/store/order/totals";
 import { OrderJourney } from "@/components/store/order-journey";
@@ -25,11 +26,13 @@ import {
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { getFileStorage } from "@/adapters/storage";
+import { serializeTrackingView } from "@/core/delivery/tracking-json";
 import { buildOrderJourney } from "@/core/orders/journey";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
 import { waMeUrl } from "@/lib/phone";
+import { getTrackingForOrder } from "@/services/delivery-runs";
 import { getPublicOrder } from "@/services/store-orders";
 import { isMpEnabled } from "@/services/store-payments";
 import { getSettingsMap } from "@/services/settings";
@@ -144,7 +147,13 @@ export default async function OrderPage({
   const isCash = order.paymentMethod === "cash";
   const isPixManual = order.paymentMethod === "pix_manual";
 
-  const settings = isPendingPayment
+  // Saída do motoboy com GPS: a leitura pública (sem endereço) — só para
+  // pedido de motoboy ainda por entregar (a cliente pode ter tocado "Chegou!"
+  // antes do motoboy fechar a parada), e só enquanto vale mostrar algo.
+  const tracking = order.deliveryWindowLabel && !isCanceled && order.status !== "delivered" ? await getTrackingForOrder(db, token) : null;
+  const showCourier = tracking !== null && tracking.state !== "delivered" && tracking.state !== "finished";
+
+  const settings = isPendingPayment || showCourier
     ? await getSettingsMap(db, ["store_whatsapp", "store_pix_key"])
     : {};
   const pixKey =
@@ -157,6 +166,10 @@ export default async function OrderPage({
 
   const whatsappLink = isPendingPayment
     ? waMeLink(settings["store_whatsapp"], order.orderNumber)
+    : null;
+  // Na Sheet do motoboy o assunto é a entrega, não o pagamento.
+  const deliveryWhatsappLink = showCourier
+    ? waMeUrl(settings["store_whatsapp"], `Olá! É sobre a entrega do pedido #${order.orderNumber}`)
     : null;
 
   const journey = buildOrderJourney({
@@ -439,6 +452,20 @@ export default async function OrderPage({
               ) : null}
               {justConfirmed ? (
                 <p className="mt-4 font-display text-lg text-espresso-900 italic">Que bom que chegou 🤎 Esperamos que a peça fique linda em você.</p>
+              ) : null}
+            </Sheet>
+          ) : showCourier && tracking ? (
+            // Um bloco só sobre a entrega: o motoboy no mapa e, embaixo, o "Chegou!".
+            <Sheet eyebrow="Seu motoboy" headingId="chegou-title" aria-labelledby="chegou-title">
+              <CourierTracking token={token} initial={serializeTrackingView(tracking)} storeWhatsappUrl={deliveryWhatsappLink} />
+              {order.status === "shipped" && tracking.state !== "failed" ? (
+                <form action={confirmAction} className="mt-6 border-t border-ivory-200 pt-5">
+                  <button type="submit" className={btnPrimary}>
+                    Chegou!
+                  </button>
+                  <p className="mt-2 font-store text-xs text-ink-500">Recebeu a peça? Toque para avisar a TRIVÉ.</p>
+                  {confirmFailed ? <p className="mt-2 font-store text-sm text-ink-700">Não conseguimos registrar agora — tente de novo em instantes ou nos chame no WhatsApp.</p> : null}
+                </form>
               ) : null}
             </Sheet>
           ) : order.status === "shipped" ? (

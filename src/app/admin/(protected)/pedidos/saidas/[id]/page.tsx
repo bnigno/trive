@@ -16,6 +16,8 @@ import { getDeliveryRun } from "@/services/delivery-runs";
 import { formatDateTimeSP } from "../../format";
 import { CancelRunForm, FinishRunForm, ResendLinkForm } from "../forms";
 import { RUN_TONE, STOP_TONE } from "../tones";
+import { serializeRunLive } from "./poll/schema";
+import { RunLiveMap } from "./run-live-map";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +29,8 @@ function mapsLink(point: { lat: number; lng: number }): string {
   return `https://www.google.com/maps?q=${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
 }
 
-// A saída: o motoboy, o link, cada parada com a prova (hora, quem recebeu,
-// ponto do GPS) e os gestos do painel. O mapa ao vivo chega no próximo PR.
+// A saída: o motoboy, o link, o mapa ao vivo, cada parada com a prova
+// (hora, quem recebeu, ponto do GPS) e os gestos do painel.
 export default async function SaidaPage({ params }: { params: Promise<{ id: string }> }) {
   await requireUser();
   const { id } = await params;
@@ -52,6 +54,10 @@ export default async function SaidaPage({ params }: { params: Promise<{ id: stri
           </>
         }
       />
+
+      <Card title="No mapa">
+        <RunLiveMap runId={run.id} initial={serializeRunLive(run)} />
+      </Card>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card title="Motoboy" className="lg:col-span-1">

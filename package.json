@@ -25,6 +25,7 @@
     "heic-to": "1.5.2",
     "imapflow": "^1.7.6",
     "inngest": "^4.18.1",
+    "leaflet": "1.9.4",
     "mailparser": "^3.9.16",
     "next": "16.3.2",
     "pg": "^8.23.0",
@@ -39,6 +40,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.7",
     "@tailwindcss/postcss": "^4",
+    "@types/leaflet": "~1.9.22",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
