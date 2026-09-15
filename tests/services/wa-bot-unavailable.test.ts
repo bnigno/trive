@@ -145,6 +145,43 @@ describe("rajada de mensagens: um turno por mensagem, mas o modelo roda uma vez"
   });
 });
 
+describe("✓✓ azul só quando a Lia vai responder agora", () => {
+  it("texto enquanto um áudio dela ainda transcreve: turno espera a transcrição e NÃO marca como lida", async () => {
+    const conversationId = await createConversation();
+    await db.insert(schema.settings).values({ key: "bot_media_enabled", value: true }).onConflictDoNothing();
+    await db.insert(schema.waMessages).values({
+      conversationId,
+      direction: "inbound",
+      kind: "audio",
+      zapiMessageId: "MSG-AUDIO",
+      body: "[a cliente enviou um áudio]",
+      mediaUrl: "https://cdn.test/audio.ogg",
+      mediaMeta: { transcript: { status: "pending" } },
+      status: "delivered",
+      createdAt: new Date(Date.now() - 5_000),
+    });
+    await addMessage(conversationId, "inbound", "e no M tem?");
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ skipped: "aguardando_transcricao" });
+    expect(provider.readReceipts).toEqual([]);
+    expect(assistant.inputs).toHaveLength(0);
+  });
+
+  it("Z-API recusa o read-message: o turno segue e responde", async () => {
+    const conversationId = await createConversation();
+    await addMessage(conversationId, "inbound", "Oi");
+    provider.setPhoneExists(PHONE, false); // paridade: /read-message 4xx (e phoneExists não é consultado no turno)
+    assistant.enqueueScript({ replyTemplate: "Oi! 🤎" });
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(provider.readReceipts).toEqual([]);
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(spy).toHaveBeenCalledWith("[wa-bot] não marcou a mensagem como lida", expect.stringContaining("read-message"));
+    spy.mockRestore();
+  });
+});
+
 describe("modelo indisponível", () => {
   it("falha passageira (429) na primeira tentativa relança: nada sai, a fila tenta de novo", async () => {
     const conversationId = await createConversation();

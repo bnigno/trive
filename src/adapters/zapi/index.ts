@@ -5,6 +5,8 @@ import { FakeMessagingProvider } from "./fake";
 export type OutboundTextMessage = {
   toE164: string;
   body: string;
+  /** Segundos de "digitando…" antes de a mensagem aparecer (1–15). */
+  typingSeconds?: number;
 };
 
 // Imagem é mensagem de MÍDIA da Z-API (endpoint /send-image, não /send-text).
@@ -18,6 +20,8 @@ export type OutboundImageMessage = {
 export type OutboundAudioMessage = {
   toE164: string;
   audioUrl: string;
+  /** Segundos de "gravando áudio…" antes de a mensagem aparecer (1–15). */
+  typingSeconds?: number;
 };
 
 export type OptionListOption = {
@@ -76,6 +80,11 @@ export interface MessagingProvider {
    * de enviar. Indisponibilidade da consulta deve responder true (fail-open).
    */
   phoneExists(toE164: string): Promise<boolean>;
+  /**
+   * Marca uma mensagem RECEBIDA como lida (✓✓ azul) — o sinal de que a Lia
+   * viu, enquanto o modelo pensa. Best-effort: quem chama trata o erro.
+   */
+  markAsRead(input: { fromE164: string; providerMessageId: string }): Promise<void>;
   /**
    * Baixa uma mídia recebida (foto, áudio) pela URL que veio no webhook. A
    * Z-API guarda o arquivo por ~30 dias numa URL pública. Lança quando a

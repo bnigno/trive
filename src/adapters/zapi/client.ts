@@ -78,6 +78,15 @@ function getCredentials(): ZapiCredentials {
  * Toda chamada leva o header 'Client-Token'. Erros HTTP expõem apenas o
  * status e o caminho do endpoint — NUNCA a URL completa (contém tokens).
  */
+/** Marcar como lida é cosmético: não pode segurar o turno. */
+const READ_TIMEOUT_MS = 3_000;
+
+/** Atributos de "digitando"/entrega da Z-API para um envio com typingSeconds. */
+function typingDelays(typingSeconds: number | undefined): Record<string, number> {
+  if (typingSeconds === undefined) return {};
+  return { delayTyping: Math.min(15, Math.max(1, Math.round(typingSeconds))), delayMessage: 1 };
+}
+
 export class ZapiMessagingProvider implements MessagingProvider {
   private readonly fetchFn: typeof fetch;
 
@@ -87,7 +96,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
 
   private async request(
     path: string,
-    init?: { method?: "GET" | "POST"; body?: Record<string, unknown> },
+    init?: { method?: "GET" | "POST"; body?: Record<string, unknown>; signal?: AbortSignal },
   ): Promise<unknown> {
     const { instanceId, instanceToken, clientToken } = getCredentials();
     const url = `https://api.z-api.io/instances/${instanceId}/token/${instanceToken}${path}`;
@@ -99,6 +108,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
         ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+      ...(init?.signal ? { signal: init.signal } : {}),
     });
 
     if (response.status >= 400) {
@@ -119,6 +129,10 @@ export class ZapiMessagingProvider implements MessagingProvider {
         // Z-API espera o número SEM o '+' do E.164.
         phone: message.toE164.replace(/^\+/, ""),
         message: message.body,
+        // delayTyping = segundos de "digitando…" antes da entrega; com ele,
+        // delayMessage fixo no mínimo (1 s) em vez do padrão aleatório de
+        // 1–3 s que a Z-API aplica quando não se diz nada.
+        ...typingDelays(message.typingSeconds),
       },
     });
 
@@ -158,6 +172,8 @@ export class ZapiMessagingProvider implements MessagingProvider {
         phone: message.toE164.replace(/^\+/, ""),
         audio: message.audioUrl,
         waveform: true,
+        // Aqui o status é "gravando áudio…".
+        ...typingDelays(message.typingSeconds),
       },
     });
 
@@ -176,6 +192,8 @@ export class ZapiMessagingProvider implements MessagingProvider {
         // Z-API espera o número SEM o '+' do E.164.
         phone: message.toE164.replace(/^\+/, ""),
         message: message.message,
+        // A lista não tem "digitando"; só tira o atraso aleatório de 1–3 s.
+        delayMessage: 1,
         optionList: {
           title: message.title,
           buttonLabel: message.buttonLabel,
@@ -202,6 +220,15 @@ export class ZapiMessagingProvider implements MessagingProvider {
     const raw = await this.request("/status");
     const parsed = zapiStatusResponseSchema.parse(raw);
     return { connected: isConnectedPayload(parsed) };
+  }
+
+  async markAsRead(input: { fromE164: string; providerMessageId: string }): Promise<void> {
+    // POST /read-message { phone, messageId } — ✓✓ azul na mensagem dela.
+    await this.request("/read-message", {
+      method: "POST",
+      body: { phone: input.fromE164.replace(/^\+/, ""), messageId: input.providerMessageId },
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+    });
   }
 
   async phoneExists(toE164: string): Promise<boolean> {

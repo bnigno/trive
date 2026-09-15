@@ -144,6 +144,13 @@ const sendTemplateMessageSchema = z
     orderId: z.uuid().optional(),
     dedupeKey: z.string().min(1).optional(),
     requireOptIn: z.boolean(),
+    /**
+     * Consultar se o número tem WhatsApp antes de enviar (uma ida à Z-API).
+     * false para respostas a quem acabou de escrever — o número obviamente existe.
+     */
+    verifyPhone: z.boolean().default(true),
+    /** Segundos de "digitando…" antes de a mensagem aparecer (falas da Lia). */
+    typingSeconds: z.number().int().min(1).max(15).optional(),
   })
   .refine((value) => (value.templateKey != null) !== (value.bodyOverride != null), {
     message: "Informe templateKey OU bodyOverride (exatamente um).",
@@ -457,14 +464,19 @@ export async function sendTemplateMessage(
   if ("skipped" in insertResult) return insertResult;
   const { waMessageId } = insertResult;
 
-  if (!(await provider.phoneExists(parsed.phoneE164))) {
+  if (parsed.verifyPhone && !(await provider.phoneExists(parsed.phoneE164))) {
     return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164);
   }
 
   return deliverOutboundMessage(db, {
     waMessageId,
     conversationId,
-    send: () => provider.sendText({ toE164: parsed.phoneE164, body }),
+    send: () =>
+      provider.sendText({
+        toE164: parsed.phoneE164,
+        body,
+        ...(parsed.typingSeconds !== undefined ? { typingSeconds: parsed.typingSeconds } : {}),
+      }),
     auditAfter: {
       to: parsed.phoneE164,
       templateKey: parsed.templateKey ?? null,
@@ -485,6 +497,10 @@ const sendMediaMessageCommonFields = {
   orderId: z.uuid().optional(),
   dedupeKey: z.string().min(1),
   requireOptIn: z.boolean().default(false),
+  /** Ver sendTemplateMessage: false para respostas a quem acabou de escrever. */
+  verifyPhone: z.boolean().default(true),
+  /** Áudio: segundos de "gravando áudio…" antes de a mensagem aparecer. */
+  typingSeconds: z.number().int().min(1).max(15).optional(),
 };
 
 const sendMediaMessageSchema = z.discriminatedUnion("kind", [
@@ -581,7 +597,7 @@ export async function sendMediaMessage(
   if ("skipped" in insertResult) return insertResult;
   const { waMessageId } = insertResult;
 
-  if (!(await provider.phoneExists(parsed.phoneE164))) {
+  if (parsed.verifyPhone && !(await provider.phoneExists(parsed.phoneE164))) {
     return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164);
   }
 
@@ -596,7 +612,11 @@ export async function sendMediaMessage(
             caption: parsed.body,
           })
         : parsed.kind === "audio"
-          ? provider.sendAudio({ toE164: parsed.phoneE164, audioUrl: parsed.audioUrl })
+          ? provider.sendAudio({
+              toE164: parsed.phoneE164,
+              audioUrl: parsed.audioUrl,
+              ...(parsed.typingSeconds !== undefined ? { typingSeconds: parsed.typingSeconds } : {}),
+            })
           : provider.sendOptionList({
             toE164: parsed.phoneE164,
             message: parsed.body,

@@ -99,6 +99,15 @@ um atraso de até um minuto ainda é normal — minutos seguidos, não. Se não
 chegar: **/admin/fila** → **Reprocessar** os itens em falha definitiva e ler
 o motivo mostrado no item.
 
+Sinais que a cliente vê enquanto a Lia pensa: ✓✓ azul na mensagem dela assim
+que o turno começa (só quando é a Lia que vai responder — nunca em conversa
+"com você" nem em copiloto) e "digitando…" por 1–3 s antes de cada balão
+("gravando áudio…" antes da nota da curadora). A Z-API não tem um
+"digitando" avulso: o status só aparece nos segundos antes de a mensagem
+ser entregue. Os segundos ficam em `src/core/bot/reply.ts`. Detalhe de
+medição: "enviado" no painel é o momento em que a Z-API aceitou a mensagem
+na fila dela — a entrega real vem 2–4 s depois (o "digitando" + 1 s).
+
 Quanto a Lia demora: **Vendedora & WhatsApp → "Tempo de resposta"** mostra a
 mediana e o p90 de mensagem → primeiro balão nos últimos 7 dias, e onde o
 tempo foi (fila · preparo · modelo · entrega). Fila alta = o executor
