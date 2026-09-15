@@ -8,9 +8,14 @@ import { CourierRun } from "./run-client";
 
 export const dynamic = "force-dynamic";
 
+// A prévia do link (WhatsApp) é só o título: nada da saída entra no HTML
+// de metadados. O conteúdo em si é público a quem tem o token — o link é
+// mandado só ao motoboy e morre quando a saída fecha.
 export const metadata: Metadata = {
   title: "Saída do motoboy",
+  description: "Página da saída — abra pelo link recebido no WhatsApp.",
   robots: { index: false, follow: false },
+  openGraph: { title: "Saída do motoboy", description: "Abra pelo link recebido no WhatsApp." },
 };
 
 // A página do motoboy: o link que ele recebe no WhatsApp. O token é a

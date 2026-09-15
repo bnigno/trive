@@ -76,6 +76,14 @@ export function acceptPosition(input: { lastTrail: PositionSample | null; sample
   return { kind: "accept", trail: elapsedMs >= TRAIL_MIN_INTERVAL_MS || movedM >= TRAIL_MIN_DISTANCE_M, recordedAt };
 }
 
+/** Prova de entrega: só um ponto de até 60 s atrás vale como "onde ele estava ao tocar Entregue". */
+export const PROOF_MAX_AGE_MS = 60_000;
+
+export function isFreshSample(sample: { recordedAt: Date } | null, now: Date, maxAgeMs = PROOF_MAX_AGE_MS): boolean {
+  if (!sample) return false;
+  return now.getTime() - sample.recordedAt.getTime() <= maxAgeMs;
+}
+
 /** O celular do motoboy: manda a amostra nova? (5 s ou 10 m desde a última enviada.) */
 export function shouldSendSample(lastSent: PositionSample | null, sample: PositionSample): boolean {
   if (!lastSent) return true;

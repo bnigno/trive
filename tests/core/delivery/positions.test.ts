@@ -6,6 +6,7 @@ import {
   acceptPosition,
   courierSignal,
   haversineKm,
+  isFreshSample,
   isValidPoint,
   shouldSendSample,
   signalAgeLabel,
@@ -110,5 +111,14 @@ describe("courierSignal", () => {
     expect(signalAgeLabel(new Date(NOW.getTime() - 20_000), NOW)).toBe("agora");
     expect(signalAgeLabel(new Date(NOW.getTime() - 150_000), NOW)).toBe("há 3 min");
     expect(signalAgeLabel(new Date(NOW.getTime() - 2 * 3_600_000), NOW)).toBe("há 2 h");
+  });
+});
+
+describe("isFreshSample (prova de entrega)", () => {
+  it("só um ponto de até 60 s vale como prova; sem amostra não vale", () => {
+    expect(isFreshSample(null, NOW)).toBe(false);
+    expect(isFreshSample(sample({ secondsAgo: 10 }), NOW)).toBe(true);
+    expect(isFreshSample(sample({ secondsAgo: 60 }), NOW)).toBe(true);
+    expect(isFreshSample(sample({ secondsAgo: 61 }), NOW)).toBe(false);
   });
 });

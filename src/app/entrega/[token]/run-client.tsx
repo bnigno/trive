@@ -8,7 +8,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 
-import { shouldSendSample, type PositionSample } from "@/core/delivery/positions";
+import { isFreshSample, shouldSendSample, type PositionSample } from "@/core/delivery/positions";
 import { FAILURE_REASON_LABELS, FAILURE_REASONS, RUN_STATUS_LABELS, type FailureReason } from "@/core/delivery/state";
 import { formatCentsBRL } from "@/lib/money";
 import { waMeUrl } from "@/lib/phone";
@@ -17,11 +17,16 @@ import { completeStopAction, failStopAction, finishRunAction, startRunAction, ty
 import type { CourierRunProps } from "./page";
 
 type Fix = PositionSample & { speedMps: number | null };
-type GpsState = "off" | "on" | "denied" | "unsupported" | "error";
+/** searching = o GPS não achou sinal ainda (dentro da loja, garagem); error = o celular não respondeu. */
+type GpsState = "off" | "on" | "searching" | "denied" | "unsupported" | "error";
 /** O que a tela mostra: "starting" enquanto o GPS ligado ainda não deu a primeira amostra. */
 type GpsDisplay = GpsState | "starting";
+type WakeLockSentinel = { release: () => Promise<void>; addEventListener?: (type: "release", listener: () => void) => void };
+type NavigatorWithWakeLock = Navigator & { wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> } };
 
 const QUEUE_MAX = 50;
+/** O mesmo teto da action (RECEIVED_BY_MAX_CHARS × 3): o campo não deixa passar do que o servidor aceita. */
+const RECEIVED_BY_INPUT_MAX = 180;
 const BIG_BUTTON = "flex min-h-14 w-full items-center justify-center gap-2 rounded-(--radius-soft) px-5 text-base font-semibold transition-colors disabled:opacity-50";
 const LINK_BUTTON = "flex min-h-12 flex-1 items-center justify-center rounded-(--radius-soft) border border-ivory-400 bg-ivory-50 px-3 text-sm font-medium text-ink-900 active:bg-ivory-200";
 
@@ -33,19 +38,25 @@ function positionBody(fix: Fix): string {
  * O GPS do celular → servidor. watchPosition enquanto `active`; amostras
  * filtradas por shouldSendSample; falha de rede vira fila (até 50) que
  * esvazia na amostra seguinte ou quando a internet volta; ao fechar a
- * aba, a última posição sai por sendBeacon. Wake Lock mantém a tela acesa.
+ * aba, a última posição sai por sendBeacon. O Wake Lock (tela acesa) e o
+ * próprio GPS são pedidos DENTRO de um toque quando possível (o iOS só
+ * concede assim): `arm()` é chamado no onClick de "Comecei a rota" e do
+ * botão "Ligar GPS / manter a tela acesa"; o efeito só cobre o reload.
  */
-function useGpsTracking(token: string, active: boolean) {
+function useGpsTracking(token: string, active: boolean, onRunClosed: () => void) {
   const [gps, setGps] = useState<GpsState>("off");
   const [lastFix, setLastFix] = useState<Fix | null>(null);
   const [lastSentAt, setLastSentAt] = useState<Date | null>(null);
   const [sendFailures, setSendFailures] = useState(0);
+  const [wakeLockHeld, setWakeLockHeld] = useState(false);
+  const [resumedAt, setResumedAt] = useState<Date | null>(null);
   const lastSentRef = useRef<PositionSample | null>(null);
   const lastFixRef = useRef<Fix | null>(null);
   const queueRef = useRef<string[]>([]);
   const sendingRef = useRef(false);
   const watchRef = useRef<number | null>(null);
-  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const hiddenSinceRef = useRef<number | null>(null);
   const url = `/entrega/${token}/posicao`;
 
   const flush = useCallback(async () => {
@@ -55,17 +66,32 @@ function useGpsTracking(token: string, active: boolean) {
       while (queueRef.current.length > 0) {
         const body = queueRef.current[0];
         const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true, cache: "no-store" });
+        // 400 = amostra torta (descarta); 404 = a saída sumiu (descarta e recarrega); 5xx = tenta de novo.
+        if (response.status === 404) {
+          queueRef.current.length = 0;
+          onRunClosed();
+          return;
+        }
         if (!response.ok && response.status !== 400) throw new Error(`HTTP ${response.status}`);
         queueRef.current.shift();
         setLastSentAt(new Date());
         setSendFailures(0);
+        if (response.ok) {
+          const result = (await response.json().catch(() => null)) as { accepted?: boolean; reason?: string } | null;
+          // A saída foi encerrada/cancelada pela loja: a página precisa saber.
+          if (result && result.accepted === false && result.reason === "not_en_route") {
+            queueRef.current.length = 0;
+            onRunClosed();
+            return;
+          }
+        }
       }
     } catch {
       setSendFailures((n) => n + 1);
     } finally {
       sendingRef.current = false;
     }
-  }, [url]);
+  }, [url, onRunClosed]);
 
   const enqueue = useCallback(
     (fix: Fix) => {
@@ -78,20 +104,28 @@ function useGpsTracking(token: string, active: boolean) {
 
   const requestWakeLock = useCallback(async () => {
     try {
-      const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+      const wakeLock = (navigator as NavigatorWithWakeLock).wakeLock;
       if (!wakeLock) return;
-      wakeLockRef.current = await wakeLock.request("screen");
+      const sentinel = await wakeLock.request("screen");
+      wakeLockRef.current = sentinel;
+      setWakeLockHeld(true);
+      sentinel.addEventListener?.("release", () => {
+        if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
+        setWakeLockHeld(false);
+      });
     } catch {
-      // Sem Wake Lock (iOS antigo, bateria baixa): a tela pode apagar — o aviso na página cobre.
+      // Sem Wake Lock (pedido fora de um toque, bateria baixa): a tela pode
+      // apagar — a página oferece o botão "manter a tela acesa".
+      setWakeLockHeld(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (!active) return;
+  const startWatch = useCallback(() => {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      const timer = setTimeout(() => setGps("unsupported"), 0);
-      return () => clearTimeout(timer);
+      setGps("unsupported");
+      return;
     }
+    if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
     watchRef.current = navigator.geolocation.watchPosition(
       (position) => {
         const fix: Fix = {
@@ -109,17 +143,35 @@ function useGpsTracking(token: string, active: boolean) {
         enqueue(fix);
       },
       (error) => {
-        setGps(error.code === error.PERMISSION_DENIED ? "denied" : "error");
+        // 1 = negado; 3 = sem sinal ainda (dentro da loja é normal); 2 = o celular não achou posição.
+        setGps(error.code === error.PERMISSION_DENIED ? "denied" : error.code === error.TIMEOUT ? "searching" : "error");
       },
       { enableHighAccuracy: true, maximumAge: 5_000, timeout: 20_000 },
     );
+  }, [enqueue]);
+
+  /** Chamar DENTRO de um toque: o iOS só concede Wake Lock (e pede GPS sem drama) assim. */
+  const arm = useCallback(() => {
     void requestWakeLock();
+    startWatch();
+  }, [requestWakeLock, startWatch]);
+
+  useEffect(() => {
+    if (!active) return;
+    // Reload com a saída na rua: liga sem toque (Wake Lock pode não vir — o botão cobre).
+    if (watchRef.current === null) arm();
 
     const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        void requestWakeLock();
-        void flush();
+      if (document.visibilityState === "hidden") {
+        hiddenSinceRef.current = Date.now();
+        return;
       }
+      // Voltou do Waze/tela apagada: o GPS parou enquanto a página esteve
+      // escondida; avisa o buraco e tenta o Wake Lock de novo.
+      if (hiddenSinceRef.current !== null && Date.now() - hiddenSinceRef.current > 15_000) setResumedAt(new Date());
+      hiddenSinceRef.current = null;
+      if (!wakeLockRef.current) void requestWakeLock();
+      void flush();
     };
     const onOnline = () => void flush();
     const onPageHide = () => {
@@ -139,10 +191,10 @@ function useGpsTracking(token: string, active: boolean) {
       void wakeLockRef.current?.release();
       wakeLockRef.current = null;
     };
-  }, [active, enqueue, flush, requestWakeLock, url]);
+  }, [active, arm, flush, requestWakeLock, url]);
 
   const display: GpsDisplay = active && gps === "off" ? "starting" : gps;
-  return { gps: display, lastFix, lastSentAt, sendFailures };
+  return { gps: display, lastFix, lastSentAt, sendFailures, wakeLockHeld, resumedAt, arm };
 }
 
 const noop = () => () => {};
@@ -163,6 +215,22 @@ function useOnline(): boolean {
     () => navigator.onLine,
     () => true,
   );
+}
+
+/** O relógio da tela: avança a cada segundo enquanto a saída roda (setTimeout encadeado). */
+function useNow(running: boolean): Date {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      setNow(Date.now());
+      timer = setTimeout(tick, 1_000);
+    };
+    timer = setTimeout(tick, 1_000);
+    return () => clearTimeout(timer);
+  }, [running]);
+  return new Date(now);
 }
 
 /** "há 5 s" / "há 2 min", recalculado a cada segundo enquanto a saída roda. */
@@ -191,8 +259,10 @@ export function CourierRun({ token, view }: { token: string; view: CourierRunPro
   const isIos = useIsIos();
   const online = useOnline();
   const running = view.status === "en_route";
-  const { gps, lastFix, lastSentAt, sendFailures } = useGpsTracking(token, running);
+  const onRunClosed = useCallback(() => router.refresh(), [router]);
+  const { gps, lastFix, lastSentAt, sendFailures, wakeLockHeld, resumedAt, arm } = useGpsTracking(token, running, onRunClosed);
   const sentAgo = useAgo(lastSentAt, running);
+  const now = useNow(running);
 
   const run = (action: () => Promise<CourierActionResult>) => {
     setNotice(null);
@@ -200,16 +270,21 @@ export function CourierRun({ token, view }: { token: string; view: CourierRunPro
       const result = await action();
       if (result.ok) {
         if (result.message) setNotice({ tone: "ok", text: result.message });
-        router.refresh();
       } else {
         setNotice({ tone: "error", text: result.error });
       }
+      // Também no erro: a saída pode ter sido cancelada/encerrada pela loja —
+      // a página recarrega e desliga o GPS.
+      router.refresh();
     });
   };
 
   const pendingStops = view.stops.filter((stop) => stop.status === "pending");
   const doneStops = view.stops.filter((stop) => stop.status !== "pending");
-  const position = lastFix ? { lat: lastFix.lat, lng: lastFix.lng, accuracyM: lastFix.accuracyM } : null;
+  // A prova de entrega só com uma amostra recente: depois do Waze por cima, o
+  // último ponto pode ser de vários minutos atrás (outra parada, a estrada).
+  const freshFix = lastFix && isFreshSample(lastFix, now) ? lastFix : null;
+  const position = freshFix ? { lat: freshFix.lat, lng: freshFix.lng, accuracyM: freshFix.accuracyM } : null;
 
   if (view.status === "finished" || view.status === "canceled") {
     return (
@@ -238,15 +313,36 @@ export function CourierRun({ token, view }: { token: string; view: CourierRunPro
           <p className="text-sm text-ink-800">
             Ao sair da loja, toque abaixo. A página liga o GPS e compartilha sua posição com a {view.storeName} e com as clientes desta saída — só enquanto ela estiver aberta.
           </p>
-          <button type="button" disabled={pending} onClick={() => run(() => startRunAction(token))} className={`${BIG_BUTTON} bg-ink-950 text-ivory-50 active:bg-ink-800`}>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              // Wake Lock e GPS DENTRO do toque (o iOS só concede assim); a action vem depois.
+              arm();
+              run(() => startRunAction(token));
+            }}
+            className={`${BIG_BUTTON} bg-ink-950 text-ivory-50 active:bg-ink-800`}
+          >
             🛵 Comecei a rota
           </button>
         </section>
       ) : (
         <section className="flex flex-col gap-2 rounded-(--radius-soft) border border-ivory-300 bg-ivory-50 p-4 text-sm">
           <GpsStatus gps={gps} sentAgo={sentAgo} sendFailures={sendFailures} online={online} accuracyM={lastFix?.accuracyM ?? null} />
-          {isIos ? <p className="text-xs text-ink-700">No iPhone, deixe esta página aberta na frente durante as entregas (num suporte de guidão, por exemplo) — em segundo plano o GPS para.</p> : null}
-          {!isIos ? <p className="text-xs text-ink-700">Pode abrir o Waze por cima: no Android a posição continua sendo enviada. Só não feche esta aba.</p> : null}
+          {resumedAt && lastSentAt ? (
+            <p className="text-xs text-ink-700">
+              GPS retomado — enquanto a página ficou escondida a posição não foi enviada (último envio {sentAgo}).
+            </p>
+          ) : null}
+          {gps !== "denied" && gps !== "unsupported" && (!wakeLockHeld || gps === "error" || gps === "searching") ? (
+            <button type="button" onClick={arm} className={`${BIG_BUTTON} min-h-12 border border-ink-900/30 bg-transparent text-sm text-ink-800 active:bg-ivory-200`}>
+              {gps === "error" || gps === "searching" ? "Ligar o GPS de novo" : "Manter a tela acesa"}
+            </button>
+          ) : null}
+          <p className="text-xs text-ink-700">
+            Deixe esta página na frente durante as entregas: com o Waze por cima ou a tela apagada, o GPS para (no iPhone e no Android).
+            {isIos ? " Se puder, ponha o bloqueio automático em Nunca enquanto durar a saída." : " Dica: tela dividida ou a janela flutuante do Waze/Maps."}
+          </p>
         </section>
       )}
 
@@ -303,6 +399,7 @@ function GpsStatus({ gps, sentAgo, sendFailures, online, accuracyM }: { gps: Gps
   }
   if (gps === "unsupported") return <p className="text-claret-700">Este navegador não tem GPS disponível. Abra o link no Chrome ou no Safari.</p>;
   if (gps === "error") return <p className="text-claret-700">O GPS não respondeu. Confira se a localização do celular está ligada.</p>;
+  if (gps === "searching") return <p className="text-ink-700">Procurando sinal de GPS… ao ar livre pega mais rápido.</p>;
   if (gps === "starting") return <p className="text-ink-700">Ligando o GPS…</p>;
   return (
     <p className="flex flex-wrap items-center gap-x-2 text-ink-800">
@@ -420,9 +517,11 @@ function StopCard({
               placeholder="Ex.: Maria, porteiro, a própria"
               autoComplete="off"
               enterKeyHint="done"
+              maxLength={RECEIVED_BY_INPUT_MAX}
               className="min-h-12 rounded-(--radius-hair) border border-ivory-400 bg-ivory-50 px-3 text-base text-ink-900"
             />
           </label>
+          {!position ? <p className="text-xs text-ink-700">Sem posição recente do GPS — a entrega vai ser registrada sem o ponto no mapa.</p> : null}
           <button type="submit" disabled={pending} className={`${BIG_BUTTON} bg-laurel-700 text-ivory-50 active:bg-laurel-600`}>
             {pending ? "Registrando…" : "Confirmar entrega"}
           </button>
