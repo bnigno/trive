@@ -52,6 +52,8 @@ describe("getProductLabelSheet", () => {
     expect(sheet.productName).toBe("Longo Dunas");
     expect(sheet.storeName).toBe("Trivé Teste");
     expect(sheet.productUrl).toBe(`https://trivemaison.com.br/produto/${product.slug}`);
+    // createProduct nasce em rascunho: a página avisa que o QR ainda não funciona.
+    expect(sheet.productStatus).toBe("draft");
     expect(sheet.labels[0]).toMatchObject({ composition: "100% linho", productUrl: sheet.productUrl });
     // getProductDetail ordena pelo SKU: M antes de P.
     expect(sheet.labels.map((label) => [label.sku, label.variantLabel, label.priceCents])).toEqual([
@@ -77,6 +79,18 @@ describe("getProductLabelSheet", () => {
     ]);
     expect(sheet.labels).toHaveLength(5);
     expect(sheet.storeName).toBe("TRIVÉ");
+  });
+
+  it("gráfica: sem teto de folhas — a quantidade pedida vai inteira para a lista", async () => {
+    const { product, variants } = await seedProduct();
+    const sheet = await getProductLabelSheet(db, {
+      productId: product.id,
+      model: "cabide",
+      format: "grafica",
+      quantities: { [variants[0].id]: 150, [variants[1].id]: 150 },
+    });
+    expect(sheet.designs.map((design) => design.quantity)).toEqual([150, 150]);
+    expect(sheet.truncated).toBe(false);
   });
 
   it("tag de cabide: folhas de 9 e um modelo por variação pedida", async () => {

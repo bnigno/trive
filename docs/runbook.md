@@ -419,8 +419,10 @@ já com a quantidade). Dois modelos:
   - *Impressora comum*: folha A4 com 9 tags, frente e verso. Imprima em
     frente e verso **virando na borda longa**, escala 100 %. Primeiro uma
     folha de teste: contra a luz, frente e verso têm de bater. Corte pelas
-    marcas dos cantos (régua + estilete) e fure no círculo (furador de 4 mm
-    ou ilhós). O verso já vem espelhado — não mexa na ordem.
+    marcas dos cantos (régua + estilete) e fure na cruz do topo (furador de
+    4 a 6 mm ou ilhós). O verso já vem espelhado — não mexa na ordem. Se a
+    impressora não imprimir a linha de baixo (jato de tinta com margem
+    inferior grande), fique com 2 linhas por folha ou use o modo Gráfica.
   - *Gráfica*: uma página por lado, 61 × 96 mm (3 mm de sangria + marcas de
     corte), um par frente/verso por variação. Salve como PDF pelo **Chrome**
     (o Safari ignora o tamanho da página) e mande com a lista de quantidades

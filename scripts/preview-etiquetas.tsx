@@ -2,7 +2,7 @@
 // verso e o arquivo de gráfica) em HTML estático com as fontes da marca e,
 // se o Chrome estiver no lugar de sempre, gera os PDFs e um PNG e confere
 // tamanho de página, número de páginas e a leitura do QR.
-// Uso: npx tsx scripts/preview-etiquetas.ts [pasta-de-saida]
+// Uso: npx tsx scripts/preview-etiquetas.tsx [pasta-de-saida]
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -49,18 +49,19 @@ async function main() {
   const out = process.argv[2] ?? ".preview";
   mkdirSync(out, { recursive: true });
 
+  // Inclui casos extremos: cor composta com 3 eixos, SKU longo, composição de 2 linhas.
   const variants = [
-    { id: "11111111-1111-4111-8111-111111111111", sku: "DUNAS-AREIA-P", attributes: { cor: "Areia", tamanho: "P" }, isActive: true, priceCents: 28900 },
-    { id: "22222222-2222-4222-8222-222222222222", sku: "DUNAS-AREIA-M", attributes: { cor: "Areia", tamanho: "M" }, isActive: true, priceCents: 28900 },
-    { id: "33333333-3333-4333-8333-333333333333", sku: "DUNAS-VERDE-OLIVA-G", attributes: { cor: "Verde-oliva", tamanho: "G" }, isActive: true, priceCents: 28900 },
+    { id: "11111111-1111-4111-8111-111111111111", sku: "DUNAS-AREIA-P", attributes: { cor: "Areia", tamanho: "P", estampa: "Lisa" }, isActive: true, priceCents: 28900 },
+    { id: "22222222-2222-4222-8222-222222222222", sku: "DUNAS-AREIA-M", attributes: { cor: "Areia", tamanho: "M", estampa: "Lisa" }, isActive: true, priceCents: 28900 },
+    { id: "33333333-3333-4333-8333-333333333333", sku: "VESTIDO-LONGO-DUNAS-OLIVA-ESCURO-GG", attributes: { cor: "Verde-oliva escuro", tamanho: "GG", estampa: "Floral miúda" }, isActive: true, priceCents: 28900 },
   ];
   const plan = planProductLabels({
     model: "cabide",
     storeName: "TRIVÉ",
-    productName: "Vestido Longo Dunas em Linho com Fenda",
-    composition: "100% linho · forro 100% viscose",
+    productName: "Macacão Pantalona Alfaiataria Amêndoa Premium",
+    composition: "100% linho · forro 100% viscose · botões de madrepérola",
     productUrl: PRODUCT_URL,
-    axes: ["cor", "tamanho"],
+    axes: ["cor", "tamanho", "estampa"],
     variants,
     quantities: { [variants[0].id]: 9, [variants[1].id]: 8, [variants[2].id]: 3 },
   });

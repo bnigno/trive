@@ -11,6 +11,8 @@ const getProductLabelSheetSchema = z.object({
   productId: z.uuid(),
   /** Tag de cabide (9 por folha) ou adesiva com preço (24 por folha). */
   model: z.enum(["cabide", "adesiva"]),
+  /** "grafica" = arquivo com um par por variação, sem teto de folhas. */
+  format: z.enum(["a4", "grafica"]).default("a4"),
   /** null = uma etiqueta por variação ativa. Chave = id da variação. */
   quantities: z.record(z.uuid(), z.number().int().min(0)).nullable(),
 });
@@ -23,6 +25,8 @@ export type ProductLabelSheet = LabelPlan & {
   storeName: string;
   /** Página da peça no site (o QR da tag). */
   productUrl: string;
+  /** Rascunho/arquivada: a página do QR responde 404 até publicar. */
+  productStatus: string;
 };
 
 /** Lança o erro de `getProductDetail` quando o produto não existe. */
@@ -46,6 +50,7 @@ export async function getProductLabelSheet(
     composition: detail.composition?.trim() || null,
     productUrl,
     axes,
+    capTotal: parsed.format !== "grafica",
     variants: detail.variants.map((variant) => ({
       id: variant.id,
       sku: variant.sku,
@@ -55,5 +60,5 @@ export async function getProductLabelSheet(
     })),
     quantities: parsed.quantities,
   });
-  return { ...plan, productId: detail.id, productName: detail.name, storeName, productUrl };
+  return { ...plan, productId: detail.id, productName: detail.name, storeName, productUrl, productStatus: detail.status };
 }

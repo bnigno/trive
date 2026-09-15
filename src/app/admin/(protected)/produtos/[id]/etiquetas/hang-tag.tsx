@@ -18,8 +18,9 @@ export const TAG = {
   heightMm: 90,
   /** Margem útil do verso: o duplex desalinha 1–2 mm, o conteúdo fica longe do corte. */
   insetMm: 5,
-  holeDiameterMm: 4,
-  holeCenterYMm: 7,
+  /** Centro do furo: a marca é uma cruz (furador de 4 a 6 mm ou ilhós, sem anel impresso em volta). */
+  holeCenterYMm: 8,
+  holeMarkMm: 1.5,
   /** Marcas de corte: começam a 0,5 mm do canto e medem 2 mm, fora da tag. */
   cropGapMm: 0.5,
   cropLengthMm: 2,
@@ -38,7 +39,7 @@ export const TAG_INK = {
   taupe: "#806c64",
   gold: "#6f561b",
   rose: "#865749",
-  hole: "#c9a088",
+  hole: "#b89153",
   mark: "#aba28e",
   /** Só na pré-visualização em tela — não imprime. */
   paper: "#faf7f0",
@@ -86,9 +87,9 @@ const tagBox: CSSProperties = {
   // Sem overflow hidden: as marcas de corte ficam FORA da tag.
 };
 
-/** Círculo do furo e, na gráfica, as marcas de corte nos cantos (fora da tag). */
+/** Cruz do furo e, na gráfica, as marcas de corte nos cantos (fora da tag). */
 export function TagMarks({ crop }: { crop: boolean }) {
-  const { widthMm: w, heightMm: h, cropGapMm: g, cropLengthMm: l } = TAG;
+  const { widthMm: w, heightMm: h, cropGapMm: g, cropLengthMm: l, holeMarkMm: hm } = TAG;
   const corner = (x: number, y: number, sx: number, sy: number) => (
     <>
       <line x1={x + sx * g} y1={y} x2={x + sx * (g + l)} y2={y} />
@@ -101,7 +102,10 @@ export function TagMarks({ crop }: { crop: boolean }) {
       viewBox={`0 0 ${w} ${h}`}
       style={{ position: "absolute", inset: 0, width: `${w}mm`, height: `${h}mm`, overflow: "visible", pointerEvents: "none" }}
     >
-      <circle cx={w / 2} cy={TAG.holeCenterYMm} r={TAG.holeDiameterMm / 2} fill="none" stroke={TAG_INK.hole} strokeWidth={0.2} />
+      <g stroke={TAG_INK.hole} strokeWidth={0.2} strokeLinecap="round">
+        <line x1={w / 2 - hm / 2} y1={TAG.holeCenterYMm} x2={w / 2 + hm / 2} y2={TAG.holeCenterYMm} />
+        <line x1={w / 2} y1={TAG.holeCenterYMm - hm / 2} x2={w / 2} y2={TAG.holeCenterYMm + hm / 2} />
+      </g>
       {crop ? (
         <g stroke={TAG_INK.mark} strokeWidth={0.15} strokeLinecap="butt">
           {corner(0, 0, -1, -1)}
@@ -248,17 +252,21 @@ export function HangTagBack({ label, crop = false }: { label: ProductLabel; crop
         </div>
         <span style={{ marginTop: "2.5mm", width: "8mm", borderTop: `0.25mm solid ${TAG_INK.rose}` }} />
         {label.variantLabel ? (
+          // Cor/tamanho nunca perdem o tamanho: rótulo longo (cor composta,
+          // 3 eixos) quebra em até 2 linhas com corpo e tracking menores.
           <div
             style={{
               marginTop: "2.5mm",
               fontWeight: 500,
-              fontSize: "8.5pt",
+              fontSize: label.variantLabel.length > 18 ? "7.5pt" : "8.5pt",
+              lineHeight: 1.25,
               textTransform: "uppercase",
-              letterSpacing: "0.18em",
-              paddingLeft: "0.18em",
-              whiteSpace: "nowrap",
+              letterSpacing: label.variantLabel.length > 18 ? "0.12em" : "0.18em",
+              paddingLeft: label.variantLabel.length > 18 ? "0.12em" : "0.18em",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
               overflow: "hidden",
-              textOverflow: "ellipsis",
               maxWidth: "100%",
             }}
           >
@@ -269,10 +277,14 @@ export function HangTagBack({ label, crop = false }: { label: ProductLabel; crop
           style={{
             marginTop: "1mm",
             fontSize: "6.5pt",
+            lineHeight: 1.3,
             letterSpacing: "0.08em",
             paddingLeft: "0.08em",
             color: TAG_INK.taupe,
-            overflowWrap: "anywhere",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            maxWidth: "100%",
           }}
         >
           REF. {label.sku}
@@ -293,7 +305,8 @@ export function HangTagBack({ label, crop = false }: { label: ProductLabel; crop
             {label.composition}
           </div>
         ) : null}
-        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        {/* Zona de silêncio do QR (≥ 4 módulos): reservada, não só o que sobra acima. */}
+        <div style={{ marginTop: "auto", paddingTop: "3mm", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <svg
             aria-label={`QR: ${label.productUrl}`}
             role="img"
@@ -301,12 +314,13 @@ export function HangTagBack({ label, crop = false }: { label: ProductLabel; crop
           >
             <use href="#tag-qr" />
           </svg>
-          <div style={{ marginTop: "2.5mm", fontSize: "6.5pt", color: TAG_INK.taupe }}>veja a peça no site</div>
+          <div style={{ marginTop: "2.5mm", fontSize: "6.5pt", lineHeight: 1.3, color: TAG_INK.taupe }}>veja a peça no site</div>
           <div
             style={{
               marginTop: "3.5mm",
               fontWeight: 500,
               fontSize: "6.5pt",
+              lineHeight: 1.3,
               letterSpacing: "0.2em",
               paddingLeft: "0.2em",
             }}

@@ -132,7 +132,7 @@ export function ReceiveStockForm({
           href={`/admin/produtos/${productId}/etiquetas?${variantId}=${state.labels.quantity}`}
           className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
         >
-          Imprimir {state.labels.quantity === 1 ? "1 etiqueta" : `${state.labels.quantity} etiquetas`} desta entrada →
+          Imprimir {state.labels.quantity === 1 ? "1 tag" : `${state.labels.quantity} tags`} desta entrada →
         </Link>
       ) : null}
       <div>

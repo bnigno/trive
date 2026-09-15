@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hangTagNameSizePt,
+  serifLinesFor,
   LABELS_MAX_PER_VARIANT,
   LABELS_MAX_SHEETS,
   LABELS_PER_SHEET,
@@ -162,12 +163,48 @@ describe("planProductLabels — tag de cabide", () => {
     expect(result.designs[0].productUrl).toBe(PRODUCT_URL);
     expect(plan({ [verdeP.id]: 0 }, undefined, "cabide").designs).toEqual([]);
   });
+
+  it("na gráfica não há folhas: capTotal false deixa passar as quantidades (só o teto por variação)", () => {
+    const result = planProductLabels({
+      model: "cabide",
+      storeName: "TRIVÉ",
+      productName: "Longo Dunas",
+      composition: null,
+      productUrl: PRODUCT_URL,
+      axes: AXES,
+      variants: [verdeP, verdeM, terraP],
+      quantities: { [verdeP.id]: 100, [verdeM.id]: 100, [terraP.id]: 999 },
+      capTotal: false,
+    });
+    expect(result.designs.map((design) => design.quantity)).toEqual([100, 100, LABELS_MAX_PER_VARIANT]);
+    expect(result.truncated).toBe(false);
+    expect(result.labels).toHaveLength(400);
+  });
 });
 
-describe("hangTagNameSizePt", () => {
-  it("nome curto no corpo maior; nome comprido desce um degrau; caixa alta e muito comprido, dois", () => {
-    expect(hangTagNameSizePt("Longo Dunas")).toBe(13);
-    expect(hangTagNameSizePt("Vestido Longo Dunas em Linho com Fenda Lateral")).toBe(11.5);
-    expect(hangTagNameSizePt("VESTIDO LONGO DUNAS EM LINHO PURO COM FENDA LATERAL E ALÇAS AJUSTÁVEIS BORDADAS")).toBe(10);
+describe("hangTagNameSizePt (métrica da Cormorant SemiBold medida no Chrome)", () => {
+  // Cada corpo abaixo foi conferido no Chrome: o nome cabe em 2 linhas de 45 mm nesse corpo.
+  it.each([
+    ["Longo Dunas", 13],
+    ["Vestido Longo Dunas em Linho com Fenda", 13],
+    ["Camisa Social Feminina Manga Longa", 13],
+    ["Saia Midi Plissada Cetim Acetinado Champanhe", 13],
+    ["Conjunto Cropped e Saia Midi Plissada Marfim", 11.5],
+    ["Camisa Oversized Manga Bufante Algodão Orgânico", 11.5],
+    ["Vestido Longo Dunas em Linho com Fenda Lateral", 11.5],
+    ["VESTIDO LONGO DUNAS EM LINHO COM FENDA", 10],
+    ["Macacão Pantalona Alfaiataria Amêndoa Premium", 10],
+    ["CAMISA OVERSIZED LINHO BEGE COM BOLSOS FRONTAIS", 9],
+  ])("%s → %s pt", (name, pt) => {
+    expect(hangTagNameSizePt(name)).toBe(pt);
+    expect(serifLinesFor(name, pt, 45)).toBeLessThanOrEqual(2);
+  });
+
+  it("quebra por palavra como o navegador: uma palavra maior que a linha ainda conta linhas", () => {
+    expect(serifLinesFor("Longo Dunas", 13, 45)).toBe(1);
+    expect(serifLinesFor("Vestido Longo Dunas em Linho com Fenda", 13, 45)).toBe(2);
+    expect(serifLinesFor("Supercalifragilisticexpialidocious", 13, 20)).toBeGreaterThanOrEqual(2);
+    // Nome absurdo: cai no menor corpo (o clamp da página corta o resto).
+    expect(hangTagNameSizePt("VESTIDO LONGO DUNAS EM LINHO PURO COM FENDA LATERAL E ALÇAS AJUSTÁVEIS BORDADAS")).toBe(9);
   });
 });

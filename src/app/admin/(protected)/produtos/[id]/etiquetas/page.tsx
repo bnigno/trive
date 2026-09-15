@@ -15,7 +15,7 @@ import { Button, Input, Select } from "@/components/ui/form";
 import { Money } from "@/components/ui/money";
 import { LABELS_MAX_PER_VARIANT, LABELS_MAX_SHEETS, LABELS_PER_SHEET, labelsMaxTotal, type LabelModel } from "@/core/catalog/labels";
 import { getDb } from "@/db/client";
-import { qrSvgPath } from "@/receipts/qr";
+import { qrSvgPath, qrVersion } from "@/receipts/qr";
 import { requireUser } from "@/services/auth";
 import { getProductLabelSheet } from "@/services/product-labels";
 
@@ -86,7 +86,7 @@ export default async function ProductLabelsPage({
 
   let sheet: Awaited<ReturnType<typeof getProductLabelSheet>>;
   try {
-    sheet = await getProductLabelSheet(getDb(), { productId: id, model, quantities });
+    sheet = await getProductLabelSheet(getDb(), { productId: id, model, format, quantities });
   } catch {
     // Produto não encontrado (ou excluído).
     notFound();
@@ -105,6 +105,16 @@ export default async function ProductLabelsPage({
   }
   if (sheet.truncated) {
     warnings.push(`O pedido passou de ${maxTotal} etiquetas (${LABELS_MAX_SHEETS} folhas) e foi cortado. Imprima em mais de uma vez.`);
+  }
+  if (model === "cabide" && sheet.productStatus !== "active") {
+    warnings.push(
+      sheet.productStatus === "archived"
+        ? "A peça está arquivada: o QR da tag leva a uma página que não existe mais."
+        : "A peça ainda está em rascunho: o QR da tag só vai funcionar depois de publicar.",
+    );
+  }
+  if (model === "cabide" && qrVersion(sheet.productUrl) > 7) {
+    warnings.push("O endereço da peça é longo e o QR fica denso demais para 20 mm: encurte o nome (identificador) da peça antes de imprimir.");
   }
 
   const printLabel = model === "adesiva" ? "Imprimir etiquetas" : format === "a4" ? "Imprimir tags" : "Salvar PDF para a gráfica";
@@ -129,7 +139,7 @@ export default async function ProductLabelsPage({
             {model === "adesiva"
               ? `Folha A4 com ${LABELS_PER_SHEET.adesiva} etiquetas de ${formatLabelSize} (Avery L7159 / Pimaco A4356, ou papel comum para recortar pelo fio cinza). Imprima em tamanho real — escala 100%, sem "ajustar à página".`
               : format === "a4"
-                ? `Folha A4 com ${LABELS_PER_SHEET.cabide} tags de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)}, frente e verso. Papel cartão creme de 180–300 g. Imprima em frente e verso virando na borda longa, escala 100% — primeiro uma folha de teste, para conferir contra a luz se frente e verso batem. Corte pelas marcas dos cantos e fure no círculo (furador de 4 mm ou ilhós).`
+                ? `Folha A4 com ${LABELS_PER_SHEET.cabide} tags de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)}, frente e verso. Papel cartão creme de 180–300 g. Imprima em frente e verso virando na borda longa, escala 100% — primeiro uma folha de teste, para conferir contra a luz se frente e verso batem. Corte pelas marcas dos cantos e fure na cruz do topo (furador de 4 a 6 mm ou ilhós).`
                 : `Arquivo para gráfica: uma página por lado, ${mm(PRESS_PAGE.widthMm)} × ${mm(PRESS_PAGE.heightMm)} (tag de ${mm(TAG.widthMm)} × ${mm(TAG.heightMm)} com ${mm(TAG.bleedMm)} de sangria e marcas de corte). Nada sangra: a gráfica escolhe o papel. Salve como PDF pelo Chrome (o Safari ignora o tamanho da página) e mande junto a lista de quantidades abaixo.`}
           </p>
         </div>
@@ -166,7 +176,9 @@ export default async function ProductLabelsPage({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Quantas de cada?</h2>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Até {LABELS_MAX_PER_VARIANT} por variação e {maxTotal} no total.
+            {model === "cabide" && format === "grafica"
+              ? `Até ${LABELS_MAX_PER_VARIANT} por variação (a gráfica imprime a quantidade).`
+              : `Até ${LABELS_MAX_PER_VARIANT} por variação e ${maxTotal} no total.`}
           </p>
         </div>
         <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">

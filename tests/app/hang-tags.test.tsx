@@ -42,6 +42,15 @@ describe("tag de cabide — frente e verso", () => {
     expect(outra).toContain("Maison Aurora");
   });
 
+  it("cor/tamanho longos quebram em 2 linhas com corpo menor — o tamanho nunca some", () => {
+    const longo = renderToStaticMarkup(<HangTagBack label={{ ...label(1), variantLabel: "Verde-oliva escuro · GG · Estampa floral" }} />);
+    expect(longo).toContain("Verde-oliva escuro · GG · Estampa floral");
+    expect(longo).toContain("font-size:7.5pt");
+    expect(longo).toContain("-webkit-line-clamp:2");
+    const curto = renderToStaticMarkup(<HangTagBack label={label(1)} />);
+    expect(curto).toContain("font-size:8.5pt");
+  });
+
   it("o verso traz nome, cor/tamanho, referência, composição, QR e o endereço — sem preço", () => {
     const html = renderToStaticMarkup(<HangTagBack label={{ ...label(1), priceCents: 28900 }} />);
     expect(html).toContain("Longo Dunas");
