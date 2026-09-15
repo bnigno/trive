@@ -2,15 +2,22 @@
 // sinal) e da parada dela (destino geocodificado, prova), monta a leitura:
 // "saindo", "a caminho, a 2,1 km · ~8 min", "chegando", "entregue às 17:42".
 // Nunca inclui o endereço nem as coordenadas do destino: a página do pedido
-// circula em encaminhamentos, e a posição do motoboy já é o bastante.
+// circula em encaminhamentos. E enquanto o motoboy ainda tem OUTRAS paradas,
+// a posição vai arredondada (~110 m): o ponto exato onde ele parou seria o
+// endereço de outra cliente. Sem sinal há mais de 30 min, a posição some.
 import { courierSignal, haversineKm, type CourierSignal, type GeoPoint } from "./positions";
 import type { RunStatus, StopStatus } from "./state";
 
 /** Velocidade média de moto na cidade, com o fator de rua (linha reta × 1,3). */
 export const ETA_ROAD_FACTOR = 1.3;
 export const ETA_SPEED_KMH = 20;
-/** Abaixo disso o motoboy "está chegando". */
+/** Abaixo disso o motoboy "está chegando" — só com GPS preciso o bastante para afirmar. */
 export const ARRIVING_KM = 0.3;
+export const ARRIVING_MAX_ACCURACY_M = 100;
+/** Sem amostra nova há tanto tempo, a posição sai do link público (saída esquecida aberta). */
+export const POSITION_HIDE_AFTER_MS = 30 * 60_000;
+/** Casas decimais da posição enquanto há outras paradas por entregar (3 ≈ 110 m). */
+export const COARSE_DECIMALS = 3;
 
 export function etaMinutes(distanceKm: number): number {
   const minutes = ((distanceKm * ETA_ROAD_FACTOR) / ETA_SPEED_KMH) * 60;
@@ -22,7 +29,8 @@ export type TrackingState = "waiting" | "en_route" | "arriving" | "delivered" | 
 export interface TrackingRunInput {
   status: RunStatus;
   courierFirstName: string;
-  lastPosition: (GeoPoint & { accuracyM: number | null; recordedAt: Date }) | null;
+  /** `seenAt` = quando a amostra chegou ao servidor (o relógio do celular não entra aqui). */
+  lastPosition: (GeoPoint & { accuracyM: number | null; seenAt: Date }) | null;
 }
 
 export interface TrackingStopInput {
@@ -35,8 +43,10 @@ export interface TrackingStopInput {
 export interface TrackingView {
   state: TrackingState;
   courierFirstName: string;
-  /** Só enquanto a saída está na rua e a parada por entregar. */
+  /** Só enquanto a saída está na rua e a parada por entregar; arredondada se há outras paradas. */
   courier: (GeoPoint & { accuracyM: number | null }) | null;
+  /** Posição arredondada (outras paradas) ou GPS impreciso: o mapa mostra uma área, não um ponto. */
+  approximate: boolean;
   signal: CourierSignal;
   /** Segundos desde a última posição (null sem posição). */
   updatedSecondsAgo: number | null;
@@ -60,6 +70,7 @@ export function buildTrackingView(input: {
     state: "waiting",
     courierFirstName: run.courierFirstName,
     courier: null,
+    approximate: false,
     signal: "none",
     updatedSecondsAgo: null,
     distanceKm: null,
@@ -73,18 +84,28 @@ export function buildTrackingView(input: {
   if (stop.status === "canceled" || run.status === "finished" || run.status === "canceled") return { ...base, state: "finished" };
   if (run.status === "ready") return base;
 
-  const signal = courierSignal(run.lastPosition?.recordedAt ?? null, now);
+  const signal = courierSignal(run.lastPosition?.seenAt ?? null, now);
   const position = run.lastPosition;
   if (!position || signal === "none") return { ...base, state: "en_route", signal };
+  const ageMs = now.getTime() - position.seenAt.getTime();
+  const updatedSecondsAgo = Math.max(0, Math.round(ageMs / 1000));
+  if (ageMs > POSITION_HIDE_AFTER_MS) return { ...base, state: "en_route", signal, updatedSecondsAgo };
 
   const distanceKm = stop.destination ? round1(haversineKm(position, stop.destination)) : null;
-  const arriving = distanceKm !== null && distanceKm < ARRIVING_KM && signal !== "lost";
+  const preciseEnough = position.accuracyM === null || position.accuracyM <= ARRIVING_MAX_ACCURACY_M;
+  const arriving = distanceKm !== null && distanceKm < ARRIVING_KM && signal !== "lost" && preciseEnough;
+  const coarse = input.otherStopsPending > 0;
   return {
     ...base,
     state: arriving ? "arriving" : "en_route",
-    courier: { lat: position.lat, lng: position.lng, accuracyM: position.accuracyM },
+    courier: {
+      lat: coarse ? roundTo(position.lat, COARSE_DECIMALS) : position.lat,
+      lng: coarse ? roundTo(position.lng, COARSE_DECIMALS) : position.lng,
+      accuracyM: position.accuracyM,
+    },
+    approximate: coarse || !preciseEnough,
     signal,
-    updatedSecondsAgo: Math.max(0, Math.round((now.getTime() - position.recordedAt.getTime()) / 1000)),
+    updatedSecondsAgo,
     distanceKm,
     etaMinutes: distanceKm !== null && !arriving ? etaMinutes(distanceKm) : null,
   };
@@ -92,6 +113,11 @@ export function buildTrackingView(input: {
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function roundTo(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }
 
 /** "2,1 km" / "850 m" para a legenda. */

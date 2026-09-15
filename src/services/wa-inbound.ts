@@ -785,11 +785,13 @@ export async function processZapiInbound(
 
     // Áudio: com a vendedora ouvindo (setting + chave), a mensagem vai para a
     // fila de transcrição; quem transcreve decide a rota depois (bot ou dono).
+    // Áudio de motoboy não vale transcrição paga: vai direto para a dona.
     if (
       media?.kind === "audio" &&
       media.mediaUrl &&
       (await isBotMediaEnabled(tx)) &&
-      isTranscriptionConfigured()
+      isTranscriptionConfigured() &&
+      !(await findActiveCourierByPhone(tx, phoneE164))
     ) {
       await queueTranscription();
       await markDone();

@@ -12,7 +12,7 @@ import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
 import { dispatchDueDrops } from "@/services/drops";
 import { expireOverdueHolds, remindExpiringHolds } from "@/services/stock-holds";
-import { purgeOldDeliveryPositions } from "@/services/delivery-runs";
+import { closeStaleDeliveryRuns, purgeOldDeliveryPositions } from "@/services/delivery-runs";
 import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
 import { scheduleIdleCartFollowups } from "@/services/wa-followups";
@@ -195,12 +195,16 @@ export const waAutoReturn = inngest.createFunction(
   async () => autoReturnIdleHumanConversations(getDb()),
 );
 
-// Trilha do GPS das saídas: some depois de 30 dias (a última posição fica na
-// saída como prova da entrega).
+// Saídas do motoboy: fecha as esquecidas abertas há mais de 24 h (avisa a
+// dona) e apaga a trilha do GPS com mais de 30 dias (a prova da entrega
+// fica na parada).
 export const deliveryPositionsPurge = inngest.createFunction(
   { id: "delivery-positions-purge", triggers: [{ cron: "0 7 * * *" }] },
   async () => {
-    return purgeOldDeliveryPositions(getDb());
+    const db = getDb();
+    const stale = await closeStaleDeliveryRuns(db);
+    const purge = await purgeOldDeliveryPositions(db);
+    return { ...stale, ...purge };
   },
 );
 

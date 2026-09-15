@@ -5,7 +5,7 @@
 // mesma posição. O status do pedido continua passando pela máquina de
 // estados (dispatchOrder / completeDispatchedOrder); a saída guarda só a
 // prova e o caminho.
-import { and, asc, count, desc, eq, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Geocoder } from "@/adapters/geocoding";
@@ -56,26 +56,71 @@ export function courierRunUrl(courierToken: string): string {
 export interface RunEligibleOrder extends RouteOrder {
   /** Já está numa saída aberta: não pode entrar em outra. */
   openRunId: string | null;
+  openRunCourier: string | null;
+}
+
+/** Um "Saiu" mais velho que isso já não é "na rua": a dona esqueceu de fechar; não entra em saída nova. */
+export const ELIGIBLE_DISPATCH_MAX_MS = 48 * 3_600_000;
+
+/**
+ * Pedidos com parada ENTREGUE pelo motoboy cujo pedido ainda não fechou
+ * (dinheiro na entrega aguardando a dona baixar): já foram entregues — não
+ * podem sair de novo, nem ser cobrados de novo.
+ */
+async function deliveredAwaitingClose(db: DbOrTx, orderIds: readonly string[]): Promise<Set<string>> {
+  if (orderIds.length === 0) return new Set();
+  const rows = await db
+    .select({ orderId: deliveryStops.orderId })
+    .from(deliveryStops)
+    .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
+    .where(and(inArray(deliveryStops.orderId, [...orderIds]), eq(deliveryStops.status, "delivered"), ne(orders.status, "delivered")));
+  return new Set(rows.map((row) => row.orderId));
 }
 
 /**
  * Os pedidos de motoboy que podem sair: pagos, em separação, já na rua (o
- * "Saiu" antigo) ou dinheiro na entrega; sem parada aberta; janela de hoje
- * ou futura (a passada precisa de reagendamento — dispatchOrder recusa).
+ * "Saiu" das últimas 48 h) ou dinheiro na entrega; sem parada aberta nem
+ * entrega já feita pelo motoboy; janela de hoje ou futura (a passada precisa
+ * de reagendamento — dispatchOrder recusa).
  */
 export async function listRunEligibleOrders(db: DbOrTx, input: { now?: Date } = {}): Promise<RunEligibleOrder[]> {
   const now = input.now ?? new Date();
   const todayKey = spDayKey(now);
   const all = await listRouteOrders(db, { includeShipped: true });
   if (all.length === 0) return [];
-  const open = await db
-    .select({ orderId: deliveryStops.orderId, runId: deliveryStops.runId })
-    .from(deliveryStops)
-    .where(and(inArray(deliveryStops.orderId, all.map((o) => o.id)), eq(deliveryStops.status, "pending")));
-  const openByOrder = new Map(open.map((row) => [row.orderId, row.runId]));
+  const ids = all.map((o) => o.id);
+  const [open, alreadyDelivered] = await Promise.all([
+    db
+      .select({ orderId: deliveryStops.orderId, runId: deliveryStops.runId, courierName: couriers.name })
+      .from(deliveryStops)
+      .innerJoin(deliveryRuns, eq(deliveryRuns.id, deliveryStops.runId))
+      .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
+      .where(and(inArray(deliveryStops.orderId, ids), eq(deliveryStops.status, "pending"))),
+    deliveredAwaitingClose(db, ids),
+  ]);
+  const openByOrder = new Map(open.map((row) => [row.orderId, row]));
   return all
-    .filter((order) => order.dispatchedAt !== null || order.window.dayKey >= todayKey)
-    .map((order) => ({ ...order, openRunId: openByOrder.get(order.id) ?? null }));
+    .filter((order) => !alreadyDelivered.has(order.id))
+    .filter((order) =>
+      order.dispatchedAt !== null ? now.getTime() - order.dispatchedAt.getTime() <= ELIGIBLE_DISPATCH_MAX_MS : order.window.dayKey >= todayKey,
+    )
+    .map((order) => ({
+      ...order,
+      openRunId: openByOrder.get(order.id)?.runId ?? null,
+      openRunCourier: openByOrder.get(order.id)?.courierName ?? null,
+    }));
+}
+
+/** Violação de UNIQUE do Postgres/PGlite (corrida entre duas transações). */
+function isUniqueViolation(error: unknown, constraint?: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidates = [error, (error as { cause?: unknown }).cause];
+  return candidates.some((e) => {
+    if (!e || typeof e !== "object") return false;
+    const code = (e as { code?: unknown }).code;
+    const name = (e as { constraint?: unknown }).constraint;
+    return code === "23505" && (!constraint || name === constraint || name === undefined);
+  });
 }
 
 const createRunSchema = z.object({
@@ -128,6 +173,9 @@ export async function createDeliveryRun(db: DbOrTx, input: CreateDeliveryRunInpu
     if (busy.length > 0) {
       throw new ServiceError("ORDER_IN_RUN", "Um dos pedidos já está numa saída aberta.");
     }
+    if ((await deliveredAwaitingClose(tx, uniqueIds)).size > 0) {
+      throw new ServiceError("ORDER_ALREADY_DELIVERED", "Um dos pedidos já foi entregue pelo motoboy — registre o pagamento e feche na ficha.");
+    }
 
     const [run] = await tx
       .insert(deliveryRuns)
@@ -138,14 +186,23 @@ export async function createDeliveryRun(db: DbOrTx, input: CreateDeliveryRunInpu
     for (const [index, orderId] of uniqueIds.entries()) {
       const dispatched = await dispatchOrder(tx, { orderId, userId: parsed.userId, now });
       const [order] = await tx.select({ shippingAddress: orders.shippingAddress }).from(orders).where(eq(orders.id, orderId)).limit(1);
-      await tx.insert(deliveryStops).values({
-        runId: run.id,
-        orderId,
-        sequence: index + 1,
-        destAddress: addressLineOf(order?.shippingAddress).line,
-        createdAt: now,
-        updatedAt: now,
-      });
+      try {
+        await tx.insert(deliveryStops).values({
+          runId: run.id,
+          orderId,
+          sequence: index + 1,
+          destAddress: addressLineOf(order?.shippingAddress).line,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (error) {
+        // Duas pessoas montando saídas com o mesmo pedido ao mesmo tempo: o
+        // índice parcial (um pedido por saída aberta) é o árbitro.
+        if (isUniqueViolation(error, "delivery_stops_open_order_idx")) {
+          throw new ServiceError("ORDER_IN_RUN", "Um dos pedidos acabou de entrar em outra saída.");
+        }
+        throw error;
+      }
       stops.push({ orderId, orderNumber: dispatched.orderNumber, sequence: index + 1, alreadyDispatched: dispatched.idempotent });
     }
 
@@ -187,13 +244,14 @@ export async function resendCourierLink(db: DbOrTx, input: { runId: string; user
   const now = parsed.now ?? new Date();
   await db.transaction(async (tx) => {
     const [row] = await tx
-      .select({ id: deliveryRuns.id, status: deliveryRuns.status, courierToken: deliveryRuns.courierToken, courierName: couriers.name, phoneE164: couriers.phoneE164 })
+      .select({ id: deliveryRuns.id, status: deliveryRuns.status, courierToken: deliveryRuns.courierToken, courierName: couriers.name, phoneE164: couriers.phoneE164, courierActive: couriers.isActive })
       .from(deliveryRuns)
       .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
       .where(eq(deliveryRuns.id, parsed.runId))
       .limit(1);
     if (!row) throw new ServiceError("RUN_NOT_FOUND", "Saída não encontrada.");
     if (!isRunOpen(row.status as RunStatus)) throw new ServiceError("RUN_CLOSED", "Esta saída já foi encerrada.");
+    if (!row.courierActive) throw new ServiceError("COURIER_INACTIVE", "Este motoboy foi desativado — cancele a saída e monte outra.");
     const [{ total }] = await tx
       .select({ total: count() })
       .from(deliveryStops)
@@ -224,18 +282,21 @@ export async function resendCourierLink(db: DbOrTx, input: { runId: string; user
 // O motoboy na rua (tudo pelo token do link)
 // ---------------------------------------------------------------------------
 
-async function lockRunByToken(tx: DbOrTx, courierToken: string) {
+async function lockRunByToken(tx: DbOrTx, courierToken: string, options: { requireOpen?: boolean } = {}) {
   const parsedToken = z.uuid().safeParse(courierToken);
   if (!parsedToken.success) throw new ServiceError("RUN_NOT_FOUND", "Saída não encontrada.");
   const [run] = await tx.select().from(deliveryRuns).where(eq(deliveryRuns.courierToken, parsedToken.data)).for("update");
   if (!run) throw new ServiceError("RUN_NOT_FOUND", "Saída não encontrada.");
+  if (options.requireOpen && !isRunOpen(run.status as RunStatus)) {
+    throw new ServiceError("RUN_CLOSED", run.status === "canceled" ? "Esta saída foi cancelada pela loja." : "Esta saída já foi encerrada.");
+  }
   return run;
 }
 
 export async function startDeliveryRun(db: DbOrTx, input: { courierToken: string; now?: Date }): Promise<{ runId: string; idempotent: boolean }> {
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
-    const run = await lockRunByToken(tx, input.courierToken);
+    const run = await lockRunByToken(tx, input.courierToken, { requireOpen: true });
     const status = run.status as RunStatus;
     if (status === "en_route") return { runId: run.id, idempotent: true };
     assertRunTransition(status, "en_route");
@@ -273,15 +334,16 @@ export async function recordRunPosition(db: DbOrTx, input: RecordPositionInput):
       .limit(1);
     const sample: PositionSample = { lat: parsed.lat, lng: parsed.lng, accuracyM: parsed.accuracyM ?? null, recordedAt: parsed.recordedAt };
     const decision = acceptPosition({
-      last: run.lastPositionAt ? { recordedAt: run.lastPositionAt } : null,
       lastTrail: lastTrailRow ? { ...lastTrailRow, accuracyM: lastTrailRow.accuracyM ?? null } : null,
       sample,
       now,
     });
     if (decision.kind === "reject") return { accepted: false, reason: decision.reason };
+    // last_position_at é a hora de CHEGADA (relógio do servidor): é o que o
+    // sinal e o "há N min" leem — o relógio do celular pode estar torto.
     await tx
       .update(deliveryRuns)
-      .set({ lastLat: sample.lat, lastLng: sample.lng, lastAccuracyM: sample.accuracyM, lastPositionAt: sample.recordedAt, updatedAt: now })
+      .set({ lastLat: sample.lat, lastLng: sample.lng, lastAccuracyM: sample.accuracyM, lastPositionAt: now, updatedAt: now })
       .where(eq(deliveryRuns.id, run.id));
     if (decision.trail) {
       await tx.insert(deliveryPositions).values({
@@ -290,7 +352,7 @@ export async function recordRunPosition(db: DbOrTx, input: RecordPositionInput):
         lng: sample.lng,
         accuracyM: sample.accuracyM,
         speedMps: parsed.speedMps ?? null,
-        recordedAt: sample.recordedAt,
+        recordedAt: decision.recordedAt,
         createdAt: now,
       });
     }
@@ -334,7 +396,7 @@ export async function completeStop(db: DbOrTx, input: CompleteStopInput): Promis
   const parsed = completeStopSchema.parse(input);
   const now = parsed.now ?? new Date();
   return db.transaction(async (tx) => {
-    const run = await lockRunByToken(tx, parsed.courierToken);
+    const run = await lockRunByToken(tx, parsed.courierToken, { requireOpen: true });
     const [stop] = await tx
       .select()
       .from(deliveryStops)
@@ -353,6 +415,9 @@ export async function completeStop(db: DbOrTx, input: CompleteStopInput): Promis
     }
     if (!canCloseStop(run.status as RunStatus, stop.status as StopStatus)) {
       throw new ServiceError("STOP_NOT_OPEN", run.status !== "en_route" ? 'Toque em "Comecei a rota" antes de entregar.' : "Esta parada já foi fechada.");
+    }
+    if (order.status === "canceled" || order.status === "refunded") {
+      throw new ServiceError("ORDER_CANCELED", 'Este pedido foi cancelado pela loja: não entregue — toque em "Não consegui" e traga a peça de volta.');
     }
     const [courier] = await tx.select({ name: couriers.name }).from(couriers).where(eq(couriers.id, run.courierId)).limit(1);
     const receivedBy = normalizeReceivedBy(parsed.receivedBy);
@@ -420,7 +485,7 @@ export async function failStop(db: DbOrTx, input: FailStopInput): Promise<{ stop
   const parsed = failStopSchema.parse(input);
   const now = parsed.now ?? new Date();
   return db.transaction(async (tx) => {
-    const run = await lockRunByToken(tx, parsed.courierToken);
+    const run = await lockRunByToken(tx, parsed.courierToken, { requireOpen: true });
     const [stop] = await tx
       .select({ id: deliveryStops.id, status: deliveryStops.status, orderId: deliveryStops.orderId, orderNumber: orders.orderNumber, customerName: customers.fullName })
       .from(deliveryStops)
@@ -679,7 +744,7 @@ export async function getTrackingForOrder(db: DbOrTx, publicToken: string, now =
       courierFirstName: firstNameOf(row.courierName),
       lastPosition:
         row.lastLat !== null && row.lastLng !== null && row.lastPositionAt
-          ? { lat: row.lastLat, lng: row.lastLng, accuracyM: row.lastAccuracyM ?? null, recordedAt: row.lastPositionAt }
+          ? { lat: row.lastLat, lng: row.lastLng, accuracyM: row.lastAccuracyM ?? null, seenAt: row.lastPositionAt }
           : null,
     },
     stop: {
@@ -920,7 +985,9 @@ export async function getStopForOrder(db: DbOrTx, orderId: string): Promise<Orde
     .innerJoin(deliveryRuns, eq(deliveryRuns.id, deliveryStops.runId))
     .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
     .where(eq(deliveryStops.orderId, parsedId.data))
-    .orderBy(desc(deliveryStops.createdAt))
+    // A parada cancelada só aparece se não houver outra: a prova (entregue /
+    // não entregue) de uma saída anterior vale mais.
+    .orderBy(sql`case when ${deliveryStops.status} = 'canceled' then 1 else 0 end`, desc(deliveryStops.createdAt))
     .limit(1);
   if (!row) return null;
   return {
@@ -954,54 +1021,134 @@ const storedAddressSchema = z
 
 /** Nominatim: ≤ 1 pedido por segundo. */
 export const GEOCODE_SPACING_MS = 1_100;
+/** Paradas por execução do handler: cabe no orçamento da varredura (~8 × 3 s). */
+export const GEOCODE_MAX_STOPS_PER_RUN = 8;
+/** Com menos que isso até o prazo, não começa outra parada (pausa + 2 consultas de 5 s). */
+const GEOCODE_STOP_BUDGET_MS = 12_000;
 
 /**
- * Geocodifica as paradas sem coordenada, uma por vez, com pausa entre elas.
- * Falha de uma parada não derruba as outras; o que não achou fica null.
+ * Geocodifica as paradas sem coordenada, uma por vez, com pausa entre elas,
+ * até `maxStops` ou até o prazo do worker chegar perto. Devolve quantas
+ * ficaram para a próxima rodada (o handler re-enfileira). Falha de uma parada
+ * não derruba as outras; o que não achou fica null (e entra de novo se
+ * houver outra rodada — a lista encolhe a cada rodada, então termina).
  */
 export async function geocodeRunStops(
   db: DbOrTx,
   geocoder: Geocoder,
-  input: { runId: string; sleep?: (ms: number) => Promise<void> },
-): Promise<{ attempted: number; found: number }> {
+  input: { runId: string; sleep?: (ms: number) => Promise<void>; deadlineAt?: Date | null; maxStops?: number; now?: () => Date },
+): Promise<{ attempted: number; found: number; remaining: number }> {
   const runId = z.uuid().parse(input.runId);
   const sleep = input.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const clock = input.now ?? (() => new Date());
+  const maxStops = input.maxStops ?? GEOCODE_MAX_STOPS_PER_RUN;
   const rows = await db
     .select({ id: deliveryStops.id, destLat: deliveryStops.destLat, shippingAddress: orders.shippingAddress })
     .from(deliveryStops)
     .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
     .where(eq(deliveryStops.runId, runId))
     .orderBy(asc(deliveryStops.sequence));
+  const pending = rows.flatMap((row) => {
+    if (row.destLat !== null) return [];
+    const address = storedAddressSchema.safeParse(row.shippingAddress);
+    if (!address.success || !address.data.street || !address.data.city) return [];
+    return [{ id: row.id, address: address.data }];
+  });
   let attempted = 0;
   let found = 0;
-  for (const row of rows) {
-    if (row.destLat !== null) continue;
-    const address = storedAddressSchema.safeParse(row.shippingAddress);
-    if (!address.success || !address.data.street || !address.data.city) continue;
+  for (const row of pending) {
+    if (attempted >= maxStops) break;
+    if (input.deadlineAt && input.deadlineAt.getTime() - clock().getTime() < GEOCODE_STOP_BUDGET_MS) break;
     if (attempted > 0) await sleep(GEOCODE_SPACING_MS);
     attempted += 1;
     const point = await geocoder.geocode({
-      street: address.data.street,
-      number: address.data.number ?? "",
-      district: address.data.district ?? "",
-      city: address.data.city,
-      state: address.data.state ?? "",
-      postalCode: address.data.postalCode ?? null,
+      street: row.address.street ?? "",
+      number: row.address.number ?? "",
+      district: row.address.district ?? "",
+      city: row.address.city ?? "",
+      state: row.address.state ?? "",
+      postalCode: row.address.postalCode ?? null,
     });
     if (!point || !isValidPoint(point)) continue;
     found += 1;
-    await db.update(deliveryStops).set({ destLat: point.lat, destLng: point.lng, updatedAt: new Date() }).where(eq(deliveryStops.id, row.id));
+    await db.update(deliveryStops).set({ destLat: point.lat, destLng: point.lng, updatedAt: clock() }).where(eq(deliveryStops.id, row.id));
   }
-  return { attempted, found };
+  return { attempted, found, remaining: pending.length - attempted };
 }
 
 export const POSITIONS_RETENTION_DAYS = 30;
 
-/** A trilha some depois de 30 dias; a última posição fica na saída (prova). */
-export async function purgeOldDeliveryPositions(db: DbOrTx, input: { now?: Date; days?: number } = {}): Promise<{ deleted: number }> {
+/**
+ * A trilha some depois de 30 dias (pela hora de chegada ao servidor — o
+ * relógio do celular não manda aqui) e a última posição das saídas fechadas
+ * há mais de 30 dias também: ela é onde o motoboy tocou "Encerrar", não a
+ * prova. A prova (ponto da entrega) fica na parada.
+ */
+export async function purgeOldDeliveryPositions(db: DbOrTx, input: { now?: Date; days?: number } = {}): Promise<{ deleted: number; runsCleared: number }> {
   const now = input.now ?? new Date();
   const days = input.days ?? POSITIONS_RETENTION_DAYS;
   const cutoff = new Date(now.getTime() - days * 86_400_000);
-  const deleted = await db.delete(deliveryPositions).where(lt(deliveryPositions.recordedAt, cutoff)).returning({ id: deliveryPositions.id });
-  return { deleted: deleted.length };
+  const deleted = await db.delete(deliveryPositions).where(lt(deliveryPositions.createdAt, cutoff)).returning({ id: deliveryPositions.id });
+  const cleared = await db
+    .update(deliveryRuns)
+    .set({ lastLat: null, lastLng: null, lastAccuracyM: null })
+    .where(and(inArray(deliveryRuns.status, ["finished", "canceled"]), lt(deliveryRuns.updatedAt, cutoff), sql`${deliveryRuns.lastLat} IS NOT NULL`))
+    .returning({ id: deliveryRuns.id });
+  return { deleted: deleted.length, runsCleared: cleared.length };
+}
+
+export const STALE_RUN_HOURS = 24;
+
+/**
+ * Saída esquecida aberta (ninguém encerrou nem cancelou): depois de 24 h
+ * fecha sozinha — encerra se não sobrou parada, cancela as pendentes se
+ * sobrou — e avisa a dona. Sem isso, o link do motoboy e a posição dele
+ * ficariam vivos indefinidamente.
+ */
+export async function closeStaleDeliveryRuns(db: DbOrTx, input: { now?: Date; hours?: number } = {}): Promise<{ closed: number }> {
+  const now = input.now ?? new Date();
+  const cutoff = new Date(now.getTime() - (input.hours ?? STALE_RUN_HOURS) * 3_600_000);
+  const stale = await db
+    .select({ id: deliveryRuns.id, status: deliveryRuns.status, courierName: couriers.name })
+    .from(deliveryRuns)
+    .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
+    .where(and(inArray(deliveryRuns.status, ["ready", "en_route"]), lt(deliveryRuns.createdAt, cutoff)))
+    .limit(50);
+  let closed = 0;
+  for (const run of stale) {
+    await db.transaction(async (tx) => {
+      const stops = await tx.select({ status: deliveryStops.status }).from(deliveryStops).where(eq(deliveryStops.runId, run.id));
+      const pending = stops.filter((s) => s.status === "pending").length;
+      const finish = run.status === "en_route" && pending === 0;
+      if (finish) {
+        await tx.update(deliveryRuns).set({ status: "finished", finishedAt: now, updatedAt: now }).where(eq(deliveryRuns.id, run.id));
+      } else {
+        await tx.update(deliveryRuns).set({ status: "canceled", canceledAt: now, updatedAt: now }).where(eq(deliveryRuns.id, run.id));
+        await tx.update(deliveryStops).set({ status: "canceled", updatedAt: now }).where(and(eq(deliveryStops.runId, run.id), eq(deliveryStops.status, "pending")));
+      }
+      await enqueueOutboxEvent(tx, {
+        eventType: "wa.owner_forward",
+        dedupeKey: `wa.run_stale:${run.id}`,
+        aggregateType: "delivery_run",
+        aggregateId: run.id,
+        payload: {
+          raw: true,
+          dedupeKey: `wa.run_stale:${run.id}`,
+          body: finish
+            ? `🛵 A saída de ${run.courierName} ficou aberta mais de 24 h sem "Encerrar" — encerrei por você.`
+            : `🛵 A saída de ${run.courierName} ficou aberta mais de 24 h com ${pending} parada${pending === 1 ? "" : "s"} por entregar — cancelei a saída; os pedidos continuam como saídos. Veja a Rota do dia.`,
+        },
+      });
+      await tx.insert(auditLog).values({
+        actorType: "system",
+        actorId: null,
+        action: finish ? "delivery_run.finish" : "delivery_run.cancel",
+        entityType: "delivery_run",
+        entityId: run.id,
+        reason: "Saída aberta há mais de 24 h.",
+      });
+    });
+    closed += 1;
+  }
+  return { closed };
 }

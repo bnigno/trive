@@ -15,7 +15,7 @@ import type { MessagingProvider } from "@/adapters/zapi";
 import { deliveryLine, isStaleShipment, normalizeReceivedBy, RECEIVED_BY_MAX_CHARS, STALE_SHIPMENT_DAYS } from "@/core/orders/delivery";
 import { type OrderStatus } from "@/core/orders/state-machine";
 import { renderTemplate } from "@/core/whatsapp/render";
-import { auditLog, customers, orders, waMessages, waTemplates } from "@/db/schema";
+import { auditLog, customers, deliveryStops, orders, waMessages, waTemplates } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { spDayKey } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -256,6 +256,18 @@ export async function sendDeliveredWa(
   const storeName =
     typeof settings["store_name"] === "string" && settings["store_name"].trim() !== "" ? settings["store_name"].trim() : STORE_NAME_DEFAULT;
   const now = input.now ?? new Date();
+  // Pelo motoboy, a hora é a do toque "Entregue" na parada — o pedido em
+  // dinheiro só vira 'delivered' quando a dona baixa o pagamento, horas depois.
+  const [stop] =
+    row.deliveryConfirmedBy === "courier"
+      ? await db
+          .select({ deliveredAt: deliveryStops.deliveredAt })
+          .from(deliveryStops)
+          .where(and(eq(deliveryStops.orderId, orderId), eq(deliveryStops.status, "delivered")))
+          .orderBy(desc(deliveryStops.deliveredAt))
+          .limit(1)
+      : [];
+  const deliveredAt = stop?.deliveredAt ?? row.deliveredAt;
   // Com a foto ou pelo motoboy, a hora é a da entrega de verdade; confirmada
   // pela cliente, a frase fica sem hora ("foi entregue 🤎").
   const body = renderTemplate(template.bodyTemplate, {
@@ -272,7 +284,7 @@ export async function sendDeliveredWa(
     }),
     entrega:
       row.deliveredPhotoPath || row.deliveryConfirmedBy === "courier"
-        ? deliveryLine({ deliveredAt: row.deliveredAt, receivedBy: row.receivedBy, now })
+        ? deliveryLine({ deliveredAt, receivedBy: row.receivedBy, now })
         : "",
     recebido_por: row.receivedBy ?? "",
   }).replace(/[ \t]{2,}/g, " ");

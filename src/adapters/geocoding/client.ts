@@ -14,6 +14,9 @@ const resultSchema = z.array(
 );
 
 type FetchLike = (input: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => Promise<Response>;
+type SleepLike = (ms: number) => Promise<void>;
+/** Entre a busca com número e a busca só pela rua: a política pede ≤ 1 pedido/s. */
+const RETRY_SPACING_MS = 1_100;
 
 /**
  * Consulta estruturada (rua+número, bairro, cidade, UF, CEP, só Brasil).
@@ -21,12 +24,16 @@ type FetchLike = (input: string, init?: { signal?: AbortSignal; headers?: Record
  * ainda serve para uma distância aproximada. Qualquer erro → null.
  */
 export class NominatimGeocoder implements Geocoder {
-  constructor(private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init)) {}
+  constructor(
+    private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init),
+    private readonly sleep: SleepLike = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  ) {}
 
   async geocode(query: GeocodeQuery): Promise<GeoResult | null> {
     const withNumber = await this.search(query, true);
     if (withNumber) return withNumber;
     if (!query.number.trim()) return null;
+    await this.sleep(RETRY_SPACING_MS);
     return this.search(query, false);
   }
 

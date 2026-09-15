@@ -61,7 +61,9 @@ export async function createCourier(db: DbOrTx, input: CreateCourierInput): Prom
   return db.transaction(async (tx) => {
     const [existing] = await tx.select({ id: couriers.id }).from(couriers).where(eq(couriers.phoneE164, parsed.phone)).limit(1);
     if (existing) throw new ServiceError("COURIER_PHONE_TAKEN", "Já existe um motoboy com este WhatsApp.");
-    const [row] = await tx.insert(couriers).values({ name: parsed.name, phoneE164: parsed.phone }).returning();
+    // Duas abas cadastrando o mesmo número ao mesmo tempo: o UNIQUE decide.
+    const [row] = await tx.insert(couriers).values({ name: parsed.name, phoneE164: parsed.phone }).onConflictDoNothing().returning();
+    if (!row) throw new ServiceError("COURIER_PHONE_TAKEN", "Já existe um motoboy com este WhatsApp.");
     await tx.insert(auditLog).values({
       actorType: "user",
       actorId: parsed.userId,

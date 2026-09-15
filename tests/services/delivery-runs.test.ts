@@ -16,6 +16,7 @@ import { confirmDeliveryByToken, sendDeliveredWa } from "@/services/delivery";
 import { completeDispatchedOrder, dispatchOrder } from "@/services/delivery-routes";
 import {
   cancelDeliveryRun,
+  closeStaleDeliveryRuns,
   completeStop,
   createDeliveryRun,
   failStop,
@@ -178,9 +179,23 @@ describe("listRunEligibleOrders", () => {
     expect(byId.has(paid.orderId)).toBe(true);
     expect(byId.has(cash.orderId)).toBe(true);
     expect(byId.get(onStreet.orderId)?.status).toBe("shipped");
-    expect(byId.get(tomorrow.orderId)?.openRunId).toBe(created.runId);
+    expect(byId.get(tomorrow.orderId)).toMatchObject({ openRunId: created.runId, openRunCourier: "Carlos Motoboy" });
+    expect(byId.get(paid.orderId)).toMatchObject({ openRunId: null, openRunCourier: null });
     expect(byId.has(past.orderId)).toBe(false);
     expect(byId.has(pac.orderId)).toBe(false);
+  });
+
+  it("'Saiu' de mais de 48 h não é 'na rua': fica fora; pedido entregue pelo motoboy à espera da baixa também", async () => {
+    const { variantId, rateId } = await setup();
+    const old = await paidMotoboyOrder(variantId, rateId, "2026-09-15", WINDOWS[0], new Date("2026-09-15T13:30:00Z"));
+    await dispatchOrder(sdb, { orderId: old.orderId, userId: FIXED_USER_ID, now: new Date("2026-09-15T19:00:00Z") });
+    expect((await listRunEligibleOrders(sdb, { now: AFTERNOON })).some((o) => o.id === old.orderId)).toBe(false);
+
+    const { cash, stops, token } = await runOnTheRoad();
+    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
+    expect((await listRunEligibleOrders(sdb, { now: AFTERNOON })).some((o) => o.id === cash.orderId)).toBe(false);
+    const c2 = await courier("Outro", "(91) 98111-2222");
+    await expect(createDeliveryRun(sdb, { courierId: c2.id, orderIds: [cash.orderId], userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toThrow(/já foi entregue/);
   });
 });
 
@@ -264,12 +279,15 @@ describe("createDeliveryRun", () => {
     await expect(createDeliveryRun(sdb, { courierId: c.id, orderIds: [], userId: FIXED_USER_ID })).rejects.toThrow();
   });
 
-  it("reenvia o link com outra chave de dedupe", async () => {
-    const { run } = await runOnTheRoad();
+  it("reenvia o link com outra chave de dedupe — nunca a motoboy desativado", async () => {
+    const { run, courier: c } = await runOnTheRoad();
     await resendCourierLink(sdb, { runId: run.runId, userId: FIXED_USER_ID, now: new Date(AFTERNOON.getTime() + 60_000) });
     const links = (await outboxEvents()).filter((e) => e.eventType === "wa.send");
     expect(links).toHaveLength(2);
     expect(links[1].dedupeKey).toBe(`wa.courier_link:${run.runId}:${AFTERNOON.getTime() + 60_000}`);
+    await updateCourier(sdb, { courierId: c.id, isActive: false, userId: FIXED_USER_ID });
+    await expect(resendCourierLink(sdb, { runId: run.runId, userId: FIXED_USER_ID })).rejects.toThrow(/desativado/);
+    expect((await outboxEvents()).filter((e) => e.eventType === "wa.send")).toHaveLength(2);
   });
 });
 
@@ -288,7 +306,7 @@ describe("o motoboy na rua", () => {
     await expect(startDeliveryRun(sdb, { courierToken: "00000000-0000-4000-8000-000000000000" })).rejects.toThrow(/não encontrada/);
   });
 
-  it("posições: só na rua; a última sempre atualiza, a trilha com espaçamento; futuro e regressão são recusados", async () => {
+  it("posições: só na rua; a última sempre atualiza (hora do servidor), a trilha com espaçamento; regressão é recusada", async () => {
     const { variantId, rateId } = await setup();
     const paid = await paidMotoboyOrder(variantId, rateId);
     const c = await courier();
@@ -302,10 +320,9 @@ describe("o motoboy na rua", () => {
     expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, accuracyM: 10, recordedAt: t(1), now: t(1) })).toEqual({ accepted: true, trail: true });
     // 5 s depois, 5 m adiante: a última posição muda, a trilha não.
     expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45 + 5 / 111_320, lng: -48.49, accuracyM: 10, recordedAt: t(6), now: t(6) })).toEqual({ accepted: true, trail: false });
-    expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, accuracyM: 10, recordedAt: t(3), now: t(7) })).toEqual({ accepted: false, reason: "regression" });
-    expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, accuracyM: 10, recordedAt: t(500), now: t(8) })).toEqual({ accepted: false, reason: "future" });
-    // 20 s depois: trilha por tempo.
-    expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.451, lng: -48.49, accuracyM: 25, speedMps: 8, recordedAt: t(26), now: t(26) })).toEqual({ accepted: true, trail: true });
+    expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, accuracyM: 10, recordedAt: t(0), now: t(7) })).toEqual({ accepted: false, reason: "regression" });
+    // 20 s depois: trilha por tempo. Relógio do celular 8 min adiantado: a hora é aparada ao servidor.
+    expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.451, lng: -48.49, accuracyM: 25, speedMps: 8, recordedAt: t(500), now: t(26) })).toEqual({ accepted: true, trail: true });
 
     const [run] = await db.select().from(schema.deliveryRuns).where(eq(schema.deliveryRuns.id, created.runId));
     expect(run.lastLat).toBeCloseTo(-1.451, 6);
@@ -314,6 +331,15 @@ describe("o motoboy na rua", () => {
     const trail = await db.select().from(schema.deliveryPositions).where(eq(schema.deliveryPositions.runId, created.runId)).orderBy(asc(schema.deliveryPositions.recordedAt));
     expect(trail.map((p) => p.recordedAt)).toEqual([t(1), t(26)]);
     expect(trail[1].speedMps).toBe(8);
+  });
+
+  it("relógio do celular 5 min atrasado: o sinal é 'ao vivo' mesmo assim (hora de chegada ao servidor)", async () => {
+    const { paid, token } = await runOnTheRoad();
+    const t = (s: number) => new Date(AFTERNOON.getTime() + s * 1000);
+    expect(await recordRunPosition(sdb, { courierToken: token, lat: NAZARE.lat + 0.001, lng: NAZARE.lng, accuracyM: 8, recordedAt: t(-300), now: t(10) })).toMatchObject({ accepted: true });
+    const view = (await getTrackingForOrder(sdb, paid.publicToken, t(15)))!;
+    expect(view.signal).toBe("live");
+    expect(view.updatedSecondsAgo).toBe(5);
   });
 
   it("'Entregue' no pedido pago: prova na parada e no pedido, 'delivered' pela máquina e o aviso com hora e quem recebeu", async () => {
@@ -357,10 +383,18 @@ describe("o motoboy na rua", () => {
     expect(order).toMatchObject({ status: "pending_payment", deliveryConfirmedBy: "courier", receivedBy: null });
     expect((await outboxEvents()).some((e) => e.eventType === "order.delivered")).toBe(false);
 
-    // A dona baixa o dinheiro e fecha pelo caminho de sempre.
+    // A dona baixa o dinheiro e fecha pelo caminho de sempre — horas depois.
     await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
     await completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID });
     expect((await orderRow(cash.orderId)).status).toBe("delivered");
+
+    // O aviso à cliente traz a hora em que o motoboy entregou (16:00 SP), não a do fechamento.
+    await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
+    const template = initialWaTemplates.find((row) => row.key === "order_delivered")!;
+    await db.insert(schema.waTemplates).values({ key: template.key, label: template.label, bodyTemplate: template.bodyTemplate, variables: template.variables });
+    const provider = new FakeMessagingProvider();
+    await sendDeliveredWa(sdb, provider, new FakeFileStorage(), { orderId: cash.orderId, now: new Date(AFTERNOON.getTime() + 5 * 3_600_000) });
+    expect(provider.sentMessages[0].body).toMatch(/hoje às 16:00/);
   });
 
   it("a cliente tocou 'Chegou!' antes: a parada fecha, sem sobrescrever quem confirmou", async () => {
@@ -371,6 +405,24 @@ describe("o motoboy na rua", () => {
     const result = await completeStop(sdb, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON });
     expect(result).toMatchObject({ orderDelivered: true, idempotent: false, receivedBy: "Maria" });
     expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer", receivedBy: "Maria" });
+  });
+
+  it("pedido cancelado pela loja com parada aberta: 'Entregue' recusa com mensagem clara; 'Não consegui' fecha", async () => {
+    const { paid, stops, token } = await runOnTheRoad();
+    await transitionOrder(sdb, { orderId: paid.orderId, to: "refunded", userId: FIXED_USER_ID, reason: "Cliente desistiu." });
+    const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
+    await expect(completeStop(sdb, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria" })).rejects.toThrow(/cancelado pela loja/);
+    expect(await failStop(sdb, { courierToken: token, stopId: paidStop.id, reason: "outro", note: "Loja cancelou" })).toMatchObject({ idempotent: false });
+  });
+
+  it("depois de cancelada, o link do motoboy não faz mais nada (mensagem clara, não erro genérico)", async () => {
+    const { paid, stops, token, run } = await runOnTheRoad();
+    await cancelDeliveryRun(sdb, { runId: run.runId, userId: FIXED_USER_ID });
+    const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
+    await expect(startDeliveryRun(sdb, { courierToken: token })).rejects.toThrow(/cancelada pela loja/);
+    await expect(completeStop(sdb, { courierToken: token, stopId: paidStop.id })).rejects.toThrow(/cancelada pela loja/);
+    await expect(failStop(sdb, { courierToken: token, stopId: paidStop.id, reason: "outro" })).rejects.toThrow(/cancelada pela loja/);
+    expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, recordedAt: AFTERNOON })).toEqual({ accepted: false, reason: "not_en_route" });
   });
 
   it("antes de 'Comecei a rota' não fecha parada; parada de outra saída não existe", async () => {
@@ -478,10 +530,10 @@ describe("leituras", () => {
 
     const geocoder = new FakeGeocoder();
     const sleeps: number[] = [];
-    expect(await geocodeRunStops(sdb, geocoder, { runId: created.runId, sleep: async (ms) => void sleeps.push(ms) })).toEqual({ attempted: 2, found: 2 });
+    expect(await geocodeRunStops(sdb, geocoder, { runId: created.runId, sleep: async (ms) => void sleeps.push(ms) })).toEqual({ attempted: 2, found: 2, remaining: 0 });
     expect(sleeps).toEqual([1100]);
     // Rodar de novo não consulta o vendor.
-    expect(await geocodeRunStops(sdb, geocoder, { runId: created.runId })).toEqual({ attempted: 0, found: 0 });
+    expect(await geocodeRunStops(sdb, geocoder, { runId: created.runId })).toEqual({ attempted: 0, found: 0, remaining: 0 });
     expect(geocoder.calls).toHaveLength(2);
 
     await startDeliveryRun(sdb, { courierToken: created.courierToken, now: t(1) });
@@ -491,7 +543,10 @@ describe("leituras", () => {
     await recordRunPosition(sdb, { courierToken: created.courierToken, lat: NAZARE.lat + 0.02, lng: NAZARE.lng, accuracyM: 12, recordedAt: t(10), now: t(10) });
     const far = (await getTrackingForOrder(sdb, paid.publicToken, t(25)))!;
     expect(far).toMatchObject({ state: "en_route", signal: "live", updatedSecondsAgo: 15, otherStopsPending: 1 });
-    expect(far.courier).toMatchObject({ lat: NAZARE.lat + 0.02, accuracyM: 12 });
+    // Outra parada por entregar: posição arredondada (~110 m).
+    expect(far.approximate).toBe(true);
+    expect(far.courier?.accuracyM).toBe(12);
+    expect(far.courier?.lat).toBeCloseTo(NAZARE.lat + 0.02, 2);
     expect(far.distanceKm).toBeCloseTo(2.2, 1);
     expect(far.etaMinutes).toBeGreaterThan(0);
     expect(JSON.stringify(far)).not.toContain("Nazaré");
@@ -501,17 +556,83 @@ describe("leituras", () => {
     expect(await getTrackingForOrder(sdb, paid.publicToken, t(405))).toMatchObject({ state: "arriving", etaMinutes: null });
     // Sem sinal há 10 min: continua "a caminho", com a posição velha e o aviso.
     expect(await getTrackingForOrder(sdb, paid.publicToken, t(1_100))).toMatchObject({ state: "en_route", signal: "lost" });
+    // Depois de 30 min sem sinal, a posição some do link.
+    expect((await getTrackingForOrder(sdb, paid.publicToken, t(400 + 31 * 60)))!).toMatchObject({ state: "en_route", signal: "lost", courier: null });
     expect(await getTrackingForOrder(sdb, "nao-e-uuid")).toBeNull();
     expect(await getTrackingForOrder(sdb, "00000000-0000-4000-8000-000000000000")).toBeNull();
   });
 
-  it("geocodificação: o que o vendor não acha fica sem pino e não derruba o resto", async () => {
+  it("privacidade: com outra parada por entregar a posição vai arredondada; sozinha, exata; nunca o endereço nem o destino, em nenhum estado", async () => {
+    const { variantId, rateId } = await setup();
+    const a = await paidMotoboyOrder(variantId, rateId);
+    const b = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, {
+        customer: { fullName: "Beatriz Lima", document: "111.444.777-35", phone: "(91) 98888-5678", email: "bia@example.com", marketingOptIn: true },
+        address: { postalCode: "66055-260", street: "Travessa Quintino Bocaiúva", number: "1500", complement: "", district: "Batista Campos", city: "Belém", state: "PA" },
+        deliveryWindow: { dayKey: TODAY, ...WINDOWS[1] },
+      }),
+      { now: MORNING },
+    );
+    await transitionOrder(sdb, { orderId: b.orderId, to: "paid", userId: FIXED_USER_ID });
+    const c = await courier();
+    const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [a.orderId, b.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
+    const geocoder = new FakeGeocoder();
+    geocoder.set("Travessa Quintino Bocaiúva", { lat: -1.4611, lng: -48.4867 });
+    await geocodeRunStops(sdb, geocoder, { runId: created.runId, sleep: async () => {} });
+    await startDeliveryRun(sdb, { courierToken: created.courierToken, now: AFTERNOON });
+    const t = (s: number) => new Date(AFTERNOON.getTime() + s * 1000);
+    // O motoboy parado na porta da cliente A (ponto exato da casa dela).
+    const atA = { lat: NAZARE.lat + 0.00004, lng: NAZARE.lng - 0.00007 };
+    await recordRunPosition(sdb, { courierToken: created.courierToken, ...atA, accuracyM: 6, recordedAt: t(30), now: t(30) });
+
+    const seenByB = (await getTrackingForOrder(sdb, b.publicToken, t(35)))!;
+    expect(seenByB.approximate).toBe(true);
+    expect(seenByB.courier).not.toEqual({ ...atA, accuracyM: 6 });
+    expect(Math.abs(seenByB.courier!.lat - atA.lat)).toBeLessThan(0.001);
+    const seenByA = (await getTrackingForOrder(sdb, a.publicToken, t(35)))!;
+    expect(seenByA.state).toBe("arriving");
+    expect(seenByA.approximate).toBe(true); // B ainda por entregar
+
+    const stops = await stopsOf(created.runId);
+    await completeStop(sdb, { courierToken: created.courierToken, stopId: stops.find((s) => s.orderId === a.orderId)!.id, receivedBy: "Ana", position: { ...atA, accuracyM: 6 }, now: t(60) });
+    // Só B sobrou: posição exata para B.
+    await recordRunPosition(sdb, { courierToken: created.courierToken, lat: -1.4605, lng: -48.4871, accuracyM: 6, recordedAt: t(200), now: t(200) });
+    const alone = (await getTrackingForOrder(sdb, b.publicToken, t(205)))!;
+    expect(alone.approximate).toBe(false);
+    expect(alone.courier).toEqual({ lat: -1.4605, lng: -48.4871, accuracyM: 6 });
+
+    // Em nenhum estado a leitura carrega endereço ou destino.
+    const forbidden = ["Nazaré", "Quintino", "-1.4611", "-48.4867", String(NAZARE.lat), "destination", "address"];
+    for (const [token, when] of [[a.publicToken, t(65)], [b.publicToken, t(205)]] as const) {
+      const json = JSON.stringify(await getTrackingForOrder(sdb, token, when));
+      for (const word of forbidden) expect(json).not.toContain(word);
+    }
+    await failStop(sdb, { courierToken: created.courierToken, stopId: stops.find((s) => s.orderId === b.orderId)!.id, reason: "ninguem_em_casa" });
+    expect((await getTrackingForOrder(sdb, b.publicToken, t(300)))!).toMatchObject({ state: "failed", courier: null });
+    await finishDeliveryRun(sdb, { courierToken: created.courierToken, now: t(400) });
+    expect((await getTrackingForOrder(sdb, a.publicToken, t(500)))!).toMatchObject({ state: "delivered", courier: null, receivedBy: "Ana" });
+  });
+
+  it("geocodificação: o que o vendor não acha fica sem pino e não derruba o resto; respeita o teto por rodada e o prazo", async () => {
     const { run } = await runOnTheRoad();
     const geocoder = new FakeGeocoder();
     geocoder.failNext();
-    expect(await geocodeRunStops(sdb, geocoder, { runId: run.runId, sleep: async () => {} })).toEqual({ attempted: 2, found: 1 });
+    expect(await geocodeRunStops(sdb, geocoder, { runId: run.runId, sleep: async () => {}, maxStops: 1 })).toEqual({ attempted: 1, found: 0, remaining: 1 });
+    // A que falhou continua sem pino e entra de novo na rodada seguinte, junto com a que faltava.
+    expect(await geocodeRunStops(sdb, geocoder, { runId: run.runId, sleep: async () => {} })).toEqual({ attempted: 2, found: 2, remaining: 0 });
     const stops = await stopsOf(run.runId);
-    expect(stops.map((s) => s.destLat)).toEqual([null, NAZARE.lat]);
+    expect(stops.map((s) => s.destLat)).toEqual([NAZARE.lat, NAZARE.lat]);
+
+    // Prazo do worker já perto: não começa parada nenhuma e devolve o que falta.
+    const { run: other } = await (async () => {
+      const { variantId, rateId } = await setup();
+      const paid = await paidMotoboyOrder(variantId, rateId);
+      const c = await courier("Outro", "(91) 98111-2222");
+      return { run: await createDeliveryRun(sdb, { courierId: c.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: AFTERNOON }) };
+    })();
+    const soon = new Date(AFTERNOON.getTime() + 5_000);
+    expect(await geocodeRunStops(sdb, geocoder, { runId: other.runId, deadlineAt: soon, now: () => AFTERNOON, sleep: async () => {} })).toEqual({ attempted: 0, found: 0, remaining: 1 });
   });
 
   it("o painel: lista, detalhe com prova, trilha e link; e a ficha do pedido acha a parada", async () => {
@@ -542,15 +663,61 @@ describe("leituras", () => {
     expect(closed.stops.find((s) => s.orderId === paid.orderId)?.addressLine).toBe("Av. Nazaré, 100, apto 12 — Nazaré, Belém");
   });
 
-  it("a trilha some depois de 30 dias; a última posição fica na saída", async () => {
-    const { token, run } = await runOnTheRoad();
+  it("a trilha some depois de 30 dias (pela chegada ao servidor); a última posição de saída fechada há 30 dias também", async () => {
+    const { token, run, stops } = await runOnTheRoad();
     const old = new Date("2026-08-01T12:00:00Z");
     await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, recordedAt: old, now: old });
     await recordRunPosition(sdb, { courierToken: token, lat: -1.451, lng: -48.49, recordedAt: AFTERNOON, now: AFTERNOON });
-    expect(await purgeOldDeliveryPositions(sdb, { now: new Date("2026-09-18T20:00:00Z") })).toEqual({ deleted: 1 });
+    expect(await purgeOldDeliveryPositions(sdb, { now: new Date("2026-09-18T20:00:00Z") })).toEqual({ deleted: 1, runsCleared: 0 });
     const trail = await db.select().from(schema.deliveryPositions).where(eq(schema.deliveryPositions.runId, run.runId));
     expect(trail.map((p) => p.recordedAt)).toEqual([AFTERNOON]);
-    const [row] = await db.select().from(schema.deliveryRuns).where(eq(schema.deliveryRuns.id, run.runId));
+    let [row] = await db.select().from(schema.deliveryRuns).where(eq(schema.deliveryRuns.id, run.runId));
+    expect(row.lastLat).not.toBeNull();
+
+    for (const stop of stops) await failStop(sdb, { courierToken: token, stopId: stop.id, reason: "outro" });
+    await finishDeliveryRun(sdb, { courierToken: token, now: AFTERNOON });
+    expect(await purgeOldDeliveryPositions(sdb, { now: new Date("2026-10-20T20:00:00Z") })).toEqual({ deleted: 1, runsCleared: 1 });
+    [row] = await db.select().from(schema.deliveryRuns).where(eq(schema.deliveryRuns.id, run.runId));
+    expect(row.lastLat).toBeNull();
     expect(row.lastPositionAt).toEqual(AFTERNOON);
+  });
+
+  it("saída esquecida aberta há mais de 24 h fecha sozinha e avisa a dona", async () => {
+    const { paid, cash, stops, token, run } = await runOnTheRoad();
+    expect(await closeStaleDeliveryRuns(sdb, { now: new Date(AFTERNOON.getTime() + 2 * 3_600_000) })).toEqual({ closed: 0 });
+    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, now: AFTERNOON });
+    const later = new Date(AFTERNOON.getTime() + 25 * 3_600_000);
+    expect(await closeStaleDeliveryRuns(sdb, { now: later })).toEqual({ closed: 1 });
+    const [row] = await db.select().from(schema.deliveryRuns).where(eq(schema.deliveryRuns.id, run.runId));
+    expect(row.status).toBe("canceled");
+    expect((await stopsOf(run.runId)).find((s) => s.orderId === cash.orderId)?.status).toBe("canceled");
+    const alert = (await outboxEvents()).find((e) => e.dedupeKey === `wa.run_stale:${run.runId}`);
+    expect((alert?.payload as { body: string }).body).toContain("1 parada por entregar");
+
+    // Sem pendentes, encerra em vez de cancelar.
+    const second = await (async () => {
+      const { variantId, rateId } = await setup();
+      const p = await paidMotoboyOrder(variantId, rateId);
+      const c = await courier("Outro", "(91) 98111-2222");
+      const r = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [p.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
+      await startDeliveryRun(sdb, { courierToken: r.courierToken, now: AFTERNOON });
+      const [stop] = await stopsOf(r.runId);
+      await completeStop(sdb, { courierToken: r.courierToken, stopId: stop.id, now: AFTERNOON });
+      return r;
+    })();
+    expect(await closeStaleDeliveryRuns(sdb, { now: later })).toEqual({ closed: 1 });
+    const [row2] = await db.select().from(schema.deliveryRuns).where(eq(schema.deliveryRuns.id, second.runId));
+    expect(row2.status).toBe("finished");
+  });
+
+  it("a ficha do pedido prefere a prova de uma saída anterior à parada cancelada", async () => {
+    const { paid, stops, token, run } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa" });
+    await cancelDeliveryRun(sdb, { runId: run.runId, userId: FIXED_USER_ID });
+    const c2 = await courier("Outro", "(91) 98111-2222");
+    const again = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    expect(await getStopForOrder(sdb, paid.orderId)).toMatchObject({ runId: again.runId, stopStatus: "pending" });
+    await cancelDeliveryRun(sdb, { runId: again.runId, userId: FIXED_USER_ID });
+    expect(await getStopForOrder(sdb, paid.orderId)).toMatchObject({ runId: run.runId, stopStatus: "failed", failureReason: "ninguem_em_casa" });
   });
 });

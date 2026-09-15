@@ -38,14 +38,16 @@ describe("NominatimGeocoder", () => {
     expect(calls[0].headers?.["User-Agent"]).toMatch(/^TRIVE\/1\.0 \(.+\)$/);
   });
 
-  it("sem resultado com número, tenta só a rua; sem nada, null", async () => {
+  it("sem resultado com número, tenta só a rua depois de uma pausa de 1,1 s; sem nada, null", async () => {
     const { calls, fetchFn } = fetchFor((url) => ({ status: 200, body: url.includes("100") ? [] : [{ lat: "-1.45", lon: "-48.49" }] }));
-    expect(await new NominatimGeocoder(fetchFn).geocode(QUERY)).toEqual({ lat: -1.45, lng: -48.49 });
+    const sleeps: number[] = [];
+    expect(await new NominatimGeocoder(fetchFn, async (ms) => void sleeps.push(ms)).geocode(QUERY)).toEqual({ lat: -1.45, lng: -48.49 });
     expect(calls).toHaveLength(2);
+    expect(sleeps).toEqual([1100]);
     expect(new URL(calls[1].url).searchParams.get("street")).toBe("Av. Nazaré");
 
     const empty = fetchFor(() => ({ status: 200, body: [] }));
-    expect(await new NominatimGeocoder(empty.fetchFn).geocode(QUERY)).toBeNull();
+    expect(await new NominatimGeocoder(empty.fetchFn, async () => {}).geocode(QUERY)).toBeNull();
   });
 
   it("erro de rede, 5xx, corpo torto ou coordenada inválida → null, nunca lança", async () => {

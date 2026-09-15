@@ -45,35 +45,44 @@ describe("haversineKm", () => {
 
 describe("acceptPosition", () => {
   it("primeira amostra: aceita e abre a trilha", () => {
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample(), now: NOW })).toEqual({ kind: "accept", trail: true });
+    const decision = acceptPosition({ lastTrail: null, sample: sample(), now: NOW });
+    expect(decision).toEqual({ kind: "accept", trail: true, recordedAt: NOW });
   });
 
-  it("recusa ponto inválido, hora no futuro e regressão de tempo", () => {
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample({ lat: 0, lng: 0 }), now: NOW })).toEqual({ kind: "reject", reason: "invalid" });
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample({ secondsAgo: -120 }), now: NOW })).toEqual({ kind: "reject", reason: "future" });
-    // 30 s no futuro é relógio desregulado, não fraude: passa.
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample({ secondsAgo: -30 }), now: NOW }).kind).toBe("accept");
-    const last = { recordedAt: new Date(NOW.getTime() - 10_000) };
-    expect(acceptPosition({ last, lastTrail: null, sample: sample({ secondsAgo: 20 }), now: NOW })).toEqual({ kind: "reject", reason: "regression" });
-    expect(acceptPosition({ last, lastTrail: null, sample: sample({ secondsAgo: 10 }), now: NOW })).toEqual({ kind: "reject", reason: "regression" });
+  it("recusa ponto inválido e regressão de tempo contra o último ponto da trilha", () => {
+    expect(acceptPosition({ lastTrail: null, sample: sample({ lat: 0, lng: 0 }), now: NOW })).toEqual({ kind: "reject", reason: "invalid" });
+    const lastTrail = sample({ secondsAgo: 10 });
+    expect(acceptPosition({ lastTrail, sample: sample({ secondsAgo: 20 }), now: NOW })).toEqual({ kind: "reject", reason: "regression" });
+    expect(acceptPosition({ lastTrail, sample: sample({ secondsAgo: 10 }), now: NOW })).toEqual({ kind: "reject", reason: "regression" });
+  });
+
+  it("relógio do celular adiantado: a hora é aparada ao relógio do servidor, nunca recusada", () => {
+    const decision = acceptPosition({ lastTrail: null, sample: sample({ secondsAgo: -120 }), now: NOW });
+    expect(decision).toEqual({ kind: "accept", trail: true, recordedAt: NOW });
+    // A amostra seguinte (também adiantada) não é regressão: as duas caem em NOW+…
+    const later = new Date(NOW.getTime() + 5_000);
+    const next = acceptPosition({ lastTrail: { ...sample({ secondsAgo: -120 }), recordedAt: NOW }, sample: sample({ ...north(REPUBLICA, 30), secondsAgo: -120 }), now: later });
+    expect(next).toEqual({ kind: "accept", trail: true, recordedAt: later });
+  });
+
+  it("relógio do celular atrasado: aceita (a hora dele só ordena a trilha)", () => {
+    expect(acceptPosition({ lastTrail: null, sample: sample({ secondsAgo: 300 }), now: NOW }).kind).toBe("accept");
   });
 
   it("recusa precisão de quilômetro (célula de operadora) e precisão negativa", () => {
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample({ accuracyM: 1500 }), now: NOW })).toEqual({ kind: "reject", reason: "inaccurate" });
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample({ accuracyM: -1 }), now: NOW })).toEqual({ kind: "reject", reason: "invalid" });
-    expect(acceptPosition({ last: null, lastTrail: null, sample: sample({ accuracyM: null }), now: NOW }).kind).toBe("accept");
+    expect(acceptPosition({ lastTrail: null, sample: sample({ accuracyM: 1500 }), now: NOW })).toEqual({ kind: "reject", reason: "inaccurate" });
+    expect(acceptPosition({ lastTrail: null, sample: sample({ accuracyM: -1 }), now: NOW })).toEqual({ kind: "reject", reason: "invalid" });
+    expect(acceptPosition({ lastTrail: null, sample: sample({ accuracyM: null }), now: NOW }).kind).toBe("accept");
   });
 
   it("trilha só a cada 15 s ou 25 m desde o último ponto guardado; a última posição sempre atualiza", () => {
     const lastTrail = sample({ secondsAgo: 10 });
-    const last = { recordedAt: lastTrail.recordedAt };
     // 5 s depois, 5 m adiante: aceita sem trilha.
-    expect(acceptPosition({ last, lastTrail, sample: sample({ ...north(REPUBLICA, 5), secondsAgo: 5 }), now: NOW })).toEqual({ kind: "accept", trail: false });
+    expect(acceptPosition({ lastTrail, sample: sample({ ...north(REPUBLICA, 5), secondsAgo: 5 }), now: NOW })).toMatchObject({ kind: "accept", trail: false });
     // 5 s depois, 30 m adiante: trilha por distância.
-    expect(acceptPosition({ last, lastTrail, sample: sample({ ...north(REPUBLICA, 30), secondsAgo: 5 }), now: NOW })).toEqual({ kind: "accept", trail: true });
+    expect(acceptPosition({ lastTrail, sample: sample({ ...north(REPUBLICA, 30), secondsAgo: 5 }), now: NOW })).toMatchObject({ kind: "accept", trail: true });
     // 16 s depois parado: trilha por tempo.
-    const older = sample({ secondsAgo: 20 });
-    expect(acceptPosition({ last: { recordedAt: older.recordedAt }, lastTrail: older, sample: sample({ secondsAgo: 4 }), now: NOW })).toEqual({ kind: "accept", trail: true });
+    expect(acceptPosition({ lastTrail: sample({ secondsAgo: 20 }), sample: sample({ secondsAgo: 4 }), now: NOW })).toMatchObject({ kind: "accept", trail: true });
   });
 });
 

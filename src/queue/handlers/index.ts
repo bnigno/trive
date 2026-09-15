@@ -554,10 +554,24 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // Saída do motoboy: geocodifica os endereços das paradas (pino no mapa e
   // distância para a cliente). Best-effort: o que não achar fica sem pino;
   // uma parada por segundo, como o Nominatim pede.
+  // Poucas paradas por rodada e olho no prazo da varredura: o que sobrar
+  // volta para a fila como evento novo (idempotente: só as sem coordenada).
   "delivery_run.geocode": async (event) => {
-    const { runId } = z.object({ runId: z.uuid() }).parse(event.payload);
-    const result = await geocodeRunStops(getDb(), getGeocoder(), { runId });
-    console.info(`[delivery_run.geocode] ${runId} → ${JSON.stringify(result)}`);
+    const { runId, round } = z.object({ runId: z.uuid(), round: z.number().int().min(0).default(0) }).parse(event.payload);
+    const result = await geocodeRunStops(getDb(), getGeocoder(), { runId, deadlineAt: event.deadlineAt ?? null });
+    console.info(`[delivery_run.geocode] ${runId} rodada ${round} → ${JSON.stringify(result)}`);
+    if (result.remaining > 0 && result.attempted > 0) {
+      await enqueueOutboxEvent(getDb(), {
+        eventType: "delivery_run.geocode",
+        dedupeKey: `delivery_run.geocode:${runId}:${round + 1}`,
+        aggregateType: "delivery_run",
+        aggregateId: runId,
+        payload: { runId, round: round + 1 },
+      });
+    } else if (result.remaining > 0) {
+      // Nem uma parada coube no prazo: devolve para a fila tentar de novo.
+      throw new Error(`[delivery_run.geocode] ${runId}: sem prazo para geocodificar (${result.remaining} paradas restantes)`);
+    }
   },
   // Resposta de cliente → encaminha ao dono (humano responde; bot desligado
   // ou conversa assumida).

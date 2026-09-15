@@ -2,7 +2,7 @@
 // "chegando", sinal perdido — e nunca o destino.
 import { describe, expect, it } from "vitest";
 
-import { buildTrackingView, distanceLabel, etaMinutes, type TrackingRunInput, type TrackingStopInput } from "@/core/delivery/tracking";
+import { buildTrackingView, COARSE_DECIMALS, distanceLabel, etaMinutes, POSITION_HIDE_AFTER_MS, type TrackingRunInput, type TrackingStopInput } from "@/core/delivery/tracking";
 
 const NOW = new Date("2026-09-18T18:00:00Z");
 const DEST = { lat: -1.4553, lng: -48.4933 };
@@ -12,7 +12,7 @@ const FAR = { lat: DEST.lat + 0.02, lng: DEST.lng };
 const NEAR = { lat: DEST.lat + 0.001, lng: DEST.lng };
 
 function run(over: Partial<TrackingRunInput> = {}): TrackingRunInput {
-  return { status: "en_route", courierFirstName: "Carlos", lastPosition: { ...FAR, accuracyM: 10, recordedAt: new Date(NOW.getTime() - 15_000) }, ...over };
+  return { status: "en_route", courierFirstName: "Carlos", lastPosition: { ...FAR, accuracyM: 10, seenAt: new Date(NOW.getTime() - 15_000) }, ...over };
 }
 function stop(over: Partial<TrackingStopInput> = {}): TrackingStopInput {
   return { status: "pending", destination: DEST, deliveredAt: null, receivedBy: null, ...over };
@@ -59,15 +59,42 @@ describe("buildTrackingView", () => {
   });
 
   it("a menos de 300 m está chegando (sem ETA); com sinal perdido não afirma que chega", () => {
-    const arriving = buildTrackingView({ run: run({ lastPosition: { ...NEAR, accuracyM: 8, recordedAt: NOW } }), stop: stop(), otherStopsPending: 0, now: NOW });
+    const arriving = buildTrackingView({ run: run({ lastPosition: { ...NEAR, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 0, now: NOW });
     expect(arriving.state).toBe("arriving");
     expect(arriving.etaMinutes).toBeNull();
+    expect(arriving.approximate).toBe(false);
     const lost = buildTrackingView(
-      { run: run({ lastPosition: { ...NEAR, accuracyM: 8, recordedAt: new Date(NOW.getTime() - 10 * 60_000) } }), stop: stop(), otherStopsPending: 0, now: NOW },
+      { run: run({ lastPosition: { ...NEAR, accuracyM: 8, seenAt: new Date(NOW.getTime() - 10 * 60_000) } }), stop: stop(), otherStopsPending: 0, now: NOW },
     );
     expect(lost.state).toBe("en_route");
     expect(lost.signal).toBe("lost");
     expect(lost.courier).not.toBeNull();
+  });
+
+  it("'chegando' só com GPS preciso: a 110 m com erro de 400 m é 'a caminho, aproximado'", () => {
+    const view = buildTrackingView({ run: run({ lastPosition: { ...NEAR, accuracyM: 400, seenAt: NOW } }), stop: stop(), otherStopsPending: 0, now: NOW });
+    expect(view.state).toBe("en_route");
+    expect(view.approximate).toBe(true);
+    expect(view.courier?.accuracyM).toBe(400);
+  });
+
+  it("com outras paradas por entregar a posição vai arredondada (~110 m): o ponto exato seria a casa de outra cliente", () => {
+    const exact = { lat: -1.455312, lng: -48.493287 };
+    const view = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 2, now: NOW });
+    expect(view.approximate).toBe(true);
+    expect(view.courier).toEqual({ lat: -1.455, lng: -48.493, accuracyM: 8 });
+    expect(String(view.courier?.lat).split(".")[1]?.length ?? 0).toBeLessThanOrEqual(COARSE_DECIMALS);
+    // A distância e o ETA continuam calculados sobre a posição exata.
+    expect(view.distanceKm).toBeCloseTo(0, 1);
+    const alone = buildTrackingView({ run: run({ lastPosition: { ...exact, accuracyM: 8, seenAt: NOW } }), stop: stop(), otherStopsPending: 0, now: NOW });
+    expect(alone.courier).toEqual({ ...exact, accuracyM: 8 });
+    expect(alone.approximate).toBe(false);
+  });
+
+  it("sem amostra nova há mais de 30 min a posição some do link (saída esquecida aberta)", () => {
+    const stale = buildTrackingView({ run: run({ lastPosition: { ...FAR, accuracyM: 8, seenAt: new Date(NOW.getTime() - POSITION_HIDE_AFTER_MS - 1) } }), stop: stop(), otherStopsPending: 0, now: NOW });
+    expect(stale).toMatchObject({ state: "en_route", signal: "lost", courier: null, distanceKm: null });
+    expect(stale.updatedSecondsAgo).toBeGreaterThanOrEqual(1800);
   });
 
   it("na rua sem posição ainda: a caminho, sem sinal", () => {
