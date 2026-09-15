@@ -85,10 +85,43 @@ export function addressLineOf(raw: unknown): { line: string | null; postalCode: 
 
 /** Pago ou em separação — e o dinheiro na entrega, que fica "aguardando pagamento" até o motoboy voltar. */
 const ROUTE_STATUSES: OrderStatus[] = ["paid", "preparing"];
-const routeStatusFilter = () =>
-  or(inArray(orders.status, ROUTE_STATUSES), and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")))!;
+const routeStatusFilter = (includeShipped: boolean) =>
+  or(
+    inArray(orders.status, includeShipped ? [...ROUTE_STATUSES, "shipped"] : ROUTE_STATUSES),
+    and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+  )!;
 
-export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
+/** "Longo Dunas · Areia · M ×1" por linha, e a contagem, por pedido. */
+export async function summarizeOrderItems(db: DbOrTx, orderIds: readonly string[]): Promise<Map<string, { count: number; lines: string[] }>> {
+  const itemsByOrder = new Map<string, { count: number; lines: string[] }>();
+  if (orderIds.length === 0) return itemsByOrder;
+  const items = await db
+    .select({
+      orderId: orderItems.orderId,
+      quantity: orderItems.quantity,
+      name: orderItems.nameSnapshot,
+      sku: orderItems.skuSnapshot,
+      attributes: productVariants.attributes,
+    })
+    .from(orderItems)
+    .leftJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
+    .where(inArray(orderItems.orderId, [...orderIds]));
+  for (const item of items) {
+    const entry = itemsByOrder.get(item.orderId) ?? { count: 0, lines: [] };
+    entry.count += item.quantity;
+    const attrs = item.attributes && typeof item.attributes === "object" ? Object.values(item.attributes as Record<string, string>).filter(Boolean) : [];
+    entry.lines.push([item.name, ...attrs].join(" · ") + (item.quantity > 1 ? ` ×${item.quantity}` : ""));
+    itemsByOrder.set(item.orderId, entry);
+  }
+  return itemsByOrder;
+}
+
+/**
+ * Os pedidos de motoboy por sair. `includeShipped` traz também os que já
+ * saíram (pagos viram 'shipped' no "Saiu"): é o que a saída com GPS aceita —
+ * o motoboy pode levar um pedido que a dona já marcou como saído.
+ */
+export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: boolean } = {}): Promise<RouteOrder[]> {
   const rows = await db
     .select({
       id: orders.id,
@@ -106,29 +139,11 @@ export async function listRouteOrders(db: DbOrTx): Promise<RouteOrder[]> {
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
-    .where(and(routeStatusFilter(), isNotNull(orders.deliveryWindow)))
+    .where(and(routeStatusFilter(options.includeShipped === true), isNotNull(orders.deliveryWindow)))
     .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
   if (rows.length === 0) return [];
 
-  const items = await db
-    .select({
-      orderId: orderItems.orderId,
-      quantity: orderItems.quantity,
-      name: orderItems.nameSnapshot,
-      sku: orderItems.skuSnapshot,
-      attributes: productVariants.attributes,
-    })
-    .from(orderItems)
-    .leftJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
-    .where(inArray(orderItems.orderId, rows.map((row) => row.id)));
-  const itemsByOrder = new Map<string, { count: number; lines: string[] }>();
-  for (const item of items) {
-    const entry = itemsByOrder.get(item.orderId) ?? { count: 0, lines: [] };
-    entry.count += item.quantity;
-    const attrs = item.attributes && typeof item.attributes === "object" ? Object.values(item.attributes as Record<string, string>).filter(Boolean) : [];
-    entry.lines.push([item.name, ...attrs].join(" · ") + (item.quantity > 1 ? ` ×${item.quantity}` : ""));
-    itemsByOrder.set(item.orderId, entry);
-  }
+  const itemsByOrder = await summarizeOrderItems(db, rows.map((row) => row.id));
 
   const result: RouteOrder[] = [];
   for (const row of rows) {
@@ -276,11 +291,18 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
  * (a dona passou pelo "Embalei"), shipped → delivered. O aviso "saiu" não
  * repete: shipped e out_for_delivery dividem a mesma chave de dedupe.
  */
+const completeSchema = z.object({
+  orderId: z.uuid(),
+  /** null = o motoboy, pela página da saída (a máquina registra o motivo). */
+  userId: z.uuid().nullable(),
+  reason: z.string().min(1).max(2000).optional(),
+});
+
 export async function completeDispatchedOrder(
   db: DbOrTx,
-  input: { orderId: string; userId: string },
+  input: z.input<typeof completeSchema>,
 ): Promise<{ orderId: string; orderNumber: number; from: OrderStatus; idempotent: boolean }> {
-  const parsed = dispatchSchema.parse(input);
+  const parsed = completeSchema.parse(input);
   return db.transaction(async (tx) => {
     const [order] = await tx
       .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, deliveryWindow: orders.deliveryWindow })
@@ -299,9 +321,9 @@ export async function completeDispatchedOrder(
       throw new ServiceError("PAYMENT_PENDING", "Registre o pagamento em dinheiro antes de marcar como entregue.");
     }
     if (from === "preparing") {
-      await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
+      await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId, reason: parsed.reason });
     }
-    await transitionOrder(tx, { orderId: order.id, to: "delivered", userId: parsed.userId });
+    await transitionOrder(tx, { orderId: order.id, to: "delivered", userId: parsed.userId, reason: parsed.reason });
     return { ...base, idempotent: false };
   });
 }

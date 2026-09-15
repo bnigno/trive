@@ -182,6 +182,26 @@ describe("processZapiInbound", () => {
     });
   });
 
+  it("motoboy cadastrado respondendo ao link da saída: vai para a dona, nunca para a Lia", async () => {
+    await db.insert(schema.settings).values([
+      { key: "wa_enabled", value: true },
+      { key: "bot_enabled", value: true },
+    ]);
+    await db.insert(schema.couriers).values({ name: "Carlos Motoboy", phoneE164: PHONE_E164 });
+
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: receivedMessage("MSG-MOTO", "Saí agora, chego em 20 min"),
+    });
+
+    expect(result.action).toBe("forwarded");
+    const outbox = await db.select().from(schema.outboxEvents);
+    expect(outbox.map((e) => e.eventType)).toEqual(["wa.owner_forward"]);
+    const payload = outbox[0].payload as { body: string; customerName?: string };
+    expect(payload.customerName).toBe("Motoboy Carlos");
+    expect(payload.body).toBe("Saí agora, chego em 20 min");
+  });
+
   it("texto comum: encaminha ao dono com customerName e trunca em 300 chars", async () => {
     await createOptedInCustomer();
     const longText = "Quero trocar o pedido. ".repeat(30); // > 300 chars

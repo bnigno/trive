@@ -39,7 +39,8 @@ import { recordDeliveryFeedback } from "@/services/delivery-feedback";
 import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
-import { isOwnerPhone } from "@/services/wa-messaging";
+import { firstNameOf, isOwnerPhone } from "@/services/wa-messaging";
+import { findActiveCourierByPhone } from "@/services/couriers";
 import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
 import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
 import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
@@ -306,6 +307,24 @@ export async function routeInboundMessage(
       });
       return "atelier_help";
     }
+  }
+
+  // Motoboy respondendo ao link da saída ("ok", "saí", "cheguei"): é
+  // recado para a dona — a Lia não vende para o motoboy.
+  const courier = await findActiveCourierByPhone(tx, input.phoneE164);
+  if (courier) {
+    await enqueueOutboxEvent(tx, {
+      eventType: "wa.owner_forward",
+      dedupeKey: `wa.fwd:${input.zapiMessageId}`,
+      aggregateType: "wa_conversation",
+      aggregateId: conversation.id,
+      payload: {
+        phoneE164: input.phoneE164,
+        body: (input.forwardText ?? input.text).slice(0, FORWARD_BODY_MAX_CHARS),
+        customerName: `Motoboy ${firstNameOf(courier.name)}`,
+      },
+    });
+    return "forwarded";
   }
 
   const botEligible =

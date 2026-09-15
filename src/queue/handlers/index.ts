@@ -32,6 +32,8 @@ import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
 import { getMessagingProvider } from "@/adapters/zapi";
+import { getGeocoder } from "@/adapters/geocoding";
+import { geocodeRunStops } from "@/services/delivery-runs";
 import { getDb } from "@/db/client";
 import { orders, products, productVariants, stockLevels } from "@/db/schema";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
@@ -548,6 +550,14 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       },
     );
     console.info(`[wa.bot_turn] ${payload.conversationId} → ${JSON.stringify(result)}`);
+  },
+  // Saída do motoboy: geocodifica os endereços das paradas (pino no mapa e
+  // distância para a cliente). Best-effort: o que não achar fica sem pino;
+  // uma parada por segundo, como o Nominatim pede.
+  "delivery_run.geocode": async (event) => {
+    const { runId } = z.object({ runId: z.uuid() }).parse(event.payload);
+    const result = await geocodeRunStops(getDb(), getGeocoder(), { runId });
+    console.info(`[delivery_run.geocode] ${runId} → ${JSON.stringify(result)}`);
   },
   // Resposta de cliente → encaminha ao dono (humano responde; bot desligado
   // ou conversa assumida).

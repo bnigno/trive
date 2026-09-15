@@ -302,6 +302,13 @@
       "when": 1789389757366,
       "tag": "0042_vai_me_servir",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1789485196713,
+      "tag": "0043_saida_motoboy",
+      "breakpoints": true
     }
   ]
 }

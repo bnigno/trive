@@ -156,7 +156,7 @@ export const orders = pgTable(
     check("orders_received_by_check", sql`${table.receivedBy} IS NULL OR char_length(${table.receivedBy}) <= 60`),
     check(
       "orders_delivery_confirmed_by_check",
-      sql`${table.deliveryConfirmedBy} IS NULL OR ${table.deliveryConfirmedBy} IN ('owner', 'customer', 'lia')`,
+      sql`${table.deliveryConfirmedBy} IS NULL OR ${table.deliveryConfirmedBy} IN ('owner', 'customer', 'lia', 'courier')`,
     ),
     check(
       "orders_status_check",

@@ -225,12 +225,13 @@ export async function sendDeliveredWa(
     .limit(1);
   if (!row) throw new ServiceError("ORDER_NOT_FOUND", `Pedido ${orderId} não encontrado.`);
   if (row.status !== "delivered" || !row.deliveredAt) return { skipped: "nao_entregue" };
-  // Sem foto, só quando a cliente confirmou pela PÁGINA: pela Lia, a
-  // resposta da Lia já é o aviso; "marcar entregue" pelo rastreio dos
-  // Correios não sabe a hora real e não manda nada, como antes.
+  // Sem foto, só quando a cliente confirmou pela PÁGINA ou o motoboy marcou
+  // na saída (ele sabe a hora e quem recebeu): pela Lia, a resposta da Lia
+  // já é o aviso; "marcar entregue" pelo rastreio dos Correios não sabe a
+  // hora real e não manda nada, como antes.
   if (!row.deliveredPhotoPath) {
     if (row.deliveryConfirmedBy === "lia") return { skipped: "confirmado_pela_lia" };
-    if (row.deliveryConfirmedBy !== "customer") return { skipped: "sem_foto" };
+    if (row.deliveryConfirmedBy !== "customer" && row.deliveryConfirmedBy !== "courier") return { skipped: "sem_foto" };
   }
   if (!row.phoneE164) return { skipped: "sem_telefone" };
   if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
@@ -255,8 +256,8 @@ export async function sendDeliveredWa(
   const storeName =
     typeof settings["store_name"] === "string" && settings["store_name"].trim() !== "" ? settings["store_name"].trim() : STORE_NAME_DEFAULT;
   const now = input.now ?? new Date();
-  // Com a foto, a hora é a da entrega de verdade; confirmada pela cliente,
-  // a frase fica sem hora ("foi entregue 🤎").
+  // Com a foto ou pelo motoboy, a hora é a da entrega de verdade; confirmada
+  // pela cliente, a frase fica sem hora ("foi entregue 🤎").
   const body = renderTemplate(template.bodyTemplate, {
     ...buildOrderVars({
       orderNumber: row.orderNumber,
@@ -269,7 +270,10 @@ export async function sendDeliveredWa(
       paymentMethod: row.paymentMethod,
       isGift: row.isGift,
     }),
-    entrega: row.deliveredPhotoPath ? deliveryLine({ deliveredAt: row.deliveredAt, receivedBy: row.receivedBy, now }) : "",
+    entrega:
+      row.deliveredPhotoPath || row.deliveryConfirmedBy === "courier"
+        ? deliveryLine({ deliveredAt: row.deliveredAt, receivedBy: row.receivedBy, now })
+        : "",
     recebido_por: row.receivedBy ?? "",
   }).replace(/[ \t]{2,}/g, " ");
 
