@@ -101,11 +101,13 @@ export const CUT = { cornerRadiusMm: 3, holeDiameterMm: 4.5 } as const;
 const QUARTER_BULGE = Math.tan(Math.PI / 8);
 
 /**
- * O arquivo de corte para o Silhouette Studio (DXF ASCII em mm): na camada
- * CORTE, uma polilinha fechada com cantos arredondados por tag e um círculo
- * do furo; na camada PAGINA, o retângulo da folha inteira — só para alinhar
- * o conjunto com a página (X 0, Y 0) e depois apagar. Y do DXF cresce para
- * cima: yDxf = altura da página − y.
+ * O arquivo de corte para o Silhouette Studio (DXF ASCII R12/AC1009 em mm —
+ * o dialeto mais simples, sem handles, que toda cortadora lê): na camada
+ * CORTE, uma POLYLINE fechada com cantos arredondados (bulge nos VERTEX)
+ * por tag e um CIRCLE do furo; na camada PAGINA, o retângulo da folha
+ * inteira — serve para conferir a escala (210 × 297) e alinhar o conjunto
+ * com a página (X 0, Y 0), depois se apaga. Y do DXF cresce para cima:
+ * yDxf = altura da página − y.
  */
 export function hangTagCutDxf(input: {
   page?: PageMm;
@@ -118,23 +120,32 @@ export function hangTagCutDxf(input: {
   const push = (...pairs: (string | number)[]) => {
     for (let i = 0; i < pairs.length; i += 2) lines.push(String(pairs[i]), String(pairs[i + 1]));
   };
-  push(0, "SECTION", 2, "HEADER", 9, "$ACADVER", 1, "AC1015", 9, "$INSUNITS", 70, 4, 0, "ENDSEC");
-  push(0, "SECTION", 2, "TABLES", 0, "TABLE", 2, "LAYER", 70, 2);
+  push(0, "SECTION", 2, "HEADER", 9, "$ACADVER", 1, "AC1009", 9, "$INSUNITS", 70, 4);
+  push(9, "$EXTMIN", 10, 0, 20, 0, 30, 0, 9, "$EXTMAX", 10, fmt(page.widthMm), 20, fmt(page.heightMm), 30, 0, 0, "ENDSEC");
+  push(0, "SECTION", 2, "TABLES");
+  push(0, "TABLE", 2, "LTYPE", 70, 1, 0, "LTYPE", 2, "CONTINUOUS", 70, 0, 3, "Solid line", 72, 65, 73, 0, 40, 0, 0, "ENDTAB");
+  push(0, "TABLE", 2, "LAYER", 70, 2);
   push(0, "LAYER", 2, "CORTE", 70, 0, 62, 1, 6, "CONTINUOUS");
   push(0, "LAYER", 2, "PAGINA", 70, 0, 62, 8, 6, "CONTINUOUS");
   push(0, "ENDTAB", 0, "ENDSEC");
   push(0, "SECTION", 2, "ENTITIES");
 
+  const polyline = (layer: string, vertices: readonly (readonly [number, number, number])[]) => {
+    push(0, "POLYLINE", 8, layer, 66, 1, 70, 1, 10, 0, 20, 0, 30, 0);
+    for (const [x, y, bulge] of vertices) {
+      push(0, "VERTEX", 8, layer, 10, fmt(x), 20, fmt(y), 30, 0);
+      if (bulge) push(42, bulge.toFixed(5));
+    }
+    push(0, "SEQEND", 8, layer);
+  };
+
   // A folha: retângulo de referência (não é para cortar).
-  push(0, "LWPOLYLINE", 8, "PAGINA", 90, 4, 70, 1);
-  for (const [x, y] of [
-    [0, up(0)],
-    [page.widthMm, up(0)],
-    [page.widthMm, up(page.heightMm)],
-    [0, up(page.heightMm)],
-  ]) {
-    push(10, fmt(x), 20, fmt(y));
-  }
+  polyline("PAGINA", [
+    [0, up(0), 0],
+    [page.widthMm, up(0), 0],
+    [page.widthMm, up(page.heightMm), 0],
+    [0, up(page.heightMm), 0],
+  ]);
 
   const r = CUT.cornerRadiusMm;
   for (const p of input.positions) {
@@ -145,22 +156,18 @@ export function hangTagCutDxf(input: {
     // Sentido horário na página (que é anti-horário no DXF, com Y para cima):
     // cada canto é um vértice reto seguido de um arco de 90° (bulge no
     // vértice que abre o arco).
-    const vertices: [number, number, number][] = [
-      [x0 + r, y0, 0],
-      [x1 - r, y0, QUARTER_BULGE],
-      [x1, y0 + r, 0],
-      [x1, y1 - r, QUARTER_BULGE],
-      [x1 - r, y1, 0],
-      [x0 + r, y1, QUARTER_BULGE],
-      [x0, y1 - r, 0],
-      [x0, y0 + r, QUARTER_BULGE],
-    ];
-    push(0, "LWPOLYLINE", 8, "CORTE", 90, vertices.length, 70, 1);
-    for (const [x, y, bulge] of vertices) {
-      push(10, fmt(x), 20, fmt(up(y)));
-      if (bulge) push(42, (-bulge).toFixed(5));
-    }
-    push(0, "CIRCLE", 8, "CORTE", 10, fmt(x0 + input.tag.holeCenterXMm), 20, fmt(up(y0 + input.tag.holeCenterYMm)), 40, fmt(CUT.holeDiameterMm / 2));
+    // Bulge negativo = arco horário (com Y para cima): os cantos ficam convexos.
+    polyline("CORTE", [
+      [x0 + r, up(y0), 0],
+      [x1 - r, up(y0), -QUARTER_BULGE],
+      [x1, up(y0 + r), 0],
+      [x1, up(y1 - r), -QUARTER_BULGE],
+      [x1 - r, up(y1), 0],
+      [x0 + r, up(y1), -QUARTER_BULGE],
+      [x0, up(y1 - r), 0],
+      [x0, up(y0 + r), -QUARTER_BULGE],
+    ]);
+    push(0, "CIRCLE", 8, "CORTE", 10, fmt(x0 + input.tag.holeCenterXMm), 20, fmt(up(y0 + input.tag.holeCenterYMm)), 30, 0, 40, fmt(CUT.holeDiameterMm / 2));
   }
   push(0, "ENDSEC", 0, "EOF");
   return lines.join("\n") + "\n";

@@ -76,32 +76,60 @@ describe("hangTagCutDxf", () => {
   const dxf = hangTagCutDxf({ positions: silhouetteTagPositions(TAG), tag: TAG });
   const lines = dxf.split("\n");
 
-  it("é DXF ASCII em milímetros com as camadas CORTE e PAGINA", () => {
+  it("é DXF ASCII R12 em milímetros com as camadas CORTE e PAGINA e a extensão da folha", () => {
     expect(lines.slice(0, 4)).toEqual(["0", "SECTION", "2", "HEADER"]);
+    expect(dxf).toContain("$ACADVER\n1\nAC1009\n");
     expect(dxf).toContain("$INSUNITS\n70\n4\n");
+    expect(dxf).toContain("$EXTMAX\n10\n210\n20\n297\n");
     expect(dxf).toMatch(/0\nLAYER\n2\nCORTE\n/);
     expect(dxf).toMatch(/0\nLAYER\n2\nPAGINA\n/);
     expect(dxf.trimEnd().endsWith("0\nEOF")).toBe(true);
   });
 
-  it("4 contornos fechados com cantos arredondados (bulge de 90°) + 4 furos na camada CORTE, e o retângulo da página", () => {
-    const polylines = dxf.match(/0\nLWPOLYLINE\n8\nCORTE\n90\n8\n70\n1\n/g) ?? [];
+  it("4 contornos fechados (POLYLINE de 8 VERTEX com bulge de 90° nos cantos) + 4 furos na camada CORTE, e o retângulo da página", () => {
+    const polylines = dxf.match(/0\nPOLYLINE\n8\nCORTE\n66\n1\n70\n1\n/g) ?? [];
     expect(polylines).toHaveLength(4);
+    expect(dxf.match(/0\nVERTEX\n8\nCORTE\n/g)).toHaveLength(32);
+    expect(dxf.match(/0\nSEQEND\n/g)).toHaveLength(5);
     const circles = dxf.match(/0\nCIRCLE\n8\nCORTE\n/g) ?? [];
     expect(circles).toHaveLength(4);
-    expect(dxf.match(/0\nLWPOLYLINE\n8\nPAGINA\n90\n4\n70\n1\n/g)).toHaveLength(1);
+    expect(dxf.match(/0\nPOLYLINE\n8\nPAGINA\n/g)).toHaveLength(1);
+    expect(dxf.match(/0\nVERTEX\n8\nPAGINA\n/g)).toHaveLength(4);
     const bulges = lines.filter((line, i) => lines[i - 1] === "42" && line !== "");
     expect(bulges).toHaveLength(16);
     for (const b of bulges) expect(Number(b)).toBeCloseTo(-Math.tan(Math.PI / 8), 4);
+  });
+
+  it("os cantos são convexos: reconstruindo os arcos pelo bulge, o centro de cada canto fica a (r, r) para dentro da tag", () => {
+    const [first] = silhouetteTagPositions(TAG);
+    const r = CUT.cornerRadiusMm;
+    // Primeiro arco: do vértice (x1 − r, topo) ao (x1, topo − r), bulge negativo (horário) → centro em (x1 − r, topo − r).
+    const x1 = first.xMm + TAG.widthMm;
+    const top = PAGE_A4.heightMm - first.yMm;
+    const a = { x: x1 - r, y: top };
+    const b = { x: x1, y: top - r };
+    const bulge = -Math.tan(Math.PI / 8);
+    const theta = 4 * Math.atan(Math.abs(bulge));
+    const chord = Math.hypot(b.x - a.x, b.y - a.y);
+    const radius = chord / (2 * Math.sin(theta / 2));
+    expect(radius).toBeCloseTo(r, 6);
+    // Centro: ponto médio da corda deslocado perpendicularmente; para bulge negativo (horário) fica à direita da corda.
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const d = Math.sqrt(radius * radius - (chord / 2) ** 2);
+    const nx = (b.y - a.y) / chord;
+    const ny = -(b.x - a.x) / chord;
+    const center = { x: mid.x + nx * d, y: mid.y + ny * d };
+    expect(center.x).toBeCloseTo(x1 - r, 6);
+    expect(center.y).toBeCloseTo(top - r, 6);
   });
 
   it("o furo fica a 27,5 mm da borda esquerda e 8 mm do topo da tag, com raio 2,25; Y do DXF cresce para cima", () => {
     const [first] = silhouetteTagPositions(TAG);
     const holeX = Math.round((first.xMm + 27.5) * 1000) / 1000;
     const holeY = Math.round((PAGE_A4.heightMm - (first.yMm + 8)) * 1000) / 1000;
-    expect(dxf).toContain(`0\nCIRCLE\n8\nCORTE\n10\n${holeX}\n20\n${holeY}\n40\n${CUT.holeDiameterMm / 2}\n`);
+    expect(dxf).toContain(`0\nCIRCLE\n8\nCORTE\n10\n${holeX}\n20\n${holeY}\n30\n0\n40\n${CUT.holeDiameterMm / 2}\n`);
     // O primeiro vértice do primeiro contorno: (x + r, topo) — topo em Y "para cima".
-    const firstVertex = `10\n${Math.round((first.xMm + CUT.cornerRadiusMm) * 1000) / 1000}\n20\n${Math.round((PAGE_A4.heightMm - first.yMm) * 1000) / 1000}\n`;
+    const firstVertex = `0\nVERTEX\n8\nCORTE\n10\n${Math.round((first.xMm + CUT.cornerRadiusMm) * 1000) / 1000}\n20\n${Math.round((PAGE_A4.heightMm - first.yMm) * 1000) / 1000}\n`;
     expect(dxf).toContain(firstVertex);
   });
 });

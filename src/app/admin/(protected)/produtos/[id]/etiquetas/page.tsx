@@ -123,9 +123,12 @@ export default async function ProductLabelsPage({
   }
 
   const printLabel = model === "adesiva" ? "Imprimir etiquetas" : format === "a4" ? "Imprimir tags" : "Salvar PDF para a gráfica";
-  const cutDxf = silhouette
-    ? hangTagCutDxf({ page: PAGE_A4, positions: silhouetteTagPositions({ widthMm: TAG.widthMm, heightMm: TAG.heightMm }, PAGE_A4), tag: { widthMm: TAG.widthMm, heightMm: TAG.heightMm, holeCenterXMm: TAG.widthMm / 2, holeCenterYMm: TAG.holeCenterYMm } })
-    : null;
+  const cutTag = { widthMm: TAG.widthMm, heightMm: TAG.heightMm, holeCenterXMm: TAG.widthMm / 2, holeCenterYMm: TAG.holeCenterYMm };
+  const cutPositions = silhouette ? silhouetteTagPositions({ widthMm: TAG.widthMm, heightMm: TAG.heightMm }, PAGE_A4) : [];
+  const cutDxf = silhouette ? hangTagCutDxf({ page: PAGE_A4, positions: cutPositions, tag: cutTag }) : null;
+  // Última folha com menos de 4 tags: um DXF só com os contornos dela (senão a plotter corta cartões em branco).
+  const lastSheetCount = sheet.sheets.at(-1)?.length ?? 0;
+  const cutDxfLastSheet = silhouette && lastSheetCount > 0 && lastSheetCount < cutPositions.length ? hangTagCutDxf({ page: PAGE_A4, positions: cutPositions.slice(0, lastSheetCount), tag: cutTag }) : null;
   const summary =
     total === 0
       ? "Nenhuma etiqueta: escolha as quantidades acima."
@@ -230,18 +233,18 @@ export default async function ProductLabelsPage({
           <div>
             <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Arquivos para o Silhouette Studio</h2>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {sheet.sheets.length} {sheet.sheets.length === 1 ? "folha" : "folhas"} de {labelsPerSheet("cabide", "silhouette")} tags. O DXF vale para todas as folhas (as posições são fixas).
+              {sheet.sheets.length} {sheet.sheets.length === 1 ? "folha" : "folhas"} de até {labelsPerSheet("cabide", "silhouette")} tags. O DXF vale para todas as folhas cheias (as posições são fixas){cutDxfLastSheet ? "; a última folha, com menos tags, tem o DXF dela" : ""}.
             </p>
           </div>
-          <SilhouetteDownloads sheets={sheet.sheets.length} slug={sheet.productUrl.split("/").pop() ?? "peca"} dxf={cutDxf} />
+          <SilhouetteDownloads sheets={sheet.sheets.length} lastSheetCount={lastSheetCount} slug={sheet.productUrl.split("/").pop() ?? "peca"} dxf={cutDxf} dxfLastSheet={cutDxfLastSheet} />
           <div>
             <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">Como cortar na Silhouette</h3>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-zinc-700 dark:text-zinc-300">
               <li>
-                No <strong>Silhouette Studio</strong>: <em>Page Setup</em> → tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <em>Registration Marks</em> → <strong>On</strong>, Type 1, valores <strong>padrão</strong> (não mova as marcas: é o que mais causa &ldquo;não leu&rdquo;).
+                No <strong>Silhouette Studio</strong> (Basic serve): <em>Preferences</em> → unidades em <strong>mm</strong> e, em <em>Import</em>, DXF <strong>&ldquo;As Is&rdquo;</strong> (não &ldquo;Fit to Page&rdquo;). <em>Page Setup</em> → tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <em>Registration Marks</em> → <strong>On</strong>, Type 1, valores <strong>padrão</strong> (não mova as marcas: é o que mais causa &ldquo;não leu&rdquo;).
               </li>
               <li>
-                <em>File → Open</em> o PNG da <strong>frente</strong>; no painel <em>Transform</em> coloque <strong>X 0, Y 0, largura 210 mm, altura 297 mm</strong> (a folha inteira). <em>File → Open</em> o <strong>DXF</strong>; selecione tudo, X 0, Y 0; apague o retângulo grande (camada PAGINA). As 4 molduras vermelhas devem cair sobre as 4 tags.
+                <em>File → Open</em> o PNG da <strong>frente</strong>; no painel <em>Transform</em> confira <strong>largura 210 mm, altura 297 mm</strong> (a folha inteira — o arquivo já traz a resolução) e <strong>X 0, Y 0</strong>. <em>File → Open</em> o <strong>DXF</strong>; com tudo selecionado, confira <strong>210 × 297 mm</strong> no Transform (o retângulo grande é a folha; se vier em outro tamanho, digite 210 × 297 com a proporção travada), então X 0, Y 0 e apague o retângulo grande (camada PAGINA). As 4 molduras devem cair sobre as 4 tags — se não caírem, não imprima.
               </li>
               <li>
                 <em>File → Print</em> — o Studio imprime a frente <strong>com as marcas</strong>. Vire a folha <strong>na borda longa</strong>, troque o PNG pelo do <strong>verso</strong> (mesma posição 0, 0 · 210 × 297) e imprima de novo. Confira contra a luz se frente e verso batem.
