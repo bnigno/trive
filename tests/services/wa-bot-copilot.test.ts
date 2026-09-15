@@ -224,9 +224,13 @@ describe("turno em copiloto", () => {
     const conversationId = await createConversation();
     await addInbound(conversationId, "pode me chamar amanhã");
     // A mensagem dela nasce com o relógio real do banco: o "agora" do retorno
-    // precisa vir depois dela, senão o retorno conta como superado.
+    // precisa vir depois dela, senão o retorno conta como superado. E o
+    // combinado cai sempre às 13h de São Paulo (dentro da janela de envio),
+    // no próximo dia em que isso fica pelo menos 1 h à frente.
     const now = new Date(Date.now() + 60_000);
-    const dueAt = new Date(now.getTime() + 19 * 60 * 60 * 1000);
+    const dueAt = new Date(now);
+    dueAt.setUTCHours(16, 0, 0, 0);
+    if (dueAt.getTime() < now.getTime() + 60 * 60 * 1000) dueAt.setUTCDate(dueAt.getUTCDate() + 1);
     const { followupId } = await scheduleBotFollowup(sdb, { conversationId, phoneE164: PHONE, customerId: null, kind: "customer", reason: "ver se decidiu", dueAt, requestedBy: "lia", now });
     assistant.enqueueScript({ replyTemplate: "Oi! Passando como combinamos 🤎" });
     const result = await runScheduledBotTurn(sdb, assistant, provider, { followupId, now: dueAt });
