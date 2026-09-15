@@ -1,6 +1,7 @@
 // Card "Tempo de resposta da Lia": mediana e p90 de mensagem → primeiro
-// balão, e onde o tempo foi (fila · preparo · modelo · entrega). Só
-// apresenta o que services/wa-insights mede a partir do audit dos turnos.
+// balão, e onde o tempo foi (fila · preparo · modelo · entrega) — a barra usa
+// MÉDIAS, que somam; medianas de trechos não somam o total. Só apresenta o
+// que services/wa-insights mede a partir do audit dos turnos.
 import type { BotResponseTimes, BotTimingSplit } from "@/services/wa-insights";
 
 const SEGMENTS: ReadonlyArray<{ key: keyof BotTimingSplit; label: string; className: string }> = [
@@ -23,7 +24,7 @@ export function ResponseTimes({ times, sellerName }: { times: BotResponseTimes; 
       </p>
     );
   }
-  const split = times.p50;
+  const split = times.mean;
   const total = SEGMENTS.reduce((sum, segment) => sum + (split[segment.key] ?? 0), 0);
   return (
     <div className="flex flex-col gap-3">
@@ -58,7 +59,7 @@ export function ResponseTimes({ times, sellerName }: { times: BotResponseTimes; 
         </div>
       ) : null}
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        Medianas de {times.turns} {times.turns === 1 ? "resposta" : "respostas"} em {times.windowDays} dias. Fila é o tempo entre a mensagem chegar e a {sellerName} começar; modelo inclui as ferramentas (catálogo, frete, pedido).
+        {times.turns} {times.turns === 1 ? "resposta" : "respostas"} em {times.windowDays} dias. A barra é a média de cada trecho de um turno inteiro: fila é o tempo entre a mensagem chegar e a {sellerName} começar; modelo inclui as ferramentas (catálogo, frete, pedido); entrega são todos os balões e a mídia.
       </p>
     </div>
   );

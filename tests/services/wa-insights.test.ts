@@ -184,7 +184,11 @@ describe("getBotResponseTimes", () => {
 
   it("mediana e p90 por trecho, só de turnos autônomos com tempos e dentro de 7 dias", async () => {
     // Totais 10, 20, …, 100 s mais um de 50 s (11 linhas): p50 = 50 s, p90 = 90 s (percentile_cont).
-    const rows = Array.from({ length: 10 }, (_, i) => turn({ mode: "autonomous", timings: timings((i + 1) * 10_000) }));
+    // queueWaitMs: 5 linhas com 1 s, 5 com 3 s e uma null — null ignorado dá mediana 2 s;
+    // contado como 0 daria 1 s.
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      turn({ mode: "autonomous", timings: timings((i + 1) * 10_000, { queueWaitMs: i < 5 ? 1_000 : 3_000 }) }),
+    );
     await db.insert(schema.auditLog).values([
       ...rows,
       // Sem timings (turno anterior ao PR), copiloto e velho demais: fora.
@@ -199,7 +203,11 @@ describe("getBotResponseTimes", () => {
     expect(times.turns).toBe(11);
     expect(times.p50.totalMs).toBe(50_000);
     expect(times.p50.inboundToFirstBubbleMs).toBe(51_000);
-    expect(times.p50.queueWaitMs).toBe(1_000);
+    expect(times.p50.queueWaitMs).toBe(2_000);
+    // Médias (a barra): total médio = (10+20+…+100+50)/11 = 54,5 s; fila média só das 10 linhas com valor.
+    expect(times.mean.totalMs).toBe(54_545);
+    expect(times.mean.prepMs).toBe(500);
+    expect(times.mean.queueWaitMs).toBe(2_000);
     expect(times.p50.prepMs).toBe(500);
     expect(times.p50.deliveryMs).toBe(500);
     expect(times.p90.totalMs).toBe(90_000);

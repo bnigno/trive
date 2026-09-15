@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import {
   classifyOutcome,
   getRetryPolicy,
+  handlerReserveMs,
   nextAttemptDelayMs,
 } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
@@ -33,6 +34,8 @@ export type DrainOutboxOptions = {
   budgetMs?: number;
   /** Relógio injetável para o orçamento (testes). */
   clock?: () => number;
+  /** Só esta linha (o kick com id reclama o alvo antes de qualquer outra). */
+  onlyId?: string;
 };
 
 export type DrainOutboxResult = {
@@ -43,6 +46,8 @@ export type DrainOutboxResult = {
   dead: number;
   /** Devolvidos à fila por falta de tempo neste lote. */
   released: number;
+  /** Ids devolvidos por falta de tempo — o kick pode pedir outra invocação para eles. */
+  releasedIds: string[];
 };
 
 /**
@@ -75,6 +80,7 @@ export async function drainOutbox(
     failed: 0,
     dead: 0,
     released: 0,
+    releasedIds: [],
   };
 
   // db.execute retorna { rows } no pg/PGlite e array no postgres.js — normalize.
@@ -137,6 +143,7 @@ export async function drainOutbox(
       FROM outbox_events
       WHERE status IN ('pending', 'failed')
         AND next_attempt_at <= now()
+        ${options.onlyId ? sql`AND id = ${options.onlyId}` : sql``}
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -146,20 +153,31 @@ export async function drainOutbox(
   `));
   result.claimed = claimedRows.length;
 
+  const release = async (ids: string[]): Promise<void> => {
+    await db.execute(sql`
+      UPDATE outbox_events
+      SET status = 'pending',
+          locked_at = NULL,
+          locked_by = NULL
+      WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+        AND locked_by = ${workerId}
+    `);
+    result.released += ids.length;
+    result.releasedIds.push(...ids);
+  };
+
   for (const [index, row] of claimedRows.entries()) {
-    if (options.budgetMs !== undefined && clock() - startedAt > options.budgetMs) {
+    const elapsed = clock() - startedAt;
+    if (options.budgetMs !== undefined && elapsed > options.budgetMs) {
       // Sem tempo para este e os seguintes: de volta à fila, sem contar tentativa.
-      const remaining = claimedRows.slice(index).map((pending) => pending.id);
-      await db.execute(sql`
-        UPDATE outbox_events
-        SET status = 'pending',
-            locked_at = NULL,
-            locked_by = NULL
-        WHERE id IN (${sql.join(remaining.map((id) => sql`${id}`), sql`, `)})
-          AND locked_by = ${workerId}
-      `);
-      result.released = remaining.length;
+      await release(claimedRows.slice(index).map((pending) => pending.id));
       break;
+    }
+    if (options.budgetMs !== undefined && elapsed + handlerReserveMs(row.event_type) > options.budgetMs) {
+      // Este não cabe no que sobra (um turno da Lia precisa de ~32 s): volta
+      // à fila sem contar tentativa; os seguintes, mais curtos, ainda rodam.
+      await release([row.id]);
+      continue;
     }
     const event: OutboxEvent = {
       id: row.id,

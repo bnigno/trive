@@ -1,8 +1,10 @@
 // O outbox-kick com id: espera a linha aparecer (a transação de quem
-// enfileirou pode não ter commitado), drena quando ela está vencida, espera
-// um retry próximo, e não briga com outro worker. Relógio e sleep injetados:
-// nada de esperar de verdade.
-import { eq, sql } from "drizzle-orm";
+// enfileirou pode não ter commitado), reclama o ALVO primeiro quando vence,
+// espera um retry próximo pelo relógio do banco, não briga com outro worker
+// e, sem tempo para o handler, pede outra invocação em vez de começar e
+// morrer nos 60 s da rota. Relógio e sleep injetados onde não há banco no
+// meio; onde o now() do Postgres decide, o teste espera de verdade.
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@/db/client";
@@ -10,7 +12,7 @@ import * as schema from "@/db/schema";
 import { KICK_POLL_BUDGET_MS, runOutboxKick } from "@/queue/kick";
 import { createTestDb, type TestDb } from "../helpers/db";
 
-const handlers: Record<string, (event: { id: string }) => Promise<void>> = {};
+const handlers: Record<string, (event: { id: string; deadlineAt?: Date }) => Promise<void>> = {};
 vi.mock("@/queue/handlers", () => ({
   resolveOutboxHandler: (eventType: string) => {
     const handler = handlers[eventType];
@@ -34,8 +36,8 @@ afterEach(async () => {
 const asDb = () => db as unknown as Db;
 
 /** Relógio de mentira: cada sleep(ms) avança o relógio em ms sem esperar. */
-function fakeTime() {
-  let now = Date.now();
+function fakeTime(startMs = Date.now()) {
+  let now = startMs;
   const slept: number[] = [];
   return {
     clock: () => now,
@@ -50,11 +52,11 @@ function fakeTime() {
   };
 }
 
-async function insertEvent(input: { status?: string; nextAttemptInMs?: number; lockedBy?: string } = {}): Promise<string> {
+async function insertEvent(input: { eventType?: string; status?: string; nextAttemptInMs?: number; lockedBy?: string } = {}): Promise<string> {
   const [row] = await db
     .insert(schema.outboxEvents)
     .values({
-      eventType: "order.receipt",
+      eventType: input.eventType ?? "order.receipt",
       payload: {},
       status: input.status ?? "pending",
       nextAttemptAt: new Date(Date.now() + (input.nextAttemptInMs ?? 0)),
@@ -69,25 +71,34 @@ async function statusOf(id: string): Promise<string> {
   return row.status;
 }
 
+function recorder() {
+  const runs: string[] = [];
+  handlers["order.receipt"] = async (event) => {
+    runs.push(event.id);
+  };
+  handlers["wa.bot_turn"] = async (event) => {
+    runs.push(event.id);
+  };
+  return runs;
+}
+
 describe("runOutboxKick", () => {
-  it("linha pendente: drena uma vez e o handler roda", async () => {
-    const runs: string[] = [];
-    handlers["order.receipt"] = async (event) => {
-      runs.push(event.id);
-    };
+  it("linha pendente: reclama o alvo primeiro, roda, e aproveita para drenar o resto", async () => {
+    const runs = recorder();
+    // Dez linhas mais antigas na frente: o alvo ainda sai primeiro.
+    const older: string[] = [];
+    for (let i = 0; i < 10; i++) older.push(await insertEvent({ nextAttemptInMs: -60_000 }));
     const id = await insertEvent();
     const time = fakeTime();
     const result = await runOutboxKick(asDb(), { outboxEventId: id, ...time });
-    expect(runs).toEqual([id]);
-    expect(result).toMatchObject({ claimed: 1, done: 1, target: "processada", polls: 0 });
+    expect(runs[0]).toBe(id);
+    expect(new Set(runs)).toEqual(new Set([id, ...older]));
+    expect(result).toMatchObject({ claimed: 11, done: 11, target: "processada", polls: 0, rekicked: [] });
     expect(await statusOf(id)).toBe("done");
   });
 
   it("linha que ainda não commitou: espera em pequenos passos até aparecer, depois roda", async () => {
-    const runs: string[] = [];
-    handlers["order.receipt"] = async (event) => {
-      runs.push(event.id);
-    };
+    const runs = recorder();
     const id = "00000000-0000-4000-8000-00000000c1c1";
     const time = fakeTime();
     let polls = 0;
@@ -105,10 +116,7 @@ describe("runOutboxKick", () => {
   });
 
   it("linha que nunca aparece: desiste depois do orçamento de espera, drena o que houver e não lança", async () => {
-    const runs: string[] = [];
-    handlers["order.receipt"] = async (event) => {
-      runs.push(event.id);
-    };
+    const runs = recorder();
     const other = await insertEvent();
     const time = fakeTime();
     const result = await runOutboxKick(asDb(), { outboxEventId: "00000000-0000-4000-8000-00000000dead", ...time, pollMs: 1_000 });
@@ -125,47 +133,77 @@ describe("runOutboxKick", () => {
     const id = await insertEvent({ status: "processing", lockedBy: "outro" });
     const time = fakeTime();
     const result = await runOutboxKick(asDb(), { outboxEventId: id, ...time });
-    expect(result).toMatchObject({ claimed: 0, target: "com_outro_worker" });
+    expect(result).toMatchObject({ claimed: 0, target: "nao_reclamada" });
     expect(await statusOf(id)).toBe("processing");
   });
 
-  it("retry próximo (failed, daqui a 3 s): espera e roda; distante demais fica para o cron", async () => {
-    const runs: string[] = [];
-    handlers["order.receipt"] = async (event) => {
-      runs.push(event.id);
-    };
-    const soon = await insertEvent({ status: "failed", nextAttemptInMs: 3_000 });
-    const time = fakeTime();
-    // O claim usa now() do banco: o relógio de mentira não engana o Postgres,
-    // então o "sleep" também adianta a linha para o passado.
-    const sleep = async (ms: number) => {
-      await time.sleep(ms);
-      await db.execute(sql`update outbox_events set next_attempt_at = now() - interval '1 second' where id = ${soon}`);
-    };
-    const result = await runOutboxKick(asDb(), { outboxEventId: soon, clock: time.clock, sleep });
-    expect(time.slept.length).toBe(1);
-    expect(time.slept[0]).toBeGreaterThan(2_000);
-    expect(time.slept[0]).toBeLessThanOrEqual(3_000);
+  it("retry próximo (failed, daqui a ~0,8 s pelo relógio do banco): espera de verdade, com folga, e roda", async () => {
+    const runs = recorder();
+    const soon = await insertEvent({ status: "failed", nextAttemptInMs: 800 });
+    const startedAt = Date.now();
+    const result = await runOutboxKick(asDb(), { outboxEventId: soon });
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(800);
     expect(runs).toEqual([soon]);
     expect(result.target).toBe("processada");
+  }, 10_000);
 
+  it("retry distante (2 min) fica para o cron", async () => {
+    recorder();
     const far = await insertEvent({ status: "failed", nextAttemptInMs: 120_000 });
-    const time2 = fakeTime();
-    const result2 = await runOutboxKick(asDb(), { outboxEventId: far, ...time2 });
-    expect(result2).toMatchObject({ claimed: 0, target: "agendada" });
-    expect(time2.slept).toEqual([]);
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), { outboxEventId: far, ...time });
+    expect(result).toMatchObject({ claimed: 0, target: "agendada" });
+    expect(time.slept).toEqual([]);
   });
 
-  it("sem id: um drain só, como o cron", async () => {
-    const runs: string[] = [];
-    handlers["order.receipt"] = async (event) => {
-      runs.push(event.id);
+  it("sem tempo para o handler nesta invocação: não começa, pede outra invocação (uma vez só)", async () => {
+    handlers["wa.bot_turn"] = async () => {
+      throw new Error("não devia rodar");
     };
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const kicked: string[] = [];
+    const requestKick = async (eventId: string) => {
+      kicked.push(eventId);
+    };
+    // Orçamento de 20 s < 32 s de reserva de um turno.
+    const result = await runOutboxKick(asDb(), { outboxEventId: id, ...fakeTime(), budgetMs: 20_000, requestKick });
+    expect(result).toMatchObject({ target: "sem_tempo", claimed: 0, rekicked: [id] });
+    expect(kicked).toEqual([id]);
+    expect(await statusOf(id)).toBe("pending");
+
+    // A repetição (rekick) não pede de novo: fica para o cron.
+    const again = await runOutboxKick(asDb(), { outboxEventId: id, ...fakeTime(), budgetMs: 10_000, rekick: true, requestKick });
+    expect(again).toMatchObject({ target: "sem_tempo", rekicked: [] });
+    expect(kicked).toHaveLength(1);
+
+    // Com orçamento inteiro, roda.
+    const runs = recorder();
+    const full = await runOutboxKick(asDb(), { outboxEventId: id, ...fakeTime(), rekick: true, requestKick });
+    expect(full.target).toBe("processada");
+    expect(runs).toEqual([id]);
+  });
+
+  it("sem id: um drain só, como o cron; turno da Lia devolvido por falta de tempo ganha outra invocação", async () => {
+    const runs = recorder();
     const a = await insertEvent();
     const b = await insertEvent();
     const time = fakeTime();
     const result = await runOutboxKick(asDb(), { ...time });
     expect(new Set(runs)).toEqual(new Set([a, b]));
     expect(result).toMatchObject({ claimed: 2, done: 2, target: "sem_id" });
+
+    // Orçamento curto (10 s < 32 s de reserva): o turno volta à fila e é re-kickado.
+    const turn = await insertEvent({ eventType: "wa.bot_turn" });
+    const kicked: string[] = [];
+    const short = await runOutboxKick(asDb(), {
+      ...fakeTime(),
+      budgetMs: 10_000,
+      requestKick: async (eventId) => {
+        kicked.push(eventId);
+      },
+    });
+    expect(short).toMatchObject({ claimed: 1, released: 1, done: 0, rekicked: [turn] });
+    expect(kicked).toEqual([turn]);
+    expect(await statusOf(turn)).toBe("pending");
   });
 });

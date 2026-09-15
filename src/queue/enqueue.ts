@@ -26,11 +26,15 @@ export type EnqueueOutboxEventInput = z.input<typeof enqueueOutboxEventSchema>;
  * Quem enfileira DENTRO de uma transação longa (webhook, turno da Lia)
  * chama isto depois do commit — o kick disparado antes não acha a linha.
  */
-export async function kickOutbox(outboxEventId?: string): Promise<void> {
+export async function kickOutbox(outboxEventId?: string, options: { rekick?: boolean } = {}): Promise<void> {
   try {
     await inngest.send({
       name: "outbox/event.enqueued",
-      data: outboxEventId ? { outboxEventId } : {},
+      data: {
+        ...(outboxEventId ? { outboxEventId } : {}),
+        // Repetição pedida por um kick sem tempo: a próxima não pede de novo.
+        ...(options.rekick ? { rekick: true } : {}),
+      },
     });
   } catch {
     // O cron de varredura entrega mesmo sem o kick.

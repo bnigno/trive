@@ -192,6 +192,43 @@ describe("drainOutbox — orçamento de tempo do lote", () => {
     expect(next).toMatchObject({ claimed: 2, done: 2, released: 0 });
   });
 
+  it("turno da Lia sem ~32 s pela frente volta à fila sem contar tentativa; o vizinho curto ainda roda", async () => {
+    const ran: string[] = [];
+    handlers["wa.bot_turn"] = async (event) => {
+      ran.push(event.id);
+    };
+    handlers["order.receipt"] = async (event) => {
+      ran.push(event.id);
+    };
+    const turn = await insertEvent({ eventType: "wa.bot_turn" });
+    const receipt = await insertEvent({ eventType: "order.receipt" });
+
+    // 20 s de orçamento: o turno (reserva 32 s) não cabe; o comprovante (sem reserva) sim.
+    const result = await drainOutbox(asDb(), { limit: 10, budgetMs: 20_000, clock: () => 0 });
+    expect(result).toMatchObject({ claimed: 2, done: 1, released: 1, releasedIds: [turn] });
+    expect(ran).toEqual([receipt]);
+    const row = await eventRow(turn);
+    expect(row.status).toBe("pending");
+    expect(row.attempts).toBe(0);
+    expect(row.lockedBy).toBeNull();
+
+    // Com orçamento inteiro, o turno roda.
+    const next = await drainOutbox(asDb(), { limit: 10, budgetMs: 50_000, clock: () => 0 });
+    expect(next).toMatchObject({ claimed: 1, done: 1, released: 0 });
+  });
+
+  it("onlyId reclama só a linha pedida, mesmo com outras vencidas antes", async () => {
+    const ran: string[] = [];
+    handlers["order.receipt"] = async (event) => {
+      ran.push(event.id);
+    };
+    await insertEvent({ eventType: "order.receipt" });
+    const target = await insertEvent({ eventType: "order.receipt" });
+    const result = await drainOutbox(asDb(), { limit: 10, onlyId: target });
+    expect(result).toMatchObject({ claimed: 1, done: 1 });
+    expect(ran).toEqual([target]);
+  });
+
   it("sem orçamento, o lote inteiro roda", async () => {
     handlers["order.receipt"] = async () => {};
     await insertEvent({ eventType: "order.receipt" });

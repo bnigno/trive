@@ -511,7 +511,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       getDb(),
       getSalesAssistant(),
       getMessagingProvider(),
-      { followupId, attempt: event.attempts },
+      { followupId, attempt: event.attempts, deadlineAt: event.deadlineAt ?? null },
       {
         cards: {
           storage: getFileStorage(),

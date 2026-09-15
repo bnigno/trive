@@ -4,7 +4,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
-import { enqueueOutboxEvent } from "@/queue/enqueue";
+import { enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { runOutboxKick } from "@/queue/kick";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { yesterdaySpDayKey } from "@/services/daily-digest";
@@ -37,6 +37,7 @@ export const outboxSweep = inngest.createFunction(
       failed: 0,
       dead: 0,
       released: 0,
+      releasedIds: [],
       budgetExceeded: false,
     };
     for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch++) {
@@ -57,8 +58,12 @@ export const outboxSweep = inngest.createFunction(
       totals.failed += result.failed;
       totals.dead += result.dead;
       totals.released += result.released;
+      totals.releasedIds.push(...result.releasedIds);
       if (result.claimed === 0 || result.released > 0) break;
     }
+    // Turno da Lia devolvido por não caber no que sobrava: outra invocação
+    // inteira agora, em vez de esperar o próximo minuto.
+    for (const id of totals.releasedIds) await kickOutbox(id, { rekick: true });
     return totals;
   },
 );
@@ -68,9 +73,9 @@ export const outboxSweep = inngest.createFunction(
 export const outboxKick = inngest.createFunction(
   { id: "outbox-kick", triggers: [{ event: "outbox/event.enqueued" }] },
   async ({ event }) => {
-    const data = (event.data ?? {}) as { outboxEventId?: unknown };
+    const data = (event.data ?? {}) as { outboxEventId?: unknown; rekick?: unknown };
     const outboxEventId = typeof data.outboxEventId === "string" ? data.outboxEventId : undefined;
-    return runOutboxKick(getDb(), { outboxEventId });
+    return runOutboxKick(getDb(), { outboxEventId, rekick: data.rekick === true });
   },
 );
 

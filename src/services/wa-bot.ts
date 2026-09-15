@@ -529,11 +529,14 @@ export async function deliverBotTurn(
   // falha e aborta o turno nunca deixa uma mensagem de voz já entregue para o
   // retry repetir. Cada mídia tem dedupe determinístico por índice; falha é
   // melhor esforço.
+  // Primeira coisa que chegou à cliente (mídia ou balão): mede "mensagem → 1º balão".
+  let firstSentAt: number | null = null;
   const sendAttachment = async (attachment: BotAttachment, index: number): Promise<void> => {
     const mediaDedupeKey = `wa.bot_media:${dedupeBase}:${index}`;
     try {
+      let sent: Awaited<ReturnType<typeof sendMediaMessage>>;
       if (attachment.kind === "option_list") {
-        await sendMediaMessage(tx, provider, {
+        sent = await sendMediaMessage(tx, provider, {
           kind: "option_list",
           body: attachment.message,
           optionList: {
@@ -547,7 +550,7 @@ export async function deliverBotTurn(
           requireOptIn: false,
         });
       } else if (attachment.kind === "audio") {
-        await sendMediaMessage(tx, provider, {
+        sent = await sendMediaMessage(tx, provider, {
           kind: "audio",
           audioUrl: attachment.audioUrl,
           body: attachment.body,
@@ -557,7 +560,7 @@ export async function deliverBotTurn(
           requireOptIn: false,
         });
       } else {
-        await sendMediaMessage(tx, provider, {
+        sent = await sendMediaMessage(tx, provider, {
           kind: "image",
           imageUrl: attachment.imageUrl,
           body: attachment.caption,
@@ -567,6 +570,7 @@ export async function deliverBotTurn(
           requireOptIn: false,
         });
       }
+      if ("sent" in sent) firstSentAt ??= Date.now();
     } catch (error) {
       console.warn(
         `[wa-bot] Falha ao enviar mídia ${mediaDedupeKey}; o texto da IA segue mesmo assim.`,
@@ -580,7 +584,6 @@ export async function deliverBotTurn(
 
   let replied = false;
   let firstWaMessageId: string | null = null;
-  let firstSentAt: number | null = null;
   for (const [index, bubble] of bubbles.entries()) {
     const sent = await sendTemplateMessage(tx, provider, {
       bodyOverride: truncateForWhatsApp(bubble),
@@ -654,6 +657,15 @@ export type BotTurnTimings = {
   inboundToFirstBubbleMs: number | null;
 };
 
+function modelDeadlineFor(turnStartedAt: number, queueDeadlineAt: Date | undefined): Date {
+  return new Date(
+    Math.min(
+      turnStartedAt + BOT_TURN_MODEL_BUDGET_MS,
+      queueDeadlineAt ? queueDeadlineAt.getTime() - BOT_TURN_DELIVERY_RESERVE_MS : Number.POSITIVE_INFINITY,
+    ),
+  );
+}
+
 export async function runBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
@@ -666,15 +678,10 @@ export async function runBotTurn(
   const lastModelAttempt = (input.attempt ?? 0) + 1 >= BOT_TURN_MODEL_ATTEMPTS;
   const turnStartedAt = Date.now();
   // O modelo tem até 35 s — ou o que sobra do prazo da fila menos a reserva
-  // da entrega, quando isso ainda dá ≥ 20 s.
-  const modelDeadline = new Date(
-    Math.min(
-      turnStartedAt + BOT_TURN_MODEL_BUDGET_MS,
-      input.deadlineAt && input.deadlineAt.getTime() - BOT_TURN_DELIVERY_RESERVE_MS - turnStartedAt >= 20_000
-        ? input.deadlineAt.getTime() - BOT_TURN_DELIVERY_RESERVE_MS
-        : Number.POSITIVE_INFINITY,
-    ),
-  );
+  // da entrega, se for menos. Prazo curto demais para uma chamada vira
+  // "tempo esgotado" (passageiro) no adapter, sem começar: a fila reagenda
+  // (o worker já evita reclamar um turno sem ~32 s pela frente).
+  const modelDeadline = modelDeadlineFor(turnStartedAt, input.deadlineAt);
 
   const result = await db.transaction(async (tx): Promise<RunBotTurnResult> => {
     const [conversation] = await tx
@@ -1010,7 +1017,8 @@ export async function runScheduledBotTurn(
 
     const copilot = (await resolveConversationBotMode(tx, conversation)) === "copilot";
     const attachments: BotAttachment[] = [];
-    const executeTool = buildToolExecutor(tx, {
+    let toolsMs = 0;
+    const baseExecuteTool = buildToolExecutor(tx, {
       conversationId: conversation.id,
       phoneE164: conversation.phoneE164,
       customerId: conversation.customerId,
@@ -1024,6 +1032,14 @@ export async function runScheduledBotTurn(
       copilot,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
+    const executeTool: ToolExecutor = async (name, toolInput) => {
+      const toolStartedAt = Date.now();
+      try {
+        return await baseExecuteTool(name, toolInput);
+      } finally {
+        toolsMs += Date.now() - toolStartedAt;
+      }
+    };
 
     const startedAt = Date.now();
     // Modelo fora do ar: relança — a política da fila tenta de novo e o
@@ -1036,7 +1052,7 @@ export async function runScheduledBotTurn(
         history,
         model,
         executeTool,
-        deadlineAt: new Date(turnStartedAt + BOT_TURN_MODEL_BUDGET_MS),
+        deadlineAt: modelDeadlineFor(turnStartedAt, input.deadlineAt ?? undefined),
       });
     } catch (error) {
       if (lastAttempt) return finish("skipped", "modelo_indisponivel");
@@ -1071,7 +1087,7 @@ export async function runScheduledBotTurn(
           queueWaitMs: null,
           prepMs: startedAt - turnStartedAt,
           modelMs,
-          toolsMs: 0,
+          toolsMs,
           deliveryMs: null,
           totalMs: Date.now() - turnStartedAt,
           inboundToFirstBubbleMs: null,

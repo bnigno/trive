@@ -168,10 +168,12 @@ export interface BotTimingSplit {
 
 export interface BotResponseTimes {
   windowDays: number;
-  /** Turnos autônomos com tempos medidos na janela. */
+  /** Respostas medidas na janela (turnos autônomos que entregaram um balão). */
   turns: number;
   p50: BotTimingSplit;
   p90: BotTimingSplit;
+  /** Médias — são elas que somam (a barra "onde o tempo foi"); medianas não somam. */
+  mean: BotTimingSplit;
 }
 
 const TIMING_FIELDS = [
@@ -184,10 +186,12 @@ const TIMING_FIELDS = [
 ] as const;
 
 /**
- * Quanto a Lia demora, de verdade: mediana e p90 de cada trecho do turno
- * (fila, preparo, modelo, entrega) nos últimos 7 dias, a partir dos
+ * Quanto a Lia demora, de verdade: mediana, p90 e média de cada trecho do
+ * turno (fila, preparo, modelo, entrega) nos últimos 7 dias, a partir dos
  * `timings` que runBotTurn grava no audit. Só turnos autônomos (em copiloto
- * quem responde é a dona) e só os que já têm a medição.
+ * quem responde é a dona) e só os que já têm a medição; nulls (trecho que
+ * não houve) ficam fora de cada agregado. Turnos que caíram no plano B
+ * (wa.bot_turn_failed) não entram — o card mede respostas da Lia.
  */
 export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes> {
   const since = new Date(Date.now() - WINDOW_DAYS * 86_400_000);
@@ -196,11 +200,12 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
   const percentile = (q: number, field: (typeof TIMING_FIELDS)[number]) =>
     sql<string | null>`percentile_cont(${q}) within group (order by ${timing(field)})`;
   const selection: Record<string, ReturnType<typeof percentile> | ReturnType<typeof sql<string>>> = {
-    turns: sql<string>`count(*)`,
+    turns: sql<string>`count(*) filter (where ${timing("inboundToFirstBubbleMs")} is not null)`,
   };
   for (const field of TIMING_FIELDS) {
     selection[`p50_${field}`] = percentile(0.5, field);
     selection[`p90_${field}`] = percentile(0.9, field);
+    selection[`mean_${field}`] = sql<string | null>`avg(${timing(field)})`;
   }
   const [row] = await db
     .select(selection)
@@ -213,7 +218,7 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
         sql`${auditLog.after} ? 'timings'`,
       ),
     );
-  const pick = (prefix: "p50" | "p90"): BotTimingSplit => {
+  const pick = (prefix: "p50" | "p90" | "mean"): BotTimingSplit => {
     const split = {} as Record<(typeof TIMING_FIELDS)[number], number | null>;
     for (const field of TIMING_FIELDS) {
       const value = row?.[`${prefix}_${field}`];
@@ -221,7 +226,7 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
     }
     return split;
   };
-  return { windowDays: WINDOW_DAYS, turns: Number(row?.turns ?? 0), p50: pick("p50"), p90: pick("p90") };
+  return { windowDays: WINDOW_DAYS, turns: Number(row?.turns ?? 0), p50: pick("p50"), p90: pick("p90"), mean: pick("mean") };
 }
 
 export interface BotActivityEvent {
