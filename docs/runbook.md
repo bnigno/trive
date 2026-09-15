@@ -465,6 +465,24 @@ já com a quantidade). Dois modelos:
     corte), um par frente/verso por variação. Salve como PDF pelo **Chrome**
     (o Safari ignora o tamanho da página) e mande com a lista de quantidades
     que aparece na tela.
+  - *Silhouette Portrait* (print & cut): a plotter **só corta** — a tag
+    continua sendo impressa na jato de tinta. A tela entrega a **frente e o
+    verso em PNG** (A4 a 300 dpi, sem marcas) e as **linhas de corte em DXF**
+    (contorno arredondado + furo de 4,5 mm); cabem **4 tags por folha**
+    porque as marcas de registro do Studio ocupam as margens. No Silhouette
+    Studio (Basic, grátis — abre PNG e DXF; PDF/SVG só na edição paga):
+    *Page Setup* A4, *Registration Marks* **On / Type 1 / padrão** (mover as
+    marcas para ganhar área é o que mais causa "não leu"); abrir o PNG da
+    frente e, no *Transform*, X 0 · Y 0 · 210 × 297 mm; abrir o DXF,
+    selecionar tudo, X 0 · Y 0, apagar o retângulo grande (camada PAGINA);
+    *File → Print* (o Studio imprime as marcas); virar na borda longa, trocar
+    pelo PNG do verso na mesma posição, imprimir de novo; folha na base de
+    corte com a frente para cima, material *Cardstock*/*Photo Paper*,
+    AutoBlade, *Send*. Papel fotográfico **glossy** reflete no sensor: se
+    "não leu as marcas", diminua a luz sobre a máquina; se insistir, use o
+    *registro manual* do Studio. O verso sai no lado fosco do papel
+    fotográfico. Primeiro uma folha de teste. As posições e o DXF ficam em
+    `src/core/catalog/silhouette.ts`.
 - **Adesiva**: Pimaco A4355 (63,5 × 31 mm, 27 por folha), com SKU e preço. O
   fio cinza em volta de cada etiqueta é guia só na tela — não imprime.
 
