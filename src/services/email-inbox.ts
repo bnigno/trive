@@ -42,7 +42,9 @@ const UNKNOWN_SENDER = "desconhecido@sem-remetente.invalid";
 // Colunas jsonb chegam como `unknown` do Drizzle: PARSE na saída do banco
 // (nunca cast). `.catch` cobre linha antiga/torta sem derrubar a tela.
 const attachmentRefSchema = z.object({
-  storagePath: z.string(),
+  // null = o anexo não pôde ser guardado (ex.: tipo que o storage recusa);
+  // a mensagem entra mesmo assim — um anexo nunca trava a caixa inteira.
+  storagePath: z.string().nullable(),
   filename: z.string(),
   contentType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
@@ -201,13 +203,22 @@ async function uploadAttachments(
     const path = `emails/${storageSegment(messageId)}/${index + 1}-${storageSegment(
       attachment.filename,
     )}`;
-    await storage.upload({
-      path,
-      data: attachment.content,
-      contentType: attachment.contentType,
-    });
+    let storagePath: string | null = path;
+    try {
+      await storage.upload({
+        path,
+        data: attachment.content,
+        contentType: attachment.contentType,
+      });
+    } catch (error) {
+      // Caso real: PDF recusado pelo bucket ("mime type application/pdf is
+      // not supported") travou a caixa de entrada por dias — o cursor nunca
+      // passava dessa mensagem. O anexo fica marcado como não guardado.
+      console.warn(`[email-inbox] anexo ${attachment.filename} não guardado:`, error);
+      storagePath = null;
+    }
     refs.push({
-      storagePath: path,
+      storagePath,
       filename: attachment.filename,
       contentType: attachment.contentType,
       sizeBytes: attachment.content.byteLength,

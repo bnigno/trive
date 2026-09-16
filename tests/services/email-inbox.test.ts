@@ -199,6 +199,23 @@ describe("email-inbox (caixa de entrada do painel)", () => {
     ]);
   });
 
+  it("anexo que o storage recusa (PDF no bucket de imagens) NÃO trava a caixa: a mensagem entra com o anexo marcado como não guardado", async () => {
+    storage.rejectedContentTypes.add("application/pdf");
+    const result = await ingest({
+      attachments: [
+        { filename: "nota.pdf", contentType: "application/pdf", content: new Uint8Array([1, 2, 3]) },
+        { filename: "foto.jpg", contentType: "image/jpeg", content: new Uint8Array([9, 9]) },
+      ],
+    });
+    expect(result.action).toBe("ingested");
+    expect(storage.list()).toEqual(["emails/msg-1-cliente.com/2-foto.jpg"]);
+    const [message] = await db.select().from(schema.emailMessages);
+    expect(message.attachments).toEqual([
+      { storagePath: null, filename: "nota.pdf", contentType: "application/pdf", sizeBytes: 3 },
+      { storagePath: "emails/msg-1-cliente.com/2-foto.jpg", filename: "foto.jpg", contentType: "image/jpeg", sizeBytes: 2 },
+    ]);
+  });
+
   // -------------------------------------------------------------------------
   // Não-lidas (marca d'água) e badge
   // -------------------------------------------------------------------------

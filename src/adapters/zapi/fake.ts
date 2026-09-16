@@ -6,6 +6,7 @@ import type {
   OutboundOptionListMessage,
   OutboundTextMessage,
   QrCode,
+  RecentChat,
   SentMessage,
   SessionStatus,
 } from "./index";
@@ -72,6 +73,14 @@ export class FakeMessagingProvider implements MessagingProvider {
     const providerMessageId = this.nextProviderMessageId();
     this.sentOptionLists.push({ ...message, providerMessageId });
     return { providerMessageId };
+  }
+
+  /** O que GET /chats devolveria: o teste do vigia preenche. */
+  recentChats: RecentChat[] = [];
+
+  async listRecentChats(limit: number): Promise<RecentChat[]> {
+    if (!this.connected) throw new Error("Z-API desconectada (fake).");
+    return this.recentChats.slice(0, limit);
   }
 
   async getSessionStatus(): Promise<SessionStatus> {

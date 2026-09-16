@@ -6,7 +6,13 @@ export class FakeFileStorage implements FileStorage {
     { data: Uint8Array; contentType: string }
   >();
 
+  /** Tipos que o storage "recusa" (simula o bucket real, que só aceita imagem). */
+  readonly rejectedContentTypes = new Set<string>();
+
   async upload(input: UploadInput): Promise<{ path: string }> {
+    if (this.rejectedContentTypes.has(input.contentType)) {
+      throw new Error(`Falha ao enviar arquivo ao storage (${input.path}): mime type ${input.contentType} is not supported`);
+    }
     this.files.set(input.path, {
       data: new Uint8Array(input.data),
       contentType: input.contentType,

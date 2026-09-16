@@ -14,6 +14,7 @@ import {
   buildDigestVars,
   digestDedupeKey,
   digestStoragePath,
+  enqueueDailyDigest,
   getLastDigest,
   publishDailyDigest,
   sendDailyDigestWa,
@@ -84,6 +85,20 @@ async function enableOwnerWa(): Promise<void> {
     isActive: true,
   });
 }
+
+describe("enqueueDailyDigest (o cron das 08:00)", () => {
+  it("enfileira digest.daily de ONTEM sem aggregateId (uuid no banco) e não repete no mesmo dia", async () => {
+    const now = new Date("2026-09-16T11:00:00Z");
+    const first = await enqueueDailyDigest(sdb, now);
+    expect(first).toEqual({ date: "2026-09-15", enqueued: true });
+    const again = await enqueueDailyDigest(sdb, now);
+    expect(again).toEqual({ date: "2026-09-15", enqueued: false });
+
+    const rows = await db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ eventType: "digest.daily", dedupeKey: "digest.daily:2026-09-15", aggregateType: "digest", aggregateId: null, payload: { date: "2026-09-15" } });
+  });
+});
 
 describe("buildDailyDigestData", () => {
   it("conta só os pagamentos do dia de São Paulo, o que espera o dono, a Lia e o estoque", async () => {

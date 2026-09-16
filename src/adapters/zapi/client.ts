@@ -10,6 +10,7 @@ import type {
   OutboundOptionListMessage,
   OutboundTextMessage,
   QrCode,
+  RecentChat,
   SentMessage,
   SessionStatus,
 } from "./index";
@@ -29,6 +30,18 @@ export const zapiSendTextResponseSchema = z.looseObject({
   zaapId: idField.optional(),
   id: idField.optional(),
 });
+
+// GET /chats: lista com phone/name/lastMessageTime (ms em string) e isGroup.
+// Um item fora do formato não derruba a lista: é só pulado.
+const zapiChatsResponseSchema = z.array(
+  z.looseObject({
+    phone: z.union([z.string(), z.number()]).nullish(),
+    name: z.string().nullish(),
+    lastMessageTime: z.union([z.string(), z.number()]).nullish(),
+    messageTime: z.union([z.string(), z.number()]).nullish(),
+    isGroup: z.boolean().nullish(),
+  }),
+);
 
 export const zapiStatusResponseSchema = z.looseObject({
   connected: z.union([z.boolean(), z.string()]).optional(),
@@ -216,6 +229,24 @@ export class ZapiMessagingProvider implements MessagingProvider {
       throw new Error("Resposta da Z-API sem id de mensagem em /send-option-list.");
     }
     return { providerMessageId };
+  }
+
+  async listRecentChats(limit: number): Promise<RecentChat[]> {
+    const raw = await this.request(`/chats?page=1&pageSize=${Math.max(1, Math.min(limit, 100))}`);
+    const parsed = zapiChatsResponseSchema.parse(raw);
+    const chats: RecentChat[] = [];
+    for (const chat of parsed) {
+      const phone = chat.phone != null ? String(chat.phone).trim() : "";
+      const ms = Number(chat.lastMessageTime ?? chat.messageTime ?? NaN);
+      if (!phone || !Number.isFinite(ms) || ms <= 0) continue;
+      chats.push({
+        phone,
+        name: chat.name?.trim() || null,
+        lastMessageAt: new Date(ms),
+        isGroup: chat.isGroup === true || phone.includes("-group") || phone.endsWith("@g.us"),
+      });
+    }
+    return chats;
   }
 
   async getSessionStatus(): Promise<SessionStatus> {

@@ -63,7 +63,22 @@ export type DownloadedMedia = {
  * oficial (Cloud API) sem tocar nos serviços. Idempotência de envio fica no
  * serviço (wa_messages.dedupe_key), nunca no provider.
  */
+/** Um chat como a Z-API o lista: quem, quando foi a última mensagem (qualquer direção), grupo ou não. */
+export interface RecentChat {
+  /** Telefone sem '+' ('5591…'), LID ('…@lid') ou id de grupo — como a Z-API entrega. */
+  phone: string;
+  name: string | null;
+  lastMessageAt: Date;
+  isGroup: boolean;
+}
+
 export interface MessagingProvider {
+  /**
+   * Os chats mais recentes da sessão (GET /chats da Z-API). É o que permite
+   * ao vigia comparar "o que o WhatsApp recebeu" com "o que chegou ao
+   * sistema" — o webhook pode falhar em silêncio (caso real: LID, 16/09/2026).
+   */
+  listRecentChats(limit: number): Promise<RecentChat[]>;
   sendText(input: OutboundTextMessage): Promise<SentMessage>;
   /** Envia imagem por URL (mensagem de mídia da Z-API). */
   sendImage(input: OutboundImageMessage): Promise<SentMessage>;
