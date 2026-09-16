@@ -22,7 +22,7 @@ import {
 } from "@/db/schema";
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { INBOUND_MEDIA_MARKERS, type WaMediaMeta } from "@/core/whatsapp/media";
-import { isValidE164, toE164BR } from "@/lib/phone";
+import { isValidE164, toE164BR, toWaLid } from "@/lib/phone";
 import { enqueueOutboxEvent, kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import {
   enqueueAtelierHelp,
@@ -57,60 +57,90 @@ const FORWARD_BODY_MAX_CHARS = 300;
 // opções ou botão) chegam em listResponseMessage/buttonsResponseMessage;
 // phone/messageId às vezes chegam numéricos. Qualquer coisa fora do
 // reconhecível vira {} e o evento é ignorado.
+// Campos de texto chegam null em vez de ausentes para alguns contatos: tudo
+// é `nullish`. Um campo estranho NÃO pode derrubar a mensagem inteira.
+const optionalText = z.string().nullish();
+
 const zapiInboundBodySchema = z
   .object({
-    messageId: z.union([z.string(), z.number()]).optional(),
-    phone: z.union([z.string(), z.number()]).optional(),
-    fromMe: z.boolean().optional(),
-    isGroup: z.boolean().optional(),
-    senderName: z.string().optional(),
-    chatName: z.string().optional(),
-    text: z.object({ message: z.string().optional() }).optional(),
-    body: z.object({ message: z.string().optional() }).optional(),
+    messageId: z.union([z.string(), z.number()]).nullish(),
+    // Telefone ('5591…') OU, quando o WhatsApp esconde o número, o LID
+    // ('220839349862480@lid'). chatLid/participantLid trazem o LID mesmo
+    // quando `phone` vem numérico — guardamos para reencontrar a pessoa.
+    phone: z.union([z.string(), z.number()]).nullish(),
+    chatLid: optionalText,
+    participantLid: optionalText,
+    senderLid: optionalText,
+    fromMe: z.boolean().nullish(),
+    isGroup: z.boolean().nullish(),
+    senderName: optionalText,
+    chatName: optionalText,
+    text: z.object({ message: optionalText }).nullish(),
+    body: z.object({ message: optionalText }).nullish(),
     listResponseMessage: z
       .object({
-        message: z.string().optional(),
-        title: z.string().optional(),
-        selectedRowId: z.string().optional(),
+        message: optionalText,
+        title: optionalText,
+        selectedRowId: optionalText,
       })
-      .optional(),
+      .nullish(),
     buttonsResponseMessage: z
       .object({
-        buttonId: z.string().optional(),
-        message: z.string().optional(),
+        buttonId: optionalText,
+        message: optionalText,
       })
-      .optional(),
+      .nullish(),
     // Mídia recebida (a Z-API manda um objeto por tipo). Registramos o fato
     // para a vendedora responder com honestidade em vez de ignorar a cliente.
     image: z
       .object({
-        imageUrl: z.string().optional(),
-        caption: z.string().optional(),
-        mimeType: z.string().optional(),
-        width: z.number().optional(),
-        height: z.number().optional(),
+        imageUrl: optionalText,
+        caption: optionalText,
+        mimeType: optionalText,
+        width: z.number().nullish(),
+        height: z.number().nullish(),
       })
-      .optional(),
+      .nullish(),
     audio: z
       .object({
-        audioUrl: z.string().optional(),
-        mimeType: z.string().optional(),
-        seconds: z.number().optional(),
+        audioUrl: optionalText,
+        mimeType: optionalText,
+        seconds: z.number().nullish(),
       })
-      .optional(),
-    video: z.object({ videoUrl: z.string().optional() }).optional(),
+      .nullish(),
+    video: z.object({ videoUrl: optionalText }).nullish(),
     document: z
-      .object({ documentUrl: z.string().optional(), fileName: z.string().optional() })
-      .optional(),
-    sticker: z.object({ stickerUrl: z.string().optional() }).optional(),
-    location: z.object({ address: z.string().optional() }).optional(),
+      .object({ documentUrl: optionalText, fileName: optionalText })
+      .nullish(),
+    sticker: z.object({ stickerUrl: optionalText }).nullish(),
+    location: z.object({ address: optionalText }).nullish(),
     // Callback de status de mensagem (webhook update-webhook-message-status):
     // status SENT/RECEIVED/READ/PLAYED + ids das mensagens afetadas.
-    status: z.string().optional(),
-    ids: z.array(z.union([z.string(), z.number()])).optional(),
-    type: z.string().optional(),
-  })
-  .or(z.unknown().transform(() => ({}) as Record<string, never>));
+    status: optionalText,
+    ids: z.array(z.union([z.string(), z.number()])).nullish(),
+    type: optionalText,
+  });
+
+type ZapiInboundBody = z.infer<typeof zapiInboundBodySchema>;
+
+/** Corpo que o schema não engoliu: em vez de virar {} em silêncio, é registrado como ignorado com o motivo. */
+function parseInboundBody(body: unknown): { parsed: ZapiInboundBody; issue: string | null } {
+  const result = zapiInboundBodySchema.safeParse(body ?? {});
+  if (result.success) return { parsed: result.data, issue: null };
+  const first = result.error.issues[0];
+  const issue = `${first?.path.join(".") || "?"}: ${first?.message ?? "inválido"}`;
+  // Segunda chance: só os campos que importam, um a um, para não perder a
+  // mensagem por causa de um campo decorativo com formato novo.
+  const loose = z.object({}).passthrough().safeParse(body ?? {});
+  const partial: ZapiInboundBody = {};
+  if (loose.success) {
+    for (const key of Object.keys(zapiInboundBodySchema.shape) as (keyof ZapiInboundBody)[]) {
+      const field = zapiInboundBodySchema.shape[key].safeParse(loose.data[key]);
+      if (field.success) (partial as Record<string, unknown>)[key] = field.data;
+    }
+  }
+  return { parsed: partial, issue };
+}
 
 export type ProcessZapiInboundInput = {
   /** O segmento [secret] do path do webhook. */
@@ -123,7 +153,7 @@ export type ProcessZapiInboundInput = {
 
 export type ProcessZapiInboundResult =
   | { action: "rejected"; rejected: "secret" | "client_token" }
-  | { action: "ignored"; ignored: true }
+  | { action: "ignored"; ignored: true; reason?: string }
   | { action: "duplicate"; duplicate: true }
   | { action: "status"; updated: number }
   | {
@@ -161,10 +191,10 @@ function normalizeKeyword(text: string): string {
 // resolve o slug com match exato); 'variante:{sku}' vira a escolha daquela
 // combinação de cor/tamanho, pelo SKU exato (ambos os ids são montados em
 // src/services/wa-bot.ts); outra opção usa o título visível.
+type Nullish<T> = { [K in keyof T]?: T[K] | null };
+
 function listResponseText(
-  list:
-    | { message?: string; title?: string; selectedRowId?: string }
-    | undefined,
+  list: Nullish<{ message: string; title: string; selectedRowId: string }> | null | undefined,
 ): string | undefined {
   if (!list) return undefined;
   const rowId = list.selectedRowId;
@@ -176,7 +206,7 @@ function listResponseText(
     const escolha = list.title ? `${list.title} ` : "";
     return `Escolhi esta opção: ${escolha}(SKU ${sku}). Confirme comigo essa combinação.`;
   }
-  return list.title ?? list.message;
+  return list.title ?? list.message ?? undefined;
 }
 
 export { INBOUND_MEDIA_MARKERS };
@@ -196,12 +226,12 @@ type InboundMedia = {
  * mensagem.
  */
 function describeInboundMedia(parsed: {
-  image?: { imageUrl?: string; caption?: string; mimeType?: string; width?: number; height?: number };
-  audio?: { audioUrl?: string; mimeType?: string; seconds?: number };
-  video?: { videoUrl?: string };
-  document?: { documentUrl?: string; fileName?: string };
-  sticker?: { stickerUrl?: string };
-  location?: { address?: string };
+  image?: Nullish<{ imageUrl: string; caption: string; mimeType: string; width: number; height: number }> | null;
+  audio?: Nullish<{ audioUrl: string; mimeType: string; seconds: number }> | null;
+  video?: Nullish<{ videoUrl: string }> | null;
+  document?: Nullish<{ documentUrl: string; fileName: string }> | null;
+  sticker?: Nullish<{ stickerUrl: string }> | null;
+  location?: Nullish<{ address: string }> | null;
 }): InboundMedia | undefined {
   if (parsed.image) {
     const caption = parsed.image.caption?.trim();
@@ -373,6 +403,46 @@ function normalizePhone(raw: string): string | null {
   return isValidE164(candidate) ? candidate : null;
 }
 
+const IGNORED_ALERT_MAX_CHARS = 160;
+
+/**
+ * Mensagem que chegou mas não deu para processar (sem id, sem telefone nem
+ * LID, corpo fora do formato): fica em inbound_events com status 'ignored'
+ * e o motivo — para ninguém precisar adivinhar o que a Z-API mandou — e o
+ * dono recebe um aviso no WhatsApp com o texto, para responder pelo
+ * celular. O id externo ganha o prefixo 'ignored:' para não consumir o
+ * dedupe do messageId (se a Z-API reenviar certo, entra normalmente).
+ */
+async function recordIgnoredInbound(
+  db: DbOrTx,
+  input: { body: unknown; messageId: string | undefined; reason: string; senderName?: string; text: string },
+): Promise<void> {
+  const externalEventId = `ignored:${input.messageId ?? `sem-id:${Date.now()}`}`;
+  const inserted = await db
+    .insert(inboundEvents)
+    .values({
+      source: "zapi",
+      externalEventId,
+      eventType: "message.received",
+      payload: (input.body ?? {}) as Record<string, unknown>,
+      status: "ignored",
+      lastError: input.reason.slice(0, 500),
+      processedAt: new Date(),
+    })
+    .onConflictDoNothing({ target: [inboundEvents.source, inboundEvents.externalEventId] })
+    .returning({ id: inboundEvents.id });
+  if (inserted.length === 0) return;
+  const who = input.senderName?.trim() || "alguém";
+  await enqueueOutboxEvent(db, {
+    eventType: "wa.owner_forward",
+    dedupeKey: `wa.fwd:${externalEventId}`,
+    payload: {
+      raw: true,
+      body: `⚠️ Mensagem de ${who} chegou no WhatsApp da loja, mas o sistema não conseguiu identificar quem mandou (${input.reason.split(" ")[0]}). Responda pelo celular. Texto: "${input.text.slice(0, IGNORED_ALERT_MAX_CHARS)}"`,
+    },
+  });
+}
+
 export async function processZapiInbound(
   db: DbOrTx,
   input: ProcessZapiInboundInput,
@@ -391,22 +461,22 @@ export async function processZapiInbound(
     return { action: "rejected", rejected: "client_token" };
   }
 
-  const parsed = zapiInboundBodySchema.parse(input.body ?? {});
-  const messageId =
-    parsed.messageId !== undefined ? String(parsed.messageId) : undefined;
-  const rawPhone = parsed.phone !== undefined ? String(parsed.phone) : undefined;
+  const { parsed, issue } = parseInboundBody(input.body);
+  const messageId = parsed.messageId != null ? String(parsed.messageId) : undefined;
+  const rawPhone = parsed.phone != null ? String(parsed.phone).trim() : undefined;
   const media = describeInboundMedia(parsed);
   const text =
     parsed.text?.message ??
     parsed.body?.message ??
     listResponseText(parsed.listResponseMessage) ??
     parsed.buttonsResponseMessage?.message ??
-    media?.body;
+    media?.body ??
+    undefined;
 
   // Callback de STATUS de mensagem (entregue/lida): atualiza wa_messages
   // pelo zapi_message_id de forma MONOTÔNICA (nunca regride) — é o que torna
   // visível uma mensagem "aceita mas nunca entregue" (número sem WhatsApp).
-  const statusUpper = parsed.status?.toUpperCase();
+  const statusUpper = parsed.status?.toUpperCase() ?? undefined;
   const statusTarget =
     statusUpper === "RECEIVED" || statusUpper === "DELIVERED"
       ? "delivered"
@@ -441,13 +511,25 @@ export async function processZapiInbound(
   // Sem texto nem mídia = status/ack — ignorados (não registram inbound,
   // senão o DELIVERED consumiria o dedupe do messageId). Ecos das nossas
   // próprias mensagens (fromMe) e grupos também não entram no fluxo.
-  if (!messageId || !rawPhone || !text || parsed.fromMe === true || parsed.isGroup === true) {
+  if (!text || parsed.fromMe === true || parsed.isGroup === true) {
     return { action: "ignored", ignored: true };
   }
 
-  const phoneE164 = normalizePhone(rawPhone);
-  if (!phoneE164) {
-    return { action: "ignored", ignored: true };
+  // O endereço da pessoa: telefone (E.164) ou, quando o WhatsApp esconde o
+  // número, o LID — a Z-API põe o LID no próprio `phone` ('…@lid') e/ou em
+  // chatLid. Um LID nunca passa por normalizePhone: os dígitos viram um
+  // "número" que não existe.
+  const lid =
+    toWaLid(rawPhone) ?? toWaLid(parsed.chatLid) ?? toWaLid(parsed.participantLid) ?? toWaLid(parsed.senderLid);
+  const realPhone = rawPhone && !rawPhone.includes("@") ? normalizePhone(rawPhone) : null;
+  const address = realPhone ?? lid;
+
+  // Mensagem de verdade que não dá para processar: fica REGISTRADA (status
+  // 'ignored' + motivo) e o dono é avisado — nunca some em silêncio.
+  if (!messageId || !address) {
+    const reason = !messageId ? "sem_id" : issue ? `payload_invalido (${issue})` : "sem_endereco";
+    await recordIgnoredInbound(db, { body: input.body, messageId, reason, senderName: parsed.senderName ?? undefined, text });
+    return { action: "ignored", ignored: true, reason };
   }
 
   const result = await db.transaction(async (tx) => {
@@ -470,24 +552,40 @@ export async function processZapiInbound(
       return { action: "duplicate", duplicate: true } as const;
     }
 
-    const [customer] = await tx
-      .select({
-        id: customers.id,
-        fullName: customers.fullName,
-        marketingOptIn: customers.marketingOptIn,
-      })
-      .from(customers)
-      .where(and(eq(customers.phoneE164, phoneE164), isNull(customers.deletedAt)))
-      .limit(1);
+    // Cliente cadastrada só se conhecemos o telefone (o LID não está no cadastro).
+    const [customer] = realPhone
+      ? await tx
+          .select({
+            id: customers.id,
+            fullName: customers.fullName,
+            marketingOptIn: customers.marketingOptIn,
+          })
+          .from(customers)
+          .where(and(eq(customers.phoneE164, realPhone), isNull(customers.deletedAt)))
+          .limit(1)
+      : [];
 
     const now = new Date();
 
-    // No máximo UMA conversa não-fechada por telefone (unique parcial):
+    // A mesma pessoa pode chegar ora pelo telefone, ora só pelo LID: se o
+    // LID já está numa conversa aberta, é ela — não nasce outra.
+    const [byLid] = lid
+      ? await tx
+          .select({ phoneE164: waConversations.phoneE164 })
+          .from(waConversations)
+          .where(and(eq(waConversations.lid, lid), sql`${waConversations.status} <> 'closed'`))
+          .orderBy(desc(waConversations.updatedAt))
+          .limit(1)
+      : [];
+    const conversationAddress = byLid?.phoneE164 ?? address;
+
+    // No máximo UMA conversa não-fechada por endereço (unique parcial):
     // upsert reaproveita a aberta; conversa fechada não conflita e nasce outra.
     const [conversation] = await tx
       .insert(waConversations)
       .values({
-        phoneE164,
+        phoneE164: conversationAddress,
+        lid: lid ?? null,
         customerId: customer?.id ?? null,
         lastInboundAt: now,
       })
@@ -497,6 +595,7 @@ export async function processZapiInbound(
         set: {
           lastInboundAt: now,
           updatedAt: now,
+          ...(lid ? { lid: sql`coalesce(${waConversations.lid}, ${lid})` } : {}),
           // Nunca sobrescreve um vínculo existente com outro cliente.
           ...(customer
             ? { customerId: sql`coalesce(${waConversations.customerId}, ${customer.id})` }
@@ -505,10 +604,14 @@ export async function processZapiInbound(
       })
       .returning({
         id: waConversations.id,
+        phoneE164: waConversations.phoneE164,
         status: waConversations.status,
         createdAt: waConversations.createdAt,
         botDisabledUntil: waConversations.botDisabledUntil,
       });
+    // Daqui em diante, o endereço é o da CONVERSA (telefone quando conhecido,
+    // senão o LID): é para ele que a resposta volta.
+    const phoneE164 = conversation.phoneE164;
 
     const [message] = await tx
       .insert(waMessages)
@@ -702,7 +805,7 @@ export async function processZapiInbound(
     // A resposta é gravada na linha do pedido (só do telefone que recebeu a
     // pergunta) e vira texto com contexto; grande/pequeno/amei caem na Lia,
     // defeito e "falar" vão direto para a equipe.
-    const feedbackRow = parseFeedbackRowId(parsed.listResponseMessage?.selectedRowId);
+    const feedbackRow = parseFeedbackRowId(parsed.listResponseMessage?.selectedRowId ?? undefined);
     if (feedbackRow) {
       const recorded = await recordDeliveryFeedback(tx, {
         orderId: feedbackRow.orderId,

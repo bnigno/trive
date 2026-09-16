@@ -1,8 +1,35 @@
 const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
 const DDD_PATTERN = /^[1-9][1-9]$/;
+/** LID do WhatsApp: identificador que substitui o número quando ele é oculto ('220839349862480@lid'). */
+const WA_LID_PATTERN = /^\d{5,20}@lid$/;
 
 export function isValidE164(s: string): boolean {
   return E164_PATTERN.test(s);
+}
+
+/** 'xxxxx@lid' — o WhatsApp passou a esconder o número de alguns contatos; a Z-API entrega e aceita o LID no lugar do telefone. */
+export function isWaLid(s: string): boolean {
+  return WA_LID_PATTERN.test(s);
+}
+
+/**
+ * Endereço de WhatsApp: o que vai no campo `phone` da Z-API — E.164
+ * ('+5591…') ou LID ('…@lid'). A conversa guarda o endereço em phone_e164.
+ */
+export function isWaAddress(s: string): boolean {
+  return isValidE164(s) || isWaLid(s);
+}
+
+/** Normaliza um LID vindo da Z-API ('123@lid', ' 123@LID ', '123@lid.whatsapp.net'?) para o canônico; null se não for LID. */
+export function toWaLid(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const match = raw.trim().toLowerCase().match(/^(\d{5,20})@lid\b/);
+  return match ? `${match[1]}@lid` : null;
+}
+
+/** O que a Z-API espera no campo `phone`: E.164 sem o '+', ou o LID como está. */
+export function waAddressForZapi(address: string): string {
+  return isWaLid(address) ? address : address.replace(/^\+/, "");
 }
 
 /**
@@ -74,8 +101,9 @@ export function sameE164(a: string | null | undefined, b: string | null | undefi
   return left.length > 1 && left === right;
 }
 
-/** '+5511999991234' -> '(11) •••••-1234' — nunca expõe o número inteiro. */
+/** '+5511999991234' -> '(11) •••••-1234' — nunca expõe o número inteiro. LID (número oculto) não tem o que mascarar. */
 export function maskPhone(phoneE164: string): string {
+  if (isWaLid(phoneE164)) return "número oculto";
   const last4 = phoneE164.slice(-4);
   if (phoneE164.startsWith("+55") && phoneE164.length >= 12) {
     const ddd = phoneE164.slice(3, 5);

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isWaLid, waAddressForZapi } from "@/lib/phone";
+
 import type {
   DownloadedMedia,
   MessagingProvider,
@@ -127,7 +129,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
       method: "POST",
       body: {
         // Z-API espera o número SEM o '+' do E.164.
-        phone: message.toE164.replace(/^\+/, ""),
+        phone: waAddressForZapi(message.toE164),
         message: message.body,
         // delayTyping = segundos de "digitando…" antes da entrega; com ele,
         // delayMessage fixo no mínimo (1 s) em vez do padrão aleatório de
@@ -149,7 +151,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
       method: "POST",
       body: {
         // Z-API espera o número SEM o '+' do E.164.
-        phone: message.toE164.replace(/^\+/, ""),
+        phone: waAddressForZapi(message.toE164),
         image: message.imageUrl,
         ...(message.caption !== undefined ? { caption: message.caption } : {}),
       },
@@ -169,7 +171,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
     const raw = await this.request("/send-audio", {
       method: "POST",
       body: {
-        phone: message.toE164.replace(/^\+/, ""),
+        phone: waAddressForZapi(message.toE164),
         audio: message.audioUrl,
         waveform: true,
         // Aqui o status é "gravando áudio…".
@@ -190,7 +192,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
       method: "POST",
       body: {
         // Z-API espera o número SEM o '+' do E.164.
-        phone: message.toE164.replace(/^\+/, ""),
+        phone: waAddressForZapi(message.toE164),
         message: message.message,
         // A lista não tem "digitando"; só tira o atraso aleatório de 1–3 s.
         delayMessage: 1,
@@ -226,7 +228,7 @@ export class ZapiMessagingProvider implements MessagingProvider {
     // POST /read-message { phone, messageId } — ✓✓ azul na mensagem dela.
     await this.request("/read-message", {
       method: "POST",
-      body: { phone: input.fromE164.replace(/^\+/, ""), messageId: input.providerMessageId },
+      body: { phone: waAddressForZapi(input.fromE164), messageId: input.providerMessageId },
       signal: AbortSignal.timeout(READ_TIMEOUT_MS),
     });
   }
@@ -234,6 +236,8 @@ export class ZapiMessagingProvider implements MessagingProvider {
   async phoneExists(toE164: string): Promise<boolean> {
     // Fail-open: se a CONSULTA falhar (rede/HTTP), não bloqueamos um envio
     // legítimo — só a resposta explícita "exists: false" impede o envio.
+    // LID (número oculto) não tem consulta: quem mandou a mensagem existe.
+    if (isWaLid(toE164)) return true;
     try {
       const raw = await this.request(
         `/phone-exists/${toE164.replace(/^\+/, "")}`,

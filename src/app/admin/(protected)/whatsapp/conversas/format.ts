@@ -2,12 +2,13 @@ import type { BadgeTone } from "@/components/ui/badge";
 import type { BotToolName } from "@/core/bot/tools";
 import type { WaMessageOrigin } from "@/core/whatsapp/origin";
 
-import { maskPhone } from "@/lib/phone";
+import { isWaLid, maskPhone } from "@/lib/phone";
 
 export { maskPhone };
 
 /** '+5511999991234' -> '(11) 99999-1234' — só no painel do cliente. */
 export function formatPhoneBR(phoneE164: string): string {
+  if (isWaLid(phoneE164)) return "número oculto pelo WhatsApp";
   const digits = phoneE164.replace(/\D/g, "");
   if (digits.startsWith("55") && (digits.length === 13 || digits.length === 12)) {
     const ddd = digits.slice(2, 4);

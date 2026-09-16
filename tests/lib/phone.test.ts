@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidE164, sameE164, toE164BR, waMeUrl } from "../../src/lib/phone";
+import { isValidE164, isWaAddress, isWaLid, maskPhone, sameE164, toE164BR, toWaLid, waAddressForZapi, waMeUrl } from "../../src/lib/phone";
 
 describe("sameE164", () => {
   it("compara o setting do dono (formato livre) com o telefone da Z-API", () => {
@@ -126,5 +126,25 @@ describe("waMeUrl", () => {
     expect(waMeUrl("   ")).toBeNull();
     expect(waMeUrl(undefined)).toBeNull();
     expect(waMeUrl(42)).toBeNull();
+  });
+});
+
+describe("LID do WhatsApp (número oculto)", () => {
+  it("reconhece e canoniza o LID; telefone nunca é LID", () => {
+    expect(isWaLid("220839349862480@lid")).toBe(true);
+    expect(isWaLid("+5511999990000")).toBe(false);
+    expect(toWaLid(" 65998849469@LID ")).toBe("65998849469@lid");
+    expect(toWaLid("5511999990000")).toBeNull();
+    expect(toWaLid(null)).toBeNull();
+    expect(isWaAddress("220839349862480@lid")).toBe(true);
+    expect(isWaAddress("+5511999990000")).toBe(true);
+    expect(isWaAddress("5511999990000")).toBe(false);
+  });
+
+  it("para a Z-API: E.164 sem o '+', LID como está; máscara não vaza nem inventa número", () => {
+    expect(waAddressForZapi("+5511999990000")).toBe("5511999990000");
+    expect(waAddressForZapi("220839349862480@lid")).toBe("220839349862480@lid");
+    expect(maskPhone("220839349862480@lid")).toBe("número oculto");
+    expect(maskPhone("+5511999990000")).toBe("(11) •••••-0000");
   });
 });

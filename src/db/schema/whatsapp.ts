@@ -21,7 +21,13 @@ export const waConversations = pgTable(
   "wa_conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    // O ENDEREÇO de WhatsApp da conversa: E.164 ('+5591…') ou, quando o
+    // WhatsApp esconde o número, o LID ('…@lid') — a Z-API entrega e aceita
+    // os dois no campo `phone`. isWaLid() distingue.
     phoneE164: text("phone_e164").notNull(),
+    // LID conhecido desta pessoa mesmo quando o endereço é o telefone: uma
+    // mensagem que chegue só com o LID reencontra a conversa em vez de abrir outra.
+    lid: text("lid"),
     customerId: uuid("customer_id").references(() => customers.id, {
       onDelete: "set null",
     }),
@@ -50,6 +56,7 @@ export const waConversations = pgTable(
     uniqueIndex("wa_conversations_phone_e164_active_unique_idx")
       .on(table.phoneE164)
       .where(sql`${table.status} <> 'closed'`),
+    index("wa_conversations_lid_idx").on(table.lid),
     check(
       "wa_conversations_status_check",
       sql`${table.status} IN ('open', 'human', 'closed')`,
