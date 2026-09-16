@@ -24,6 +24,23 @@ function createFakeFetch(payload: unknown, status = 200) {
   return { calls, fetchFn };
 }
 
+describe("LID (número oculto) no adapter", () => {
+  beforeEach(() => {
+    process.env.ZAPI_INSTANCE_ID = "inst";
+    process.env.ZAPI_INSTANCE_TOKEN = "tok";
+    process.env.ZAPI_CLIENT_TOKEN = "ct";
+  });
+
+  it("manda o LID como está no campo phone e não consulta phone-exists para LID", async () => {
+    const { calls, fetchFn } = createFakeFetch({ messageId: "mid-lid" });
+    const provider = new ZapiMessagingProvider(fetchFn);
+    await provider.sendText({ toE164: "220839349862480@lid", body: "Oi!" });
+    expect(calls[0]?.body).toEqual({ phone: "220839349862480@lid", message: "Oi!" });
+    expect(await provider.phoneExists("220839349862480@lid")).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe("ZapiMessagingProvider (client real com fetch fake)", () => {
   beforeEach(() => {
     vi.stubEnv("ZAPI_INSTANCE_ID", "inst-test");

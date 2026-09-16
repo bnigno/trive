@@ -324,6 +324,183 @@ describe("processZapiInbound", () => {
     expect(await db.select().from(schema.inboundEvents)).toHaveLength(0);
   });
 
+  it("número oculto (LID no phone): conversa nasce com o LID como endereço, é encaminhada ao dono e nada se perde", async () => {
+    const LID = "220839349862480@lid";
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...receivedMessage("MSG-LID", "Boa noite", LID), chatLid: LID, senderName: "Sogra" },
+    });
+    expect(result.action).toBe("forwarded");
+
+    const [conversation] = await db.select().from(schema.waConversations);
+    expect(conversation.phoneE164).toBe(LID);
+    expect(conversation.lid).toBe(LID);
+    expect(conversation.customerId).toBeNull();
+
+    const outbox = await db.select().from(schema.outboxEvents);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].eventType).toBe("wa.owner_forward");
+    // A resposta volta para o LID — a Z-API aceita o LID no campo phone.
+    expect((outbox[0].payload as { phoneE164: string }).phoneE164).toBe(LID);
+  });
+
+  it("LID de 11 dígitos NÃO vira telefone brasileiro: continua LID", async () => {
+    const LID = "65998849469@lid";
+    await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: receivedMessage("MSG-LID11", "Oi", LID),
+    });
+    const [conversation] = await db.select().from(schema.waConversations);
+    expect(conversation.phoneE164).toBe(LID);
+  });
+
+  it("a mesma pessoa pelo telefone (com chatLid) e depois só pelo LID cai na MESMA conversa, e a resposta vai para o telefone", async () => {
+    const LID = "81896604192873@lid";
+    await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...receivedMessage("MSG-TEL", "Primeira, com número"), chatLid: LID },
+    });
+    await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...receivedMessage("MSG-SO-LID", "Segunda, só com LID", LID), chatLid: LID },
+    });
+
+    const conversations = await db.select().from(schema.waConversations);
+    expect(conversations).toHaveLength(1);
+    expect(conversations[0].phoneE164).toBe(PHONE_E164);
+    expect(conversations[0].lid).toBe(LID);
+    const messages = await db.select().from(schema.waMessages);
+    expect(messages).toHaveLength(2);
+    const outbox = await db.select().from(schema.outboxEvents);
+    expect(outbox.map((e) => (e.payload as { phoneE164: string }).phoneE164)).toEqual([PHONE_E164, PHONE_E164]);
+  });
+
+  it("SAIR vindo de um LID: o ack vai para o LID (o handler wa.send aceita LID)", async () => {
+    const LID = "220839349862480@lid";
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: receivedMessage("MSG-SAIR-LID", "sair", LID),
+    });
+    expect(result.action).toBe("opt_out");
+    const outbox = await db.select().from(schema.outboxEvents);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].eventType).toBe("wa.send");
+    expect((outbox[0].payload as { phoneE164: string }).phoneE164).toBe(LID);
+  });
+
+  it("LID primeiro, depois o telefone aparece (com chatLid): a MESMA conversa passa a usar o telefone; o SAIR cancela pelo telefone", async () => {
+    const LID = "81896604192873@lid";
+    await createOptedInCustomer();
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-L1", "Oi", LID) });
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: { ...receivedMessage("MSG-T1", "Agora com número"), chatLid: LID } });
+
+    const conversations = await db.select().from(schema.waConversations);
+    expect(conversations).toHaveLength(1);
+    expect(conversations[0]).toMatchObject({ phoneE164: PHONE_E164, lid: LID });
+    expect((await db.select().from(schema.waMessages)).every((m) => m.conversationId === conversations[0].id)).toBe(true);
+
+    // Só o LID de novo: continua na mesma conversa e a resposta vai para o telefone.
+    const again = await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-L2", "sair", LID) });
+    expect(again.action).toBe("opt_out");
+    expect(await db.select().from(schema.waConversations)).toHaveLength(1);
+    const [customer] = await db.select().from(schema.customers);
+    // A identidade é o telefone real da conversa: o opt-in dela foi desligado.
+    expect(customer.marketingOptIn).toBe(false);
+    const ack = (await db.select().from(schema.outboxEvents)).find((e) => e.eventType === "wa.send");
+    expect((ack!.payload as { phoneE164: string }).phoneE164).toBe(PHONE_E164);
+  });
+
+  it("conversa do telefone já aberta (sem lid) + nasce uma só com o LID: quando telefone e LID chegam juntos, a do telefone ganha o LID e a do LID é fechada", async () => {
+    const LID = "65998849469@lid";
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-A", "Primeira, pelo telefone") });
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-B", "Segunda, só LID", LID) });
+    expect(await db.select().from(schema.waConversations)).toHaveLength(2);
+
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: { ...receivedMessage("MSG-C", "Terceira, com os dois"), chatLid: LID } });
+    const conversations = await db.select().from(schema.waConversations);
+    const open = conversations.filter((c) => c.status !== "closed");
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ phoneE164: PHONE_E164, lid: LID });
+    expect(conversations.find((c) => c.phoneE164 === LID)?.status).toBe("closed");
+
+    // Daqui em diante, só o LID cai na conversa do telefone.
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-D", "Quarta, só LID", LID) });
+    expect((await db.select().from(schema.waConversations)).filter((c) => c.status !== "closed")).toHaveLength(1);
+  });
+
+  it("JID antigo ('…@c.us') é telefone; LID cru no phone (mesmos dígitos do chatLid) não vira telefone estrangeiro", async () => {
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-JID", "Oi", `${PHONE_ZAPI}@c.us`) });
+    const [jid] = await db.select().from(schema.waConversations);
+    expect(jid.phoneE164).toBe(PHONE_E164);
+
+    const LID = "220839349862480@lid";
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: { ...receivedMessage("MSG-RAW", "Oi", "220839349862480"), chatLid: LID } });
+    const raw = (await db.select().from(schema.waConversations)).find((c) => c.lid === LID);
+    expect(raw?.phoneE164).toBe(LID);
+  });
+
+  it("campos nulos (senderName, chatName, text.message null com body.message) não derrubam a mensagem", async () => {
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: {
+        ...receivedMessage("MSG-NULOS", "ignorado"),
+        senderName: null,
+        chatName: null,
+        text: { message: null },
+        body: { message: "Texto no body" },
+        image: null,
+      },
+    });
+    expect(result.action).toBe("forwarded");
+    const [message] = await db.select().from(schema.waMessages);
+    expect(message.body).toBe("Texto no body");
+  });
+
+  it("mensagem sem telefone nem LID: fica registrada como ignorada com o motivo e o dono é avisado com o texto", async () => {
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...receivedMessage("MSG-SEM-END", "Oi, quero uma blusa"), phone: "", chatLid: null, senderName: "Maria" },
+    });
+    expect(result).toEqual({ action: "ignored", ignored: true, reason: "sem_endereco" });
+
+    const [inbound] = await db.select().from(schema.inboundEvents);
+    expect(inbound).toMatchObject({ source: "zapi", externalEventId: "ignored:MSG-SEM-END", status: "ignored", lastError: "sem_endereco" });
+    expect(inbound.processedAt).not.toBeNull();
+
+    const outbox = await db.select().from(schema.outboxEvents);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].eventType).toBe("wa.owner_forward");
+    const payload = outbox[0].payload as { raw: boolean; body: string };
+    expect(payload.raw).toBe(true);
+    expect(payload.body).toContain("Maria");
+    expect(payload.body).toContain("Oi, quero uma blusa");
+
+    // Reentrega igual: não duplica o registro nem o aviso.
+    await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...receivedMessage("MSG-SEM-END", "Oi, quero uma blusa"), phone: "", senderName: "Maria" },
+    });
+    expect(await db.select().from(schema.inboundEvents)).toHaveLength(1);
+    expect(await db.select().from(schema.outboxEvents)).toHaveLength(1);
+    // E se a Z-API mandar depois o mesmo id com telefone, entra normalmente.
+    const fixed = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: receivedMessage("MSG-SEM-END", "Oi, quero uma blusa"),
+    });
+    expect(fixed.action).toBe("forwarded");
+  });
+
+  it("corpo fora do formato (messageId objeto) é registrado como payload_invalido em vez de sumir", async () => {
+    const result = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { ...receivedMessage("x", "Oi"), messageId: { estranho: true } },
+    });
+    expect(result.action).toBe("ignored");
+    expect((result as { reason?: string }).reason).toMatch(/^sem_id|payload_invalido/);
+    const [inbound] = await db.select().from(schema.inboundEvents);
+    expect(inbound.status).toBe("ignored");
+  });
+
   it("inbound_event fica done com processedAt após processar", async () => {
     await processZapiInbound(sdb, {
       providedSecret: SECRET,

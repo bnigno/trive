@@ -50,6 +50,33 @@ async function level(variantId: string) {
   return { onHand: row.onHand, reserved: row.reserved };
 }
 
+describe("número oculto (LID) nas ferramentas", () => {
+  it("reservar_peca, avisar_quando_voltar e criar_pedido com conversa LID: recusam pedindo o telefone, sem lançar; listar_produtos segue normal", async () => {
+    const LID = "220839349862480@lid";
+    const LID_CONVERSATION_ID = "00000000-0000-4000-8000-0000000000aa";
+    await db.insert(schema.waConversations).values({ id: LID_CONVERSATION_ID, phoneE164: LID, lid: LID, status: "open" });
+    const { variantId } = await variant("DUNAS-PRET-M", 2);
+    const execute = buildToolExecutor(sdb, {
+      conversationId: LID_CONVERSATION_ID,
+      phoneE164: LID,
+      customerId: null,
+      lastInboundId: "00000000-0000-4000-8000-00000000feed",
+    });
+    for (const [name, input] of [
+      ["reservar_peca", { sku: "dunas-pret-m" }],
+      ["avisar_quando_voltar", { sku: "dunas-pret-m" }],
+      ["criar_pedido", { nome: "Ana", cpf: "52998224725", endereco: { cep: "66000000", logradouro: "Rua A", numero: "1", bairro: "B", cidade: "Belém", uf: "PA" }, forma_de_entrega: "motoboy" }],
+    ] as const) {
+      const result = await execute(name, input);
+      expect(result.ok, name).toBe(false);
+      expect(result.text, name).toContain("esconde o número");
+    }
+    expect(await level(variantId)).toEqual({ onHand: 2, reserved: 0 });
+    const list = await execute("listar_produtos", {});
+    expect(list.ok).toBe(true);
+  });
+});
+
 describe("reservar_peca / liberar_reserva", () => {
   it("segura a combinação pelo SKU, devolve o prazo e reserva no ledger; a segunda é recusada", async () => {
     const { variantId } = await variant("DUNAS-PRET-M", 2);

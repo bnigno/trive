@@ -8,6 +8,7 @@ import { useState, useTransition } from "react";
 
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { formatCentsBRL } from "@/lib/money";
+import { isWaLid } from "@/lib/phone";
 import { daySeparatorLabel, formatTimeSP } from "./chat-format";
 import { cancelFollowupAction } from "./actions";
 import { formatPhoneBR } from "./format";
@@ -87,7 +88,9 @@ export function ContextPanel({
             No WhatsApp: {context.displayName}
           </p>
         ) : null}
-        {phoneE164 ? (
+        {phoneE164 && isWaLid(phoneE164) ? (
+          <p className="text-xs text-ink-500 dark:text-ink-300">{formatPhoneBR(phoneE164)}</p>
+        ) : phoneE164 ? (
           <a
             href={`https://wa.me/${phoneE164.replace(/\D/g, "")}`}
             target="_blank"

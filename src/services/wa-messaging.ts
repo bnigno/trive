@@ -24,16 +24,17 @@ import {
 import { formatDateTimeSP } from "@/emails/templates";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
-import { isValidE164, sameE164, toE164BR } from "@/lib/phone";
+import { isValidE164, isWaLid, sameE164, toE164BR } from "@/lib/phone";
 import { spDayKey, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 
 export { ServiceError };
 
+// Endereço de WhatsApp: E.164 ou LID ('…@lid', número oculto pelo WhatsApp) — a Z-API aceita os dois.
 const E164_SCHEMA = z
   .string()
-  .regex(/^\+[1-9]\d{7,14}$/, "Telefone deve estar em E.164 (ex.: +5511999998888).");
+  .refine((value) => /^\+[1-9]\d{7,14}$/.test(value) || isWaLid(value), "Telefone deve estar em E.164 (ex.: +5511999998888) ou ser um LID do WhatsApp.");
 
 // ---------------------------------------------------------------------------
 // isWaEnabled — espelha isMpEnabled (store-payments): o toggle sozinho não
