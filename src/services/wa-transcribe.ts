@@ -125,6 +125,8 @@ export async function transcribeInboundAudio(
     const route = await routeInboundMessage(tx, {
       conversation: { id: row.conversationId, status: row.status, botDisabledUntil: row.botDisabledUntil },
       phoneE164: row.phoneE164,
+      // A conversa guarda o telefone quando o conhece; um LID é o melhor que há.
+      identityPhone: row.phoneE164,
       zapiMessageId: row.zapiMessageId as string,
       text: body,
       forwardText:

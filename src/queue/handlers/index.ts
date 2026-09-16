@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { isWaLid } from "@/lib/phone";
+
 import { getSalesAssistant } from "@/adapters/assistant";
 import { getEmailProvider } from "@/adapters/email";
 import { getMailboxProvider } from "@/adapters/mailbox";
@@ -164,9 +166,11 @@ async function sendOrderWa(
 // Envio avulso (ex.: resposta manual do dono no admin) — corpo pronto no
 // payload, sem opt-in (transacional/resposta a contato do cliente).
 const waSendPayloadSchema = z.object({
+  // E.164 ou LID (número oculto pelo WhatsApp): a resposta manual do painel e
+  // o ack de SAIR para uma conversa LID passam por aqui.
   phoneE164: z
     .string()
-    .regex(/^\+[1-9]\d{7,14}$/, "Telefone deve estar em E.164."),
+    .refine((value) => /^\+[1-9]\d{7,14}$/.test(value) || isWaLid(value), "Telefone deve estar em E.164 ou ser um LID do WhatsApp."),
   body: z.string().min(1),
   customerId: z.uuid().optional(),
   orderId: z.uuid().optional(),

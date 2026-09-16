@@ -9,7 +9,9 @@
 // wa_conversations.bot_state e entra no turno como primeira mensagem, fora do
 // prompt de sistema — que se mantém idêntico entre turnos para o cache valer.
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { ZodError } from "zod";
 import { getAdapterMode } from "@/adapters/adapter-mode";
+import { isWaLid } from "@/lib/phone";
 import {
   AssistantUnavailableError,
   type AssistantTurn,
@@ -20,7 +22,7 @@ import { getCepLookup } from "@/adapters/cep";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memory";
 import { copilotBlockedText, isToolBlockedInCopilot } from "@/core/bot/copilot";
-import { BOT_TOOL_INPUT_SCHEMAS, type BotToolInputs, type ToolExecutor } from "@/core/bot/tools";
+import { BOT_TOOL_INPUT_SCHEMAS, type BotToolInputs, type BotToolName, type ToolExecutor } from "@/core/bot/tools";
 import { buildBotSystemPrompt, DEFAULT_SELLER_NAME, truncateForWhatsApp } from "@/core/bot/prompt";
 import { CURATOR_AUDIO_RECORDING_SECONDS, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
 import { isBridgeFresh } from "@/core/bot/site-bridge";
@@ -201,6 +203,10 @@ export function buildToolExecutor(
   return async (name, rawInput) => {
     // Copiloto: o que tem efeito fora da conversa espera a dona.
     if (ctx.copilot && isToolBlockedInCopilot(name)) return { ok: false, text: copilotBlockedText(name) };
+    // Número oculto (LID): o que grava o telefone da cliente (pedido, reserva,
+    // aviso, cartela, retorno) não tem telefone para gravar. A ferramenta
+    // responde "peça o telefone" em vez de lançar e derrubar o turno inteiro.
+    if (TOOLS_NEEDING_PHONE.has(name) && isWaLid(ctx.phoneE164)) return { ok: false, text: HIDDEN_NUMBER_TOOL_TEXT };
     const schema = BOT_TOOL_INPUT_SCHEMAS[name];
     const parsed = schema.safeParse(rawInput);
     if (!parsed.success) {
@@ -210,6 +216,20 @@ export function buildToolExecutor(
       return { ok: false, text: `Dados inválidos: ${detalhes}` };
     }
 
+    try {
+      return await runTool(name, parsed.data);
+    } catch (error) {
+      // Validação de um serviço (Zod) nunca derruba o turno: vira resposta
+      // da ferramenta e o modelo explica/pede o que falta.
+      if (error instanceof ZodError) {
+        return { ok: false, text: `Não consegui registrar isso: ${error.issues.map((issue) => issue.message).join("; ")}` };
+      }
+      throw error;
+    }
+  };
+
+  async function runTool(name: BotToolName, data: unknown) {
+    const parsed = { data };
     switch (name) {
       case "listar_produtos":
         return execListarProdutos(
@@ -300,8 +320,20 @@ export function buildToolExecutor(
           parsed.data as BotToolInputs["transferir_para_atendente"],
         );
     }
-  };
+  }
 }
+
+/** Ferramentas que gravam o telefone da cliente em algum lugar (cadastro, reserva, aviso, cartela, retorno). */
+const TOOLS_NEEDING_PHONE = new Set<BotToolName>([
+  "criar_pedido",
+  "reservar_peca",
+  "avisar_quando_voltar",
+  "atualizar_cartela",
+  "agendar_retorno",
+  "registrar_foto_com_a_peca",
+]);
+const HIDDEN_NUMBER_TOOL_TEXT =
+  "O WhatsApp esconde o número desta cliente, então não dá para registrar isso no cadastro. Peça a ela o telefone com DDD (ela pode mandar aqui mesmo) e avise a equipe pelo avisar_dono.";
 
 // ---------------------------------------------------------------------------
 // Prompt do turno: configurações + planta da loja. Compartilhado com o

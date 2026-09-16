@@ -22,7 +22,7 @@ import {
 } from "@/db/schema";
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { INBOUND_MEDIA_MARKERS, type WaMediaMeta } from "@/core/whatsapp/media";
-import { isValidE164, toE164BR, toWaLid } from "@/lib/phone";
+import { isValidE164, isWaLid, toE164BR, toWaLid } from "@/lib/phone";
 import { enqueueOutboxEvent, kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import {
   enqueueAtelierHelp,
@@ -286,7 +286,10 @@ export async function routeInboundMessage(
   tx: DbOrTx,
   input: {
     conversation: { id: string; status: string; botDisabledUntil: Date | null };
+    /** Endereço de entrega da conversa (telefone ou LID): para onde a resposta volta. */
     phoneE164: string;
+    /** Telefone REAL quando conhecido (identidade: dono, motoboy) — senão o endereço. */
+    identityPhone: string;
     zapiMessageId: string;
     /** O que a vendedora lê. */
     text: string;
@@ -307,7 +310,7 @@ export async function routeInboundMessage(
   if (
     input.waMessageId &&
     input.kind === "audio" &&
-    (await isOwnerPhone(tx, input.phoneE164)) &&
+    (await isOwnerPhone(tx, input.identityPhone)) &&
     (await isAtelierEnabled(tx))
   ) {
     const decision = await routeOwnerInbound(tx, {
@@ -341,7 +344,7 @@ export async function routeInboundMessage(
 
   // Motoboy respondendo ao link da saída ("ok", "saí", "cheguei"): é
   // recado para a dona — a Lia não vende para o motoboy.
-  const courier = await findActiveCourierByPhone(tx, input.phoneE164);
+  const courier = await findActiveCourierByPhone(tx, input.identityPhone);
   if (courier) {
     await enqueueOutboxEvent(tx, {
       eventType: "wa.owner_forward",
@@ -521,7 +524,12 @@ export async function processZapiInbound(
   // "número" que não existe.
   const lid =
     toWaLid(rawPhone) ?? toWaLid(parsed.chatLid) ?? toWaLid(parsed.participantLid) ?? toWaLid(parsed.senderLid);
-  const realPhone = rawPhone && !rawPhone.includes("@") ? normalizePhone(rawPhone) : null;
+  // JID antigo ('5591…@c.us' / '@s.whatsapp.net') é telefone; qualquer outro
+  // '@' (LID, canal) não é. E o LID cru sem sufixo no phone (mesmos dígitos
+  // do chatLid) também não é telefone.
+  const phoneDigits = rawPhone?.replace(/@(c\.us|s\.whatsapp\.net)$/i, "");
+  const looksLikeLid = lid !== null && phoneDigits?.replace(/\D/g, "") === lid.replace("@lid", "");
+  const realPhone = phoneDigits && !phoneDigits.includes("@") && !looksLikeLid ? normalizePhone(phoneDigits) : null;
   const address = realPhone ?? lid;
 
   // Mensagem de verdade que não dá para processar: fica REGISTRADA (status
@@ -552,8 +560,46 @@ export async function processZapiInbound(
       return { action: "duplicate", duplicate: true } as const;
     }
 
-    // Cliente cadastrada só se conhecemos o telefone (o LID não está no cadastro).
-    const [customer] = realPhone
+    const now = new Date();
+
+    // A mesma pessoa pode chegar ora pelo telefone, ora só pelo LID. A
+    // conversa do TELEFONE manda (é a que tem cliente e caderninho): se
+    // existir, ganha o LID; uma conversa aberta só com o LID é fechada para
+    // a pessoa não alternar entre duas. Sem conversa do telefone, a do LID
+    // serve — e, se o telefone acabou de aparecer, ela passa a usá-lo.
+    const openConversation = (where: ReturnType<typeof eq>) =>
+      tx
+        .select({ id: waConversations.id, phoneE164: waConversations.phoneE164 })
+        .from(waConversations)
+        .where(and(where, sql`${waConversations.status} <> 'closed'`))
+        .orderBy(desc(waConversations.updatedAt))
+        .limit(1);
+    const [byPhone] = realPhone ? await openConversation(eq(waConversations.phoneE164, realPhone)) : [];
+    const [byLid] = lid && !byPhone ? await openConversation(eq(waConversations.lid, lid)) : [];
+    const [byLidAddress] = lid && !byPhone && !byLid ? await openConversation(eq(waConversations.phoneE164, lid)) : [];
+    const lidConversation = byLid ?? byLidAddress;
+    let conversationAddress = address;
+    if (byPhone) {
+      conversationAddress = realPhone as string;
+      if (lid) {
+        const [stray] = await openConversation(eq(waConversations.phoneE164, lid));
+        if (stray && stray.id !== byPhone.id) {
+          await tx.update(waConversations).set({ status: "closed", updatedAt: now }).where(eq(waConversations.id, stray.id));
+        }
+      }
+    } else if (lidConversation) {
+      if (realPhone && lidConversation.phoneE164 !== realPhone) {
+        await tx.update(waConversations).set({ phoneE164: realPhone, updatedAt: now }).where(eq(waConversations.id, lidConversation.id));
+        conversationAddress = realPhone;
+      } else {
+        conversationAddress = lidConversation.phoneE164;
+      }
+    }
+
+    // Cliente cadastrada só pelo telefone real — o da mensagem ou o que a
+    // conversa já conhece (o LID não está no cadastro).
+    const customerPhone = realPhone ?? (isWaLid(conversationAddress) ? null : conversationAddress);
+    const [customer] = customerPhone
       ? await tx
           .select({
             id: customers.id,
@@ -561,23 +607,9 @@ export async function processZapiInbound(
             marketingOptIn: customers.marketingOptIn,
           })
           .from(customers)
-          .where(and(eq(customers.phoneE164, realPhone), isNull(customers.deletedAt)))
+          .where(and(eq(customers.phoneE164, customerPhone), isNull(customers.deletedAt)))
           .limit(1)
       : [];
-
-    const now = new Date();
-
-    // A mesma pessoa pode chegar ora pelo telefone, ora só pelo LID: se o
-    // LID já está numa conversa aberta, é ela — não nasce outra.
-    const [byLid] = lid
-      ? await tx
-          .select({ phoneE164: waConversations.phoneE164 })
-          .from(waConversations)
-          .where(and(eq(waConversations.lid, lid), sql`${waConversations.status} <> 'closed'`))
-          .orderBy(desc(waConversations.updatedAt))
-          .limit(1)
-      : [];
-    const conversationAddress = byLid?.phoneE164 ?? address;
 
     // No máximo UMA conversa não-fechada por endereço (unique parcial):
     // upsert reaproveita a aberta; conversa fechada não conflita e nasce outra.
@@ -610,8 +642,10 @@ export async function processZapiInbound(
         botDisabledUntil: waConversations.botDisabledUntil,
       });
     // Daqui em diante, o endereço é o da CONVERSA (telefone quando conhecido,
-    // senão o LID): é para ele que a resposta volta.
+    // senão o LID): é para ele que a resposta volta. A IDENTIDADE (dono,
+    // motoboy, opt-out, feedback) usa o telefone real quando o temos.
     const phoneE164 = conversation.phoneE164;
+    const identityPhone = customerPhone ?? phoneE164;
 
     const [message] = await tx
       .insert(waMessages)
@@ -711,7 +745,7 @@ export async function processZapiInbound(
     // recado com fotos recentes abre a chegada; documento pede a foto.
     // Texto solto dele cai no fluxo normal (testar a Lia como cliente);
     // SAIR/PARAR continua sendo o comando, mesmo com lote aberto.
-    if (!isOptOut && (await isOwnerPhone(tx, phoneE164)) && (await isAtelierEnabled(tx))) {
+    if (!isOptOut && (await isOwnerPhone(tx, identityPhone)) && (await isAtelierEnabled(tx))) {
       const decision = await routeOwnerInbound(tx, {
         phoneE164,
         kind: media?.kind ?? "text",
@@ -756,9 +790,9 @@ export async function processZapiInbound(
     if (isOptOut) {
       // Com ou sem cadastro: o que esse telefone pediu para receber é cancelado
       // (lista da estreia e avisos de "voltou") — a /estreia é sem login.
-      await cancelDropWaitlistByPhone(tx, phoneE164, now);
-      await cancelStockAlertsByPhone(tx, phoneE164, now);
-      await cancelBotFollowupsByPhone(tx, { phoneE164, reason: "sair", now });
+      await cancelDropWaitlistByPhone(tx, identityPhone, now);
+      await cancelStockAlertsByPhone(tx, identityPhone, now);
+      await cancelBotFollowupsByPhone(tx, { phoneE164: identityPhone, reason: "sair", now });
       if (customer) {
         await tx
           .update(customers)
@@ -810,7 +844,7 @@ export async function processZapiInbound(
       const recorded = await recordDeliveryFeedback(tx, {
         orderId: feedbackRow.orderId,
         answer: feedbackRow.answer,
-        phoneE164,
+        phoneE164: identityPhone,
         waMessageId: message.id,
         now,
       });
@@ -830,6 +864,7 @@ export async function processZapiInbound(
         const route = await routeInboundMessage(tx, {
           conversation,
           phoneE164,
+          identityPhone,
           zapiMessageId: messageId,
           text: contextText,
           forwardText: contextText,
@@ -849,7 +884,7 @@ export async function processZapiInbound(
       const consent = await recordLookConsent(tx, {
         lookId: lookRow.lookId,
         answer: lookRow.answer,
-        phoneE164,
+        phoneE164: identityPhone,
         waMessageId: message.id,
         now,
       });
@@ -894,7 +929,7 @@ export async function processZapiInbound(
       media.mediaUrl &&
       (await isBotMediaEnabled(tx)) &&
       isTranscriptionConfigured() &&
-      !(await findActiveCourierByPhone(tx, phoneE164))
+      !(await findActiveCourierByPhone(tx, identityPhone))
     ) {
       await queueTranscription();
       await markDone();
@@ -910,6 +945,7 @@ export async function processZapiInbound(
     const route = await routeInboundMessage(tx, {
       conversation,
       phoneE164,
+      identityPhone,
       zapiMessageId: messageId,
       text,
       ...(forwardText ? { forwardText } : {}),

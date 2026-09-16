@@ -154,6 +154,22 @@ describe("isWaEnabled", () => {
 });
 
 describe("sendTemplateMessage", () => {
+  it("destino LID (número oculto): envia com o LID no campo phone, sem consultar phone-exists, e grava na conversa do LID", async () => {
+    await enableWa();
+    const LID = "220839349862480@lid";
+    const result = await sendTemplateMessage(sdb, provider, {
+      phoneE164: LID,
+      bodyOverride: "Oi! Sou a Lia.",
+      dedupeKey: "wa.send:lid-1",
+      requireOptIn: false,
+    });
+    expect(result).toMatchObject({ sent: true });
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(provider.sentMessages[0].toE164).toBe(LID);
+    const [conversation] = await db.select().from(schema.waConversations);
+    expect(conversation.phoneE164).toBe(LID);
+  });
+
   it("wa desligado → { skipped: 'desabilitado' } e NADA gravado", async () => {
     await seedTemplates();
     const customerId = await createCustomer(true);
