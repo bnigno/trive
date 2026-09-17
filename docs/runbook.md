@@ -527,7 +527,7 @@ já com a quantidade). Dois modelos:
   Instagram em destaque (setting `store_instagram`, padrão
   `@trive_mfeminine`, editável em Configurações → Dados da loja; aparece
   também no rodapé do site) e o site. **2 por folha A4** é o máximo físico;
-  o campo "Folhas" imprime até 20. Mesmos dois modos do selo: papel comum
+  o campo "Folhas" vai até 10 (20 adesivos). Mesmos dois modos do selo: papel comum
   (marcas de corte nos cantos, régua e estilete) ou Silhouette (cantos
   arredondados r 6, kiss cut, arquivo "TRIVÉ sacola.studio3"). Conferir a
   leitura do QR com o celular na primeira folha.

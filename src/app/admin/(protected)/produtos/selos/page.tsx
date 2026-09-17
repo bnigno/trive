@@ -35,7 +35,7 @@ import { qrSvgPath, qrVersion } from "@/receipts/qr";
 import { requireUser } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
 
-import { BagQrSymbol, BagStickerSheet, type BagStickerData } from "./bag-sticker";
+import { BagQrSymbol, BagStickerSheet, STORE_LINE_MAX_CHARS, type BagStickerData } from "./bag-sticker";
 import { SealSheet } from "./seal";
 
 export const dynamic = "force-dynamic";
@@ -107,7 +107,8 @@ export default async function PackagingPage({ searchParams }: { searchParams: Pr
   const qr = qrText ? qrSvgPath(qrText) : null;
   const bagData: BagStickerData = {
     storeName,
-    storeLine: asText(settings.store_tagline) || STORE_HERO_LINE_DEFAULT,
+    // A frase da vitrine só entra se couber na coluna (até 90 chars); senão a frase padrão da marca.
+    storeLine: [asText(settings.store_tagline)].filter((line) => line.length > 0 && line.length <= STORE_LINE_MAX_CHARS)[0] ?? STORE_HERO_LINE_DEFAULT,
     whatsappE164,
     instagram: asText(settings.store_instagram) || STORE_INSTAGRAM_DEFAULT,
     siteHost: siteUrl().replace(/^https?:\/\//, ""),
@@ -116,6 +117,7 @@ export default async function PackagingPage({ searchParams }: { searchParams: Pr
   const warnings: string[] = [];
   if (bag && !whatsappE164) warnings.push("O WhatsApp da loja não está preenchido em Configurações → Dados da loja: o adesivo sai sem o QR e sem o telefone.");
   if (bag && qrText && qrVersion(qrText) > 7) warnings.push("O link do WhatsApp ficou longo e o QR denso demais para 28 mm — encurte o nome da loja.");
+  if (bag && asText(settings.store_tagline).length > STORE_LINE_MAX_CHARS) warnings.push(`A frase da vitrine tem mais de ${STORE_LINE_MAX_CHARS} caracteres e não cabe no adesivo: saiu a frase padrão da marca.`);
 
   const unit = bag ? "adesivo" : "selo";
   const units = bag ? "adesivos" : "selos";

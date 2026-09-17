@@ -36,7 +36,7 @@ export function StoreFooter({
   /** Nome da vendedora (setting bot_seller_name) para "Falar com a Lia". */
   sellerName: string;
 }) {
-  const hasStoreData = Boolean(cnpj || address || email || whatsapp || instagram);
+  const hasStoreData = Boolean(cnpj || address || email || whatsapp);
   // Sem código (a ponte grava o dela ao tocar): é o link de emergência do botão.
   const whatsappUrl = waMeUrl(whatsapp, `Oi ${sellerName}, vim pelo site da ${storeName}`);
 
@@ -76,14 +76,6 @@ export function StoreFooter({
                 {address ? <p>{address}</p> : null}
                 {email ? <p>{email}</p> : null}
                 {whatsapp ? <p>WhatsApp: {whatsapp}</p> : null}
-                {instagram ? (
-                  <p>
-                    Instagram:{" "}
-                    <a href={`https://instagram.com/${instagram.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className="underline decoration-ivory-500 underline-offset-4 hover:text-ivory-100">
-                      {instagram}
-                    </a>
-                  </p>
-                ) : null}
               </div>
             ) : (
               // Lembrete discreto para o dono da loja preencher os settings.
@@ -91,6 +83,14 @@ export function StoreFooter({
                 Dados da loja pendentes de configuração
               </p>
             )}
+            {instagram ? (
+              <p className="text-sm text-ivory-300">
+                Instagram:{" "}
+                <a href={`https://instagram.com/${instagram.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className="underline decoration-ivory-500 underline-offset-4 hover:text-ivory-100">
+                  {instagram}
+                </a>
+              </p>
+            ) : null}
           </div>
 
           <nav aria-label="Institucional" className="flex flex-col">

@@ -45,13 +45,22 @@ describe("BagSticker (150 × 100)", () => {
     expect(html).toContain(">@trive_mfeminine<");
     expect(html).toMatch(/data-site=""[^>]*>trivemaison\.com\.br</);
     expect(html).toContain("envio para todo o Brasil");
-    expect(html).toContain("Obrigada por levar a TRIVÉ com você.");
+    expect(html).toContain("Obrigada por levar a gente com você.");
+    expect(html).not.toContain("qualquer hora");
   });
 
   it("modo Silhouette: base com cantos arredondados (r 7 com a sangria), sem marcas de corte", () => {
     const html = renderToStaticMarkup(<BagSticker data={data} mode="silhouette" />);
     expect(html).toContain('<rect x="-1" y="-1" width="152" height="102" rx="7" ry="7" fill="#faf7f0">');
     expect(html).not.toContain("data-crop-marks");
+  });
+
+  it("frase da vitrine longa desce para 9 pt; nome de loja longo fora do letreiro encolhe", () => {
+    const long = "Vestir é um jeito de contar quem você é — sem precisar dizer uma palavra, todos os dias.";
+    const html = renderToStaticMarkup(<BagSticker data={{ ...data, storeLine: long, storeName: "Ateliê da Marina" }} mode="scissors" />);
+    expect(html).toMatch(/data-store-line=""[^>]*font-size:9pt/);
+    expect(html).toMatch(/font-size:12pt;letter-spacing:0.3em[^>]*>Ateliê da Marina</);
+    expect(html).toContain("Obrigada por levar a gente com você.");
   });
 
   it("sem WhatsApp: sem QR e sem a linha do telefone; Instagram e site continuam", () => {

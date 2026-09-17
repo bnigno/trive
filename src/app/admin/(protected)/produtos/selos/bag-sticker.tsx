@@ -38,7 +38,7 @@ export const BAG_ART = {
   taglineTopMm: 66,
   storeLineTopMm: 76,
   contactLeftMm: 82,
-  contactRightMm: 146,
+  contactRightMm: 142,
   qrSizeMm: 28,
   qrTopMm: 11,
   cropGapMm: 0.5,
@@ -46,6 +46,11 @@ export const BAG_ART = {
 } as const;
 
 const MONOGRAM = BRAND.light.mark[BRAND.light.mark.length - 1];
+/** A frase da vitrine cabe em até 3 linhas de 60 mm sem invadir a moldura: corpo por comprimento. */
+export const STORE_LINE_MAX_CHARS = 90;
+const storeLineSizePt = (text: string) => (text.length <= 45 ? 10.5 : 9);
+/** Nome fora do letreiro: corpo por comprimento para caber nos 76 mm da coluna. */
+const storeNameSizePt = (name: string) => (name.length <= 8 ? 22 : name.length <= 14 ? 16 : 12);
 const W = BAG_STICKER.widthMm;
 const H = BAG_STICKER.heightMm;
 const wordmarkHeightMm = (BAG_ART.wordmarkWidthMm * WORDMARK_LETTERING.height) / WORDMARK_LETTERING.width;
@@ -177,7 +182,7 @@ export function BagSticker({ data, mode }: { data: BagStickerData; mode: SealMod
           <use href={`#${LETTERING_SYMBOL.wordmark}`} />
         </svg>
       ) : (
-        <div style={{ position: "absolute", top: `${BAG_ART.wordmarkTopMm - 1}mm`, left: 0, width: `${BAG_ART.brandColumnWidthMm}mm`, textAlign: "center", fontFamily: PRINT_SERIF, fontWeight: 600, fontSize: "22pt", letterSpacing: "0.3em", paddingLeft: "0.3em", color: PRINT_INK.gold }}>
+        <div style={{ position: "absolute", top: `${BAG_ART.wordmarkTopMm - 1}mm`, left: 0, width: `${BAG_ART.brandColumnWidthMm}mm`, textAlign: "center", fontFamily: PRINT_SERIF, fontWeight: 600, fontSize: `${storeNameSizePt(data.storeName)}pt`, letterSpacing: "0.3em", paddingLeft: "0.3em", color: PRINT_INK.gold, overflowWrap: "anywhere" }}>
           {data.storeName}
         </div>
       )}
@@ -190,7 +195,7 @@ export function BagSticker({ data, mode }: { data: BagStickerData; mode: SealMod
       </div>
       <p
         data-store-line=""
-        style={{ position: "absolute", top: `${BAG_ART.storeLineTopMm}mm`, left: "8mm", width: `${BAG_ART.brandColumnWidthMm - 16}mm`, margin: 0, textAlign: "center", fontFamily: PRINT_SERIF, fontStyle: "italic", fontSize: "10.5pt", lineHeight: 1.3, color: PRINT_INK.taupe }}
+        style={{ position: "absolute", top: `${BAG_ART.storeLineTopMm}mm`, left: "8mm", width: `${BAG_ART.brandColumnWidthMm - 16}mm`, margin: 0, textAlign: "center", fontFamily: PRINT_SERIF, fontStyle: "italic", fontSize: `${storeLineSizePt(data.storeLine)}pt`, lineHeight: 1.3, color: PRINT_INK.taupe }}
       >
         {data.storeLine}
       </p>
@@ -211,7 +216,7 @@ export function BagSticker({ data, mode }: { data: BagStickerData; mode: SealMod
           <div style={{ display: "flex", flexDirection: "column", gap: "1.6mm", paddingTop: "1mm" }}>
             <p style={{ ...eyebrow, margin: 0, color: PRINT_INK.gold, fontSize: "7pt" }}>Fale com a {data.sellerName}</p>
             <p style={{ margin: 0, fontFamily: PRINT_SERIF, fontSize: "11pt", lineHeight: 1.25, color: PRINT_INK.ink }}>
-              {data.whatsappE164 ? "Aponte a câmera e fale com a nossa vendedora, a qualquer hora." : "Nossa vendedora atende pelo WhatsApp, a qualquer hora."}
+              {data.whatsappE164 ? "Aponte a câmera e fale com a nossa vendedora pelo WhatsApp." : "Nossa vendedora atende pelo WhatsApp."}
             </p>
           </div>
         </div>
@@ -234,7 +239,7 @@ export function BagSticker({ data, mode }: { data: BagStickerData; mode: SealMod
         </div>
 
         <p data-thanks="" style={{ margin: 0, fontFamily: PRINT_SERIF, fontStyle: "italic", fontSize: "9.5pt", color: PRINT_INK.taupe }}>
-          Obrigada por levar a {data.storeName} com você.
+          Obrigada por levar a gente com você.
         </p>
       </div>
     </div>

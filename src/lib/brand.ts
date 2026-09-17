@@ -12,9 +12,14 @@ export const STORE_HERO_LINE_DEFAULT = "Para a mulher que se veste de si.";
 /** Perfil do Instagram da loja (fallback de settings.store_instagram), sempre com o "@". */
 export const STORE_INSTAGRAM_DEFAULT = "@trive_mfeminine";
 
-/** '@Loja', 'loja', 'instagram.com/loja/' → '@loja'; vazio → ''. Sem validar além do formato de usuário do Instagram. */
+/** '@Loja', 'loja', 'instagram.com/loja/', 'https://www.instagram.com/loja?igsh=…' → '@loja'; vazio → ''. Sem validar além do formato de usuário do Instagram. */
 export function normalizeInstagramHandle(raw: string): string | null {
-  const value = raw.trim().replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").replace(/\/.*$/, "").replace(/^@/, "").toLowerCase();
+  const value = raw
+    .trim()
+    .replace(/^(https?:\/\/)?(www\.)?instagram\.com\//i, "")
+    .replace(/[/?#].*$/, "")
+    .replace(/^@/, "")
+    .toLowerCase();
   if (value === "") return "";
   return /^[a-z0-9._]{1,30}$/.test(value) ? `@${value}` : null;
 }

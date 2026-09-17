@@ -220,6 +220,11 @@ describe("updateSetting / getSettingsMap", () => {
     expect((await getSettingsMap(db, ["store_instagram"])).store_instagram).toBe("@trive_mfeminine");
     await updateSetting(db, { key: "store_instagram", value: "https://www.instagram.com/trive_mfeminine/?hl=pt", userId: FIXED_USER_ID });
     expect((await getSettingsMap(db, ["store_instagram"])).store_instagram).toBe("@trive_mfeminine");
+    // Sem esquema e o link "Compartilhar perfil" do app (sem barra antes do ?): nunca vira '@instagram.com'.
+    await updateSetting(db, { key: "store_instagram", value: "www.instagram.com/trive_mfeminine", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["store_instagram"])).store_instagram).toBe("@trive_mfeminine");
+    await updateSetting(db, { key: "store_instagram", value: "https://www.instagram.com/trive_mfeminine?igsh=MTIzNDU2", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["store_instagram"])).store_instagram).toBe("@trive_mfeminine");
     await updateSetting(db, { key: "store_instagram", value: "", userId: FIXED_USER_ID });
     expect((await getSettingsMap(db, ["store_instagram"])).store_instagram).toBe("");
     await expect(updateSetting(db, { key: "store_instagram", value: "trivé maison", userId: FIXED_USER_ID })).rejects.toThrow(/Instagram inválido/);
