@@ -45,15 +45,19 @@ async function setup() {
   const [pac] = await db.insert(schema.shippingRates).values({ name: "PAC", priceCents: 1990, deliveryDaysMin: 3, deliveryDaysMax: 5 }).returning({ id: schema.shippingRates.id });
   const [moto] = await db
     .insert(schema.shippingRates)
-    .values({ name: "Motoboy", priceCents: 1500, kind: "motoboy", deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "17:00" }], deliveryDaysMin: 0, deliveryDaysMax: 0 })
+    .values({ name: "Motoboy", priceCents: 1500, kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "17:00" }], deliveryDaysMin: 0, deliveryDaysMax: 0 })
     .returning({ id: schema.shippingRates.id });
   return { variantId, pacId: pac.id, motoId: moto.id };
 }
 
+/** Onde o motoboy chega (CEP 66) só o motoboy fecha; o PAC vai para fora da área. */
+const BELEM_ADDRESS = { postalCode: "66050-000", street: "Av. Nazaré", number: "100", district: "Nazaré", city: "Belém", state: "PA" };
+const SP_ADDRESS = { postalCode: "01310-100", street: "Av. Paulista", number: "1000", district: "Bela Vista", city: "São Paulo", state: "SP" };
+
 function input(variantId: string, rateId: string, over: Partial<CreateStoreOrderInput> = {}): CreateStoreOrderInput {
   return {
     customer: { fullName: "Ana Souza", document: "529.982.247-25", phone: "(91) 98888-1234", email: "ana@example.com", marketingOptIn: true },
-    address: { postalCode: "66050-000", street: "Av. Nazaré", number: "100", district: "Nazaré", city: "Belém", state: "PA" },
+    address: SP_ADDRESS,
     items: [{ variantId, quantity: 1, expectedUnitPriceCents: 15900 }],
     shippingRateId: rateId,
     expectedShippingCents: 1990,
@@ -76,7 +80,7 @@ describe("createStoreOrder com data marcada", () => {
     const { variantId, pacId, motoId } = await setup();
     const moto = await createStoreOrder(
       sdb,
-      input(variantId, motoId, { expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-05", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-07" }),
+      input(variantId, motoId, { address: BELEM_ADDRESS, expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-05", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-07" }),
       { now: NOW },
     );
     expect((await db.select().from(schema.orders).where(eq(schema.orders.id, moto.orderId)))[0].shipBy).toBe("2026-10-05");
@@ -96,7 +100,7 @@ describe("createStoreOrder com data marcada", () => {
     // Motoboy com a janela depois da data marcada: o limite vira a própria data (vermelho no painel).
     const lateMoto = await createStoreOrder(
       sdb,
-      input(variantId, motoId, { expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-06", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-05" }),
+      input(variantId, motoId, { address: BELEM_ADDRESS, expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-06", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-05" }),
       { now: new Date("2026-10-05T21:00:00Z") },
     );
     expect((await db.select().from(schema.orders).where(eq(schema.orders.id, lateMoto.orderId)))[0].shipBy).toBe("2026-10-05");
@@ -117,7 +121,7 @@ describe("listOrdersWithNeededBy / countOrdersMustShipToday", () => {
     for (const o of [green, red, amber]) await transitionOrder(sdb, { orderId: o.orderId, to: "paid", userId: FIXED_USER_ID });
     const cash = await createStoreOrder(
       sdb,
-      input(variantId, motoId, { expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-05", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-05", paymentMethod: "cash" }),
+      input(variantId, motoId, { address: BELEM_ADDRESS, expectedShippingCents: 1500, deliveryWindow: { dayKey: "2026-10-05", start: "19:00", end: "21:00", cutoff: "17:00" }, neededBy: "2026-10-05", paymentMethod: "cash" }),
       { now: NOW },
     );
 

@@ -64,11 +64,14 @@ async function setup(opts: { kind?: "motoboy" | "correios" } = {}) {
     .values(
       opts.kind === "correios"
         ? { name: "PAC", priceCents: 1990 }
-        : { name: "Motoboy Belém", priceCents: 1500, kind: "motoboy", deliveryWindows: WINDOWS, deliveryDaysMin: 0, deliveryDaysMax: 0 },
+        : { name: "Motoboy Belém", priceCents: 1500, kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", deliveryWindows: WINDOWS, deliveryDaysMin: 0, deliveryDaysMax: 0 },
     )
     .returning({ id: schema.shippingRates.id });
   return { variantId, rateId: rate.id };
 }
+
+/** Fora da área do motoboy: onde o motoboy chega, o pedido pelos Correios é recusado (SHIPPING_MOTOBOY_ONLY). */
+const SP_ADDRESS = { postalCode: "01310-100", street: "Av. Paulista", number: "1000", complement: "", district: "Bela Vista", city: "São Paulo", state: "SP" };
 
 function input(variantId: string, rateId: string, over: Partial<CreateStoreOrderInput> = {}): CreateStoreOrderInput {
   return {
@@ -305,7 +308,7 @@ describe("dispatchOrder ('Saiu')", () => {
     expect(result).toMatchObject({ from: "preparing", to: "shipped" });
 
     const pac = await setup({ kind: "correios" });
-    const pacOrder = await createStoreOrder(sdb, input(pac.variantId, pac.rateId, { expectedShippingCents: 1990 }));
+    const pacOrder = await createStoreOrder(sdb, input(pac.variantId, pac.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }));
     await transitionOrder(sdb, { orderId: pacOrder.orderId, to: "paid", userId: FIXED_USER_ID });
     await expect(dispatchOrder(sdb, { orderId: pacOrder.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "NOT_MOTOBOY" });
 
@@ -327,7 +330,7 @@ describe("dispatchOrder ('Saiu')", () => {
     expect(["hoje", "amanhã"].includes(ctx!.vars.dia) || /\d{2}\/\d{2}$/.test(ctx!.vars.dia)).toBe(true);
 
     const pac = await setup({ kind: "correios" });
-    const pacOrder = await createStoreOrder(sdb, input(pac.variantId, pac.rateId, { expectedShippingCents: 1990 }));
+    const pacOrder = await createStoreOrder(sdb, input(pac.variantId, pac.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }));
     const pacCtx = await loadOrderWaContext(sdb, pacOrder.orderId);
     expect(pacCtx?.hasDeliveryWindow).toBe(false);
     expect(pacCtx?.vars.janela).toBe("");
