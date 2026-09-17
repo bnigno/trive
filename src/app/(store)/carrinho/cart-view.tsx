@@ -22,6 +22,7 @@ import { CheckoutCta } from "@/components/store/cart/checkout-cta";
 import { EmptyState } from "@/components/store/empty-state";
 import { deliveryLabel } from "@/components/store/order/delivery-label";
 import { Notice } from "@/components/store/order/notice";
+import { CorreiosOnRequestNotice } from "@/components/store/order/correios-on-request";
 import { OptionCard } from "@/components/store/order/option-card";
 import { Sheet, SheetSection } from "@/components/store/order/sheet";
 import { TotalsList } from "@/components/store/order/totals";
@@ -31,7 +32,6 @@ import {
   btnSmallDark,
   eyebrow,
   inputBase,
-  linkGold,
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { LiaLink } from "@/components/store/lia-link";
@@ -52,6 +52,8 @@ type QuoteState =
       cepDigits: string;
       options: DeliveryOption[];
       whatsappUrl: string | null;
+      sellerName: string;
+      motoboyArea: string;
     };
 
 type CouponState =
@@ -137,6 +139,8 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           cepDigits,
           options: result.options,
           whatsappUrl: result.whatsappUrl,
+          sellerName: result.sellerName,
+          motoboyArea: result.motoboyArea,
         });
         // A página da peça usa este CEP para prometer "chega hoje".
         writeStoredCep(cepDigits);
@@ -351,23 +355,15 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                 </Notice>
               ) : null}
 
-              {noDelivery ? (
-                <Notice tone="gold" role="alert" className="mt-2">
-                  Ainda não entregamos para este CEP —{" "}
-                  {quote.status === "done" && quote.whatsappUrl ? (
-                    <a
-                      href={quote.whatsappUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={linkGold}
-                    >
-                      fale com a gente no WhatsApp
-                    </a>
-                  ) : (
-                    "fale com a gente no WhatsApp"
-                  )}
-                  .
-                </Notice>
+              {noDelivery && quote.status === "done" ? (
+                <CorreiosOnRequestNotice
+                  className="mt-2"
+                  cepDigits={quote.cepDigits}
+                  motoboyArea={quote.motoboyArea}
+                  sellerName={quote.sellerName}
+                  fallbackUrl={quote.whatsappUrl}
+                  items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}
+                />
               ) : null}
 
               {quote.status === "done" && quote.options.length > 0 ? (

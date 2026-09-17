@@ -13,9 +13,10 @@ import {
   quoteCoupon,
   ServiceError as CouponServiceError,
 } from "@/services/coupons";
-import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { motoboyAreaLabel, type DeliveryOption } from "@/core/shipping/delivery-windows";
 import { computeTotalWeightGrams, quoteDeliveryOptions, ServiceError } from "@/services/store-catalog";
-import { getSettingsMap } from "@/services/settings";
+import { listShippingRates } from "@/services/shipping";
+import { loadBridgeSettings, plainBridgeUrl } from "@/services/site-carts";
 
 const quoteShippingActionSchema = z.object({
   cep: z.string().trim().min(1, "Informe o CEP."),
@@ -39,6 +40,10 @@ export type QuoteShippingActionResult =
       options: DeliveryOption[];
       /** Link wa.me quando store_whatsapp está configurado; null caso contrário. */
       whatsappUrl: string | null;
+      /** Nome da vendedora (bot_seller_name), para o aviso "fale com a Lia". */
+      sellerName: string;
+      /** Onde o motoboy chega ("Belém, Ananindeua e Castanhal"); vazio sem faixa de motoboy. */
+      motoboyArea: string;
     }
   | { ok: false; error: string };
 
@@ -67,17 +72,13 @@ export async function quoteShippingAction(
 
     const options = await quoteDeliveryOptions(db, { cep: parsed.cep, totalWeightGrams });
 
-    // Só precisamos do WhatsApp quando não há opção de entrega, mas ler a
-    // setting é barato e evita uma segunda action.
-    let whatsappUrl: string | null = null;
-    const settings = await getSettingsMap(db, ["store_whatsapp"]);
-    const whatsapp = settings["store_whatsapp"];
-    if (typeof whatsapp === "string") {
-      const digits = whatsapp.replace(/\D/g, "");
-      if (digits.length >= 10) whatsappUrl = `https://wa.me/${digits}`;
-    }
+    // Só precisamos do WhatsApp e da área do motoboy quando não há opção de
+    // entrega, mas ler é barato e evita uma segunda action.
+    const bridge = await loadBridgeSettings(db);
+    const whatsappUrl = plainBridgeUrl(bridge);
+    const motoboyArea = options.length === 0 ? motoboyAreaLabel(await listShippingRates(db)) : "";
 
-    return { ok: true, options, whatsappUrl };
+    return { ok: true, options, whatsappUrl, sellerName: bridge.sellerName, motoboyArea };
   } catch (error) {
     if (error instanceof ServiceError) {
       return { ok: false, error: error.message };

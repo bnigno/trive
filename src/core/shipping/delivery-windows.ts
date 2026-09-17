@@ -94,17 +94,44 @@ export function formatWindowLabel(window: { start: string; end: string; cutoff: 
 }
 
 /**
+ * Onde o motoboy chega, a entrega é SÓ por motoboy: com ao menos uma faixa
+ * de motoboy cotada para o CEP, as de Correios somem (decisão da dona,
+ * 2026-09-17 — Belém e região só por motoboy). Sem motoboy, ficam as de
+ * Correios que houver.
+ */
+export function motoboyExclusive<T extends { kind: ShippingKind }>(rates: readonly T[]): T[] {
+  const motoboy = rates.filter((rate) => rate.kind === "motoboy");
+  return motoboy.length > 0 ? motoboy : [...rates];
+}
+
+/**
+ * A área do motoboy, para a cliente ler: os nomes das faixas de motoboy
+ * ativas sem o prefixo "Motoboy", na ordem do CEP inicial (a capital, CEP
+ * menor, vem primeiro: "Belém, Ananindeua e Castanhal"). Vazio quando não há
+ * faixa.
+ */
+export function motoboyAreaLabel(rates: readonly { name: string; kind: ShippingKind; isActive?: boolean; cepStart?: string }[]): string {
+  const cities = [...rates]
+    .filter((rate) => rate.kind === "motoboy" && rate.isActive !== false)
+    .sort((a, b) => (a.cepStart ?? "").localeCompare(b.cepStart ?? ""))
+    .map((rate) => rate.name.replace(/^\s*motoboy\s*[-–—:·]?\s*/i, "").trim())
+    .filter((city, index, all) => city.length > 0 && all.indexOf(city) === index);
+  if (cities.length <= 1) return cities[0] ?? "";
+  return `${cities.slice(0, -1).join(", ")} e ${cities[cities.length - 1]}`;
+}
+
+/**
  * Expande as faixas em opções: Correios vira uma; motoboy vira uma por
  * janela — hoje, se ainda dá tempo de pagar até a hora-limite (relógio de
  * SP), senão amanhã. Ordem: motoboy de hoje primeiro, depois o resto pelo
- * preço.
+ * preço. Onde há motoboy, só motoboy (motoboyExclusive).
  */
 export function expandDeliveryOptions(rates: readonly RateForOptions[], now: Date): DeliveryOption[] {
   const today = spDayKey(now);
   const tomorrow = spNextDayKey(today);
   const minutesNow = spMinutesOfDay(now);
   const options: DeliveryOption[] = [];
-  for (const rate of rates) {
+  for (const rate of motoboyExclusive(rates)) {
     if (rate.kind === "motoboy") {
       for (const window of rate.deliveryWindows) {
         const when: "today" | "tomorrow" = minutesNow < minutesOf(window.cutoff) ? "today" : "tomorrow";

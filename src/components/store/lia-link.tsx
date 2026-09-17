@@ -22,6 +22,8 @@ export type LiaLinkProps = {
   productSlug?: string;
   variantSku?: string;
   items?: readonly { variantId: string; sku: string; quantity: number }[];
+  /** CEP (8 dígitos) do checkout sem frete: vai na mensagem para a Lia cotar. */
+  cep?: string;
   /** "button" (marfim, contorno) ou "footer" (link claro sobre noir). */
   variant?: "button" | "footer";
   className?: string;
@@ -40,6 +42,7 @@ export function LiaLink({
   productSlug,
   variantSku,
   items,
+  cep,
   variant = "button",
   className,
 }: LiaLinkProps) {
@@ -56,7 +59,7 @@ export function LiaLink({
       try {
         // Rede engasgada não prende a cliente em "Abrindo…": passado o teto, o link simples segue.
         const result = await Promise.race([
-          startLiaBridgeAction({ source, productSlug, variantSku, items: items ? [...items] : undefined }),
+          startLiaBridgeAction({ source, productSlug, variantSku, items: items ? [...items] : undefined, cep: cep && /^\d{8}$/.test(cep) ? cep : undefined }),
           new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), ACTION_TIMEOUT_MS)),
         ]);
         if (result.ok) url = result.url;

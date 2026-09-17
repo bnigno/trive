@@ -1,14 +1,16 @@
 // Ferramenta de frete da vendedora (cotar_frete).
 import { formatQuoteLines } from "@/core/bot/shipping";
 import { quoteKey, type BotQuote } from "@/core/bot/memory";
-import type { DeliveryOption } from "@/core/shipping/delivery-windows";
+import { motoboyAreaLabel, type DeliveryOption } from "@/core/shipping/delivery-windows";
 import { assessNeededBy } from "@/core/shipping/needed-by";
 import { isValidNeededBy } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
 import type { BotToolInputs } from "@/core/bot/tools";
 import type { DbOrTx } from "@/queue/enqueue";
 import { formatLookedUpAddress, lookupAddressByCep } from "@/services/address-lookup";
+import { listShippingRates } from "@/services/shipping";
 import { DEFAULT_ITEM_WEIGHT_GRAMS, quoteDeliveryOptions } from "@/services/store-catalog";
+import { formatCep } from "@/lib/cep";
 
 import { cartWeightGrams } from "./cart";
 import { readBotState, updateBotState } from "./shared";
@@ -37,12 +39,6 @@ export async function execCotarFrete(
   const occasion = input.ocasiao?.trim() || (neededBy === state.neededBy ? state.occasion : undefined);
   const options = await quoteDeliveryOptions(db, { cep: input.cep, totalWeightGrams, now });
   const quotes = options.map((option) => toBotQuote(option, neededBy, now));
-  if (quotes.length === 0) {
-    return {
-      ok: false,
-      text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
-    };
-  }
 
   // Endereço do CEP (melhor esforço): a cliente digita só número e
   // complemento. Vendor fora do ar não atrapalha a cotação.
@@ -53,6 +49,24 @@ export async function execCotarFrete(
       const { street, district, city, state: uf } = found.address;
       cepAddress = { street, district, city, state: uf };
     }
+  }
+
+  if (quotes.length === 0) {
+    // Fora da área do motoboy: Correios com o frete calculado pela equipe.
+    // O caderninho guarda o CEP e ZERA a cotação antiga (de outro CEP), para
+    // criar_pedido não fechar com um frete que não é deste endereço.
+    await updateBotState(db, ctx, (current) => ({
+      ...current,
+      lastCep: input.cep,
+      lastCepAddress: cepAddress,
+      lastQuotes: [],
+      lastQuotedAt: now.toISOString(),
+      chosenRateId: undefined,
+      chosenOptionKey: undefined,
+      neededBy,
+      occasion: neededBy ? occasion : undefined,
+    }));
+    return { ok: true, text: outsideMotoboyAreaText({ cep: input.cep, area: motoboyAreaLabel(await listShippingRates(db)), cepAddress }) };
   }
 
   await updateBotState(db, ctx, (current) => ({
@@ -89,6 +103,26 @@ export async function execCotarFrete(
     );
   }
   return { ok: true, text: lines.join("\n") };
+}
+
+/**
+ * O que a Lia lê quando nenhuma faixa cobre o CEP: onde o motoboy não chega
+ * a entrega é pelos Correios e quem calcula o frete é a equipe — a Lia
+ * explica, fecha o endereço e transfere. Nunca inventa valor nem cria o
+ * pedido (não há cotação).
+ */
+export function outsideMotoboyAreaText(input: { cep: string; area: string; cepAddress?: { street: string; district: string; city: string; state: string } }): string {
+  const onde = input.area ? `Fora da área do motoboy (${input.area}): ` : "";
+  const lines = [
+    `${onde}para o CEP ${formatCep(input.cep)} a entrega é pelos Correios e o FRETE É CALCULADO PELA EQUIPE — não existe valor agora, e este pedido não fecha aqui.`,
+  ];
+  if (input.cepAddress) {
+    lines.push(`Endereço do CEP: ${formatLookedUpAddress(input.cepAddress)}.`);
+  }
+  lines.push(
+    "[Diga em 1 frase que a entrega é pelos Correios e que a equipe calcula o frete e manda o valor em seguida. Confirme a sacola e peça SÓ número e complemento do endereço (o CEP já deu rua/bairro/cidade; sem endereço do CEP, confira o CEP com ela). Depois chame transferir_para_atendente com motivo \"frete Correios a cotar\" e um resumo com CEP, endereço completo e as peças da sacola. Não invente prazo nem valor e NÃO chame criar_pedido.]",
+  );
+  return lines.join("\n");
 }
 
 /** A opção da vitrine como a Lia a guarda no caderninho (com "chega dia…" quando há data marcada). */

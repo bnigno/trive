@@ -13,6 +13,7 @@ const schema = z.object({
   source: z.enum(["pdp", "cart", "footer"]),
   productSlug: z.string().trim().min(1).max(200).optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
+  cep: z.string().regex(/^\d{8}$/).optional(),
   items: z
     .array(z.object({ variantId: z.uuid().optional(), sku: z.string().trim().min(1).max(60).optional(), quantity: z.number().int().min(1).max(BRIDGE_MAX_QTY) }))
     .max(BRIDGE_MAX_LINES)

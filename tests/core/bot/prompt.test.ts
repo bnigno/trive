@@ -67,10 +67,17 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("nunca invente uma");
   });
 
-  it("regra 26: 'chegou' → confirmar_entrega, só quando a cliente disser que recebeu", () => {
+  it("regra 27: 'chegou' → confirmar_entrega, só quando a cliente disser que recebeu", () => {
     const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
-    expect(prompt).toContain("26. CHEGOU");
+    expect(prompt).toContain("27. CHEGOU");
     expect(prompt).toContain("confirmar_entrega");
+  });
+
+  it("regra 26: fora da área do motoboy, Correios com frete calculado pela equipe — transferir, nunca inventar valor nem criar_pedido", () => {
+    const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
+    expect(prompt).toContain("26. FORA DA ÁREA DO MOTOBOY");
+    expect(prompt).toContain("transferir_para_atendente com o resumo");
+    expect(prompt).toContain("Nunca chame criar_pedido sem uma cotação desta conversa");
   });
 
   it("regra 25: janelas só as que cotar_frete devolveu e a data marcada via entregar_ate", () => {
