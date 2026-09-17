@@ -19,6 +19,34 @@ export type DxfEntity =
 
 export const DXF_LAYERS = { cut: "CORTE", page: "PAGINA" } as const;
 
+/** tan(90°/4): o "bulge" de um arco de 90° numa POLYLINE do DXF. */
+export const QUARTER_BULGE = Math.tan(Math.PI / 8);
+
+/**
+ * Retângulo de cantos arredondados (coordenadas da PÁGINA, Y para baixo —
+ * a conversão para o DXF é feita aqui). Sentido horário na página, que é
+ * anti-horário no DXF: cada canto é um vértice reto seguido de um arco de
+ * 90° (bulge negativo = arco horário com Y para cima → cantos convexos).
+ */
+export function roundedRectEntity(input: { layer: string; x0: number; y0: number; x1: number; y1: number; radiusMm: number; pageHeightMm: number }): DxfEntity {
+  const { x0, y0, x1, y1, radiusMm: r } = input;
+  const up = (yMm: number) => input.pageHeightMm - yMm;
+  return {
+    kind: "polyline",
+    layer: input.layer,
+    vertices: [
+      [x0 + r, up(y0), 0],
+      [x1 - r, up(y0), -QUARTER_BULGE],
+      [x1, up(y0 + r), 0],
+      [x1, up(y1 - r), -QUARTER_BULGE],
+      [x1 - r, up(y1), 0],
+      [x0 + r, up(y1), -QUARTER_BULGE],
+      [x0, up(y1 - r), 0],
+      [x0, up(y0 + r), -QUARTER_BULGE],
+    ],
+  };
+}
+
 /** Coordenadas com 3 casas (milésimo de mm): sem assimetria entre os cantos. */
 export function dxfNumber(value: number): string {
   return String(Math.round(value * 1000) / 1000);

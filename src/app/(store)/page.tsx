@@ -35,7 +35,7 @@ import {
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { getDb } from "@/db/client";
-import { STORE_NAME_DEFAULT, VEIL_SEEN_KEY } from "@/lib/brand";
+import { STORE_HERO_LINE_DEFAULT, STORE_NAME_DEFAULT, VEIL_SEEN_KEY } from "@/lib/brand";
 import { tryOrBuildFallback } from "@/lib/build-safe";
 import { waMeUrl } from "@/lib/phone";
 import { getCurrentCityEdition } from "@/services/city-editions";
@@ -76,7 +76,7 @@ const VEIL_SEEN_SCRIPT = `try{if(sessionStorage.getItem(${JSON.stringify(VEIL_SE
 
 // Textos padrão; o dono pode trocá-los em /admin/configuracoes › Vitrine
 // (settings store_tagline / store_manifesto, vazio = padrão).
-const DEFAULT_TAGLINE = "Para a mulher que se veste de si.";
+const DEFAULT_TAGLINE = STORE_HERO_LINE_DEFAULT;
 const DEFAULT_MANIFESTO = [
   "Vestir é um jeito de contar quem você é — sem precisar dizer uma palavra.",
   "A TRIVÉ nasce de um laço: entre o clássico e o agora, entre a mulher que você é de manhã e a que chega em casa à noite.",

@@ -520,6 +520,17 @@ já com a quantidade). Dois modelos:
     posições e o DXF ficam em `src/core/catalog/silhouette.ts`.
 - **Adesiva**: Pimaco A4355 (63,5 × 31 mm, 27 por folha), com SKU e preço. O
   fio cinza em volta de cada etiqueta é guia só na tela — não imprime.
+- **Adesivo da sacola** (`/admin/produtos/selos?modelo=sacola`): **15 × 10 cm**,
+  a marca em destaque (monograma, letreiro, tagline e a frase da vitrine —
+  setting `store_tagline`), QR para a Lia no WhatsApp da loja
+  (`store_whatsapp`; sem ele o adesivo sai sem QR e sem telefone), WhatsApp,
+  Instagram em destaque (setting `store_instagram`, padrão
+  `@trive_mfeminine`, editável em Configurações → Dados da loja; aparece
+  também no rodapé do site) e o site. **2 por folha A4** é o máximo físico;
+  o campo "Folhas" imprime até 20. Mesmos dois modos do selo: papel comum
+  (marcas de corte nos cantos, régua e estilete) ou Silhouette (cantos
+  arredondados r 6, kiss cut, arquivo "TRIVÉ sacola.studio3"). Conferir a
+  leitura do QR com o celular na primeira folha.
 - **Selos de embalagem** (`/admin/produtos/selos`, link na lista de produtos
   e na página de etiquetas): adesivo redondo de **50 mm** com o logotipo e o
   slogan, para fechar o papel que embala a peça. Disco marfim impresso, anel

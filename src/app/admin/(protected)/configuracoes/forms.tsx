@@ -11,6 +11,7 @@ import {
   SubmitButton,
   TextArea,
 } from "@/components/ui/form";
+import { STORE_INSTAGRAM_DEFAULT } from "@/lib/brand";
 import {
   replaceFeeRuleAction,
   updateApprovalRulesAction,
@@ -65,6 +66,7 @@ export function StoreDataForm({
     address: string;
     email: string;
     whatsapp: string;
+    instagram: string;
     pixKey: string;
   };
 }) {
@@ -130,6 +132,16 @@ export function StoreDataForm({
             inputMode="tel"
             defaultValue={defaults.whatsapp}
             placeholder="(11) 99999-8888"
+          />
+        </Field>
+        <Field
+          label="Instagram"
+          hint="O perfil da loja, com ou sem @. Aparece no rodapé do site e no adesivo da sacola."
+        >
+          <Input
+            name="storeInstagram"
+            defaultValue={defaults.instagram}
+            placeholder={STORE_INSTAGRAM_DEFAULT}
           />
         </Field>
         <Field

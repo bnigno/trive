@@ -23,6 +23,7 @@ export function StoreFooter({
   address,
   email,
   whatsapp,
+  instagram,
   sellerName,
 }: {
   storeName: string;
@@ -30,10 +31,12 @@ export function StoreFooter({
   address: string;
   email: string;
   whatsapp: string;
+  /** Perfil do Instagram ('@usuario'); vazio = sem linha. */
+  instagram: string;
   /** Nome da vendedora (setting bot_seller_name) para "Falar com a Lia". */
   sellerName: string;
 }) {
-  const hasStoreData = Boolean(cnpj || address || email || whatsapp);
+  const hasStoreData = Boolean(cnpj || address || email || whatsapp || instagram);
   // Sem código (a ponte grava o dela ao tocar): é o link de emergência do botão.
   const whatsappUrl = waMeUrl(whatsapp, `Oi ${sellerName}, vim pelo site da ${storeName}`);
 
@@ -73,6 +76,14 @@ export function StoreFooter({
                 {address ? <p>{address}</p> : null}
                 {email ? <p>{email}</p> : null}
                 {whatsapp ? <p>WhatsApp: {whatsapp}</p> : null}
+                {instagram ? (
+                  <p>
+                    Instagram:{" "}
+                    <a href={`https://instagram.com/${instagram.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className="underline decoration-ivory-500 underline-offset-4 hover:text-ivory-100">
+                      {instagram}
+                    </a>
+                  </p>
+                ) : null}
               </div>
             ) : (
               // Lembrete discreto para o dono da loja preencher os settings.

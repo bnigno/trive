@@ -10,7 +10,7 @@ import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/core/orders/payment-m
 import { cityDatesSchema } from "@/core/shipping/needed-by";
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
-import { STORE_NAME_DEFAULT } from "@/lib/brand";
+import { normalizeInstagramHandle, STORE_NAME_DEFAULT } from "@/lib/brand";
 import { toE164BR } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { enqueueProductCardRefresh } from "@/services/product-cards-queue";
@@ -429,6 +429,17 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
         return z.NEVER;
       }
       return e164;
+    }),
+  store_instagram: z
+    .string()
+    .trim()
+    .transform((value, ctx) => {
+      const handle = normalizeInstagramHandle(value);
+      if (handle === null) {
+        ctx.addIssue({ code: "custom", message: "Instagram inválido. Informe o usuário, ex.: @trive_mfeminine." });
+        return z.NEVER;
+      }
+      return handle;
     }),
   // --- Vitrine (textos da home editáveis pelo dono; vazio = texto padrão) ---
   store_tagline: z

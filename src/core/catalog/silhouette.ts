@@ -9,7 +9,7 @@
 // das marcas, as posições das tags nessa área e o arquivo de corte (DXF, que
 // o Studio Basic abre) com o contorno arredondado e o furo.
 
-import { DXF_LAYERS, dxfDocument, type DxfEntity, type PageMm } from "@/core/print/dxf";
+import { DXF_LAYERS, dxfDocument, roundedRectEntity, type DxfEntity, type PageMm } from "@/core/print/dxf";
 
 export type { PageMm } from "@/core/print/dxf";
 
@@ -138,14 +138,10 @@ export function mirrorForBack(positions: readonly TagPosition[], tag: TagSizeMm,
 /** Contorno de corte: cantos arredondados e o furo do cordão (um pouco maior que o cartão pede: o cordão passa fácil). */
 export const CUT = { cornerRadiusMm: 3, holeDiameterMm: 4.5 } as const;
 
-/** tan(90°/4): o "bulge" de um arco de 90° numa LWPOLYLINE do DXF. */
-const QUARTER_BULGE = Math.tan(Math.PI / 8);
-
 /**
  * O arquivo de corte para o Silhouette Studio (escritor em core/print/dxf):
- * na camada CORTE, uma POLYLINE fechada com cantos arredondados (bulge nos
- * VERTEX) por tag e um CIRCLE do furo; a camada PAGINA vem do escritor.
- * Y do DXF cresce para cima: yDxf = altura da página − y.
+ * na camada CORTE, uma POLYLINE fechada com cantos arredondados por tag e um
+ * CIRCLE do furo; a camada PAGINA vem do escritor.
  */
 export function hangTagCutDxf(input: {
   page?: PageMm;
@@ -153,33 +149,20 @@ export function hangTagCutDxf(input: {
   tag: TagSizeMm & { holeCenterXMm: number; holeCenterYMm: number };
 }): string {
   const page = input.page ?? PAGE_A4;
-  const up = (yMm: number) => page.heightMm - yMm;
-  const r = CUT.cornerRadiusMm;
   const entities: DxfEntity[] = [];
   for (const p of input.positions) {
-    const x0 = p.xMm;
-    const y0 = p.yMm;
-    const x1 = p.xMm + input.tag.widthMm;
-    const y1 = p.yMm + input.tag.heightMm;
-    // Sentido horário na página (que é anti-horário no DXF, com Y para cima):
-    // cada canto é um vértice reto seguido de um arco de 90° (bulge no
-    // vértice que abre o arco). Bulge negativo = arco horário (com Y para
-    // cima): os cantos ficam convexos.
-    entities.push({
-      kind: "polyline",
-      layer: DXF_LAYERS.cut,
-      vertices: [
-        [x0 + r, up(y0), 0],
-        [x1 - r, up(y0), -QUARTER_BULGE],
-        [x1, up(y0 + r), 0],
-        [x1, up(y1 - r), -QUARTER_BULGE],
-        [x1 - r, up(y1), 0],
-        [x0 + r, up(y1), -QUARTER_BULGE],
-        [x0, up(y1 - r), 0],
-        [x0, up(y0 + r), -QUARTER_BULGE],
-      ],
-    });
-    entities.push({ kind: "circle", layer: DXF_LAYERS.cut, cx: x0 + input.tag.holeCenterXMm, cy: up(y0 + input.tag.holeCenterYMm), r: CUT.holeDiameterMm / 2 });
+    entities.push(
+      roundedRectEntity({
+        layer: DXF_LAYERS.cut,
+        x0: p.xMm,
+        y0: p.yMm,
+        x1: p.xMm + input.tag.widthMm,
+        y1: p.yMm + input.tag.heightMm,
+        radiusMm: CUT.cornerRadiusMm,
+        pageHeightMm: page.heightMm,
+      }),
+    );
+    entities.push({ kind: "circle", layer: DXF_LAYERS.cut, cx: p.xMm + input.tag.holeCenterXMm, cy: page.heightMm - (p.yMm + input.tag.holeCenterYMm), r: CUT.holeDiameterMm / 2 });
   }
   return dxfDocument({ page, entities });
 }

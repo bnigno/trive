@@ -191,7 +191,7 @@ export default async function ProdutosPage({
           <div className="flex items-center gap-4">
             {/* O selo é tarefa de embalagem: toda a equipe imprime. */}
             <Link href="/admin/produtos/selos" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
-              Selos de embalagem
+              Embalagem: selos e adesivos
             </Link>
             {/* Cadastro de produto e as chegadas (custo, conta a pagar): área do dono. */}
             <OwnerOnly>

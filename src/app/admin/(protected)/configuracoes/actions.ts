@@ -293,6 +293,7 @@ export async function updateStoreDataAction(
     const address = String(formData.get("storeAddress") ?? "").trim();
     const email = String(formData.get("storeEmail") ?? "").trim();
     const whatsapp = String(formData.get("storeWhatsapp") ?? "").trim();
+    const instagram = String(formData.get("storeInstagram") ?? "").trim();
     const pixKey = String(formData.get("storePixKey") ?? "").trim();
 
     const db = getDb();
@@ -303,6 +304,8 @@ export async function updateStoreDataAction(
       ["store_email", email],
       // O serviço normaliza o WhatsApp para E.164 (+55…) quando não vazio.
       ["store_whatsapp", whatsapp],
+      // O serviço normaliza para '@usuario'; vazio = o perfil padrão da marca.
+      ["store_instagram", instagram],
       // Vazio = Pix manual desligado (robô e página do pedido não oferecem).
       ["store_pix_key", pixKey],
     ];

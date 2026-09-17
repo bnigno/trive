@@ -101,6 +101,19 @@ export function sameE164(a: string | null | undefined, b: string | null | undefi
   return left.length > 1 && left === right;
 }
 
+/** '+5511999991234' -> '(11) 99999-1234' — para o painel e o material impresso. LID (número oculto) não tem número. */
+export function formatPhoneBR(phoneE164: string): string {
+  if (isWaLid(phoneE164)) return "número oculto pelo WhatsApp";
+  const digits = phoneE164.replace(/\D/g, "");
+  if (digits.startsWith("55") && (digits.length === 13 || digits.length === 12)) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    const split = rest.length === 9 ? 5 : 4;
+    return `(${ddd}) ${rest.slice(0, split)}-${rest.slice(split)}`;
+  }
+  return phoneE164;
+}
+
 /** '+5511999991234' -> '(11) •••••-1234' — nunca expõe o número inteiro. LID (número oculto) não tem o que mascarar. */
 export function maskPhone(phoneE164: string): string {
   if (isWaLid(phoneE164)) return "número oculto";
