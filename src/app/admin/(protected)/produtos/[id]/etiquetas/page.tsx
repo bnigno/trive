@@ -150,7 +150,7 @@ export default async function ProductLabelsPage({
           <h1 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
             Etiquetas{" "}
             <Link href="/admin/produtos/selos" className="ml-2 align-middle text-sm font-normal text-indigo-600 hover:underline dark:text-indigo-400">
-              Selos de embalagem →
+              Embalagem: selos e adesivos →
             </Link>
           </h1>
           <p className="max-w-2xl text-sm text-zinc-500 dark:text-zinc-400">

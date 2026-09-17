@@ -73,6 +73,7 @@ type SettingsData = {
     address: string;
     email: string;
     whatsapp: string;
+    instagram: string;
     pixKey: string;
   };
   storefront: {
@@ -108,6 +109,7 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_address",
         "store_email",
         "store_whatsapp",
+        "store_instagram",
         "store_pix_key",
         "store_tagline",
         "store_manifesto",
@@ -128,6 +130,7 @@ async function loadSettings(): Promise<SettingsData | null> {
         address: asString(map.store_address),
         email: asString(map.store_email),
         whatsapp: asString(map.store_whatsapp),
+        instagram: asString(map.store_instagram),
         pixKey: asString(map.store_pix_key),
       },
       storefront: {
@@ -218,6 +221,7 @@ export default async function ConfiguracoesPage() {
               address: data.store.address,
               email: data.store.email,
               whatsapp: data.store.whatsapp,
+              instagram: data.store.instagram,
               pixKey: data.store.pixKey,
             }}
           />

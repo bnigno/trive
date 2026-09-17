@@ -23,6 +23,7 @@ export function StoreFooter({
   address,
   email,
   whatsapp,
+  instagram,
   sellerName,
 }: {
   storeName: string;
@@ -30,6 +31,8 @@ export function StoreFooter({
   address: string;
   email: string;
   whatsapp: string;
+  /** Perfil do Instagram ('@usuario'); vazio = sem linha. */
+  instagram: string;
   /** Nome da vendedora (setting bot_seller_name) para "Falar com a Lia". */
   sellerName: string;
 }) {
@@ -80,6 +83,14 @@ export function StoreFooter({
                 Dados da loja pendentes de configuração
               </p>
             )}
+            {instagram ? (
+              <p className="text-sm text-ivory-300">
+                Instagram:{" "}
+                <a href={`https://instagram.com/${instagram.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className="underline decoration-ivory-500 underline-offset-4 hover:text-ivory-100">
+                  {instagram}
+                </a>
+              </p>
+            ) : null}
           </div>
 
           <nav aria-label="Institucional" className="flex flex-col">
