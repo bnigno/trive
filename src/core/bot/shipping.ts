@@ -132,6 +132,15 @@ export function resolveApprovedQuote(input: ResolveApprovedQuoteInput): QuoteRes
   const orderCep = input.orderCep.replace(/\D/g, "");
   const quotes = input.quotes ?? [];
 
+  // Cotação feita e vazia (lista [], não ausente) para este CEP: fora da área
+  // do motoboy — Correios com o frete pela equipe. Não é "cote de novo".
+  if (Array.isArray(input.quotes) && input.quotes.length === 0 && input.quotedCep && input.quotedCep.replace(/\D/g, "") === orderCep) {
+    return {
+      ok: false,
+      text: `Para o CEP ${formatCep(orderCep)} não há frete automático: a entrega é pelos Correios com o frete calculado pela equipe. NÃO crie o pedido — confirme a sacola e o endereço completo e chame transferir_para_atendente com o resumo (CEP, endereço, peças).`,
+    };
+  }
+
   if (quotes.length === 0 || !input.quotedCep) {
     return {
       ok: false,
@@ -192,7 +201,7 @@ export function confirmQuoteUnchanged(
   if (fresh.length === 0) {
     return {
       ok: false,
-      text: "Não entregamos para este CEP no momento. Confira se o CEP está correto, por favor.",
+      text: `Nenhuma faixa cobre mais o CEP ${cep} para esta sacola: a entrega é pelos Correios com o frete calculado pela equipe. NÃO feche o pedido — chame cotar_frete de novo com este CEP e siga a instrução devolvida (confirmar sacola e endereço → transferir_para_atendente). Não invente valor nem repita o frete antigo.`,
     };
   }
   const current = fresh.find((quote) => quoteKey(quote) === quoteKey(approved));

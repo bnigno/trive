@@ -38,7 +38,14 @@ async function main(): Promise<void> {
   if (!owner) throw new Error("Nenhum usuário owner para assinar a auditoria.");
 
   const rates = await listShippingRates(db);
-  const byName = new Map(rates.map((rate) => [rate.name.trim().toLowerCase(), rate]));
+  // Nome repetido (o painel não impede): vale a faixa ativa, e o aviso sai para a dona conferir.
+  const byName = new Map<string, (typeof rates)[number]>();
+  for (const rate of rates) {
+    const key = rate.name.trim().toLowerCase();
+    const seen = byName.get(key);
+    if (seen) console.log(`AVISO: duas faixas chamadas "${rate.name}" (${seen.isActive ? "ativa" : "inativa"} e ${rate.isActive ? "ativa" : "inativa"}) — confira no painel.`);
+    if (!seen || (!seen.isActive && rate.isActive)) byName.set(key, rate);
+  }
   // O molde é a faixa de Belém que já existe: preço, peso e janelas iguais para toda a região.
   const belem = byName.get("motoboy belém");
   const mold = {

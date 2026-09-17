@@ -1,7 +1,7 @@
 // Ferramenta de frete da vendedora (cotar_frete).
 import { formatQuoteLines } from "@/core/bot/shipping";
 import { quoteKey, type BotQuote } from "@/core/bot/memory";
-import { motoboyAreaLabel, type DeliveryOption } from "@/core/shipping/delivery-windows";
+import { motoboyAreaLabel, motoboyCoversCep, type DeliveryOption } from "@/core/shipping/delivery-windows";
 import { assessNeededBy } from "@/core/shipping/needed-by";
 import { isValidNeededBy } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
@@ -66,7 +66,17 @@ export async function execCotarFrete(
       neededBy,
       occasion: neededBy ? occasion : undefined,
     }));
-    return { ok: true, text: outsideMotoboyAreaText({ cep: input.cep, area: motoboyAreaLabel(await listShippingRates(db)), cepAddress }) };
+    const rates = await listShippingRates(db);
+    return {
+      ok: true,
+      text: outsideMotoboyAreaText({
+        cep: input.cep,
+        // Um motoboy cobre o CEP mas não o peso: não é "fora da área" — só não há valor automático.
+        area: motoboyCoversCep(rates, input.cep) ? "" : motoboyAreaLabel(rates),
+        cepAddress,
+        cartEmpty: isEstimate,
+      }),
+    };
   }
 
   await updateBotState(db, ctx, (current) => ({
@@ -111,7 +121,13 @@ export async function execCotarFrete(
  * explica, fecha o endereço e transfere. Nunca inventa valor nem cria o
  * pedido (não há cotação).
  */
-export function outsideMotoboyAreaText(input: { cep: string; area: string; cepAddress?: { street: string; district: string; city: string; state: string } }): string {
+export function outsideMotoboyAreaText(input: {
+  cep: string;
+  area: string;
+  cepAddress?: { street: string; district: string; city: string; state: string };
+  /** Sacola vazia: a cliente só perguntou o frete — não é hora de transferir. */
+  cartEmpty?: boolean;
+}): string {
   const onde = input.area ? `Fora da área do motoboy (${input.area}): ` : "";
   const lines = [
     `${onde}para o CEP ${formatCep(input.cep)} a entrega é pelos Correios e o FRETE É CALCULADO PELA EQUIPE — não existe valor agora, e este pedido não fecha aqui.`,
@@ -120,7 +136,9 @@ export function outsideMotoboyAreaText(input: { cep: string; area: string; cepAd
     lines.push(`Endereço do CEP: ${formatLookedUpAddress(input.cepAddress)}.`);
   }
   lines.push(
-    "[Diga em 1 frase que a entrega é pelos Correios e que a equipe calcula o frete e manda o valor em seguida. Confirme a sacola e peça SÓ número e complemento do endereço (o CEP já deu rua/bairro/cidade; sem endereço do CEP, confira o CEP com ela). Depois chame transferir_para_atendente com motivo \"frete Correios a cotar\" e um resumo com CEP, endereço completo e as peças da sacola. Não invente prazo nem valor e NÃO chame criar_pedido.]",
+    input.cartEmpty
+      ? "[Diga em 1 frase que a entrega é pelos Correios e que a equipe calcula o frete quando a sacola estiver pronta. NÃO transfira agora: continue ajudando a escolher as peças; quando ela quiser fechar, cote de novo com o CEP e siga a instrução. Não invente prazo nem valor e NÃO chame criar_pedido.]"
+      : "[Diga em 1 frase que a entrega é pelos Correios e que a equipe calcula o frete e manda o valor em seguida. Confirme a sacola e peça SÓ número e complemento do endereço (o CEP já deu rua/bairro/cidade; sem endereço do CEP, confira o CEP com ela). Depois chame transferir_para_atendente com motivo \"frete Correios a cotar\" e um resumo com CEP, endereço completo e as peças da sacola. Não invente prazo nem valor e NÃO chame criar_pedido.]",
   );
   return lines.join("\n");
 }

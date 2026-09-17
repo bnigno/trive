@@ -223,6 +223,13 @@ describe("renderContextNote", () => {
     expect(note).not.toContain("escolhido");
   });
 
+  it("cotação feita e vazia (fora da área do motoboy): o caderninho manda transferir, não cotar de novo", () => {
+    const note = renderContextNote({ lastCep: "01310100", lastQuotes: [], lastQuotedAt: "2026-09-17T12:00:00.000Z" });
+    expect(note).toContain("• CEP informado: 01310-100 · FORA DA ÁREA DO MOTOBOY");
+    expect(note).toContain("transferir_para_atendente");
+    expect(note).not.toContain("frete ainda NÃO cotado");
+  });
+
   it("endereço do CEP entra no caderninho pedindo só número e complemento", () => {
     const note = renderContextNote({
       lastCep: "01310100",

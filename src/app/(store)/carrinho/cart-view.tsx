@@ -461,6 +461,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                     sellerName={lia.sellerName}
                     fallbackUrl={lia.fallbackUrl}
                     items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}
+                    cep={quote.status === "done" ? quote.cepDigits : undefined}
                     className="w-full"
                   />
                   <p className="font-store text-[13px] text-ink-500">Prefere fechar pelo WhatsApp? A {lia.sellerName} recebe a sua sacola como está.</p>
@@ -476,7 +477,11 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
         totalCents={totalCents}
         href={checkoutHref}
         noDelivery={noDelivery}
-        whatsappUrl={quote.status === "done" ? quote.whatsappUrl : null}
+        lia={
+          quote.status === "done"
+            ? { sellerName: quote.sellerName, fallbackUrl: quote.whatsappUrl, cepDigits: quote.cepDigits, items: items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity })) }
+            : null
+        }
       />
     </div>
   );

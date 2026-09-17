@@ -89,9 +89,9 @@ describe("buildBridgeMessage / originLabel", () => {
         code: "AB23",
         source: "cart",
         items: [{ sku: "A", name: "Longo Dunas", variation: "", quantity: 1, priceCents: 1 }],
-        cep: "68740000",
+        cep: "01310100",
       }),
-    ).toBe("Oi Lia, minha sacola no site: 1× Longo Dunas, entrega no CEP 68740-000 (#AB23)");
+    ).toBe("Oi Lia, minha sacola no site: 1× Longo Dunas, entrega no CEP 01310-100 (#AB23)");
     expect(buildBridgeMessage({ sellerName: "", code: "K7F2", source: "footer" })).toBe("Oi Lia, vim pelo site (#K7F2)");
     expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "campaign", product: { name: "Longo Dunas" } })).toBe(
       "Oi Lia, vi o Longo Dunas no story (#K7F2)",

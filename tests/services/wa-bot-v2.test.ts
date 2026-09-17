@@ -372,6 +372,16 @@ describe("cotar_frete fora da área do motoboy", () => {
     // Sem a cotação, criar_pedido não fecha com o frete antigo de Belém.
     const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "Motoboy Belém" });
     expect(pedido.ok).toBe(false);
+    expect(pedido.text).toContain("não há frete automático");
+    expect(pedido.text).toContain("transferir_para_atendente");
+    expect(pedido.text).not.toContain("Chame cotar_frete");
+
+    // Só perguntou o frete (sacola vazia): explica, mas NÃO transfere — continua vendendo.
+    await executor("remover_da_sacola", { sku: "CANECA-AZUL" });
+    const soPergunta = await executor("cotar_frete", { cep: "01310100" });
+    expect(soPergunta.ok).toBe(true);
+    expect(soPergunta.text).toContain("NÃO transfira agora");
+    expect(soPergunta.text).not.toContain("chame transferir_para_atendente");
   });
 });
 

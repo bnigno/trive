@@ -99,9 +99,16 @@ export function formatWindowLabel(window: { start: string; end: string; cutoff: 
  * 2026-09-17 — Belém e região só por motoboy). Sem motoboy, ficam as de
  * Correios que houver.
  */
-export function motoboyExclusive<T extends { kind: ShippingKind }>(rates: readonly T[]): T[] {
-  const motoboy = rates.filter((rate) => rate.kind === "motoboy");
+export function motoboyExclusive<T extends { kind: ShippingKind; deliveryWindows: readonly unknown[] }>(rates: readonly T[]): T[] {
+  // Faixa de motoboy sem janela (gravada por fora do painel) não vira opção nenhuma — não pode engolir os Correios.
+  const motoboy = rates.filter((rate) => rate.kind === "motoboy" && rate.deliveryWindows.length > 0);
   return motoboy.length > 0 ? motoboy : [...rates];
+}
+
+/** Alguma faixa de motoboy ativa cobre o CEP (só a faixa de CEP, sem olhar o peso). */
+export function motoboyCoversCep(rates: readonly { kind: ShippingKind; isActive?: boolean; cepStart: string; cepEnd: string }[], cep: string): boolean {
+  const digits = cep.replace(/\D/g, "");
+  return rates.some((rate) => rate.kind === "motoboy" && rate.isActive !== false && rate.cepStart <= digits && digits <= rate.cepEnd);
 }
 
 /**

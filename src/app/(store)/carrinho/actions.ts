@@ -13,7 +13,7 @@ import {
   quoteCoupon,
   ServiceError as CouponServiceError,
 } from "@/services/coupons";
-import { motoboyAreaLabel, type DeliveryOption } from "@/core/shipping/delivery-windows";
+import { motoboyAreaLabel, motoboyCoversCep, type DeliveryOption } from "@/core/shipping/delivery-windows";
 import { computeTotalWeightGrams, quoteDeliveryOptions, ServiceError } from "@/services/store-catalog";
 import { listShippingRates } from "@/services/shipping";
 import { loadBridgeSettings, plainBridgeUrl } from "@/services/site-carts";
@@ -76,7 +76,12 @@ export async function quoteShippingAction(
     // entrega, mas ler é barato e evita uma segunda action.
     const bridge = await loadBridgeSettings(db);
     const whatsappUrl = plainBridgeUrl(bridge);
-    const motoboyArea = options.length === 0 ? motoboyAreaLabel(await listShippingRates(db)) : "";
+    let motoboyArea = "";
+    if (options.length === 0) {
+      const rates = await listShippingRates(db);
+      // Um motoboy cobre o CEP mas não o peso da sacola: não é "fora da área".
+      motoboyArea = motoboyCoversCep(rates, parsed.cep) ? "" : motoboyAreaLabel(rates);
+    }
 
     return { ok: true, options, whatsappUrl, sellerName: bridge.sellerName, motoboyArea };
   } catch (error) {

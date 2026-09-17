@@ -401,7 +401,10 @@ export function CheckoutClient({
     if (!selectedQuote || shippingCents === null) {
       setSubmitError({
         code: "NO_SHIPPING",
-        message: "Escolha uma opção de entrega para continuar.",
+        message:
+          quote.status === "done" && quote.options.length === 0
+            ? `Para este CEP o frete é calculado pela nossa equipe: fale com a ${quote.sellerName} pelo botão em Entrega para fechar o pedido.`
+            : "Escolha uma opção de entrega para continuar.",
       });
       return;
     }

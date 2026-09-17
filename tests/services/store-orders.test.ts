@@ -479,6 +479,18 @@ describe("createStoreOrder — motoboy com janela", () => {
     return { variantId, rate };
   }
 
+  it("onde o motoboy chega, o servidor recusa fechar pelos Correios (aba antiga do checkout ou POST montado à mão)", async () => {
+    const { variantId } = await setupMotoboy();
+    const pac = await createRate({ name: "PAC Norte", priceCents: 1990, cepStart: "00000000", cepEnd: "99999999" });
+    await expect(
+      createStoreOrder(sdb, baseInput(variantId, pac.id, { expectedShippingCents: 1990 }), { now: MORNING }),
+    ).rejects.toMatchObject({ code: "SHIPPING_MOTOBOY_ONLY" });
+    // Fora da faixa do motoboy, o PAC segue valendo.
+    await db.update(schema.shippingRates).set({ cepStart: "66000000", cepEnd: "66999999" }).where(eq(schema.shippingRates.name, "Motoboy Belém"));
+    const result = await createStoreOrder(sdb, baseInput(variantId, pac.id, { expectedShippingCents: 1990 }), { now: MORNING });
+    expect(result.orderId).toBeDefined();
+  });
+
   it("guarda o retrato da janela no pedido e mostra o rótulo datado na página pública", async () => {
     const { variantId, rate } = await setupMotoboy();
     const result = await createStoreOrder(

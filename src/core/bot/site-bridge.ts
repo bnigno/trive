@@ -67,7 +67,7 @@ export type BridgeMessageInput = {
   product?: { name: string; variation?: string } | null;
   /** A sacola (cart). */
   items?: readonly BridgeItem[];
-  /** O CEP que a cliente digitou no checkout (8 dígitos), quando o site não tem frete para ele: a Lia cota e a equipe calcula. */
+  /** O CEP que a cliente digitou no checkout (8 dígitos): a Lia já cota certo — e, fora da área do motoboy, a equipe calcula os Correios. */
   cep?: string;
 };
 

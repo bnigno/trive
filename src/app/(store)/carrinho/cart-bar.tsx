@@ -2,11 +2,13 @@
 
 // Barra fixa da sacola no celular (mesmo padrão da BuyBar da PDP): aparece
 // sempre que o resumo está fora da tela — acima ou abaixo — com o total e a
-// ação certa: fechar o pedido, calcular a entrega (foca o CEP) ou, quando não
-// entregamos no CEP, falar no WhatsApp. `inert` quando escondida.
+// ação certa: fechar o pedido, calcular a entrega (foca o CEP) ou, sem frete
+// para o CEP (Correios pela equipe), falar com a Lia levando sacola e CEP.
+// `inert` quando escondida.
 import Link from "next/link";
 
-import { btnOutline, btnPrimary, eyebrow } from "@/components/store/styles";
+import { LiaLink } from "@/components/store/lia-link";
+import { btnPrimary, eyebrow } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { formatCentsBRL } from "@/lib/money";
 
@@ -15,13 +17,14 @@ export function CartBar({
   totalCents,
   href,
   noDelivery,
-  whatsappUrl,
+  lia,
 }: {
   visible: boolean;
   totalCents: number;
   href: string | null;
   noDelivery: boolean;
-  whatsappUrl: string | null;
+  /** Sem frete para o CEP: a mesma ponte do aviso (sacola + CEP), para a Lia cotar. */
+  lia: { sellerName: string; fallbackUrl: string | null; cepDigits: string; items: readonly { variantId: string; sku: string; quantity: number }[] } | null;
 }) {
   function focusCep() {
     document.getElementById("cart-cep")?.focus();
@@ -52,15 +55,8 @@ export function CartBar({
           <Link href={href} className={btnPrimary}>
             Fechar pedido
           </Link>
-        ) : noDelivery && whatsappUrl ? (
-          <a
-            href={whatsappUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={btnOutline}
-          >
-            Falar no WhatsApp
-          </a>
+        ) : noDelivery && lia?.fallbackUrl ? (
+          <LiaLink source="cart" sellerName={lia.sellerName} fallbackUrl={lia.fallbackUrl} items={lia.items} cep={lia.cepDigits} />
         ) : (
           <button type="button" onClick={focusCep} className={btnPrimary}>
             Calcular entrega
