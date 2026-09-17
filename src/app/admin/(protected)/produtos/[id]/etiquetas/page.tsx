@@ -30,7 +30,7 @@ import { HangTagSheets } from "./hang-tag-sheets";
 import { LabelSheet, SHEET } from "./label-sheet";
 import { SilhouetteSheet } from "./hang-tag-silhouette";
 import { SilhouetteDownloads } from "./silhouette-downloads";
-import { printCss } from "./print-css";
+import { printCss } from "@/components/print/print-css";
 
 export const dynamic = "force-dynamic";
 
@@ -147,7 +147,12 @@ export default async function ProductLabelsPage({
           <Link href={`/admin/produtos/${id}`} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
             ← {sheet.productName}
           </Link>
-          <h1 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-100">Etiquetas</h1>
+          <h1 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+            Etiquetas{" "}
+            <Link href="/admin/produtos/selos" className="ml-2 align-middle text-sm font-normal text-indigo-600 hover:underline dark:text-indigo-400">
+              Selos de embalagem →
+            </Link>
+          </h1>
           <p className="max-w-2xl text-sm text-zinc-500 dark:text-zinc-400">
             {model === "adesiva"
               ? `Folha A4 com ${LABELS_PER_SHEET.adesiva} etiquetas de ${formatLabelSize} (Pimaco A4355). Imprima em tamanho real — escala 100%, sem "ajustar à página"; o fio cinza é guia só na tela, não sai no papel.`

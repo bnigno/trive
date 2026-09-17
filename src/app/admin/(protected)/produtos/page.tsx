@@ -191,6 +191,9 @@ export default async function ProdutosPage({
           // Cadastro de produto e as chegadas (custo, conta a pagar): área do dono.
           <OwnerOnly>
             <div className="flex items-center gap-4">
+              <Link href="/admin/produtos/selos" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
+                Selos de embalagem
+              </Link>
               <Link href="/admin/produtos/chegadas" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
                 Chegadas pelo WhatsApp
               </Link>

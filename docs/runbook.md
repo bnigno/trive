@@ -520,6 +520,18 @@ já com a quantidade). Dois modelos:
     posições e o DXF ficam em `src/core/catalog/silhouette.ts`.
 - **Adesiva**: Pimaco A4355 (63,5 × 31 mm, 27 por folha), com SKU e preço. O
   fio cinza em volta de cada etiqueta é guia só na tela — não imprime.
+- **Selos de embalagem** (`/admin/produtos/selos`, link na lista de produtos
+  e na página de etiquetas): adesivo redondo de **50 mm** com o logotipo e o
+  slogan, para fechar o papel que embala a peça. Disco marfim impresso, anel
+  duplo dourado, monograma, letreiro e "Maison Féminine". Dois jeitos:
+  *papel adesivo A4 comum* (15 por folha; corte pela linha cinza fina com
+  tesoura ou furador de 50 mm de scrapbook; papel fosco fica mais elegante)
+  e *Silhouette* (12 por folha; a folha sai com as marcas de registro, como
+  as tags; no Studio abrir o DXF uma vez, marcas no padrão, salvar "TRIVÉ
+  selos.studio3"; material *Papel adesivo*, corte **kiss cut** — só o
+  adesivo, a base fica inteira; começar com força baixa). Geometria em
+  `src/core/print/round-labels.ts`; desenho em
+  `src/app/admin/(protected)/produtos/selos/seal.tsx`.
 
 Tetos: 200 por variação e 20 folhas por vez. As medidas ficam em
 `src/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag.tsx` (tag) e

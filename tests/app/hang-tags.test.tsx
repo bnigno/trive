@@ -12,7 +12,7 @@ import { HangTagBack, HangTagDefs, HangTagFront, TAG } from "@/app/admin/(protec
 import { HangTagPress, PRESS_PAGE } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-press";
 import { HangTagSheet, HangTagSheets, SHEET_A4, SHEET_A4_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-sheets";
 import { LabelSheet, SHEET, SHEET_MARGIN } from "@/app/admin/(protected)/produtos/[id]/etiquetas/label-sheet";
-import { printCss } from "@/app/admin/(protected)/produtos/[id]/etiquetas/print-css";
+import { printCss } from "@/components/print/print-css";
 import { SilhouetteSheet } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-silhouette";
 import { silhouetteTagPositions, studioRegistrationMarks } from "@/core/catalog/silhouette";
 

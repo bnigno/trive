@@ -13,7 +13,7 @@ import { HangTagDefs } from "@/app/admin/(protected)/produtos/[id]/etiquetas/han
 import { HangTagPress } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-press";
 import { HangTagSheets } from "@/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag-sheets";
 import { LabelSheet } from "@/app/admin/(protected)/produtos/[id]/etiquetas/label-sheet";
-import { printCss } from "@/app/admin/(protected)/produtos/[id]/etiquetas/print-css";
+import { printCss } from "@/components/print/print-css";
 import { planProductLabels } from "@/core/catalog/labels";
 import { qrSvgPath } from "@/receipts/qr";
 
