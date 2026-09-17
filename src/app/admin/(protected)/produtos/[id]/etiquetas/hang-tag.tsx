@@ -6,6 +6,7 @@
 // os testes renderizarem com react-dom/server.
 import type { CSSProperties } from "react";
 
+import { LetteringSymbols, PRINT_INK, PRINT_SANS, PRINT_SERIF } from "@/components/print/brand-lettering";
 import { BRAND } from "@/components/store/brand/assets";
 import { TAGLINE_LETTERING, WORDMARK_LETTERING } from "@/components/store/brand/lettering.generated";
 import { isLetteringName } from "@/components/store/brand/wordmark";
@@ -32,21 +33,11 @@ export const TAG = {
   qrSizeMm: 20,
 } as const;
 
-/** Tintas: as mesmas do lockup claro (TONES.light do pipeline da marca). */
-export const TAG_INK = {
-  ink: "#201d18",
-  soft: "#453f35",
-  taupe: "#806c64",
-  gold: "#6f561b",
-  rose: "#865749",
-  hole: "#b89153",
-  mark: "#aba28e",
-  /** Só na pré-visualização em tela — não imprime. */
-  paper: "#faf7f0",
-} as const;
+/** Tintas: as mesmas do lockup claro (TONES.light do pipeline da marca). O marfim (`paper`) fica só na prévia da tag — não imprime. */
+export const TAG_INK = PRINT_INK;
 
-export const SERIF = "var(--font-cormorant), 'Cormorant Garamond', Georgia, serif";
-export const SANS = "var(--font-jost), Jost, system-ui, sans-serif";
+export const SERIF = PRINT_SERIF;
+export const SANS = PRINT_SANS;
 
 const MONOGRAM = BRAND.light.mark[BRAND.light.mark.length - 1];
 
@@ -59,16 +50,7 @@ export function HangTagDefs({ qr }: { qr: QrSvg }) {
   return (
     <svg aria-hidden="true" width="0" height="0" style={{ position: "absolute", overflow: "hidden" }}>
       <defs>
-        <symbol id="tag-wordmark" viewBox={WORDMARK_LETTERING.viewBox}>
-          {WORDMARK_LETTERING.glyphs.map((glyph) => (
-            <path key={`${glyph.x},${glyph.y}`} transform={`translate(${glyph.x} ${glyph.y})`} d={glyph.d} />
-          ))}
-        </symbol>
-        <symbol id="tag-tagline" viewBox={TAGLINE_LETTERING.viewBox}>
-          {TAGLINE_LETTERING.glyphs.map((glyph) => (
-            <path key={`${glyph.x},${glyph.y}`} transform={`translate(${glyph.x} ${glyph.y})`} d={glyph.d} />
-          ))}
-        </symbol>
+        <LetteringSymbols />
         <symbol id="tag-qr" viewBox={`0 0 ${qr.size} ${qr.size}`}>
           <path d={qr.d} fill={TAG_INK.ink} shapeRendering="crispEdges" />
         </symbol>

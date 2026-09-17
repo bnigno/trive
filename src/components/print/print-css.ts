@@ -15,7 +15,7 @@ export function printCss(pageSize: PrintPageSize): string {
   .print-page:last-child { break-after: auto; page-break-after: auto; }
   html[data-print-side="front"] .print-page[data-side="back"], html[data-print-side="back"] .print-page[data-side="front"] { display: none !important; }
   [data-guide] { display: none !important; }
-  .label, .label-sheet { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .label, .label-sheet, .seal { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .label { border-color: transparent !important; }
   @page { size: ${pageSize}; margin: 0; }
 }`;

@@ -188,9 +188,13 @@ export default async function ProdutosPage({
         title="Produtos"
         subtitle="Tudo o que você vende: cadastre, edite e acompanhe estoque e preço."
         actions={
-          // Cadastro de produto e as chegadas (custo, conta a pagar): área do dono.
-          <OwnerOnly>
-            <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4">
+            {/* O selo é tarefa de embalagem: toda a equipe imprime. */}
+            <Link href="/admin/produtos/selos" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
+              Selos de embalagem
+            </Link>
+            {/* Cadastro de produto e as chegadas (custo, conta a pagar): área do dono. */}
+            <OwnerOnly>
               <Link href="/admin/produtos/chegadas" className="text-sm font-medium text-zinc-700 underline dark:text-zinc-300">
                 Chegadas pelo WhatsApp
               </Link>
@@ -203,8 +207,8 @@ export default async function ProdutosPage({
               >
                 Novo produto
               </Link>
-            </div>
-          </OwnerOnly>
+            </OwnerOnly>
+          </div>
         }
       />
 
