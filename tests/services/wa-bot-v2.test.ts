@@ -332,6 +332,59 @@ describe("sacola", () => {
   });
 });
 
+describe("cotar_frete fora da área do motoboy", () => {
+  it("sem faixa para o CEP: Correios com frete pela equipe — a Lia é instruída a transferir; o caderninho guarda o CEP e zera a cotação antiga", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await db.insert(schema.shippingRates).values({
+      name: "Motoboy Belém",
+      kind: "motoboy",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      priceCents: 1500,
+      deliveryWindows: [{ start: "16:00", end: "19:00", cutoff: "13:00" }],
+    });
+    await db.insert(schema.shippingRates).values({ name: "Motoboy Castanhal", kind: "motoboy", cepStart: "68740000", cepEnd: "68749999", priceCents: 1500, deliveryWindows: [{ start: "16:00", end: "19:00", cutoff: "13:00" }] });
+    const cep = new FakeCepLookup();
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId, false, cep);
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+
+    // Dentro da área: cotação normal (e fica no caderninho).
+    const dentro = await executor("cotar_frete", { cep: "66010000" });
+    expect(dentro.ok).toBe(true);
+    expect(dentro.text).toContain("Motoboy Belém");
+    expect((await botState(conversationId)).lastQuotes).toHaveLength(1);
+
+    // Fora da área (São Paulo): sem valor, instrução de transferir, endereço do CEP para a equipe.
+    const fora = await executor("cotar_frete", { cep: "01310100" });
+    expect(fora.ok).toBe(true);
+    expect(fora.text).toContain("Fora da área do motoboy (Belém e Castanhal)");
+    expect(fora.text).toContain("CEP 01310-100");
+    expect(fora.text).toContain("FRETE É CALCULADO PELA EQUIPE");
+    expect(fora.text).toContain("Endereço do CEP: Avenida Paulista, Bela Vista — São Paulo/SP.");
+    expect(fora.text).toContain("transferir_para_atendente");
+    expect(fora.text).toContain("NÃO chame criar_pedido");
+    const state = await botState(conversationId);
+    expect(state.lastCep).toBe("01310100");
+    expect(state.lastQuotes).toEqual([]);
+    expect(state.chosenOptionKey).toBeUndefined();
+
+    // Sem a cotação, criar_pedido não fecha com o frete antigo de Belém.
+    const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "Motoboy Belém" });
+    expect(pedido.ok).toBe(false);
+    expect(pedido.text).toContain("não há frete automático");
+    expect(pedido.text).toContain("transferir_para_atendente");
+    expect(pedido.text).not.toContain("Chame cotar_frete");
+
+    // Só perguntou o frete (sacola vazia): explica, mas NÃO transfere — continua vendendo.
+    await executor("remover_da_sacola", { sku: "CANECA-AZUL" });
+    const soPergunta = await executor("cotar_frete", { cep: "01310100" });
+    expect(soPergunta.ok).toBe(true);
+    expect(soPergunta.text).toContain("NÃO transfira agora");
+    expect(soPergunta.text).not.toContain("chame transferir_para_atendente");
+  });
+});
+
 describe("cotar_frete com endereço pelo CEP", () => {
   it("com o adapter, a cotação traz rua/bairro/cidade/UF e guarda no caderninho; vendor fora não atrapalha", async () => {
     await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);

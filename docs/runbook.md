@@ -300,6 +300,36 @@ depois de uma mídia já entregue, o turno aborta e o retry reenvia a mídia —
 por isso a voz vai por último. Produção: sem migração;
 `scripts/sync-seed.ts --settings bot_audio_notes_enabled`.
 
+## Frete: motoboy na região de Belém, Correios sob consulta no resto
+
+Decisão da dona (2026-09-17): em **Belém (com Icoaraci, Outeiro e
+Mosqueiro), Ananindeua, Marituba, Benevides, Santa Bárbara, Santa Izabel e
+Castanhal** a entrega é **só por motoboy**; no resto do Brasil é pelos
+**Correios com o frete calculado pela equipe**. Como funciona:
+
+- **Onde há faixa de motoboy para o CEP, só o motoboy aparece** (site e Lia;
+  regra `motoboyExclusive` em `src/core/shipping/delivery-windows.ts`) — as
+  faixas de Correios valem só para CEPs sem motoboy. Uma faixa por cidade em
+  **/admin/frete**, tipo Motoboy, mesmas janelas; o nome ("Motoboy Belém") é
+  o que a cliente lê e monta a frase "Belém, Ananindeua e Castanhal".
+- **Sem faixa para o CEP**: a sacola e o checkout mostram "a entrega é pelos
+  Correios e o frete é calculado pela nossa equipe" com o botão **Falar com a
+  Lia**, que leva a sacola **e o CEP** na mensagem. A Lia (`cotar_frete` sem
+  opção) explica, confirma a sacola e o endereço e **transfere para a
+  equipe** com o resumo; a equipe cota no site dos Correios e fecha por lá
+  (pedido pelo painel com o valor do frete, ou pela conversa). A Lia nunca
+  inventa valor nem cria o pedido sem cotação (regra 26 do prompt).
+- **Faixas**: `npx tsx scripts/frete-motoboy-regiao.ts` (simulação;
+  `--apply` grava com auditoria no nome do dono) cria as cidades que faltam
+  copiando preço, peso e janelas da "Motoboy Belém" e desliga a "Entrega
+  padrão (todo o Brasil)". Preço por cidade se ajusta depois no painel.
+  Faixas de CEP: Belém 66000-000–66999-999 · Ananindeua 67000-000–67199-999 ·
+  Marituba 67200-000–67299-999 · Castanhal 68740-000–68749-999 · Santa Izabel
+  68790-000–68794-999 · Benevides 68795-000–68797-999 · Santa Bárbara
+  68798-000–68798-999.
+- Cotação automática dos Correios (SuperFrete/Melhor Envio) fica para um PR
+  próprio, quando a loja tiver a conta.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

@@ -572,7 +572,7 @@ describe("quoteDeliveryOptions (motoboy com janelas)", () => {
     });
   }
 
-  it("antes da hora-limite (relógio de SP): janelas de hoje na frente do Correios; depois: amanhã e o Correios sobe", async () => {
+  it("antes da hora-limite (relógio de SP): janelas de hoje; depois: amanhã — e onde o motoboy chega os Correios não aparecem", async () => {
     await insertMotoboy();
     await insertRate({ name: "PAC Norte", cepStart: "66000000", cepEnd: "66999999", priceCents: 1990, deliveryDaysMin: 5, deliveryDaysMax: 9 });
 
@@ -581,19 +581,17 @@ describe("quoteDeliveryOptions (motoboy com janelas)", () => {
     expect(before.map((o) => (o.kind === "motoboy" ? `${o.optionKey.split(":").slice(1).join(":")} ${o.label}` : o.kind))).toEqual([
       "2026-09-18:16:00 hoje, 16h–19h · pague até 13h",
       "2026-09-18:19:00 hoje, 19h–21h · pague até 13h",
-      "correios",
     ]);
     expect(before[0]).toMatchObject({ kind: "motoboy", name: "Motoboy Belém", priceCents: 1500, when: "today", window: { dayKey: "2026-09-18", cutoff: "13:00" } });
 
-    // 13:00 em ponto já passou do limite → amanhã; ordem volta a ser pelo preço.
+    // 13:00 em ponto já passou do limite → amanhã; o PAC Norte continua fora (motoboy exclusivo na área).
     const after = await quoteDeliveryOptions(db, { cep: "66050-000", totalWeightGrams: 400, now: new Date("2026-09-18T16:00:00Z") });
     expect(after.map((o) => (o.kind === "motoboy" ? `${o.window.dayKey} ${o.label}` : o.kind))).toEqual([
       "2026-09-19 amanhã, 16h–19h",
       "2026-09-19 amanhã, 19h–21h",
-      "correios",
     ]);
 
-    // A cotação clássica continua uma linha por faixa (a Lia não muda antes do I4).
+    // A cotação clássica continua uma linha por faixa: quem esconde os Correios é a expansão em opções.
     const classic = await quoteShipping(db, { cep: "66050-000", totalWeightGrams: 400 });
     expect(classic.map((q) => [q.name, q.kind, q.deliveryWindows.length])).toEqual([
       ["Motoboy Belém", "motoboy", 2],

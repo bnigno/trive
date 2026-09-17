@@ -27,6 +27,7 @@ import { Field } from "@/components/store/field";
 import { NoirStage } from "@/components/store/noir-stage";
 import { deliveryLabel } from "@/components/store/order/delivery-label";
 import { Notice } from "@/components/store/order/notice";
+import { CorreiosOnRequestNotice } from "@/components/store/order/correios-on-request";
 import { OptionCard } from "@/components/store/order/option-card";
 import { Sheet } from "@/components/store/order/sheet";
 import { TotalsList } from "@/components/store/order/totals";
@@ -37,7 +38,6 @@ import {
   eyebrow,
   eyebrowNoir,
   inputBase,
-  linkGold,
 } from "@/components/store/styles";
 import { cx } from "@/components/ui/cx";
 import { GIFT_MESSAGE_MAX, GIFT_RECIPIENT_MAX } from "@/core/gifts/types";
@@ -105,7 +105,7 @@ type QuoteState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "done"; options: DeliveryOption[]; whatsappUrl: string | null };
+  | { status: "done"; options: DeliveryOption[]; whatsappUrl: string | null; sellerName: string; motoboyArea: string };
 
 const PAYMENT_OPTIONS = [
   {
@@ -236,6 +236,8 @@ export function CheckoutClient({
         status: "done",
         options: result.options,
         whatsappUrl: result.whatsappUrl,
+        sellerName: result.sellerName,
+        motoboyArea: result.motoboyArea,
       });
       writeStoredCep(cepDigits);
       setShippingCentsOverride(null);
@@ -399,7 +401,10 @@ export function CheckoutClient({
     if (!selectedQuote || shippingCents === null) {
       setSubmitError({
         code: "NO_SHIPPING",
-        message: "Escolha uma opção de entrega para continuar.",
+        message:
+          quote.status === "done" && quote.options.length === 0
+            ? `Para este CEP o frete é calculado pela nossa equipe: fale com a ${quote.sellerName} pelo botão em Entrega para fechar o pedido.`
+            : "Escolha uma opção de entrega para continuar.",
       });
       return;
     }
@@ -739,22 +744,13 @@ export function CheckoutClient({
                   </Notice>
                 ) : null}
                 {quote.status === "done" && options.length === 0 ? (
-                  <Notice tone="gold" role="alert">
-                    Ainda não entregamos para este CEP —{" "}
-                    {quote.whatsappUrl ? (
-                      <a
-                        href={quote.whatsappUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={linkGold}
-                      >
-                        fale com a gente no WhatsApp
-                      </a>
-                    ) : (
-                      "fale com a gente no WhatsApp"
-                    )}
-                    .
-                  </Notice>
+                  <CorreiosOnRequestNotice
+                    cepDigits={cepDigits}
+                    motoboyArea={quote.motoboyArea}
+                    sellerName={quote.sellerName}
+                    fallbackUrl={quote.whatsappUrl}
+                    items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}
+                  />
                 ) : null}
                 {windowGone && options.length > 0 ? (
                   <Notice tone="gold" role="alert">

@@ -85,11 +85,14 @@ async function setup(opts: { kind?: "motoboy" | "correios" } = {}) {
     .values(
       opts.kind === "correios"
         ? { name: "PAC", priceCents: 1990 }
-        : { name: "Motoboy Belém", priceCents: 1500, kind: "motoboy", deliveryWindows: WINDOWS, deliveryDaysMin: 0, deliveryDaysMax: 0 },
+        : { name: "Motoboy Belém", priceCents: 1500, kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", deliveryWindows: WINDOWS, deliveryDaysMin: 0, deliveryDaysMax: 0 },
     )
     .returning({ id: schema.shippingRates.id });
   return { variantId, rateId: rate.id };
 }
+
+/** Fora da área do motoboy: onde o motoboy chega, o pedido pelos Correios é recusado (SHIPPING_MOTOBOY_ONLY). */
+const SP_ADDRESS = { postalCode: "01310-100", street: "Av. Paulista", number: "1000", complement: "", district: "Bela Vista", city: "São Paulo", state: "SP" };
 
 function input(variantId: string, rateId: string, over: Partial<CreateStoreOrderInput> = {}): CreateStoreOrderInput {
   return {
@@ -179,7 +182,7 @@ describe("listRunEligibleOrders", () => {
     const onStreet = await paidMotoboyOrder(variantId, rateId);
     await dispatchOrder(sdb, { orderId: onStreet.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
     const correios = await setup({ kind: "correios" });
-    const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990 }), { now: MORNING });
+    const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }), { now: MORNING });
     await transitionOrder(sdb, { orderId: pac.orderId, to: "paid", userId: FIXED_USER_ID });
 
     const c = await courier();
@@ -270,7 +273,7 @@ describe("createDeliveryRun", () => {
     const { variantId, rateId } = await setup();
     const paid = await paidMotoboyOrder(variantId, rateId);
     const correios = await setup({ kind: "correios" });
-    const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990 }), { now: MORNING });
+    const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }), { now: MORNING });
     await transitionOrder(sdb, { orderId: pac.orderId, to: "paid", userId: FIXED_USER_ID });
     const c = await courier();
 

@@ -67,7 +67,14 @@ export type BridgeMessageInput = {
   product?: { name: string; variation?: string } | null;
   /** A sacola (cart). */
   items?: readonly BridgeItem[];
+  /** O CEP que a cliente digitou no checkout (8 dígitos): a Lia já cota certo — e, fora da área do motoboy, a equipe calcula os Correios. */
+  cep?: string;
 };
+
+/** "68740000" → "68740-000"; outra coisa volta como veio. */
+function cepLabel(cep: string): string {
+  return /^\d{8}$/.test(cep) ? `${cep.slice(0, 5)}-${cep.slice(5)}` : cep;
+}
 
 function itemPhrase(item: { name: string; variation?: string }): string {
   const variation = item.variation?.trim();
@@ -83,7 +90,8 @@ export function buildBridgeMessage(input: BridgeMessageInput): string {
   const tag = `(#${input.code})`;
   if (input.source === "cart" && input.items && input.items.length > 0) {
     const lista = input.items.map((item) => `${item.quantity}× ${itemPhrase(item)}`).join(", ");
-    return `${oi} minha sacola no site: ${lista} ${tag}`;
+    const entrega = input.cep ? `, entrega no CEP ${cepLabel(input.cep)}` : "";
+    return `${oi} minha sacola no site: ${lista}${entrega} ${tag}`;
   }
   if (input.product) {
     const onde = input.source === "campaign" ? " no story" : "";

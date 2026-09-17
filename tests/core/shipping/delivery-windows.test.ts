@@ -8,6 +8,8 @@ import {
   deliveryWindowsSchema,
   describeWindow,
   expandDeliveryOptions,
+  motoboyAreaLabel,
+  motoboyExclusive,
   formatWindowLabel,
   isWindowBookable,
   optionKeyFor,
@@ -45,17 +47,19 @@ describe("spMinutesOfDay", () => {
 });
 
 describe("expandDeliveryOptions", () => {
-  it("antes do limite: janelas de hoje (motoboy primeiro); depois: amanhã; Correios é uma opção só", () => {
+  it("antes do limite: janelas de hoje (motoboy primeiro); depois: amanhã; onde há motoboy os Correios somem", () => {
     const morning = new Date("2026-09-20T13:30:00Z"); // 10:30 SP (domingo 20/09)
     const options = expandDeliveryOptions([PAC, MOTOBOY], morning);
     expect(options.map((o) => o.kind === "motoboy" ? `${o.window.dayKey} ${o.label}` : `${o.kind} ${o.deliveryDaysMin}-${o.deliveryDaysMax}`)).toEqual([
       "2026-09-20 hoje, 16h–19h · pague até 13h",
       "2026-09-20 hoje, 19h–21h · pague até 13h",
       "2026-09-21 amanhã, 9h–12h",
-      "correios 3-5",
     ]);
     expect(options[0].optionKey).toBe("m1:2026-09-20:16:00");
-    expect(options[3].optionKey).toBe("p1");
+    // Sem motoboy para o CEP, os Correios continuam uma opção só.
+    const correios = expandDeliveryOptions([PAC], morning);
+    expect(correios.map((o) => (o.kind === "correios" ? `${o.kind} ${o.deliveryDaysMin}-${o.deliveryDaysMax}` : ""))).toEqual(["correios 3-5"]);
+    expect(correios[0].optionKey).toBe("p1");
 
     const afternoon = new Date("2026-09-20T16:00:00Z"); // 13:00 SP — o limite das 13h já passou
     expect(expandDeliveryOptions([MOTOBOY], afternoon).map((o) => (o.kind === "motoboy" ? o.label : ""))).toEqual([
@@ -63,6 +67,24 @@ describe("expandDeliveryOptions", () => {
       "amanhã, 16h–19h",
       "amanhã, 19h–21h",
     ]);
+  });
+
+  it("motoboyExclusive e motoboyAreaLabel: só motoboy onde ele chega; a área lê os nomes das faixas ativas sem o prefixo", () => {
+    expect(motoboyExclusive([PAC, MOTOBOY]).map((r) => r.rateId)).toEqual(["m1"]);
+    expect(motoboyExclusive([PAC]).map((r) => r.rateId)).toEqual(["p1"]);
+    expect(motoboyExclusive([])).toEqual([]);
+    const rates = [
+      { name: "motoboy: Castanhal", kind: "motoboy" as const, isActive: true, cepStart: "68740000" },
+      { name: "Motoboy — Ananindeua", kind: "motoboy" as const, cepStart: "67000000" },
+      { name: "Motoboy Belém", kind: "motoboy" as const, cepStart: "66000000" },
+      { name: "Motoboy Marituba", kind: "motoboy" as const, isActive: false, cepStart: "67200000" },
+      { name: "Entrega padrão (todo o Brasil)", kind: "correios" as const, cepStart: "00000000" },
+      { name: "Motoboy Belém", kind: "motoboy" as const, cepStart: "66000000" },
+    ];
+    // Ordem do CEP inicial (a capital primeiro), sem repetir, sem a inativa e sem os Correios.
+    expect(motoboyAreaLabel(rates)).toBe("Belém, Ananindeua e Castanhal");
+    expect(motoboyAreaLabel(rates.slice(2, 3))).toBe("Belém");
+    expect(motoboyAreaLabel(rates.slice(4, 5))).toBe("");
   });
 
   it("na virada do dia UTC, o dia é o de São Paulo (23h SP = amanhã pela madrugada UTC)", () => {

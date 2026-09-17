@@ -46,6 +46,8 @@ const createSiteCartSchema = z.object({
   /** Só no story: a dona amarrou a peça ao link, então ela entra mesmo antes de ficar visível (janela VIP). */
   includeHiddenProduct: z.boolean().optional(),
   variantSku: z.string().trim().min(1).max(60).optional(),
+  /** CEP do checkout sem frete (só na mensagem, para a Lia cotar; não fica gravado). */
+  cep: z.string().regex(/^\d{8}$/).optional(),
   /**
    * A sacola (source = cart): variação (id, como a sacola guarda; SKU só como
    * reserva) e quantidade; o preço é lido na hora. Tetos acima do que a
@@ -161,6 +163,7 @@ export async function createSiteCart(db: DbOrTx, rawInput: CreateSiteCartInput):
         source: input.source,
         product: snapshot.product,
         items: snapshot.items,
+        cep: input.cep,
       });
       return { id: row.id, code, message, waUrl: waMeUrl(settings.storeWhatsapp, message) };
     } catch (error) {

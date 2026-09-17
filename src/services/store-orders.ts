@@ -409,6 +409,31 @@ export async function createStoreOrder(
       );
     }
 
+    // (b3) Onde o motoboy chega, a entrega é só por motoboy (a mesma regra da
+    // cotação, motoboyExclusive): uma aba antiga do checkout ou um POST
+    // montado à mão não fecha um pedido de Belém pelos Correios.
+    if (chosenRate.kind === "correios") {
+      const motoboyRates = await tx
+        .select({ deliveryWindows: shippingRates.deliveryWindows })
+        .from(shippingRates)
+        .where(
+          and(
+            eq(shippingRates.isActive, true),
+            eq(shippingRates.kind, "motoboy"),
+            lte(shippingRates.cepStart, cep),
+            gte(shippingRates.cepEnd, cep),
+            lte(shippingRates.weightMinGrams, totalWeightGrams),
+            gte(shippingRates.weightMaxGrams, totalWeightGrams),
+          ),
+        );
+      if (motoboyRates.some((rate) => parseWindows(rate.deliveryWindows).length > 0)) {
+        throw new ServiceError(
+          "SHIPPING_MOTOBOY_ONLY",
+          "Para este CEP a entrega é só por motoboy. Volte à entrega e escolha um horário.",
+        );
+      }
+    }
+
     const shippingCents = applicableRate.priceCents;
     if (shippingCents !== parsed.expectedShippingCents) {
       throw new ShippingChangedError(shippingCents);

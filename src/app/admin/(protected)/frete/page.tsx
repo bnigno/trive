@@ -106,10 +106,14 @@ export default async function FretePage() {
       <Card title="Faixas de frete">
         <div className="flex flex-col gap-5">
           <p className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300">
-            A cliente vê todas as faixas que cobrem o CEP e o peso do pedido,
-            da mais barata para a mais cara (motoboy que ainda entrega hoje
-            vem primeiro), e escolhe. A faixa padrão cobre o Brasil inteiro —
-            crie faixas específicas (ex.: Belém por motoboy) com preço menor.
+            Onde uma faixa de <strong>motoboy</strong> cobre o CEP, a cliente vê
+            SÓ o motoboy (uma opção por janela, a de hoje primeiro) — as faixas
+            de Correios ficam para os CEPs sem motoboy. Sem nenhuma faixa para o
+            CEP, o site e a Lia dizem que a entrega é pelos Correios com o frete
+            calculado pela equipe: a cliente chega no WhatsApp com a sacola e o
+            CEP, e a equipe cota no site dos Correios e fecha por lá. O nome da
+            faixa de motoboy é o que a cliente lê (&ldquo;Motoboy Belém&rdquo;) e
+            monta a lista de cidades atendidas.
           </p>
 
           {rates.length === 0 ? (

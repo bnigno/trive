@@ -304,10 +304,14 @@ export function renderContextNote(
     const escolhido = state.lastQuotes?.find((quote) => quoteKey(quote) === chosenKey);
     // Sacola mudou depois da cotação (adicionar/remover zeram lastQuotes):
     // o CEP fica como pista, mas o frete tem de ser cotado de novo.
+    // Cotação feita e vazia (lista [], não ausente): fora da área do motoboy.
+    const foraDaArea = Array.isArray(state.lastQuotes) && state.lastQuotes.length === 0 && Boolean(state.lastQuotedAt);
     linhas.push(
       cotacoes
         ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.label ? `${escolhido.name} ${escolhido.label}` : escolhido.name}` : ""}`
-        : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
+        : foraDaArea
+          ? `• CEP informado: ${formatCep(state.lastCep)} · FORA DA ÁREA DO MOTOBOY: entrega pelos Correios com o frete calculado pela equipe — com a sacola pronta, confirme o endereço completo e chame transferir_para_atendente com o resumo; NÃO chame criar_pedido`
+          : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
     );
     if (state.lastCepAddress) {
       const endereco = state.lastCepAddress;

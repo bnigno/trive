@@ -1358,17 +1358,18 @@ describe("buildToolExecutor", () => {
     const result = await executor("cotar_frete", { cep: "01310100", entregar_ate: "2026-09-18" });
     expect(result.ok).toBe(true);
     expect(result.text).toContain(`1. Motoboy Belém — hoje, 19h–21h — ${formatCentsBRL(900)} (pague até 13h) · Chega até sexta 18/09, no dia`);
-    expect(result.text).toContain("2. PAC —");
-    expect(result.text).toContain("Pode chegar só");
+    // Onde o motoboy chega, o PAC da loja não aparece (motoboy exclusivo).
+    expect(result.text).not.toContain("PAC");
 
     const [conversation] = await db
       .select()
       .from(schema.waConversations)
       .where(eq(schema.waConversations.id, conversationId));
     const state = conversation.botState as { lastQuotes?: { optionKey?: string; kind?: string }[]; chosenOptionKey?: string; neededBy?: string };
-    expect(state.lastQuotes?.map((q) => q.kind)).toEqual(["motoboy", "correios"]);
+    expect(state.lastQuotes?.map((q) => q.kind)).toEqual(["motoboy"]);
     expect(state.lastQuotes?.[0].optionKey).toMatch(/:2026-09-18:19:00$/);
-    expect(state.chosenOptionKey).toBeUndefined();
+    // Uma opção só já é a escolhida.
+    expect(state.chosenOptionKey).toMatch(/:2026-09-18:19:00$/);
     expect(state.neededBy).toBe("2026-09-18");
 
     // criar_pedido com a janela: o pedido nasce com delivery_window e a data marcada.

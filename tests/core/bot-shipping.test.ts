@@ -130,7 +130,10 @@ describe("confirmQuoteUnchanged", () => {
   it("sem tarifa para o CEP, tarifa que sumiu e preço que mudou são recusas com os valores", () => {
     const nenhuma = confirmQuoteUnchanged(SEDEX, [], "01310100");
     expect(nenhuma.ok).toBe(false);
-    if (!nenhuma.ok) expect(nenhuma.text).toContain("Não entregamos");
+    if (!nenhuma.ok) {
+      expect(nenhuma.text).toContain("Nenhuma faixa cobre mais o CEP 01310-100");
+      expect(nenhuma.text).toContain("transferir_para_atendente");
+    }
 
     const sumiu = confirmQuoteUnchanged(SEDEX, [PAC], "01310100");
     expect(sumiu.ok).toBe(false);
