@@ -7,7 +7,7 @@ import { inngest } from "@/inngest/client";
 import { enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { runOutboxKick } from "@/queue/kick";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
-import { yesterdaySpDayKey } from "@/services/daily-digest";
+import { enqueueDailyDigest } from "@/services/daily-digest";
 import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
 import { dispatchDueDrops } from "@/services/drops";
@@ -17,6 +17,8 @@ import { expireOverdueReservations } from "@/services/store-orders";
 import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
 import { scheduleIdleCartFollowups } from "@/services/wa-followups";
 import { checkSessionAndAlert } from "@/services/wa-session";
+import { checkInboundGapsAndAlert } from "@/services/wa-watchdog";
+import { alertFunctionFailure } from "@/services/system-alerts";
 import { autoReturnIdleHumanConversations } from "@/services/wa-conversations";
 
 const SWEEP_BATCH_LIMIT = 25;
@@ -134,6 +136,37 @@ export const waSessionMonitor = inngest.createFunction(
   },
 );
 
+// Vigia do WhatsApp: os chats que a Z-API tem × o que o sistema registrou.
+// Uma mensagem que o webhook perdeu (caso real: LID, 16/09/2026) vira aviso
+// ao dono em até 10 minutos, em vez de dias.
+export const waInboundWatchdog = inngest.createFunction(
+  { id: "wa-inbound-watchdog", triggers: [{ cron: "*/10 * * * *" }] },
+  async () => checkInboundGapsAndAlert(getDb(), getMessagingProvider()),
+);
+
+// Qualquer rotina que esgote as tentativas e falhe avisa o dono (WhatsApp +
+// e-mail, 1x por hora por rotina). O Inngest dispara este evento sozinho.
+// Sem retries (os envios já são capturados; retentar só reenviaria e-mail) e
+// uma execução por vez (o cooldown consulta-e-grava no banco não pode correr
+// em paralelo). O filtro no gatilho tira a própria função ANTES de rodar —
+// senão, com o banco fora, ela falharia e dispararia a si mesma para sempre.
+export const functionFailureAlert = inngest.createFunction(
+  {
+    id: "function-failure-alert",
+    retries: 0,
+    concurrency: { limit: 1 },
+    triggers: [{ event: "inngest/function.failed", if: "event.data.function_id != 'trive-function-failure-alert'" }],
+  },
+  async ({ event }) => {
+    const data = event.data as { function_id?: string; run_id?: string; error?: { message?: string; name?: string } };
+    return alertFunctionFailure(getDb(), getMessagingProvider(), {
+      functionId: String(data.function_id ?? "?"),
+      runId: String(data.run_id ?? ""),
+      message: String(data.error?.message ?? data.error?.name ?? "erro sem mensagem"),
+    });
+  },
+);
+
 // Recuperação de pedido não pago (Fase 4): UMA única mensagem por pedido,
 // para sempre (dedupe 'wa.recovery:<orderId>' UNIQUE em wa_messages) —
 // jamais uma segunda cobrança. Só com opt-in e com a reserva ainda válida.
@@ -175,17 +208,7 @@ export const emailPoll = inngest.createFunction(
 // outbox — com retry, DLQ e "reprocessar" em /admin/fila.
 export const dailyDigest = inngest.createFunction(
   { id: "daily-digest", triggers: [{ cron: "0 11 * * *" }] },
-  async () => {
-    const date = yesterdaySpDayKey();
-    const id = await enqueueOutboxEvent(getDb(), {
-      eventType: "digest.daily",
-      dedupeKey: `digest.daily:${date}`,
-      aggregateType: "digest",
-      aggregateId: date,
-      payload: { date },
-    });
-    return { date, enqueued: id !== null };
-  },
+  async () => enqueueDailyDigest(getDb()),
 );
 
 // Conversas "com você" paradas por handoff_auto_return_hours voltam para a
@@ -209,6 +232,8 @@ export const deliveryPositionsPurge = inngest.createFunction(
 );
 
 export const functions = [
+  functionFailureAlert,
+  waInboundWatchdog,
   deliveryPositionsPurge,
   dailyDigest,
   outboxSweep,

@@ -18,7 +18,8 @@ import type { InboxAttachment, InboxMessage, InboxThreadItem } from "./use-inbox
  * do adapter estoura: preferimos anexo sem link a tela de erro — o resto do
  * e-mail continua legível e a UI mostra "arquivo indisponível".
  */
-function attachmentUrlOrNull(path: string): string | null {
+function attachmentUrlOrNull(path: string | null): string | null {
+  if (!path) return null;
   try {
     return getFileStorage().publicUrl(path);
   } catch {

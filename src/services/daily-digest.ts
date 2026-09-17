@@ -27,7 +27,7 @@ import {
   spWeekdayName,
   weekdayIndexSP,
 } from "@/lib/sp-day";
-import type { DbOrTx } from "@/queue/enqueue";
+import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { topProducts } from "@/services/reports";
 import { getStockOverview } from "@/services/stock";
 import { summarizeCityEditionsForDigest } from "@/services/city-editions";
@@ -57,6 +57,23 @@ export function digestDedupeKey(dayKey: string): string {
 /** O dia relatado pelo resumo das 8h: ontem, no calendário de São Paulo. */
 export function yesterdaySpDayKey(now: Date = new Date()): string {
   return spPreviousDayKey(spDayKey(now));
+}
+
+/**
+ * O cron das 08:00 só faz isto: enfileira digest.daily de ONTEM (dedupe por
+ * dia; quem monta e envia é o handler do outbox). aggregate_id é uuid no
+ * banco — a data vai no payload e no dedupe (passar a data como aggregateId
+ * falhou no Zod todo dia, em silêncio, até 16/09/2026).
+ */
+export async function enqueueDailyDigest(db: DbOrTx, now: Date = new Date()): Promise<{ date: string; enqueued: boolean }> {
+  const date = yesterdaySpDayKey(now);
+  const id = await enqueueOutboxEvent(db, {
+    eventType: "digest.daily",
+    dedupeKey: `digest.daily:${date}`,
+    aggregateType: "digest",
+    payload: { date },
+  });
+  return { date, enqueued: id !== null };
 }
 
 const dateSchema = z.object({

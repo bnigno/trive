@@ -579,6 +579,36 @@ escreveu enquanto isso, a Lia responde na hora. O detalhe técnico (status,
 código, tentativa) fica no audit `wa.bot_turn_failed` e nos logs da Vercel
 (`[assistant] falha na API da Anthropic`).
 
+## A Lia não respondeu uma cliente (a mensagem nem aparece no painel)
+
+Caso real de 16/09/2026: dois dias sem nenhuma mensagem chegar ao sistema,
+com a Z-API "conectada" e o site no ar. Causa: o WhatsApp esconde o número
+de alguns contatos (LID) e a Z-API mandava `phone` como `…@lid`; o webhook
+descartava em silêncio. Desde então:
+
+- **Toda mensagem que o sistema não consegue processar fica registrada**
+  (`inbound_events` com status `ignored` e o motivo) **e chega no seu
+  WhatsApp** com o texto da cliente — responda pelo celular da loja.
+- **Vigia** (a cada 10 min): compara os chats que o WhatsApp da loja tem
+  com o que o sistema registrou. Qualquer chat com mensagem que não chegou
+  (ou não-lida que a Lia já teria lido) vira aviso no seu WhatsApp e por
+  e-mail, no máximo um por chat por hora. Se foi você digitando no celular
+  da loja, ignore o aviso.
+- **Rotina que falhou** (fila, resumo diário, e-mail, monitor…): aviso no
+  seu WhatsApp e por e-mail com o nome da rotina e o erro, uma vez por
+  hora por rotina. O aviso chega uns 5 min depois da primeira falha (o
+  Inngest tenta 4 vezes antes).
+
+Recebeu um aviso e quer investigar: painel → **Fila** (`/admin/fila`) mostra
+os eventos parados; o painel do Inngest mostra cada rotina. Para conferir
+a Z-API por fora (com as chaves de `.env.prod.local`): `GET /status`
+(conectada?), `GET /me` (URL do webhook: tem de ser
+`trivemaison.com.br/api/webhooks/zapi/<segredo>`), `GET /chats` (última
+mensagem por chat — se a Z-API tem e o banco não, o webhook falhou).
+Números ocultos aparecem no painel como "número oculto": a Lia responde
+normalmente, mas não consegue reservar/fechar pedido sem o telefone — ela
+pede à cliente.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).

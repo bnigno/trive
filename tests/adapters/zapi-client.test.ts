@@ -24,6 +24,31 @@ function createFakeFetch(payload: unknown, status = 200) {
   return { calls, fetchFn };
 }
 
+describe("listRecentChats (GET /chats)", () => {
+  beforeEach(() => {
+    process.env.ZAPI_INSTANCE_ID = "inst";
+    process.env.ZAPI_INSTANCE_TOKEN = "tok";
+    process.env.ZAPI_CLIENT_TOKEN = "ct";
+  });
+
+  it("lê o formato real (lastMessageTime em ms como string, lid à parte, unread), aceita segundos e pula item sem telefone", async () => {
+    const { calls, fetchFn } = createFakeFetch([
+      { phone: "5591999991528", lid: "220839349862480@lid", name: "Sogra", lastMessageTime: "1789603256000", unread: 1, isGroup: false, pinned: false },
+      { phone: "5591999997536", name: "Fabiano", lastMessageTime: 1622991687, messagesUnread: "0" },
+      { phone: "120363041234567890-group", name: "VIP", lastMessageTime: "1789603179000", isGroup: true },
+      { name: "sem telefone", lastMessageTime: "1789603179000" },
+    ]);
+    const provider = new ZapiMessagingProvider(fetchFn);
+    const chats = await provider.listRecentChats(10);
+    expect(calls[0]?.url).toContain("/chats?page=1&pageSize=10");
+    expect(chats).toEqual([
+      { phone: "5591999991528", lid: "220839349862480@lid", name: "Sogra", lastMessageAt: new Date(1789603256000), unread: 1, isGroup: false },
+      { phone: "5591999997536", lid: null, name: "Fabiano", lastMessageAt: new Date(1622991687000), unread: 0, isGroup: false },
+      { phone: "120363041234567890-group", lid: null, name: "VIP", lastMessageAt: new Date(1789603179000), unread: 0, isGroup: true },
+    ]);
+  });
+});
+
 describe("LID (número oculto) no adapter", () => {
   beforeEach(() => {
     process.env.ZAPI_INSTANCE_ID = "inst";
