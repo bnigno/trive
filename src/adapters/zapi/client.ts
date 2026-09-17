@@ -36,9 +36,12 @@ export const zapiSendTextResponseSchema = z.looseObject({
 const zapiChatsResponseSchema = z.array(
   z.looseObject({
     phone: z.union([z.string(), z.number()]).nullish(),
+    lid: z.string().nullish(),
     name: z.string().nullish(),
     lastMessageTime: z.union([z.string(), z.number()]).nullish(),
     messageTime: z.union([z.string(), z.number()]).nullish(),
+    unread: z.union([z.string(), z.number()]).nullish(),
+    messagesUnread: z.union([z.string(), z.number()]).nullish(),
     isGroup: z.boolean().nullish(),
   }),
 );
@@ -237,12 +240,18 @@ export class ZapiMessagingProvider implements MessagingProvider {
     const chats: RecentChat[] = [];
     for (const chat of parsed) {
       const phone = chat.phone != null ? String(chat.phone).trim() : "";
-      const ms = Number(chat.lastMessageTime ?? chat.messageTime ?? NaN);
+      // Em produção vem em milissegundos (13 dígitos); a doc mostra segundos
+      // (10 dígitos) — aceitamos os dois.
+      const raw = Number(chat.lastMessageTime ?? chat.messageTime ?? NaN);
+      const ms = raw < 1e11 ? raw * 1000 : raw;
       if (!phone || !Number.isFinite(ms) || ms <= 0) continue;
+      const unread = Number(chat.unread ?? chat.messagesUnread ?? 0);
       chats.push({
         phone,
+        lid: chat.lid?.trim() || null,
         name: chat.name?.trim() || null,
         lastMessageAt: new Date(ms),
+        unread: Number.isFinite(unread) && unread > 0 ? Math.floor(unread) : 0,
         isGroup: chat.isGroup === true || phone.includes("-group") || phone.endsWith("@g.us"),
       });
     }

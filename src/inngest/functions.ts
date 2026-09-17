@@ -146,8 +146,17 @@ export const waInboundWatchdog = inngest.createFunction(
 
 // Qualquer rotina que esgote as tentativas e falhe avisa o dono (WhatsApp +
 // e-mail, 1x por hora por rotina). O Inngest dispara este evento sozinho.
+// Sem retries (os envios já são capturados; retentar só reenviaria e-mail) e
+// uma execução por vez (o cooldown consulta-e-grava no banco não pode correr
+// em paralelo). O filtro no gatilho tira a própria função ANTES de rodar —
+// senão, com o banco fora, ela falharia e dispararia a si mesma para sempre.
 export const functionFailureAlert = inngest.createFunction(
-  { id: "function-failure-alert", triggers: [{ event: "inngest/function.failed" }] },
+  {
+    id: "function-failure-alert",
+    retries: 0,
+    concurrency: { limit: 1 },
+    triggers: [{ event: "inngest/function.failed", if: "event.data.function_id != 'trive-function-failure-alert'" }],
+  },
   async ({ event }) => {
     const data = event.data as { function_id?: string; run_id?: string; error?: { message?: string; name?: string } };
     return alertFunctionFailure(getDb(), getMessagingProvider(), {

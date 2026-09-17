@@ -67,8 +67,12 @@ export type DownloadedMedia = {
 export interface RecentChat {
   /** Telefone sem '+' ('5591…'), LID ('…@lid') ou id de grupo — como a Z-API entrega. */
   phone: string;
+  /** LID do contato quando a Z-API o informa à parte ('…@lid'). */
+  lid: string | null;
   name: string | null;
   lastMessageAt: Date;
+  /** Mensagens que o WhatsApp da loja ainda não marcou como lidas. */
+  unread: number;
   isGroup: boolean;
 }
 

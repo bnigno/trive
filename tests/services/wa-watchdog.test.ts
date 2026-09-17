@@ -49,10 +49,10 @@ describe("checkInboundGapsAndAlert", () => {
       .values({ phoneE164: "+5591999997536", lastInboundAt: minutesAgo(29), lastOutboundAt: minutesAgo(28) })
       .returning({ id: schema.waConversations.id });
     provider.recentChats = [
-      { phone: "5591999991528", name: "Sogra", lastMessageAt: minutesAgo(10), isGroup: false },
-      { phone: "5591999997536", name: "Fabiano", lastMessageAt: minutesAgo(30), isGroup: false },
-      { phone: "120363041234567890-group", name: "TRIVÉ VIP", lastMessageAt: minutesAgo(5), isGroup: true },
-      { phone: "5591999990002", name: "Agora", lastMessageAt: minutesAgo(1), isGroup: false },
+      { phone: "5591999991528", lid: null, name: "Sogra", lastMessageAt: minutesAgo(10), unread: 1, isGroup: false },
+      { phone: "5591999997536", lid: null, name: "Fabiano", lastMessageAt: minutesAgo(30), unread: 0, isGroup: false },
+      { phone: "120363041234567890-group", lid: null, name: "TRIVÉ VIP", lastMessageAt: minutesAgo(5), unread: 3, isGroup: true },
+      { phone: "5591999990002", lid: null, name: "Agora", lastMessageAt: minutesAgo(1), unread: 1, isGroup: false },
     ];
 
     const first = await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email });
@@ -75,10 +75,15 @@ describe("checkInboundGapsAndAlert", () => {
     expect(second).toEqual({ checked: 2, gaps: 1, alerted: 0, alreadyAlerted: 1 });
     expect(provider.sentMessages.filter((m) => m.toE164 === "+5511988887777")).toHaveLength(1);
 
-    // Mensagem mais nova no mesmo chat: avisa de novo.
+    // Mensagem mais nova no mesmo chat dentro da mesma hora: NÃO avisa de novo (teto por chat).
     provider.recentChats[0] = { ...provider.recentChats[0], lastMessageAt: new Date(NOW.getTime() + 5 * 60_000) };
     const third = await checkInboundGapsAndAlert(sdb, provider, { now: new Date(NOW.getTime() + 10 * 60_000), emailProvider: email });
-    expect(third).toMatchObject({ alerted: 1 });
+    expect(third).toEqual({ checked: 2, gaps: 1, alerted: 0, alreadyAlerted: 1 });
+
+    // Passada a hora, com mensagem mais nova: avisa.
+    provider.recentChats[0] = { ...provider.recentChats[0], lastMessageAt: new Date(NOW.getTime() + 55 * 60_000) };
+    const fourth = await checkInboundGapsAndAlert(sdb, provider, { now: new Date(NOW.getTime() + 61 * 60_000), emailProvider: email });
+    expect(fourth).toMatchObject({ alerted: 1 });
 
     const audits = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.watchdog_alert"));
     expect(audits).toHaveLength(2);
@@ -98,14 +103,34 @@ describe("checkInboundGapsAndAlert", () => {
       status: "delivered",
       createdAt: minutesAgo(19),
     });
-    provider.recentChats = [{ phone: "220839349862480@lid", name: null, lastMessageAt: minutesAgo(20), isGroup: false }];
+    provider.recentChats = [{ phone: "220839349862480@lid", lid: null, name: null, lastMessageAt: minutesAgo(20), unread: 0, isGroup: false }];
     const result = await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email });
     expect(result).toEqual({ checked: 1, gaps: 0, alerted: 0, alreadyAlerted: 0 });
+
+    // A Z-API resolve o telefone e manda o LID à parte: a conversa (só LID) continua conhecida.
+    provider.recentChats = [{ phone: "5591999998888", lid: "220839349862480@lid", name: "Dona do LID", lastMessageAt: minutesAgo(20), unread: 0, isGroup: false }];
+    expect(await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email })).toEqual({ checked: 1, gaps: 0, alerted: 0, alreadyAlerted: 0 });
+  });
+
+  it("buraco escondido: mensagem perdida, depois um envio nosso — o chat tem não-lida numa conversa que a Lia lê → avisa", async () => {
+    await db.insert(schema.settings).values({ key: "bot_enabled", value: true });
+    const [conversation] = await db
+      .insert(schema.waConversations)
+      .values({ phoneE164: "+5591999990005", status: "open", lastInboundAt: minutesAgo(90), lastOutboundAt: minutesAgo(30) })
+      .returning({ id: schema.waConversations.id });
+    provider.recentChats = [{ phone: "5591999990005", lid: null, name: "Cliente", lastMessageAt: minutesAgo(30), unread: 1, isGroup: false }];
+    const result = await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email });
+    expect(result).toMatchObject({ gaps: 1, alerted: 1 });
+
+    // Conversa em atendimento humano: ninguém marca lido — não é buraco.
+    await db.update(schema.waConversations).set({ status: "human" }).where(eq(schema.waConversations.id, conversation.id));
+    await db.delete(schema.auditLog);
+    expect(await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email })).toEqual({ checked: 1, gaps: 0, alerted: 0, alreadyAlerted: 0 });
   });
 
   it("WhatsApp desligado ou Z-API fora do ar: pula sem lançar", async () => {
     provider.simulateDisconnect();
-    provider.recentChats = [{ phone: "5591999991528", name: "Sogra", lastMessageAt: minutesAgo(10), isGroup: false }];
+    provider.recentChats = [{ phone: "5591999991528", lid: null, name: "Sogra", lastMessageAt: minutesAgo(10), unread: 1, isGroup: false }];
     expect(await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email })).toMatchObject({ skipped: "z-api_indisponivel" });
     await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "wa_enabled"));
     expect(await checkInboundGapsAndAlert(sdb, provider, { now: NOW, emailProvider: email })).toEqual({ skipped: "desabilitado" });

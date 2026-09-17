@@ -11,6 +11,17 @@ export interface WatchdogChat {
   address: string;
   name: string | null;
   lastMessageAt: Date;
+  /** Mensagens ainda não lidas no WhatsApp da loja. */
+  unread: number;
+}
+
+export interface WatchdogKnown {
+  /** Última atividade (qualquer direção) que o sistema registrou. */
+  at: Date;
+  /** Última mensagem RECEBIDA registrada (null = nenhuma na janela). */
+  inboundAt: Date | null;
+  /** A vendedora marca as recebidas como lidas nesta conversa (modo autônomo, conversa aberta, bot ligado). */
+  botReads: boolean;
 }
 
 export interface WatchdogGap {
@@ -19,6 +30,8 @@ export interface WatchdogGap {
   lastMessageAt: Date;
   /** Última atividade que o sistema tem desse endereço (null = nunca vimos). */
   knownAt: Date | null;
+  /** Por que é buraco: movimento mais novo que tudo o que temos, ou não-lida que a Lia teria lido. */
+  reason: "movimento_novo" | "nao_lida";
 }
 
 export const WATCHDOG = {
@@ -31,23 +44,34 @@ export const WATCHDOG = {
 } as const;
 
 /**
- * Chats com movimento que o sistema NÃO registrou. `known` é a última
- * atividade (entrada ou saída) que temos por endereço. Sem direção na lista
- * da Z-API, uma mensagem que o dono digitou no celular da loja também
- * aparece como buraco — o alerta diz isso; é um falso positivo barato.
+ * Chats com movimento que o sistema NÃO registrou. Dois sinais:
+ * 1. Movimento mais novo que tudo o que temos do endereço (`known.at`). Sem
+ *    direção na lista da Z-API, uma mensagem que o dono digitou no celular
+ *    da loja também aparece — o alerta diz isso; é um falso positivo barato.
+ * 2. Não-lida que a Lia teria lido: a vendedora marca as recebidas como
+ *    lidas (✓✓ azul) ao responder; um chat com `unread` e cuja última
+ *    recebida registrada é mais velha que a última mensagem do chat é uma
+ *    mensagem que nunca chegou — mesmo que um envio nosso (retomada,
+ *    recuperação) tenha vindo depois e "atualizado" a atividade.
  */
 export function findInboundGaps(input: {
   chats: readonly WatchdogChat[];
-  known: ReadonlyMap<string, Date>;
+  known: ReadonlyMap<string, WatchdogKnown>;
   now: Date;
 }): WatchdogGap[] {
   const gaps: WatchdogGap[] = [];
   for (const chat of input.chats) {
     const age = input.now.getTime() - chat.lastMessageAt.getTime();
     if (age < WATCHDOG.settleMs || age > WATCHDOG.windowMs) continue;
-    const knownAt = input.known.get(chat.address) ?? null;
-    if (knownAt && knownAt.getTime() >= chat.lastMessageAt.getTime() - WATCHDOG.toleranceMs) continue;
-    gaps.push({ address: chat.address, name: chat.name, lastMessageAt: chat.lastMessageAt, knownAt });
+    const known = input.known.get(chat.address) ?? null;
+    const threshold = chat.lastMessageAt.getTime() - WATCHDOG.toleranceMs;
+    if (!known || known.at.getTime() < threshold) {
+      gaps.push({ address: chat.address, name: chat.name, lastMessageAt: chat.lastMessageAt, knownAt: known?.at ?? null, reason: "movimento_novo" });
+      continue;
+    }
+    if (chat.unread > 0 && known.botReads && (known.inboundAt === null || known.inboundAt.getTime() < threshold)) {
+      gaps.push({ address: chat.address, name: chat.name, lastMessageAt: chat.lastMessageAt, knownAt: known.at, reason: "nao_lida" });
+    }
   }
   return gaps.sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
 }
