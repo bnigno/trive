@@ -10,7 +10,7 @@
 // Uso: npx tsx --env-file=.env.prod.local scripts/frete-motoboy-regiao.ts [--apply]
 import { eq } from "drizzle-orm";
 
-import { planMotoboyRegion, type RateTarget } from "@/core/shipping/motoboy-region";
+import { isNationwide, planMotoboyRegion, type RateTarget } from "@/core/shipping/motoboy-region";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
 import { createShippingRate, listShippingRates, updateShippingRate, type ShippingRate } from "@/services/shipping";
@@ -66,10 +66,17 @@ async function main(): Promise<void> {
     }
   }
   for (const warning of plan.warnings) console.log(`AVISO: ${warning}`);
-  const nationwideOff = rates.filter((rate) => !rate.isActive && rate.cepStart === "00000000" && rate.cepEnd === "99999999" && rate.kind === "correios");
-  for (const rate of nationwideOff) console.log(`"${rate.name}" continua inativa de propósito: é o que faz o resto do Brasil ser "Correios, frete calculado pela equipe".`);
-  if (plan.convert.length === 0 && plan.create.length === 0 && plan.deactivate.length === 0) console.log("Nada a fazer: a região já está certa.");
-  console.log(apply ? `Gravado (auditoria: ${owner.name ?? owner.id}).` : "Simulação — rode com --apply para gravar.");
+  // A nacional de verdade (com preço) fica inativa de propósito; resto de teste (R$ 0, peso mínimo) só se avisa.
+  for (const rate of rates.filter((r) => !r.isActive && isNationwide(r) && r.kind === "correios")) {
+    console.log(
+      rate.priceCents > 0
+        ? `"${rate.name}" continua inativa de propósito: é o que faz o resto do Brasil ser "Correios, frete calculado pela equipe".`
+        : `"${rate.name}" está inativa (resto de teste, R$ 0 até ${rate.weightMaxGrams} g) — não faz parte da decisão; pode apagar no painel.`,
+    );
+  }
+  const nothing = plan.convert.length === 0 && plan.create.length === 0 && plan.deactivate.length === 0;
+  if (nothing) console.log("Nada a fazer: a região já está certa.");
+  console.log(apply ? `Gravado (auditoria: ${owner.name ?? owner.id}).` : nothing ? "Simulação — nada para gravar." : "Simulação — rode com --apply para gravar.");
   process.exit(0);
 }
 
