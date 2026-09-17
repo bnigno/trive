@@ -2,8 +2,9 @@
 // letreiro TRIVÉ) e o slogan embaixo, para fechar o papel que embala a
 // roupa. Disco marfim (impresso — no adesivo branco é o que faz o selo
 // parecer um lacre de papel creme), anel duplo dourado, e as mesmas peças da
-// tag de cabide. Dois modos: TESOURA (disco até o corte + fio-guia cinza) e
-// SILHOUETTE (disco sangra 1 mm além do corte; a plotter corta pelo DXF).
+// tag de cabide. O disco sangra 1 mm além do corte nos dois modos (o furador
+// comum de scrapbook é de 2" = 50,8 mm; a tesoura erra meio milímetro):
+// TESOURA acrescenta o fio-guia cinza no corte; SILHOUETTE corta pelo DXF.
 // Sem imports do Next, para os testes renderizarem com react-dom/server.
 import type { CSSProperties } from "react";
 
@@ -53,9 +54,9 @@ const sealBox: CSSProperties = {
   WebkitPrintColorAdjust: "exact",
 };
 
-/** Disco, anéis e (na tesoura) o fio-guia — um só SVG por selo, com a sangria fora da caixa quando há. */
+/** Disco (com sangria), anéis e (na tesoura) o fio-guia — um só SVG por selo, que extravasa a caixa de 50 mm pela sangria. */
 function SealDisc({ mode }: { mode: SealMode }) {
-  const bleed = mode === "silhouette" ? SEAL.bleedMm : 0;
+  const bleed = SEAL.bleedMm;
   const size = D + 2 * bleed;
   return (
     <svg

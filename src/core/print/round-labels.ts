@@ -32,10 +32,14 @@ export function printableArea(page: PageMm, marginMm: number): AreaMm {
 }
 
 /**
- * Quantos círculos cabem (colunas × linhas) e onde: a grade fica centrada na
- * área, ordem linha a linha. Área que não cabe nem um círculo → lista vazia.
+ * Quantos círculos cabem (colunas × linhas) e onde: a grade fica centrada,
+ * ordem linha a linha. `area` diz quantos cabem e onde é permitido;
+ * `centerIn` (opcional) diz onde centrar — a Silhouette centra na ALTURA da
+ * página, não na área útil (que é assimétrica): assim um DXF que o Studio
+ * importe invertido no Y cai nas mesmas posições e não corta fora do lugar.
+ * Lança se a grade centrada não couber na área. Área sem espaço → lista vazia.
  */
-export function roundLabelPositions(input: { diameterMm: number; gapMm: number; area: AreaMm }): RoundLabelPosition[] {
+export function roundLabelPositions(input: { diameterMm: number; gapMm: number; area: AreaMm; centerIn?: AreaMm }): RoundLabelPosition[] {
   const { diameterMm, gapMm, area } = input;
   const pitch = diameterMm + gapMm;
   const columns = Math.floor((area.widthMm + gapMm) / pitch);
@@ -43,8 +47,14 @@ export function roundLabelPositions(input: { diameterMm: number; gapMm: number; 
   if (columns < 1 || rows < 1) return [];
   const gridWidth = columns * diameterMm + (columns - 1) * gapMm;
   const gridHeight = rows * diameterMm + (rows - 1) * gapMm;
-  const originX = area.xMm + (area.widthMm - gridWidth) / 2 + diameterMm / 2;
-  const originY = area.yMm + (area.heightMm - gridHeight) / 2 + diameterMm / 2;
+  const center = input.centerIn ?? area;
+  const left = center.xMm + (center.widthMm - gridWidth) / 2;
+  const top = center.yMm + (center.heightMm - gridHeight) / 2;
+  if (left < area.xMm - 0.01 || top < area.yMm - 0.01 || left + gridWidth > area.xMm + area.widthMm + 0.01 || top + gridHeight > area.yMm + area.heightMm + 0.01) {
+    throw new Error(`A grade ${columns} × ${rows} de ${diameterMm} mm centrada não cabe na área disponível.`);
+  }
+  const originX = left + diameterMm / 2;
+  const originY = top + diameterMm / 2;
   const positions: RoundLabelPosition[] = [];
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < columns; col += 1) {

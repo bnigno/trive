@@ -525,11 +525,15 @@ já com a quantidade). Dois modelos:
   slogan, para fechar o papel que embala a peça. Disco marfim impresso, anel
   duplo dourado, monograma, letreiro e "Maison Féminine". Dois jeitos:
   *papel adesivo A4 comum* (15 por folha; corte pela linha cinza fina com
-  tesoura ou furador de 50 mm de scrapbook; papel fosco fica mais elegante)
+  tesoura ou furador de círculo de 2" = 50,8 mm, o de scrapbook — o marfim
+  sangra 1 mm além da linha; adesivo comum sem revestimento imprime como
+  "Papel comum", fotográfico fosco como "Premium Presentation Paper Matte")
   e *Silhouette* (12 por folha; a folha sai com as marcas de registro, como
-  as tags; no Studio abrir o DXF uma vez, marcas no padrão, salvar "TRIVÉ
-  selos.studio3"; material *Papel adesivo*, corte **kiss cut** — só o
-  adesivo, a base fica inteira; começar com força baixa). Geometria em
+  as tags; a grade é centrada na ALTURA da folha, então um DXF invertido no
+  Y cai no mesmo lugar; no Studio abrir o DXF uma vez, marcas no padrão,
+  salvar "TRIVÉ selos.studio3"; material *Papel adesivo*, corte **kiss
+  cut** — só o adesivo, a base fica inteira; começar com força baixa).
+  Geometria em
   `src/core/print/round-labels.ts`; desenho em
   `src/app/admin/(protected)/produtos/selos/seal.tsx`.
 

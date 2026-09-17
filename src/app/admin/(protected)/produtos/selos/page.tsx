@@ -1,6 +1,6 @@
 // Selos de embalagem: o adesivo redondo de 50 mm (logotipo + slogan) que
 // fecha o papel que embala a roupa. Duas impressões: papel adesivo A4 comum
-// (15 por folha, corte na tesoura pela linha-guia ou furador de 50 mm) e
+// (15 por folha, corte na tesoura pela linha-guia ou furador de círculo) e
 // Silhouette Portrait (12 por folha, a folha sai daqui com as marcas de
 // registro; no Studio um arquivo de corte salvo uma vez). O form é GET:
 // escolher só recarrega, não grava nada.
@@ -45,7 +45,11 @@ const jost = Jost({
 
 const MAX_SHEETS = 10;
 const formatParam = z.enum(["a4", "silhouette"]).catch("a4");
-const sheetsParam = z.coerce.number().int().min(1).max(MAX_SHEETS).catch(1);
+// Fora da faixa pela URL: encosta no limite em vez de cair para 1.
+const sheetsParam = z.coerce
+  .number()
+  .transform((n) => (Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), MAX_SHEETS) : 1))
+  .catch(1);
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
@@ -59,7 +63,10 @@ export default async function SealsPage({ searchParams }: { searchParams: Promis
 
   const silhouette = format === "silhouette";
   const area = silhouette ? silhouetteSafeArea(PAGE_A4) : printableArea(PAGE_A4, PLAIN_SHEET_MARGIN_MM);
-  const positions = roundLabelPositions({ diameterMm: SEAL.diameterMm, gapMm: SEAL.gapMm, area });
+  // Na Silhouette a grade centra na ALTURA da página: um DXF que entre
+  // invertido no Y no Studio cai nas mesmas posições.
+  const centerIn = silhouette ? { xMm: area.xMm, yMm: 0, widthMm: area.widthMm, heightMm: PAGE_A4.heightMm } : area;
+  const positions = roundLabelPositions({ diameterMm: SEAL.diameterMm, gapMm: SEAL.gapMm, area, centerIn });
   const perSheet = positions.length;
   const cutDxf = silhouette ? roundLabelCutDxf({ page: PAGE_A4, positions, diameterMm: SEAL.diameterMm }) : null;
   const mode = silhouette ? "silhouette" : "scissors";
@@ -78,7 +85,7 @@ export default async function SealsPage({ searchParams }: { searchParams: Promis
             Adesivo redondo de {SEAL.diameterMm} mm com o logotipo e o slogan, para fechar o papel que embala a peça.{" "}
             {silhouette
               ? `Folha A4 com ${perSheet} selos dentro da área que as marcas de registro do Studio deixam livre — impressa aqui já com as marcas; a plotter corta o círculo.`
-              : `Folha A4 de papel adesivo com ${perSheet} selos; corte pela linha cinza fina (tesoura ou furador de ${SEAL.diameterMm} mm).`}
+              : `Folha A4 de papel adesivo com ${perSheet} selos; corte pela linha cinza fina (tesoura ou furador de círculo de 2″).`}
           </p>
         </div>
         <PrintButton label={sheets === 1 ? "Imprimir 1 folha" : `Imprimir ${sheets} folhas`} />
@@ -89,7 +96,7 @@ export default async function SealsPage({ searchParams }: { searchParams: Promis
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-zinc-900 dark:text-zinc-100">Impressão</span>
             <Select name="formato" defaultValue={format}>
-              <option value="a4">Papel adesivo A4 comum — 15 por folha, corte na tesoura ou furador de 50 mm</option>
+              <option value="a4">Papel adesivo A4 comum — 15 por folha, corte na tesoura ou furador de círculo</option>
               <option value="silhouette">Silhouette Portrait — 12 por folha, imprime aqui com marcas de registro, corta no Studio</option>
             </Select>
           </label>
@@ -113,7 +120,7 @@ export default async function SealsPage({ searchParams }: { searchParams: Promis
           <div>
             <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Cortar na Silhouette</h2>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              O arquivo de corte é o mesmo para toda folha: os {perSheet} círculos ficam sempre no mesmo lugar. Papel adesivo A4 na bandeja de trás, lado do adesivo para cima; imprima com tipo de papel <em>Photo Paper Glossy</em> (ou <em>Premium Presentation Paper Matte</em> no fosco) e qualidade normal ou alta — no rascunho as marcas saem claras e a plotter não lê.
+              O arquivo de corte é o mesmo para toda folha: os {perSheet} círculos ficam sempre no mesmo lugar. Papel adesivo A4 na bandeja de trás, lado do adesivo para cima. Na caixa de diálogo do sistema: tamanho <strong>A4</strong>, escala <strong>100 %</strong>, frente e verso <strong>desmarcado</strong>, qualidade <strong>normal ou alta</strong> (no rascunho as marcas saem claras e a plotter não lê); tipo de papel conforme o adesivo — <em>Papel comum</em> no adesivo comum sem revestimento, <em>Premium Presentation Paper Matte</em> no fotográfico fosco, <em>Photo Paper Glossy</em> no brilhante.
             </p>
           </div>
           {cutDxf ? <DxfDownloadButton dxf={cutDxf} fileName="selos-corte-silhouette.dxf" /> : null}
@@ -124,7 +131,7 @@ export default async function SealsPage({ searchParams }: { searchParams: Promis
                 Baixe o <strong>arquivo de corte (DXF)</strong>. No <strong>Silhouette Studio</strong>: <em>Preferências</em> → unidades em <strong>mm</strong>; em <em>Importação</em>, DXF <strong>&ldquo;As Is&rdquo;</strong>.
               </li>
               <li>
-                Abra o DXF. <em>Configuração de página</em>: tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <strong>marcas de registro ligadas</strong>, em <em>Restaurar padrões</em> (recuos 15,9 mm e 26 mm embaixo, comprimento 20 mm, espessura 0,5 mm). Selecione tudo, confira <strong>210 × 297 mm</strong> no <em>Transformar</em>, ponto de referência no canto superior esquerdo → <strong>X 0, Y 0</strong> → apague o retângulo grande (camada PAGINA). Os círculos devem cair na área sem hachura, longe das marcas.
+                Abra o DXF. <em>Configuração de página</em>: tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <strong>marcas de registro ligadas</strong>, em <em>Restaurar padrões</em> (recuos 15,9 mm e 26 mm embaixo, comprimento 20 mm, espessura 0,5 mm). Selecione tudo, confira <strong>210 × 297 mm</strong> no <em>Transformar</em>, ponto de referência no canto superior esquerdo → <strong>X 0, Y 0</strong> → apague o retângulo grande (camada PAGINA). Os círculos devem cair na área sem hachura, longe das marcas, com a mesma folga em cima e embaixo (a grade é centrada na altura da folha — se o DXF entrar invertido, ela cai no mesmo lugar).
               </li>
               <li>
                 <em>Salvar como</em> <strong>&ldquo;TRIVÉ selos.studio3&rdquo;</strong>.
@@ -146,10 +153,10 @@ export default async function SealsPage({ searchParams }: { searchParams: Promis
           <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Como imprimir</h2>
           <ol className="list-decimal space-y-2 pl-5 text-zinc-700 dark:text-zinc-300">
             <li>
-              Papel adesivo A4 (fosco fica mais elegante e não reflete) na bandeja de trás, lado do adesivo para cima. Imprima em <strong>A4</strong>, escala <strong>100 %</strong>, qualidade normal ou alta; tipo de papel <em>Photo Paper Glossy</em> ou <em>Premium Presentation Paper Matte</em> na caixa de diálogo do sistema.
+              Papel adesivo A4 (fosco fica mais elegante e não reflete) na bandeja de trás, lado do adesivo para cima. Na caixa de diálogo do sistema: tamanho <strong>A4</strong>, escala <strong>100 %</strong>, frente e verso desmarcado, qualidade <strong>alta</strong>; tipo de papel conforme o adesivo — <em>Papel comum</em> no adesivo comum sem revestimento (o mais vendido), <em>Premium Presentation Paper Matte</em> no fotográfico fosco, <em>Photo Paper Glossy</em> no brilhante.
             </li>
             <li>
-              Corte pela <strong>linha cinza fina</strong> em volta de cada selo — tesoura, ou um <strong>furador de {SEAL.diameterMm} mm</strong> (papelaria de scrapbook) para sair redondinho de uma vez.
+              Corte pela <strong>linha cinza fina</strong> em volta de cada selo — tesoura, ou um <strong>furador de círculo de 2&Prime; (50,8 mm)</strong>, o de scrapbook, para sair redondinho de uma vez. O marfim vai 1 mm além da linha: cortar um pouco fora não deixa borda branca.
             </li>
             <li>
               Quer o corte perfeito sem tesoura? Troque para <strong>Silhouette Portrait</strong> acima.

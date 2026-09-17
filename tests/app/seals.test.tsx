@@ -10,18 +10,18 @@ import { PAGE_A4, silhouetteSafeArea, studioRegistrationMarks } from "@/core/cat
 import { PLAIN_SHEET_MARGIN_MM, printableArea, roundLabelPositions, SEAL } from "@/core/print/round-labels";
 
 describe("Seal (50 mm)", () => {
-  it("modo tesoura: disco marfim até o corte, anel duplo dourado, fio-guia, monograma, letreiro e tagline com filetes", () => {
+  it("modo tesoura: disco marfim com 1 mm de sangria, anel duplo dourado, fio-guia no corte, monograma, letreiro e tagline com filetes", () => {
     const html = renderToStaticMarkup(<Seal storeName="TRIVÉ" mode="scissors" />);
     expect(html).toContain('class="seal"');
     expect(html).toContain("width:50mm;height:50mm");
     expect(html).toContain("print-color-adjust:exact");
-    // Disco do tamanho do corte (r 25), sem sangria.
-    expect(html).toContain('viewBox="0 0 50 50"');
-    expect(html).toContain(`<circle cx="25" cy="25" r="25" fill="#faf7f0">`);
+    // O marfim sangra 1 mm além do corte (furador de 2" = 50,8 mm; tesoura erra meio milímetro).
+    expect(html).toContain('viewBox="-1 -1 52 52"');
+    expect(html).toContain(`<circle cx="25" cy="25" r="26" fill="#faf7f0">`);
     expect(html).toContain(`r="${SEAL_ART.ringOuterRadiusMm}" fill="none" stroke="#6f561b" stroke-width="${SEAL_ART.ringOuterStrokeMm}"`);
     expect(html).toContain(`r="${SEAL_ART.ringInnerRadiusMm}" fill="none" stroke="#6f561b" stroke-width="${SEAL_ART.ringInnerStrokeMm}"`);
-    expect(html).toContain("data-cut-guide");
-    expect(html).toContain('stroke="#aba28e"');
+    // Fio-guia exatamente no corte (r 24,9 com traço 0,2 → borda externa em 25).
+    expect(html).toContain('data-cut-guide="" cx="25" cy="25" r="24.9" fill="none" stroke="#aba28e" stroke-width="0.2"');
     expect(html).toContain("/brand/mark-light-800.webp");
     expect(html).toContain(`height:${SEAL_ART.monogramHeightMm}mm`);
     expect(html).toContain('href="#tag-wordmark"');
@@ -32,7 +32,7 @@ describe("Seal (50 mm)", () => {
     expect(html).not.toContain("REF.");
   });
 
-  it("modo Silhouette: o disco sangra 1 mm além do corte e não há fio-guia", () => {
+  it("modo Silhouette: mesma sangria, sem fio-guia (a plotter corta pelo DXF)", () => {
     const html = renderToStaticMarkup(<Seal storeName="TRIVÉ" mode="silhouette" />);
     expect(html).toContain('viewBox="-1 -1 52 52"');
     expect(html).toContain(`<circle cx="25" cy="25" r="26" fill="#faf7f0">`);
@@ -50,7 +50,8 @@ describe("Seal (50 mm)", () => {
 
 describe("SealSheet", () => {
   const scissors = roundLabelPositions({ diameterMm: SEAL.diameterMm, gapMm: SEAL.gapMm, area: printableArea(PAGE_A4, PLAIN_SHEET_MARGIN_MM) });
-  const silhouette = roundLabelPositions({ diameterMm: SEAL.diameterMm, gapMm: SEAL.gapMm, area: silhouetteSafeArea(PAGE_A4) });
+  const safe = silhouetteSafeArea(PAGE_A4);
+  const silhouette = roundLabelPositions({ diameterMm: SEAL.diameterMm, gapMm: SEAL.gapMm, area: safe, centerIn: { xMm: safe.xMm, yMm: 0, widthMm: safe.widthMm, heightMm: PAGE_A4.heightMm } });
 
   it("papel comum: 15 selos, sem marcas de registro, rodapé com a folha", () => {
     const html = renderToStaticMarkup(<SealSheet positions={scissors} storeName="TRIVÉ" mode="scissors" index={2} total={3} />);

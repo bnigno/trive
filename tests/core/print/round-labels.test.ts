@@ -29,9 +29,19 @@ describe("roundLabelPositions", () => {
     }
   });
 
-  it("Silhouette: 3 × 4 = 12 na área útil das marcas, a ≥ 5 mm das três marcas e dentro dos 203 mm de corte", () => {
-    const positions = roundLabelPositions({ diameterMm: SEAL.diameterMm, gapMm: SEAL.gapMm, area: silhouetteSafeArea(PAGE_A4) });
+  it("Silhouette: 3 × 4 = 12 na área útil das marcas, centrados na ALTURA da página (um DXF invertido no Y cai no mesmo lugar), a ≥ 5 mm da tinta das marcas e dentro dos 203 mm de corte", () => {
+    const safe = silhouetteSafeArea(PAGE_A4);
+    const positions = roundLabelPositions({
+      diameterMm: SEAL.diameterMm,
+      gapMm: SEAL.gapMm,
+      area: safe,
+      centerIn: { xMm: safe.xMm, yMm: 0, widthMm: safe.widthMm, heightMm: PAGE_A4.heightMm },
+    });
     expect(positions).toHaveLength(12);
+    // Simetria vertical na página: espelhar em Y devolve as mesmas linhas.
+    const rows = [...new Set(positions.map((p) => p.cyMm))].sort((a, b) => a - b);
+    expect(rows.map((y) => Math.round((PAGE_A4.heightMm - y) * 100) / 100).sort((a, b) => a - b)).toEqual(rows);
+    expect(rows[0]).toBe(64.5);
     const marks = studioRegistrationMarks(PAGE_A4);
     const t = marks.thicknessMm;
     // A tinta de cada marca: o quadrado e as DUAS pernas de cada "L" (o miolo
@@ -61,8 +71,11 @@ describe("roundLabelPositions", () => {
     }
   });
 
-  it("área pequena demais: nenhum selo", () => {
+  it("área pequena demais: nenhum selo; centro que tira a grade da área: lança", () => {
     expect(roundLabelPositions({ diameterMm: 50, gapMm: 6, area: { xMm: 0, yMm: 0, widthMm: 40, heightMm: 100 } })).toEqual([]);
+    expect(() =>
+      roundLabelPositions({ diameterMm: 50, gapMm: 6, area: { xMm: 100, yMm: 0, widthMm: 60, heightMm: 60 }, centerIn: { xMm: 0, yMm: 0, widthMm: 210, heightMm: 60 } }),
+    ).toThrow(/não cabe/);
   });
 });
 
