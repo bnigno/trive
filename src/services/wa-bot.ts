@@ -140,7 +140,9 @@ export async function isBotEnabled(db: DbOrTx): Promise<boolean> {
  */
 export function historyTextFor(kind: string, body: string): string {
   if (kind === "option_list") {
-    return "[lista tocável do catálogo enviada ao cliente]";
+    // A faixa ("11–20 de 25") diz ao modelo que o catálogo inteiro já está na conversa.
+    const faixa = body.match(/\((\d+–\d+ de \d+)\)/);
+    return faixa ? `[lista tocável do catálogo (${faixa[1]}) enviada ao cliente]` : "[lista tocável do catálogo enviada ao cliente]";
   }
   if (kind === "image") {
     return `[foto enviada ao cliente] ${body}`;

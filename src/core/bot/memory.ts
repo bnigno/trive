@@ -106,6 +106,11 @@ export const botStateSchema = z
         at: z.string(),
       })
       .optional(),
+    /**
+     * O último catálogo completo enviado (chave = filtros + contagem) e
+     * quando: dentro da janela, pedir de novo manda só a primeira lista.
+     */
+    catalogSent: z.object({ key: z.string(), at: z.string() }).optional(),
     /** Última transferência para a equipe: motivo e resumo para o painel. */
     handoff: z
       .object({

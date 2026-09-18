@@ -1087,10 +1087,81 @@ describe("listar_produtos 2.0", () => {
     await runBotTurn(sdb, assistant, provider, { conversationId });
 
     const texto = assistant.turns[0].reply ?? "";
-    expect(texto).toContain("12 peças encontradas — mostrando 11 a 12 (página 2 de 2");
+    expect(texto).toContain("12 peças encontradas — mostrando 11 a 12 (página 2 de 2; é a última)");
     expect(provider.sentOptionLists).toHaveLength(1);
     expect(provider.sentOptionLists[0].options).toHaveLength(2);
     expect(provider.sentOptionLists[0].message).toContain("(11–12 de 12)");
+  });
+
+  it("sem pagina, o catálogo inteiro vai em até 3 listas de uma vez, na ordem, antes do texto; a mesma pergunta em 30 min manda só a primeira", async () => {
+    for (let i = 1; i <= 25; i++) {
+      await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
+    }
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "me mostra o catálogo");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: (texts) => texts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+
+    const texto = assistant.turns[0].reply ?? "";
+    expect(texto).toContain("25 peças encontradas — todas enviadas em 3 listas tocáveis.");
+    expect(texto).toContain("• Peça 1 —");
+    expect(texto).toContain("foi enviada ao cliente em 3 listas (o catálogo completo)");
+    expect(texto).not.toContain("passe pagina");
+    expect(provider.sentOptionLists).toHaveLength(3);
+    expect(provider.sentOptionLists.map((list) => list.options.length)).toEqual([10, 10, 5]);
+    expect(provider.sentOptionLists.map((list) => list.message)).toEqual([
+      "Toque abaixo e veja o catálogo 👇 (1–10 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (11–20 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (21–25 de 25)",
+    ]);
+    // Mais nova primeiro: a última linha da última lista é a peça mais antiga.
+    expect(provider.sentOptionLists[2].options[4].title).toBe("Peça 1");
+    // As três listas saem antes do balão de texto, na ordem.
+    const seq = (id: string) => Number(id.split("-").at(-1));
+    const listas = provider.sentOptionLists.map((list) => seq(list.providerMessageId));
+    expect(listas[0]).toBeLessThan(listas[1]);
+    expect(listas[1]).toBeLessThan(listas[2]);
+    const balao = provider.sentMessages.find((m) => m.body.includes("25 peças encontradas"));
+    expect(balao).toBeDefined();
+    expect(listas[2]).toBeLessThan(seq(balao!.providerMessageId));
+    // Caderninho marca o envio.
+    expect(((await botState(conversationId)).catalogSent as { key: string }).key).toContain('"total":25');
+
+    // "Quero ver outra" logo depois: só a primeira lista de novo, e o modelo sabe que o resto já está na conversa.
+    provider.sentOptionLists.length = 0;
+    await addInbound(conversationId, "quero ver outra");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: (texts) => texts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists).toHaveLength(1);
+    expect(provider.sentOptionLists[0].message).toContain("(1–10 de 25)");
+    expect(assistant.turns[1].reply ?? "").toContain("só a primeira, porque o catálogo completo (3 listas) já foi enviado há 1 min");
+    // O histórico mostra as faixas das listas anteriores: o modelo sabe que o catálogo inteiro já está na conversa.
+    expect(assistant.inputs[1].history.map((message) => message.text)).toContain("[lista tocável do catálogo (21–25 de 25) enviada ao cliente]");
+  });
+
+  it("acima de 30 peças: 3 listas e a nota de que há mais (pagina: 4); filtro diferente não conta como repetição", async () => {
+    for (let i = 1; i <= 31; i++) {
+      await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
+    }
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId);
+    const tudo = await executor("listar_produtos", {});
+    expect(tudo.ok).toBe(true);
+    expect(tudo.text).toContain("31 peças encontradas — as 30 primeiras enviadas em 3 listas tocáveis.");
+    expect(tudo.text).toContain("[Há mais 1 peça além destas");
+    expect(tudo.text).toContain("pagina: 4");
+    // Mais nova primeiro: a que fica de fora é a mais antiga.
+    expect(tudo.text).not.toContain("• Peça 1 —");
+
+    const pagina4 = await executor("listar_produtos", { pagina: 4 });
+    expect(pagina4.text).toContain("mostrando 31 a 31 (página 4 de 4; é a última)");
+    expect(pagina4.text).toContain("• Peça 1 —");
   });
 });
 

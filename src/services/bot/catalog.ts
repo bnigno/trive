@@ -1,6 +1,6 @@
 // Ferramentas de catálogo da vendedora: listar, detalhar, montar look e resolver peças/variações.
 import { and, eq, ilike, isNull } from "drizzle-orm";
-import { truncateOptionTitle } from "@/core/bot/option-list";
+import { CATALOG_MAX_LISTS_PER_CALL, CATALOG_RESEND_GUARD_MS, catalogListMessage, truncateOptionTitle } from "@/core/bot/option-list";
 import type { BotToolInputs } from "@/core/bot/tools";
 import {
   buildVariantMenu,
@@ -73,6 +73,12 @@ export async function resolveCategorySlug(
   return byName?.slug ?? null;
 }
 
+/** O título da lista tocável: o nome da loja. */
+async function storeTitle(db: DbOrTx): Promise<string> {
+  const map = await getSettingsMap(db, ["store_name"]);
+  return typeof map["store_name"] === "string" && map["store_name"].trim() !== "" ? map["store_name"].trim() : "Nossas peças";
+}
+
 export async function execListarProdutos(
   db: DbOrTx,
   ctx: ExecutorCtx,
@@ -141,53 +147,96 @@ export async function execListarProdutos(
     };
   }
 
-  const pagina = input.pagina ?? 1;
   const totalPaginas = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const paginaEfetiva = Math.min(pagina, totalPaginas);
-  const inicio = (paginaEfetiva - 1) * PAGE_SIZE;
-  const page = items.slice(inicio, inicio + PAGE_SIZE);
-
-  const lines = page.map((item) => {
+  const pagina = Math.min(input.pagina ?? 1, totalPaginas);
+  const linhaDaPeca = (item: PublicProductListItem) => {
     const preco = formatPriceRange(item.priceFromCents, item.priceToCents);
     const categoria = item.categoryName ? ` · ${item.categoryName}` : "";
     return `• ${item.name}${categoria} — ${preco}${item.available ? "" : " (esgotado)"}`;
+  };
+  const listaTocavel = (fatia: PublicProductListItem[], inicio: number, title: string) => ({
+    kind: "option_list" as const,
+    message: catalogListMessage(inicio + 1, inicio + fatia.length, items.length),
+    title,
+    buttonLabel: "Ver o catálogo",
+    options: fatia.map((item) => ({
+      id: `produto:${item.slug}`,
+      title: truncateOptionTitle(item.name),
+      description: formatPriceRange(item.priceFromCents, item.priceToCents),
+    })),
   });
+  const contagem = `${items.length} ${items.length === 1 ? "peça encontrada" : "peças encontradas"}${descricaoFiltro}`;
+
+  // Página explícita (a Lia pediu "as próximas"): uma lista só, como sempre.
+  if ((input.pagina ?? 1) > 1) {
+    const inicio = (pagina - 1) * PAGE_SIZE;
+    const page = items.slice(inicio, inicio + PAGE_SIZE);
+    const lines = page.map(linhaDaPeca);
+    lines.unshift(
+      `${contagem} — mostrando ${inicio + 1} a ${inicio + page.length} (página ${pagina} de ${totalPaginas}${pagina < totalPaginas ? `; passe pagina: ${pagina + 1} para as próximas` : "; é a última"}).`,
+    );
+    if (ctx.onAttachment) {
+      ctx.onAttachment(listaTocavel(page, inicio, await storeTitle(db)));
+      lines.push(
+        "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
+      );
+    }
+    return { ok: true, text: lines.join("\n") };
+  }
+
+  // Catálogo inteiro: até CATALOG_MAX_LISTS_PER_CALL listas de PAGE_SIZE de
+  // uma vez (a lista do WhatsApp só aceita 10 linhas). O mesmo catálogo
+  // pedido de novo dentro da janela vai só com a primeira lista — a regra 11
+  // manda chamar a ferramenta a cada "quero ver outra", e 3 listas por vez
+  // viram spam.
+  const fatias: PublicProductListItem[][] = [];
+  for (let inicio = 0; inicio < items.length && fatias.length < CATALOG_MAX_LISTS_PER_CALL; inicio += PAGE_SIZE) {
+    fatias.push(items.slice(inicio, inicio + PAGE_SIZE));
+  }
+  const enviadas = fatias.flat();
+  const restantes = items.length - enviadas.length;
+  const chave = JSON.stringify({ categorySlug, editionSlug, busca, cor: input.cor ?? null, tamanho: input.tamanho ?? null, teto: input.preco_maximo_reais ?? null, total: items.length });
+  const now = ctx.now ?? new Date();
+  const state = await readBotState(db, ctx);
+  const recente = state.catalogSent?.key === chave && now.getTime() - Date.parse(state.catalogSent.at) < CATALOG_RESEND_GUARD_MS;
+  const fatiasParaEnviar = recente ? fatias.slice(0, 1) : fatias;
+
+  const lines = enviadas.map(linhaDaPeca);
   lines.unshift(
-    `${items.length} ${items.length === 1 ? "peça encontrada" : "peças encontradas"}${descricaoFiltro}${
-      totalPaginas > 1
-        ? ` — mostrando ${inicio + 1} a ${inicio + page.length} (página ${paginaEfetiva} de ${totalPaginas}; passe pagina: ${paginaEfetiva + 1} para as próximas)`
-        : ""
-    }.`,
+    fatias.length > 1
+      ? `${contagem} — ${restantes > 0 ? `as ${enviadas.length} primeiras enviadas` : "todas enviadas"} em ${fatias.length} listas tocáveis.`
+      : `${contagem}.`,
   );
+  if (restantes > 0) {
+    lines.push(`[Há mais ${restantes} ${restantes === 1 ? "peça" : "peças"} além destas: sugira um filtro (categoria, cor, tamanho, preço) ou, se ela quiser ver tudo, chame listar_produtos com pagina: ${fatias.length + 1}.]`);
+  }
 
   if (ctx.onAttachment) {
-    const map = await getSettingsMap(db, ["store_name"]);
-    const title =
-      typeof map["store_name"] === "string" && map["store_name"].trim() !== ""
-        ? map["store_name"].trim()
-        : "Nossas peças";
-    ctx.onAttachment({
-      kind: "option_list",
-      message:
-        totalPaginas > 1
-          ? `Toque abaixo e veja o catálogo 👇 (${inicio + 1}–${inicio + page.length} de ${items.length})`
-          : "Toque abaixo e veja o catálogo 👇",
-      title,
-      buttonLabel: "Ver o catálogo",
-      options: page.map((item) => ({
-        id: `produto:${item.slug}`,
-        title: truncateOptionTitle(item.name),
-        description: formatPriceRange(item.priceFromCents, item.priceToCents),
-      })),
-    });
-    lines.push(
-      "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
-    );
+    const title = await storeTitle(db);
+    for (const [index, fatia] of fatiasParaEnviar.entries()) {
+      ctx.onAttachment(listaTocavel(fatia, index * PAGE_SIZE, title));
+    }
+    if (recente) {
+      const minutos = Math.max(1, Math.round((now.getTime() - Date.parse(state.catalogSent!.at)) / 60000));
+      lines.push(
+        `[A lista tocável do catálogo foi enviada ao cliente de novo — só a primeira, porque o catálogo completo (${fatias.length} listas) já foi enviado há ${minutos} min e continua na conversa. Responda em 1 ou 2 frases curtas comentando até 3 peças; se ela quiser as outras listas, chame com pagina: 2 ou 3 — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]`,
+      );
+    } else {
+      lines.push(
+        fatias.length > 1
+          ? `[A lista tocável do catálogo foi enviada ao cliente em ${fatias.length} listas (o catálogo ${restantes > 0 ? "quase " : ""}completo). Responda em 1 ou 2 frases curtas: diga que mandou o catálogo, comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]`
+          : "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
+      );
+      // Copiloto: a sugestão pode ser descartada — nada de marcar como enviado.
+      if (!ctx.copilot) {
+        await updateBotState(db, ctx, (current) => ({ ...current, catalogSent: { key: chave, at: now.toISOString() } }));
+      }
+    }
 
-    // A lista é o atalho; o cartão é a vitrine: só na primeira página e só
+    // A lista é o atalho; o cartão é a vitrine: só com a primeira lista e só
     // com 2+ peças com foto (uma foto só já sai por detalhar_produto).
-    const withPhoto = page.filter((item) => item.imagePath).slice(0, CARD_MAX_ITEMS);
-    if (paginaEfetiva === 1 && withPhoto.length >= 2) {
+    const withPhoto = fatias[0].filter((item) => item.imagePath).slice(0, CARD_MAX_ITEMS);
+    if (withPhoto.length >= 2) {
       const sent = await ctx.emitCard({
         kind: "catalog",
         title: catalogCardTitle(withPhoto.length),
