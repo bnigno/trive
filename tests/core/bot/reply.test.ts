@@ -30,6 +30,14 @@ describe("polishBotReply", () => {
   });
 });
 
+describe("polishBotReply — marcadores da lista tocável", () => {
+  it("o marcador com a faixa (e o de lista que falhou) some mesmo no meio da frase", () => {
+    expect(polishBotReply("Já mandei tudo [lista tocável do catálogo (11–20 de 25) enviada ao cliente] logo acima.")).toBe("Já mandei tudo logo acima.");
+    expect(polishBotReply("Olha [lista tocável do catálogo enviada ao cliente] aí.")).toBe("Olha aí.");
+    expect(polishBotReply("Vou reenviar [lista tocável do catálogo (1–10 de 25) que NÃO chegou à cliente (falhou)] agora.")).toBe("Vou reenviar agora.");
+  });
+});
+
 describe("splitBotReply", () => {
   it("sem separador: um balão só, já polido", () => {
     expect(splitBotReply("Oi, Maria!\n\n\n\nQual a ocasião?")).toEqual([

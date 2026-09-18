@@ -175,7 +175,9 @@ export function historyTextForOutbound(input: {
       ? `[mensagem de voz ${failed ? "que NÃO chegou à cliente (falhou)" : "enviada à cliente"}] ${input.body}`
       : failed && input.kind === "image"
         ? `[foto que NÃO chegou ao cliente (falhou)] ${input.body}`
-        : historyTextFor(input.kind, input.body);
+        : failed && input.kind === "option_list"
+          ? historyTextFor(input.kind, input.body).replace("enviada ao cliente", "que NÃO chegou à cliente (falhou)")
+          : historyTextFor(input.kind, input.body);
   if (isProactiveBotReply(input.dedupeKey)) {
     return `[você chamou como combinado] ${text}`;
   }
@@ -200,6 +202,7 @@ export function buildToolExecutor(
     ...baseCtx,
     ...(baseCtx.dryRun && !baseCtx.stateOverlay ? { stateOverlay: { current: null } } : {}),
     turnAudioUrls: baseCtx.turnAudioUrls ?? new Set<string>(),
+    turnLists: { count: 0 },
     emitCard: makeCardEmitter(db, baseCtx),
   };
   return async (name, rawInput) => {

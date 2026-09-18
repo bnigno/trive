@@ -269,6 +269,10 @@ async function insertOrResumeOutboundMessage(
   resumePatch: Partial<OutboundMessageInsert>,
 ): Promise<{ waMessageId: string } | { skipped: "ja_enviado" }> {
   const dedupeKey = values.dedupeKey ?? null;
+  // Relógio do processo, não o now() da transação: várias mensagens do mesmo
+  // turno (3 listas + balões) precisam de created_at crescente para a thread
+  // e o histórico do modelo saírem na ordem em que foram enviadas.
+  values = { createdAt: new Date(), ...values };
   if (!dedupeKey) {
     const [inserted] = await db
       .insert(waMessages)

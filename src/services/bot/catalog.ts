@@ -1,5 +1,5 @@
 // Ferramentas de catálogo da vendedora: listar, detalhar, montar look e resolver peças/variações.
-import { and, eq, ilike, isNull } from "drizzle-orm";
+import { and, eq, gt, ilike, inArray, isNull } from "drizzle-orm";
 import { CATALOG_MAX_LISTS_PER_CALL, CATALOG_RESEND_GUARD_MS, catalogListMessage, truncateOptionTitle } from "@/core/bot/option-list";
 import type { BotToolInputs } from "@/core/bot/tools";
 import {
@@ -32,6 +32,7 @@ import {
   products,
   productVariants,
   stockLevels,
+  waMessages,
 } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -71,6 +72,33 @@ export async function resolveCategorySlug(
     .where(ilike(categories.name, `%${trimmed}%`))
     .limit(1);
   return byName?.slug ?? null;
+}
+
+type CatalogList = { message: string; options: { title: string; description?: string }[] };
+
+/** O corpo que sendMediaMessage persiste para uma lista: a mensagem + uma linha por opção. */
+function persistedListBody(list: CatalogList): string {
+  return [list.message, ...list.options.map((option) => (option.description ? `• ${option.title} — ${option.description}` : `• ${option.title}`))].join("\n");
+}
+
+/** As listas (2..N) deste catálogo saíram de verdade nesta conversa dentro da janela? */
+async function catalogListsDelivered(db: DbOrTx, conversationId: string, lists: readonly CatalogList[], now: Date): Promise<boolean> {
+  const bodies = lists.map(persistedListBody);
+  const rows = await db
+    .select({ body: waMessages.body })
+    .from(waMessages)
+    .where(
+      and(
+        eq(waMessages.conversationId, conversationId),
+        eq(waMessages.direction, "outbound"),
+        eq(waMessages.kind, "option_list"),
+        eq(waMessages.status, "sent"),
+        gt(waMessages.createdAt, new Date(now.getTime() - CATALOG_RESEND_GUARD_MS)),
+        inArray(waMessages.body, bodies),
+      ),
+    );
+  const delivered = new Set(rows.map((row) => row.body));
+  return bodies.every((body) => delivered.has(body));
 }
 
 /** O título da lista tocável: o nome da loja. */
@@ -169,6 +197,12 @@ export async function execListarProdutos(
 
   // Página explícita (a Lia pediu "as próximas"): uma lista só, como sempre.
   if ((input.pagina ?? 1) > 1) {
+    if ((input.pagina ?? 1) > totalPaginas) {
+      return {
+        ok: false,
+        text: `Não existe a página ${input.pagina}: ${contagem} ${totalPaginas === 1 ? "cabe numa lista só" : `cabem em ${totalPaginas} páginas`} — e ${totalPaginas === 1 ? "ela" : "as listas"} já ${totalPaginas === 1 ? "foi enviada" : "foram enviadas"}. Não reenvie; responda à cliente com o que já está na conversa.`,
+      };
+    }
     const inicio = (pagina - 1) * PAGE_SIZE;
     const page = items.slice(inicio, inicio + PAGE_SIZE);
     const lines = page.map(linhaDaPeca);
@@ -177,6 +211,7 @@ export async function execListarProdutos(
     );
     if (ctx.onAttachment) {
       ctx.onAttachment(listaTocavel(page, inicio, await storeTitle(db)));
+      ctx.turnLists.count += 1;
       lines.push(
         "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
       );
@@ -185,52 +220,68 @@ export async function execListarProdutos(
   }
 
   // Catálogo inteiro: até CATALOG_MAX_LISTS_PER_CALL listas de PAGE_SIZE de
-  // uma vez (a lista do WhatsApp só aceita 10 linhas). O mesmo catálogo
-  // pedido de novo dentro da janela vai só com a primeira lista — a regra 11
-  // manda chamar a ferramenta a cada "quero ver outra", e 3 listas por vez
-  // viram spam.
+  // uma vez (a lista do WhatsApp só aceita 10 linhas). Guarda contra spam —
+  // a regra 11 manda chamar a ferramenta a cada "quero ver outra": se as
+  // listas 2..N deste mesmo catálogo SAÍRAM (wa_messages 'sent') nos últimos
+  // 30 min, vai só a primeira de novo. Ler o que foi entregue, e não um
+  // estado gravado antes da entrega, cobre lista que falhou na Z-API,
+  // copiloto (a sugestão aprovada também vira wa_message) e ensaio.
   const fatias: PublicProductListItem[][] = [];
   for (let inicio = 0; inicio < items.length && fatias.length < CATALOG_MAX_LISTS_PER_CALL; inicio += PAGE_SIZE) {
     fatias.push(items.slice(inicio, inicio + PAGE_SIZE));
   }
-  const enviadas = fatias.flat();
-  const restantes = items.length - enviadas.length;
-  const chave = JSON.stringify({ categorySlug, editionSlug, busca, cor: input.cor ?? null, tamanho: input.tamanho ?? null, teto: input.preco_maximo_reais ?? null, total: items.length });
+  const restantes = items.length - fatias.flat().length;
+  const title = ctx.onAttachment ? await storeTitle(db) : "";
+  const listas = fatias.map((fatia, index) => listaTocavel(fatia, index * PAGE_SIZE, title));
   const now = ctx.now ?? new Date();
-  const state = await readBotState(db, ctx);
-  const recente = state.catalogSent?.key === chave && now.getTime() - Date.parse(state.catalogSent.at) < CATALOG_RESEND_GUARD_MS;
-  const fatiasParaEnviar = recente ? fatias.slice(0, 1) : fatias;
+  const recente = ctx.onAttachment && listas.length > 1 ? await catalogListsDelivered(db, ctx.conversationId, listas.slice(1), now) : false;
+  // Teto do TURNO: uma segunda busca no mesmo turno (outra categoria) ainda
+  // leva a sua primeira lista, mas o total de listas não passa do teto.
+  const orcamento = Math.max(1, CATALOG_MAX_LISTS_PER_CALL - ctx.turnLists.count);
+  const paraEnviar = recente ? listas.slice(0, 1) : listas.slice(0, orcamento);
+  const cortadasPeloTurno = !recente && paraEnviar.length < listas.length;
 
-  const lines = enviadas.map(linhaDaPeca);
-  lines.unshift(
-    fatias.length > 1
-      ? `${contagem} — ${restantes > 0 ? `as ${enviadas.length} primeiras enviadas` : "todas enviadas"} em ${fatias.length} listas tocáveis.`
-      : `${contagem}.`,
-  );
-  if (restantes > 0) {
-    lines.push(`[Há mais ${restantes} ${restantes === 1 ? "peça" : "peças"} além destas: sugira um filtro (categoria, cor, tamanho, preço) ou, se ela quiser ver tudo, chame listar_produtos com pagina: ${fatias.length + 1}.]`);
+  const lines = (recente ? fatias[0] : fatias.slice(0, paraEnviar.length).flat()).map(linhaDaPeca);
+  if (recente) {
+    const outras = listas.length === 2 ? "a lista 2 já está" : `as listas 2 a ${listas.length} já estão`;
+    lines.unshift(`${contagem} — a 1ª lista reenviada; ${outras} na conversa (enviadas há pouco).`);
+  } else if (fatias.length > 1) {
+    const enviadas = paraEnviar.length * PAGE_SIZE;
+    lines.unshift(
+      paraEnviar.length === fatias.length && restantes === 0
+        ? `${contagem} — todas enviadas em ${fatias.length} listas tocáveis.`
+        : `${contagem} — as ${Math.min(enviadas, items.length)} primeiras enviadas em ${paraEnviar.length} ${paraEnviar.length === 1 ? "lista tocável" : "listas tocáveis"}.`,
+    );
+  } else {
+    lines.unshift(`${contagem}.`);
   }
 
   if (ctx.onAttachment) {
-    const title = await storeTitle(db);
-    for (const [index, fatia] of fatiasParaEnviar.entries()) {
-      ctx.onAttachment(listaTocavel(fatia, index * PAGE_SIZE, title));
+    for (const lista of paraEnviar) {
+      ctx.onAttachment(lista);
+      ctx.turnLists.count += 1;
     }
     if (recente) {
-      const minutos = Math.max(1, Math.round((now.getTime() - Date.parse(state.catalogSent!.at)) / 60000));
       lines.push(
-        `[A lista tocável do catálogo foi enviada ao cliente de novo — só a primeira, porque o catálogo completo (${fatias.length} listas) já foi enviado há ${minutos} min e continua na conversa. Responda em 1 ou 2 frases curtas comentando até 3 peças; se ela quiser as outras listas, chame com pagina: 2 ou 3 — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]`,
+        `[A lista tocável do catálogo foi enviada ao cliente de novo — só a primeira: as outras ${listas.length - 1} listas deste mesmo catálogo foram enviadas há pouco e continuam na conversa (ela pode rolar para cima). Responda em 1 ou 2 frases curtas comentando até 3 peças e convide a tocar em «Ver o catálogo»; diga que o resto do catálogo está logo acima. Só chame pagina: 2 a ${listas.length} se ela disser que não acha as listas. NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]`,
+      );
+    } else if (paraEnviar.length > 1) {
+      lines.push(
+        `[A lista tocável do catálogo foi enviada ao cliente em ${paraEnviar.length} listas${restantes === 0 && !cortadasPeloTurno ? " — o catálogo completo" : ""}. Responda em 1 ou 2 frases curtas: ${restantes === 0 && !cortadasPeloTurno ? "diga que mandou o catálogo completo, " : ""}comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]`,
       );
     } else {
       lines.push(
-        fatias.length > 1
-          ? `[A lista tocável do catálogo foi enviada ao cliente em ${fatias.length} listas (o catálogo ${restantes > 0 ? "quase " : ""}completo). Responda em 1 ou 2 frases curtas: diga que mandou o catálogo, comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]`
-          : "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
+        "[A lista tocável do catálogo foi enviada ao cliente. Responda em 1 ou 2 frases curtas: comente até 3 peças com um motivo real cada e convide a tocar em «Ver o catálogo» — NÃO repita a lista de preços e NUNCA chame isso de menu ou cardápio: é o catálogo.]",
       );
-      // Copiloto: a sugestão pode ser descartada — nada de marcar como enviado.
-      if (!ctx.copilot) {
-        await updateBotState(db, ctx, (current) => ({ ...current, catalogSent: { key: chave, at: now.toISOString() } }));
-      }
+    }
+    if (cortadasPeloTurno) {
+      lines.push(
+        `[Teto de ${CATALOG_MAX_LISTS_PER_CALL} listas por mensagem já alcançado neste turno: desta busca saiu só ${paraEnviar.length === 1 ? "a primeira lista" : `${paraEnviar.length} listas`}. Se a cliente quiser o resto desta busca, chame com pagina: ${paraEnviar.length + 1} numa PRÓXIMA mensagem dela — não agora.]`,
+      );
+    } else if (restantes > 0 && !recente) {
+      lines.push(
+        `[Há mais ${restantes} ${restantes === 1 ? "peça" : "peças"} além destas ${fatias.length * PAGE_SIZE}. NÃO chame pagina agora: pergunte se ela quer ver o resto ou sugira um filtro (categoria, cor, tamanho, preço); só numa PRÓXIMA mensagem dela chame listar_produtos com pagina: ${fatias.length + 1}.]`,
+      );
     }
 
     // A lista é o atalho; o cartão é a vitrine: só com a primeira lista e só
@@ -257,6 +308,8 @@ export async function execListarProdutos(
         );
       }
     }
+  } else if (restantes > 0) {
+    lines.push(`[Há mais ${restantes} ${restantes === 1 ? "peça" : "peças"} além destas: filtre ou chame com pagina: ${fatias.length + 1}.]`);
   }
   return { ok: true, text: lines.join("\n") };
 }

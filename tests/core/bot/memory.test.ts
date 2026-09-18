@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { formatCentsBRL } from "@/lib/money";
 import {
   addNote,
-  botStateSchema,
   cartAdd,
   cartRemove,
   CART_MAX_QTY,
@@ -229,12 +228,6 @@ describe("renderContextNote", () => {
     expect(note).toContain("• CEP informado: 01310-100 · FORA DA ÁREA DO MOTOBOY");
     expect(note).toContain("transferir_para_atendente");
     expect(note).not.toContain("frete ainda NÃO cotado");
-  });
-
-  it("catalogSent (o catálogo completo já enviado) sobrevive ao parse do caderninho", () => {
-    const parsed = botStateSchema.parse({ catalogSent: { key: '{"total":25}', at: "2026-09-17T12:00:00.000Z" } });
-    expect(parsed.catalogSent).toEqual({ key: '{"total":25}', at: "2026-09-17T12:00:00.000Z" });
-    expect(botStateSchema.parse({}).catalogSent).toBeUndefined();
   });
 
   it("endereço do CEP entra no caderninho pedindo só número e complemento", () => {

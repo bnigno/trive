@@ -131,7 +131,11 @@ export type CardRequest = {
  */
 export type CardEmitter = (request: CardRequest) => Promise<"sent" | "queued" | false>;
 
-export type ExecutorCtx = BotExecutorContext & { emitCard: CardEmitter };
+export type ExecutorCtx = BotExecutorContext & {
+  emitCard: CardEmitter;
+  /** Listas tocáveis já emitidas neste turno (buildToolExecutor cria): teto por turno. */
+  turnLists: { count: number };
+};
 
 /**
  * Um cartão por turno, melhor esforço: cache → anexo na hora; sem cache, na
