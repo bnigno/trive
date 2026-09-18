@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTran
 
 import { isFreshSample, shouldSendSample, type PositionSample } from "@/core/delivery/positions";
 import { FAILURE_REASON_LABELS, FAILURE_REASONS, RUN_STATUS_LABELS, type FailureReason } from "@/core/delivery/state";
+import { shrinkImage, uploadBlocker } from "@/components/admin/shrink-image";
 import { formatCentsBRL } from "@/lib/money";
 import { waMeUrl } from "@/lib/phone";
 
@@ -432,9 +433,57 @@ function StopCard({
 }) {
   const [mode, setMode] = useState<"idle" | "deliver" | "fail">("idle");
   const [receivedBy, setReceivedBy] = useState("");
+  const [photoName, setPhotoName] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [reason, setReason] = useState<FailureReason>("ninguem_em_casa");
   const [note, setNote] = useState("");
   const wa = waMeUrl(stop.phoneE164);
+
+  // A foto da entrega é obrigatória: reduzida no celular antes de subir
+  // (teto por requisição da Vercel) e mandada junto com o resto num FormData.
+  async function submitDelivery() {
+    const original = photoInputRef.current?.files?.[0];
+    if (!original || original.size === 0) {
+      setPhotoError("Tire a foto da entrega no endereço para confirmar.");
+      return;
+    }
+    setPhotoError(null);
+    setPreparing(true);
+    let reduced: Awaited<ReturnType<typeof shrinkImage>>;
+    try {
+      reduced = await shrinkImage(original);
+    } finally {
+      setPreparing(false);
+    }
+    const blocker = uploadBlocker(reduced);
+    if (blocker) {
+      setPhotoError(blocker);
+      return;
+    }
+    const body = new FormData();
+    body.set("token", token);
+    body.set("stopId", stop.id);
+    body.set("receivedBy", receivedBy.trim());
+    if (position) {
+      body.set("lat", String(position.lat));
+      body.set("lng", String(position.lng));
+      if (position.accuracyM !== null) body.set("accuracyM", String(position.accuracyM));
+    }
+    body.set("photo", reduced.file);
+    onRun(async () => {
+      let result: CourierActionResult;
+      try {
+        result = await completeStopAction(body);
+      } catch {
+        // A chamada nem chegou ao servidor (sem sinal no meio do envio).
+        return { ok: false, error: "Sem internet — a foto precisa subir agora. Tente de novo quando o sinal voltar." };
+      }
+      if (result.ok) setMode("idle");
+      return result;
+    });
+  }
 
   return (
     <li className="flex flex-col gap-3 rounded-(--radius-soft) border border-ivory-300 bg-ivory-50 p-4 shadow-sm">
@@ -502,13 +551,28 @@ function StopCard({
           className="flex flex-col gap-3 rounded-(--radius-soft) bg-ivory-200 p-3"
           onSubmit={(event) => {
             event.preventDefault();
-            onRun(async () => {
-              const result = await completeStopAction({ token, stopId: stop.id, receivedBy: receivedBy.trim() || null, position });
-              if (result.ok) setMode("idle");
-              return result;
-            });
+            void submitDelivery();
           }}
         >
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Foto da entrega</span>
+            <span className="text-xs text-ink-700">Do pacote na mão da cliente ou na portaria — vai para a loja e para a cliente.</span>
+            <input
+              ref={photoInputRef}
+              type="file"
+              name="photo"
+              accept="image/*"
+              capture="environment"
+              required
+              onChange={(event) => {
+                setPhotoName(event.target.files?.[0]?.name ?? null);
+                setPhotoError(null);
+              }}
+              className="min-h-12 rounded-(--radius-hair) border border-ivory-400 bg-ivory-50 px-3 py-2 text-base text-ink-900 file:mr-3 file:rounded-(--radius-hair) file:border-0 file:bg-ink-950 file:px-3 file:py-2 file:text-sm file:text-ivory-50"
+            />
+            {photoName ? <span className="text-xs text-ink-700">Foto pronta: {photoName}</span> : null}
+            {photoError ? <span className="text-xs text-red-700">{photoError}</span> : null}
+          </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium">Quem recebeu?</span>
             <input
@@ -522,10 +586,11 @@ function StopCard({
             />
           </label>
           {!position ? <p className="text-xs text-ink-700">Sem posição recente do GPS — a entrega vai ser registrada sem o ponto no mapa.</p> : null}
-          <button type="submit" disabled={pending} className={`${BIG_BUTTON} bg-laurel-700 text-ivory-50 active:bg-laurel-600`}>
-            {pending ? "Registrando…" : "Confirmar entrega"}
+          <button type="submit" disabled={pending || preparing || !photoName} className={`${BIG_BUTTON} bg-laurel-700 text-ivory-50 active:bg-laurel-600`}>
+            {preparing ? "Preparando a foto…" : pending ? "Enviando…" : "Confirmar entrega"}
           </button>
-          <button type="button" disabled={pending} onClick={() => setMode("idle")} className="min-h-11 text-sm text-ink-700 underline">
+          <p className="text-center text-xs text-ink-500">A foto precisa de internet para subir — sem sinal, tente de novo quando voltar.</p>
+          <button type="button" disabled={pending || preparing} onClick={() => setMode("idle")} className="min-h-11 text-sm text-ink-700 underline">
             Voltar
           </button>
         </form>

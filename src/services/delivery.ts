@@ -42,14 +42,39 @@ export function deliveryPhotoUrl(storage: FileStorage, path: string, at: Date): 
   return `${storage.publicUrl(path)}?v=${at.getTime()}`;
 }
 
+export const deliveryPhotoSchema = z.object({
+  data: z.custom<Uint8Array>((value) => value instanceof Uint8Array, "Foto inválida."),
+  contentType: z.string().min(1),
+});
+
+export type DeliveryPhotoInput = z.infer<typeof deliveryPhotoSchema>;
+
+/** Tipo e tamanho da foto, com as mensagens que a dona e o motoboy leem. */
+export function assertDeliveryPhotoAcceptable(photo: DeliveryPhotoInput): void {
+  if (!photo.contentType.startsWith("image/")) {
+    throw new ServiceError("imagem_invalida", "O arquivo enviado não é uma imagem.");
+  }
+  if (photo.data.byteLength > PACKAGE_PHOTO_MAX_BYTES) {
+    throw new ServiceError("imagem_grande", "A foto passou de 8 MB. Tire a foto direto pela câmera ou escolha uma menor.");
+  }
+}
+
+/** Rotação pelo EXIF, ≤ 1200 px, JPEG sem metadados — o mesmo tratamento da foto do pacote. */
+export async function processDeliveryPhoto(photo: DeliveryPhotoInput): Promise<Buffer> {
+  try {
+    return await sharp(Buffer.from(photo.data))
+      .rotate()
+      .resize({ width: PACKAGE_PHOTO_MAX_EDGE, height: PACKAGE_PHOTO_MAX_EDGE, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: PACKAGE_PHOTO_JPEG_QUALITY })
+      .toBuffer();
+  } catch {
+    throw new ServiceError("imagem_invalida", "Não foi possível processar a foto. Tire a foto direto pela câmera ou escolha um JPG/PNG.");
+  }
+}
+
 const deliverSchema = z.object({
   orderId: z.uuid(),
-  photo: z
-    .object({
-      data: z.custom<Uint8Array>((value) => value instanceof Uint8Array, "Foto inválida."),
-      contentType: z.string().min(1),
-    })
-    .nullable(),
+  photo: deliveryPhotoSchema.nullable(),
   receivedBy: z.string().max(RECEIVED_BY_MAX_CHARS * 3).nullable().optional(),
   userId: z.uuid(),
 });
@@ -80,12 +105,7 @@ export async function deliverOrderWithPhoto(
   input: DeliverOrderInput,
 ): Promise<{ orderId: string; orderNumber: number; status: OrderStatus; deliveredPhotoPath: string | null; receivedBy: string | null; rephoto: boolean; alreadyDelivered: boolean }> {
   const parsed = deliverSchema.parse(input);
-  if (parsed.photo && !parsed.photo.contentType.startsWith("image/")) {
-    throw new ServiceError("imagem_invalida", "O arquivo enviado não é uma imagem.");
-  }
-  if (parsed.photo && parsed.photo.data.byteLength > PACKAGE_PHOTO_MAX_BYTES) {
-    throw new ServiceError("imagem_grande", "A foto passou de 8 MB. Tire a foto direto pela câmera ou escolha uma menor.");
-  }
+  if (parsed.photo) assertDeliveryPhotoAcceptable(parsed.photo);
   const receivedBy = normalizeReceivedBy(parsed.receivedBy ?? null);
 
   const selectOrder = (tx: DbOrTx) =>
@@ -130,16 +150,7 @@ export async function deliverOrderWithPhoto(
 
   let path: string | null = preview.deliveredPhotoPath;
   if (parsed.photo) {
-    let jpeg: Buffer;
-    try {
-      jpeg = await sharp(Buffer.from(parsed.photo.data))
-        .rotate()
-        .resize({ width: PACKAGE_PHOTO_MAX_EDGE, height: PACKAGE_PHOTO_MAX_EDGE, fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: PACKAGE_PHOTO_JPEG_QUALITY })
-        .toBuffer();
-    } catch {
-      throw new ServiceError("imagem_invalida", "Não foi possível processar a foto. Tire a foto direto pela câmera ou escolha um JPG/PNG.");
-    }
+    const jpeg = await processDeliveryPhoto(parsed.photo);
     path = deliveryPhotoStoragePath(preview.id);
     await storage.upload({ path, data: jpeg, contentType: "image/jpeg" });
   }

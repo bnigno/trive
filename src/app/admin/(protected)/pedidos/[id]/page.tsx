@@ -318,7 +318,7 @@ export default async function PedidoDetalhePage({
                     </Link>
                     <span className="block text-xs text-zinc-500">
                       {stop.stopStatus === "delivered"
-                        ? `entregue ${stop.deliveredAt ? formatDateTimeSP(stop.deliveredAt) : ""}${stop.receivedBy ? `, recebido por ${stop.receivedBy}` : ""}${stop.deliveredPoint ? " · GPS ✓" : ""}`
+                        ? `entregue ${stop.deliveredAt ? formatDateTimeSP(stop.deliveredAt) : ""}${stop.receivedBy ? `, recebido por ${stop.receivedBy}` : ""}${stop.deliveredPoint ? " · GPS ✓" : ""}${stop.withPhoto ? " · foto ✓" : " · sem foto"}`
                         : stop.stopStatus === "failed"
                           ? `não entregue: ${stop.failureReason ? FAILURE_REASON_LABELS[stop.failureReason] : ""}`
                           : STOP_STATUS_LABELS[stop.stopStatus].toLowerCase()}

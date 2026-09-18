@@ -389,15 +389,21 @@ do pedido que já recebe e você acompanha em **/admin/pedidos/saidas**.
    ~1 min (OpenStreetMap, melhor esforço): sem coordenada, a cliente vê o
    motoboy no mapa mas não a distância.
 3. Na página da saída: o link (para reenviar ou copiar), a última posição do
-   GPS, cada parada com a prova — hora, quem recebeu, ponto do GPS — e os
-   gestos **Encerrar** (só sem parada por entregar) e **Cancelar**.
-4. O motoboy marca **Entregue** (pergunta quem recebeu) ou **Não consegui**
-   (motivo). Pedido pago vira entregue e a cliente recebe "entregue às
-   17:42, recebido por Maria". **Dinheiro na entrega** fica aguardando: a
-   prova está na parada, você registra o pagamento no pedido e clica
-   **Entregue — o motoboy voltou**, como antes. **Não consegui** avisa você
-   no WhatsApp; o pedido continua como saído — combine com a cliente e
-   reagende.
+   GPS, cada parada com a prova — hora, quem recebeu, ponto do GPS e a
+   **foto da entrega** (miniatura) — e os gestos **Encerrar** (só sem parada
+   por entregar) e **Cancelar**.
+4. O motoboy marca **Entregue** (a câmera abre: a **foto do pacote na mão da
+   cliente ou na portaria é obrigatória**, depois pergunta quem recebeu) ou
+   **Não consegui** (motivo, sem foto). A foto é reduzida no celular e
+   precisa de internet na hora — sem sinal, ele tenta de novo quando voltar
+   (o GPS continua guardado). Pedido pago vira entregue e a cliente recebe a
+   foto com "entregue às 17:42, recebido por Maria". **Dinheiro na
+   entrega** fica aguardando: a prova (com a foto) está na parada, você
+   registra o pagamento no pedido e clica **Entregue — o motoboy voltou**,
+   como antes — a cliente recebe a foto nessa hora. Se você já tinha tirado
+   a foto pela ficha, a do motoboy não a substitui; "Refazer a foto" na
+   ficha continua valendo. **Não consegui** avisa você no WhatsApp; o
+   pedido continua como saído — combine com a cliente e reagende.
 
 **Cancelar** uma saída fecha as paradas por entregar e mata o link; o "Saiu"
 dos pedidos **não volta** (a máquina não tem "desenviar") — cada um segue

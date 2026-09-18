@@ -9,6 +9,7 @@ import { and, asc, count, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Geocoder } from "@/adapters/geocoding";
+import type { FileStorage } from "@/adapters/storage";
 import {
   acceptPosition,
   isValidPoint,
@@ -39,6 +40,7 @@ import { auditLog, couriers, customers, deliveryPositions, deliveryRuns, deliver
 import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { findActiveCourierByPhone } from "@/services/couriers";
+import { assertDeliveryPhotoAcceptable, deliveryPhotoSchema, deliveryPhotoStoragePath, processDeliveryPhoto } from "@/services/delivery";
 import { addressLineOf, completeDispatchedOrder, dispatchOrder, listRouteOrders, summarizeOrderItems, type RouteOrder } from "@/services/delivery-routes";
 import { ServiceError } from "@/services/orders";
 import { getStoreName } from "@/services/settings";
@@ -392,10 +394,14 @@ const completeStopSchema = z.object({
   stopId: z.uuid(),
   receivedBy: z.string().max(RECEIVED_BY_MAX_CHARS * 3).nullable().optional(),
   position: stopPositionSchema,
+  /** Foto da entrega no endereço: obrigatória para fechar a parada (dispensada só na repetição idempotente). */
+  photo: deliveryPhotoSchema.nullable().optional(),
   now: z.date().optional(),
 });
 
 export type CompleteStopInput = z.input<typeof completeStopSchema>;
+
+export const PHOTO_REQUIRED_CODE = "PHOTO_REQUIRED";
 
 export interface CompleteStopResult {
   stopId: string;
@@ -405,18 +411,44 @@ export interface CompleteStopResult {
   orderDelivered: boolean;
   awaitingCash: boolean;
   receivedBy: string | null;
+  /** O pedido tem foto de entrega (a do motoboy agora, ou a que a dona já tinha tirado). */
+  withPhoto: boolean;
   idempotent: boolean;
 }
 
 /**
- * "Entregue" pelo motoboy: a prova (hora, quem recebeu, ponto do GPS) fica
- * na parada e no pedido, e o pedido pago vira 'delivered' pelo caminho de
- * sempre (order.delivered → "entregue, recebido por X" à cliente). Dinheiro
- * na entrega não transiciona: a dona registra o pagamento e fecha.
+ * "Entregue" pelo motoboy: a prova (hora, quem recebeu, ponto do GPS e a
+ * FOTO da entrega no endereço) fica na parada e no pedido, e o pedido pago
+ * vira 'delivered' pelo caminho de sempre (order.delivered → a foto com a
+ * legenda "entregue, recebido por X" à cliente). Dinheiro na entrega não
+ * transiciona: a dona registra o pagamento e fecha — a foto já está lá. A
+ * foto sobe ANTES da transação (recusa nunca deixa a parada torta); foto
+ * que a dona já tirou não é sobrescrita.
  */
-export async function completeStop(db: DbOrTx, input: CompleteStopInput): Promise<CompleteStopResult> {
+export async function completeStop(db: DbOrTx, storage: FileStorage, input: CompleteStopInput): Promise<CompleteStopResult> {
   const parsed = completeStopSchema.parse(input);
   const now = parsed.now ?? new Date();
+
+  // Olhada sem trava: repetição de uma parada já entregue dispensa a foto;
+  // senão ela é obrigatória e é processada/enviada antes de trancar as linhas.
+  const [preview] = await db
+    .select({ stopStatus: deliveryStops.status, orderId: deliveryStops.orderId, deliveredPhotoPath: orders.deliveredPhotoPath })
+    .from(deliveryStops)
+    .innerJoin(deliveryRuns, eq(deliveryRuns.id, deliveryStops.runId))
+    .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
+    .where(and(eq(deliveryStops.id, parsed.stopId), eq(deliveryRuns.courierToken, parsed.courierToken)))
+    .limit(1);
+  let uploadedPath: string | null = null;
+  if (preview && preview.stopStatus !== "delivered") {
+    if (!parsed.photo) throw new ServiceError(PHOTO_REQUIRED_CODE, "Tire a foto da entrega no endereço para confirmar.");
+    assertDeliveryPhotoAcceptable(parsed.photo);
+    if (!preview.deliveredPhotoPath) {
+      const jpeg = await processDeliveryPhoto(parsed.photo);
+      uploadedPath = deliveryPhotoStoragePath(preview.orderId);
+      await storage.upload({ path: uploadedPath, data: jpeg, contentType: "image/jpeg" });
+    }
+  }
+
   return db.transaction(async (tx) => {
     const run = await lockRunByToken(tx, parsed.courierToken, { requireOpen: true });
     const [stop] = await tx
@@ -426,15 +458,26 @@ export async function completeStop(db: DbOrTx, input: CompleteStopInput): Promis
       .for("update");
     if (!stop) throw new ServiceError("STOP_NOT_FOUND", "Parada não encontrada nesta saída.");
     const [order] = await tx
-      .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, paymentMethod: orders.paymentMethod, receivedBy: orders.receivedBy, deliveryConfirmedBy: orders.deliveryConfirmedBy })
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        paymentMethod: orders.paymentMethod,
+        receivedBy: orders.receivedBy,
+        deliveryConfirmedBy: orders.deliveryConfirmedBy,
+        deliveredPhotoPath: orders.deliveredPhotoPath,
+      })
       .from(orders)
       .where(eq(orders.id, stop.orderId))
       .for("update");
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     const base = { stopId: stop.id, orderId: order.id, orderNumber: order.orderNumber };
     if (stop.status === "delivered") {
-      return { ...base, orderDelivered: order.status === "delivered", awaitingCash: order.status === "pending_payment", receivedBy: stop.receivedBy, idempotent: true };
+      return { ...base, orderDelivered: order.status === "delivered", awaitingCash: order.status === "pending_payment", receivedBy: stop.receivedBy, withPhoto: order.deliveredPhotoPath !== null, idempotent: true };
     }
+    // A olhada de cima viu a parada aberta; se ela fechou nesse meio-tempo, o retorno acima já tratou.
+    const photoPath = order.deliveredPhotoPath ?? uploadedPath;
+    if (!photoPath) throw new ServiceError(PHOTO_REQUIRED_CODE, "Tire a foto da entrega no endereço para confirmar.");
     if (!canCloseStop(run.status as RunStatus, stop.status as StopStatus)) {
       throw new ServiceError("STOP_NOT_OPEN", run.status !== "en_route" ? 'Toque em "Comecei a rota" antes de entregar.' : "Esta parada já foi fechada.");
     }
@@ -465,6 +508,7 @@ export async function completeStop(db: DbOrTx, input: CompleteStopInput): Promis
       .set({
         receivedBy: order.receivedBy ?? receivedBy,
         deliveryConfirmedBy: order.deliveryConfirmedBy ?? "courier",
+        deliveredPhotoPath: photoPath,
         updatedAt: now,
       })
       .where(eq(orders.id, order.id));
@@ -486,9 +530,9 @@ export async function completeStop(db: DbOrTx, input: CompleteStopInput): Promis
       action: "delivery_stop.deliver",
       entityType: "order",
       entityId: order.id,
-      after: { runId: run.id, stopId: stop.id, receivedBy, point, awaitingCash },
+      after: { runId: run.id, stopId: stop.id, receivedBy, point, awaitingCash, photo: uploadedPath !== null, photoPath },
     });
-    return { ...base, orderDelivered, awaitingCash, receivedBy, idempotent: false };
+    return { ...base, orderDelivered, awaitingCash, receivedBy, withPhoto: true, idempotent: false };
   });
 }
 
@@ -851,7 +895,14 @@ export interface DeliveryRunDetail {
   finishedAt: Date | null;
   canceledAt: Date | null;
   lastPosition: { lat: number; lng: number; accuracyM: number | null; recordedAt: Date } | null;
-  stops: (CourierStop & { orderId: string; destination: { lat: number; lng: number } | null; deliveredPoint: { lat: number; lng: number; accuracyM: number | null } | null; failureNote: string | null })[];
+  stops: (CourierStop & {
+    orderId: string;
+    destination: { lat: number; lng: number } | null;
+    deliveredPoint: { lat: number; lng: number; accuracyM: number | null } | null;
+    failureNote: string | null;
+    /** Foto da entrega do pedido (do motoboy ou refeita pela dona); `at` fura o cache da CDN. */
+    deliveredPhoto: { path: string; at: Date } | null;
+  })[];
   /** Os últimos pontos da trilha, do mais antigo ao mais novo. */
   trail: { lat: number; lng: number; recordedAt: Date }[];
 }
@@ -895,8 +946,11 @@ export async function getDeliveryRun(db: DbOrTx, runId: string): Promise<Deliver
       deliveredLng: deliveryStops.deliveredLng,
       deliveredAccuracyM: deliveryStops.deliveredAccuracyM,
       failureNote: deliveryStops.failureNote,
+      deliveredPhotoPath: orders.deliveredPhotoPath,
+      orderUpdatedAt: orders.updatedAt,
     })
     .from(deliveryStops)
+    .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
     .where(eq(deliveryStops.runId, run.id));
   const extraById = new Map(extra.map((row) => [row.id, row]));
   // Saída encerrada: a leitura do motoboy vem vazia, mas o painel ainda mostra as paradas.
@@ -908,6 +962,7 @@ export async function getDeliveryRun(db: DbOrTx, runId: string): Promise<Deliver
       destination: e && e.destLat !== null && e.destLng !== null ? { lat: e.destLat, lng: e.destLng } : null,
       deliveredPoint: e && e.deliveredLat !== null && e.deliveredLng !== null ? { lat: e.deliveredLat, lng: e.deliveredLng, accuracyM: e.deliveredAccuracyM ?? null } : null,
       failureNote: e?.failureNote ?? null,
+      deliveredPhoto: e?.deliveredPhotoPath ? { path: e.deliveredPhotoPath, at: e.orderUpdatedAt } : null,
     };
   });
   const trailRows = await db
@@ -991,6 +1046,8 @@ export interface OrderStopProof {
   deliveredPoint: { lat: number; lng: number; accuracyM: number | null } | null;
   failureReason: FailureReason | null;
   failureNote: string | null;
+  /** O pedido tem foto de entrega (o motoboy tira na parada; a dona pode refazer). */
+  withPhoto: boolean;
 }
 
 /** A última saída em que o pedido esteve (ficha do pedido no painel). */
@@ -1011,10 +1068,12 @@ export async function getStopForOrder(db: DbOrTx, orderId: string): Promise<Orde
       deliveredAccuracyM: deliveryStops.deliveredAccuracyM,
       failureReason: deliveryStops.failureReason,
       failureNote: deliveryStops.failureNote,
+      deliveredPhotoPath: orders.deliveredPhotoPath,
     })
     .from(deliveryStops)
     .innerJoin(deliveryRuns, eq(deliveryRuns.id, deliveryStops.runId))
     .innerJoin(couriers, eq(couriers.id, deliveryRuns.courierId))
+    .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
     .where(eq(deliveryStops.orderId, parsedId.data))
     // A parada cancelada só aparece se não houver outra: a prova (entregue /
     // não entregue) de uma saída anterior vale mais.
@@ -1032,6 +1091,7 @@ export async function getStopForOrder(db: DbOrTx, orderId: string): Promise<Orde
     deliveredPoint: row.deliveredLat !== null && row.deliveredLng !== null ? { lat: row.deliveredLat, lng: row.deliveredLng, accuracyM: row.deliveredAccuracyM ?? null } : null,
     failureReason: (row.failureReason ?? null) as FailureReason | null,
     failureNote: row.failureNote,
+    withPhoto: row.deliveredPhotoPath !== null,
   };
 }
 
