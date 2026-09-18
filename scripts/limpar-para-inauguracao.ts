@@ -69,6 +69,10 @@ function printPlan(plan: LaunchResetPlan): void {
   console.log(plan.coupons.length > 0 ? `Cupons com uso zerado: ${plan.coupons.map((cp) => `${cp.code} (${cp.usedCount})`).join(", ")}.` : "Cupons: nenhum uso para zerar.");
   console.log(plan.products.length > 0 ? "Peças de teste a ARQUIVAR:" : "Peças de teste: nenhuma.");
   for (const p of plan.products) console.log(`  • ${p.name} (${p.status}; SKU ${p.skus.join(", ") || "—"})${p.linkedTo.length ? ` — ainda ligada a ${p.linkedTo.join(", ")}` : ""}`);
+  if (plan.suspiciousVariants.length > 0) {
+    console.log("AVISO: variante com cara de teste dentro de peça que FICA (a peça não é arquivada — desative a variante no painel se for de teste):");
+    for (const v of plan.suspiciousVariants) console.log(`  • ${v.sku} em "${v.productName}"${v.isActive ? "" : " (já inativa)"}`);
+  }
   console.log(plan.shippingRates.length > 0 ? "Faixas de frete de teste a APAGAR:" : "Faixas de frete de teste: nenhuma.");
   for (const r of plan.shippingRates) console.log(`  • ${r.name} (${brl(r.priceCents)}, ${r.isActive ? "ativa" : "inativa"})`);
   if (plan.supplierEntries.length > 0) {

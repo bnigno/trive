@@ -90,6 +90,8 @@ async function seedWorld() {
   await db.update(schema.stockLevels).set({ lowStockThreshold: 7 }).where(eq(schema.stockLevels.productVariantId, real.variantId));
 
   const testProduct = await createTestVariant(db, { sku: "TESTE-PAGAMENTO-1REAL", name: "Pagamento de Teste" });
+  // Peça real com uma variante "teste" (caso CROPPED ÍRIS): a peça fica, a variante vira aviso.
+  await db.insert(schema.productVariants).values({ productId: real.productId, sku: "LONGO-DUNAS-TESTE-TAUN", costCents: 4000, attributes: { cor: "teste" } });
   const demo = await createTestVariant(db, { sku: "DEMO-01", name: "Vestido Demo" });
   const [drop] = await db
     .insert(schema.drops)
@@ -217,6 +219,7 @@ describe("planLaunchReset", () => {
     expect(plan.stock.manualMovements).toEqual([expect.objectContaining({ sku: "LONGO-DUNAS-M", type: "adjustment", quantityDelta: 1, note: "contagem da prateleira" })]);
     expect(plan.coupons).toEqual([{ code: "BEMVINDO10", usedCount: 2 }]);
     expect(plan.products.map((p) => p.name).sort()).toEqual(["Pagamento de Teste", "Vestido Demo"]);
+    expect(plan.suspiciousVariants).toEqual([{ sku: "LONGO-DUNAS-TESTE-TAUN", productName: "Longo Dunas", isActive: true }]);
     expect(plan.products.find((p) => p.name === "Vestido Demo")?.linkedTo).toEqual(['lançamento "Estreia"']);
     expect(plan.shippingRates.map((r) => r.name)).toEqual(["Frete grátis (teste de pagamento)"]);
     expect(plan.supplierEntries).toHaveLength(2);
@@ -270,7 +273,7 @@ describe("applyLaunchReset", () => {
     // O que é da loja fica.
     expect(await rows("users")).toBe(1);
     expect(await rows("products")).toBe(4);
-    expect(await rows("product_variants")).toBe(4);
+    expect(await rows("product_variants")).toBe(5);
     expect(await rows("price_versions")).toBeGreaterThanOrEqual(2);
     expect(await rows("couriers")).toBe(1);
     expect(await rows("drops")).toBe(1);
@@ -291,6 +294,7 @@ describe("applyLaunchReset", () => {
     expect(products.filter((p) => p.name === "Longo Dunas").every((p) => p.status === "active")).toBe(true);
     const variants = await db.select({ sku: schema.productVariants.sku, isActive: schema.productVariants.isActive }).from(schema.productVariants);
     expect(variants.filter((v) => v.sku.startsWith("LONGO")).every((v) => v.isActive)).toBe(true);
+    expect(variants.find((v) => v.sku === "LONGO-DUNAS-TESTE-TAUN")?.isActive).toBe(true);
     expect(variants.filter((v) => !v.sku.startsWith("LONGO")).every((v) => !v.isActive)).toBe(true);
     expect(report.variantsDeactivated).toBe(2);
 

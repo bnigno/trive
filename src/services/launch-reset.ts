@@ -29,6 +29,7 @@ import {
   isTestProduct,
   isTestShippingRate,
   lookStoragePaths,
+  looksLikeTestVariant,
   orderStoragePaths,
   recomputeLevels,
   triggerToggleSql,
@@ -111,6 +112,8 @@ export interface LaunchResetPlan {
     skus: string[];
     linkedTo: string[];
   }[];
+  /** Variante com cara de teste dentro de peça que FICA: só aviso, a dona desativa no painel. */
+  suspiciousVariants: { sku: string; productName: string; isActive: boolean }[];
   shippingRates: {
     id: string;
     name: string;
@@ -218,7 +221,7 @@ async function variantLevels(db: DbOrTx) {
     .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId));
 }
 
-async function testProducts(db: DbOrTx) {
+async function catalogProducts(db: DbOrTx) {
   const rows = await db
     .select({
       id: schema.products.id,
@@ -226,23 +229,26 @@ async function testProducts(db: DbOrTx) {
       slug: schema.products.slug,
       status: schema.products.status,
       sku: schema.productVariants.sku,
+      variantActive: schema.productVariants.isActive,
     })
     .from(schema.products)
     .leftJoin(schema.productVariants, eq(schema.productVariants.productId, schema.products.id))
     .where(and(ne(schema.products.status, "archived"), isNull(schema.products.deletedAt)));
-  const byId = new Map<string, { id: string; name: string; slug: string; status: string; skus: string[] }>();
+  const byId = new Map<string, { id: string; name: string; slug: string; status: string; skus: string[]; variants: { sku: string; isActive: boolean }[] }>();
   for (const row of rows) {
-    const entry = byId.get(row.id) ?? {
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      status: row.status,
-      skus: [],
-    };
-    if (row.sku) entry.skus.push(row.sku);
+    const entry = byId.get(row.id) ?? { id: row.id, name: row.name, slug: row.slug, status: row.status, skus: [], variants: [] };
+    if (row.sku) {
+      entry.skus.push(row.sku);
+      entry.variants.push({ sku: row.sku, isActive: row.variantActive ?? true });
+    }
     byId.set(row.id, entry);
   }
-  return [...byId.values()].filter(isTestProduct);
+  const all = [...byId.values()];
+  const test = all.filter(isTestProduct);
+  const suspiciousVariants = all
+    .filter((p) => !isTestProduct(p))
+    .flatMap((p) => p.variants.filter((v) => looksLikeTestVariant(v.sku)).map((v) => ({ sku: v.sku, productName: p.name, isActive: v.isActive })));
+  return { test, suspiciousVariants };
 }
 
 async function linkedTo(db: DbOrTx, productIds: readonly string[]): Promise<Map<string, string[]>> {
@@ -427,7 +433,7 @@ async function collectPlan(db: DbOrTx, now: Date): Promise<LaunchResetPlan> {
     .select({ code: schema.coupons.code, usedCount: schema.coupons.usedCount })
     .from(schema.coupons)
     .where(gt(schema.coupons.usedCount, 0));
-  const products = await testProducts(db);
+  const { test: products, suspiciousVariants } = await catalogProducts(db);
   const links = await linkedTo(
     db,
     products.map((p) => p.id),
@@ -499,7 +505,8 @@ async function collectPlan(db: DbOrTx, now: Date): Promise<LaunchResetPlan> {
       invalid,
     },
     coupons,
-    products: products.map((p) => ({ ...p, linkedTo: links.get(p.id) ?? [] })),
+    products: products.map((p) => ({ id: p.id, name: p.name, slug: p.slug, status: p.status, skus: p.skus, linkedTo: links.get(p.id) ?? [] })),
+    suspiciousVariants,
     shippingRates: rates.map((r) => ({
       id: r.id,
       name: r.name,

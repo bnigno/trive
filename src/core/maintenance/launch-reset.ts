@@ -261,13 +261,24 @@ function fold(text: string): string {
     .toLowerCase();
 }
 
-/** Peça de teste: "teste" como palavra no nome ou no SKU, ou SKU que começa com DEMO- ou TESTE-. */
+/**
+ * Peça de teste: "teste" como palavra no NOME, ou TODAS as variantes com
+ * SKU que começa com DEMO- ou TESTE-. Uma variante "teste" dentro de peça real (caso real:
+ * CROPPED-IRIS-TESTE-TAUN na CROPPED ÍRIS) NÃO arquiva a peça — vira aviso.
+ */
 export function isTestProduct(product: { name: string; skus: readonly string[] }): boolean {
   if (/\bteste\b/.test(fold(product.name))) return true;
-  return product.skus.some((sku) => {
-    const folded = fold(sku);
-    return folded.startsWith("demo-") || folded.startsWith("teste-") || /\bteste\b/.test(folded);
-  });
+  return product.skus.length > 0 && product.skus.every((sku) => isTestSku(sku));
+}
+
+export function isTestSku(sku: string): boolean {
+  const folded = fold(sku);
+  return folded.startsWith("demo-") || folded.startsWith("teste-");
+}
+
+/** Variante com cara de teste dentro de peça que fica: só avisar (a dona decide no painel). */
+export function looksLikeTestVariant(sku: string): boolean {
+  return isTestSku(sku) || /\bteste\b/.test(fold(sku));
 }
 
 export function isTestShippingRate(rate: { name: string }): boolean {

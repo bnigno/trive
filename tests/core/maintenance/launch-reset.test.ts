@@ -20,6 +20,7 @@ import {
   isTestProduct,
   isTestShippingRate,
   isWipeStoragePath,
+  looksLikeTestVariant,
   lookStoragePaths,
   orderStoragePaths,
   recomputeLevels,
@@ -155,18 +156,24 @@ describe("recálculo do estoque", () => {
 });
 
 describe("peças e faixas de teste", () => {
-  it("reconhece pelo nome ou pelo SKU, sem acento e sem caixa", () => {
+  it("reconhece pelo nome, ou quando TODAS as variantes são DEMO-/TESTE-, sem acento e sem caixa", () => {
     expect(isTestProduct({ name: "Pagamento de Teste", skus: ["TESTE-PAGAMENTO-1REAL"] })).toBe(true);
     expect(isTestProduct({ name: "Vestido teste", skus: ["X-1"] })).toBe(true);
-    expect(isTestProduct({ name: "Longo Dunas", skus: ["DEMO-01"] })).toBe(true);
-    expect(isTestProduct({ name: "Peça", skus: ["LD-P", "teste-2"] })).toBe(true);
+    expect(isTestProduct({ name: "Boné Bordado", skus: ["DEMO-BONE-UNICO"] })).toBe(true);
+    expect(isTestProduct({ name: "Camiseta", skus: ["demo-camiseta-m", "DEMO-CAMISETA-G"] })).toBe(true);
     expect(isTestProduct({ name: "TÉSTE", skus: [] })).toBe(true);
   });
 
-  it("não confunde palavra parecida nem peça real", () => {
+  it("peça real com UMA variante 'teste' fica (caso CROPPED ÍRIS) — e a variante só vira aviso", () => {
+    expect(isTestProduct({ name: "CROPPED ÍRIS", skus: ["CROPPED-IRIS-PRET-TAUN", "CROPPED-IRIS-TESTE-TAUN"] })).toBe(false);
+    expect(isTestProduct({ name: "Peça", skus: ["LD-P", "DEMO-2"] })).toBe(false);
     expect(isTestProduct({ name: "Longo Dunas", skus: ["LD-P"] })).toBe(false);
+    expect(isTestProduct({ name: "Sem variante", skus: [] })).toBe(false);
     expect(isTestProduct({ name: "Contestei", skus: ["CONTESTE-1"] })).toBe(false);
     expect(isTestProduct({ name: "Demonstração de fé", skus: ["DEMONSTRA-1"] })).toBe(false);
+    expect(looksLikeTestVariant("CROPPED-IRIS-TESTE-TAUN")).toBe(true);
+    expect(looksLikeTestVariant("DEMO-2")).toBe(true);
+    expect(looksLikeTestVariant("CROPPED-IRIS-PRET-TAUN")).toBe(false);
     expect(isTestShippingRate({ name: "Frete grátis (teste de pagamento)" })).toBe(true);
     expect(isTestShippingRate({ name: "Motoboy Belém" })).toBe(false);
   });
