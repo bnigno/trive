@@ -6,6 +6,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { needsPackingBeforeDispatch, NOT_PACKED_CODE, notPackedMessage } from "@/core/orders/packing";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { PAYMENT_METHOD_LABELS_SHORT, type PaymentMethod } from "@/core/orders/payment-methods";
 import {
@@ -239,6 +240,7 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
         status: orders.status,
         paymentMethod: orders.paymentMethod,
         deliveryWindow: orders.deliveryWindow,
+        packagePhotoPath: orders.packagePhotoPath,
       })
       .from(orders)
       .where(eq(orders.id, parsed.orderId))
@@ -254,9 +256,17 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     if (order.deliveryWindow.dayKey < spDayKey(now)) {
       throw new ServiceError("WINDOW_PAST", "A janela deste pedido já passou — reagende antes de marcar que saiu.");
     }
+    const waitingCash = from === "pending_payment" && order.paymentMethod === "cash";
+    if (!waitingCash && !ROUTE_STATUSES.includes(from)) {
+      throw new ServiceError("INVALID_TRANSITION", "Só um pedido pago (ou em dinheiro na entrega) pode sair para entrega.");
+    }
+    // Embalar antes de sair: sem a foto do pacote nada sai — nem o dinheiro na entrega.
+    if (needsPackingBeforeDispatch({ status: from, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.deliveryWindow.dispatchedAt ?? null })) {
+      throw new ServiceError(NOT_PACKED_CODE, notPackedMessage(order.orderNumber, "sair"));
+    }
 
     const snapshot = { ...order.deliveryWindow, dispatchedAt: now.toISOString() };
-    if (from === "pending_payment" && order.paymentMethod === "cash") {
+    if (waitingCash) {
       await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: now }).where(eq(orders.id, order.id));
       await enqueueOutboxEvent(tx, {
         eventType: "order.out_for_delivery",
@@ -274,9 +284,6 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
         after: { dispatchedAt: snapshot.dispatchedAt, paymentMethod: "cash" },
       });
       return { ...base, to: "pending_payment", idempotent: false };
-    }
-    if (!ROUTE_STATUSES.includes(from)) {
-      throw new ServiceError("INVALID_TRANSITION", "Só um pedido pago (ou em dinheiro na entrega) pode sair para entrega.");
     }
     if (from === "paid") {
       await transitionOrder(tx, { orderId: order.id, to: "preparing", userId: parsed.userId });

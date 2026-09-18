@@ -7,6 +7,7 @@ import {
   createManualOrder,
   getOrderDetail,
   listOrders,
+  shipOrder,
   transitionOrder,
 } from "@/services/orders";
 import {
@@ -302,6 +303,54 @@ describe("transitionOrder — fluxo feliz", () => {
     const level = await getLevel(variantId);
     expect(level.onHand).toBe(8);
     expect(level.reserved).toBe(0);
+  });
+});
+
+describe("shipOrder (Correios: 'Marcar como enviado')", () => {
+  async function paidOrder() {
+    const { customerId, variantId } = await setupOrder({ onHand: 10 });
+    const { orderId, orderNumber } = await createManualOrder(sdb, { customerId, items: [{ variantId, quantity: 1 }], shippingCents: 1500, userId: FIXED_USER_ID });
+    await transitionOrder(sdb, { orderId, to: "pending_payment", userId: FIXED_USER_ID });
+    await transitionOrder(sdb, { orderId, to: "paid", userId: FIXED_USER_ID });
+    return { orderId, orderNumber, customerId, variantId };
+  }
+  const packed = (orderId: string) =>
+    db.update(schema.orders).set({ packagePhotoPath: `packages/${orderId}/embalagem.jpg`, packedAt: new Date() }).where(eq(schema.orders.id, orderId));
+  const status = async (orderId: string) => (await db.select({ s: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, orderId)))[0].s;
+
+  it("embalar antes de enviar: sem a foto recusa (NOT_PACKED) e não grava o rastreio; com a foto, paid → preparing → shipped com o rastreio na mesma transação", async () => {
+    const { orderId, orderNumber } = await paidOrder();
+    await expect(shipOrder(sdb, { orderId, trackingCode: "BR123", userId: FIXED_USER_ID })).rejects.toMatchObject({
+      code: "NOT_PACKED",
+      message: `O pedido #${orderNumber} ainda não foi embalado: registre a foto do pacote (Mesa de embalagem ou card Embalagem da ficha) antes de marcar como enviado.`,
+    });
+    expect(await status(orderId)).toBe("paid");
+    expect((await db.select({ t: schema.orders.shippingTrackingCode }).from(schema.orders).where(eq(schema.orders.id, orderId)))[0].t).toBeNull();
+
+    await packed(orderId);
+    const shipped = await shipOrder(sdb, { orderId, trackingCode: "BR123", userId: FIXED_USER_ID });
+    expect(shipped).toMatchObject({ from: "paid", to: "shipped", idempotent: false });
+    expect(await status(orderId)).toBe("shipped");
+    expect((await db.select({ t: schema.orders.shippingTrackingCode }).from(schema.orders).where(eq(schema.orders.id, orderId)))[0].t).toBe("BR123");
+    const history = await db.select({ to: schema.orderStatusHistory.toStatus }).from(schema.orderStatusHistory).where(eq(schema.orderStatusHistory.orderId, orderId)).orderBy(schema.orderStatusHistory.createdAt);
+    expect(history.map((h) => h.to).slice(-2)).toEqual(["preparing", "shipped"]);
+    expect(await getOutboxEvents("order.shipped")).toHaveLength(1);
+
+    // Segunda vez: idempotente, sem novo aviso.
+    expect((await shipOrder(sdb, { orderId, userId: FIXED_USER_ID })).idempotent).toBe(true);
+    expect(await getOutboxEvents("order.shipped")).toHaveLength(1);
+  });
+
+  it("pedido de motoboy não passa por aqui; pedido não pago é recusado", async () => {
+    const { orderId, customerId, variantId } = await paidOrder();
+    await packed(orderId);
+    await db.update(schema.orders).set({ deliveryWindow: { dayKey: "2026-09-18", start: "16:00", end: "19:00", cutoff: "13:00", rateName: "Motoboy Belém", label: "hoje" } }).where(eq(schema.orders.id, orderId));
+    await expect(shipOrder(sdb, { orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "MOTOBOY_ORDER" });
+
+    // Não pago (rascunho): recusado mesmo com foto.
+    const draft = await createManualOrder(sdb, { customerId, items: [{ variantId, quantity: 1 }], shippingCents: 0, userId: FIXED_USER_ID });
+    await packed(draft.orderId);
+    await expect(shipOrder(sdb, { orderId: draft.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
   });
 });
 

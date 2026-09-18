@@ -82,7 +82,7 @@ export default async function EmbalarPage() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <Badge tone={order.status === "preparing" ? "info" : "warning"}>
-                    {order.status === "preparing" ? "Em separação" : "Pago"}
+                    {order.status === "preparing" ? "Em separação" : order.status === "pending_payment" ? "Paga ao receber" : "Pago"}
                   </Badge>
                   {order.isGift ? <Badge tone="warning">🎁 Presente · sem preço</Badge> : null}
                   {order.isFirstPurchase ? <Badge tone="warning">{order.debutLetter ? "1ª compra · carta de estreia" : "1ª compra"}</Badge> : null}

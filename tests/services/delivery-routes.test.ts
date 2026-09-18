@@ -84,9 +84,15 @@ function input(variantId: string, rateId: string, over: Partial<CreateStoreOrder
   };
 }
 
-async function paidMotoboyOrder(variantId: string, rateId: string, dayKey: string, w = WINDOWS[1], now = MORNING) {
+/** Embalar antes de sair: a foto do pacote registrada (o que packOrder grava), sem passar pela Mesa. */
+async function packed(orderId: string): Promise<void> {
+  await db.update(schema.orders).set({ packagePhotoPath: `packages/${orderId}/embalagem.jpg`, packedAt: new Date() }).where(eq(schema.orders.id, orderId));
+}
+
+async function paidMotoboyOrder(variantId: string, rateId: string, dayKey: string, w = WINDOWS[1], now = MORNING, opts: { packed?: boolean } = {}) {
   const created = await createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey, ...w } }), { now });
   await transitionOrder(sdb, { orderId: created.orderId, to: "paid", userId: FIXED_USER_ID });
+  if (opts.packed !== false) await packed(created.orderId);
   return created;
 }
 
@@ -110,6 +116,7 @@ describe("listRouteOfDay", () => {
       input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[0] }, paymentMethod: "cash" }),
       { now: MORNING },
     );
+    await packed(cash.orderId);
     await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
     await db.update(schema.orders).set({ paidAt: new Date("2026-09-18T17:00:00Z") }).where(eq(schema.orders.id, cash.orderId));
     // Pedido ainda não pago não entra na rota.
@@ -203,6 +210,7 @@ describe("dispatchOrder ('Saiu')", () => {
       input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
       { now: MORNING },
     );
+    await packed(cash.orderId);
     const before = await listRouteOfDay(sdb, { now: new Date("2026-09-18T14:00:00Z") });
     expect(before.today[0].orders.map((o) => [o.orderNumber, o.status, o.collectCashCents, o.dispatchedAt])).toEqual([
       [cash.orderNumber, "pending_payment", 15900 + 1500, null],
@@ -264,6 +272,7 @@ describe("dispatchOrder ('Saiu')", () => {
       input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
       { now: MORNING },
     );
+    await packed(cash.orderId);
     await expect(completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "NOT_DISPATCHED" });
     await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: MORNING });
     await expect(completeDispatchedOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "PAYMENT_PENDING" });
@@ -279,6 +288,7 @@ describe("dispatchOrder ('Saiu')", () => {
       input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
       { now: MORNING },
     );
+    await packed(cash2.orderId);
     await dispatchOrder(sdb, { orderId: cash2.orderId, userId: FIXED_USER_ID, now: MORNING });
     await transitionOrder(sdb, { orderId: cash2.orderId, to: "paid", userId: FIXED_USER_ID });
     await transitionOrder(sdb, { orderId: cash2.orderId, to: "preparing", userId: FIXED_USER_ID });
@@ -286,18 +296,54 @@ describe("dispatchOrder ('Saiu')", () => {
     expect((await db.select({ s: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, cash2.orderId)))[0].s).toBe("delivered");
   });
 
-  it("pedido que já saiu com o motoboy não aparece na mesa de embalagem", async () => {
+  it("pedido que já saiu com o motoboy não aparece na mesa de embalagem; o de dinheiro na entrega aparece antes da foto", async () => {
     const { variantId, rateId } = await setup();
-    const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
+    const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18", WINDOWS[1], MORNING, { packed: false });
     expect((await listOrdersAwaitingPacking(sdb)).map((o) => o.orderNumber)).toEqual([created.orderNumber]);
     const cash = await createStoreOrder(
       sdb,
       input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
       { now: MORNING },
     );
+    // Dinheiro na entrega entra na mesa ainda "aguardando pagamento" (embala antes de sair).
+    expect((await listOrdersAwaitingPacking(sdb)).map((o) => o.orderNumber).sort()).toEqual([created.orderNumber, cash.orderNumber].sort());
+    await packed(cash.orderId);
     await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: MORNING });
     await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
     expect((await listOrdersAwaitingPacking(sdb)).map((o) => o.orderNumber)).toEqual([created.orderNumber]);
+  });
+
+  it("embalar antes de sair: sem a foto do pacote o 'Saiu' recusa (pago e dinheiro na entrega); com a foto sai; quem já saiu antes da regra segue", async () => {
+    const { variantId, rateId } = await setup();
+    const semFoto = await paidMotoboyOrder(variantId, rateId, "2026-09-18", WINDOWS[1], MORNING, { packed: false });
+    await expect(dispatchOrder(sdb, { orderId: semFoto.orderId, userId: FIXED_USER_ID, now: MORNING })).rejects.toMatchObject({
+      code: "NOT_PACKED",
+      message: `O pedido #${semFoto.orderNumber} ainda não foi embalado: registre a foto do pacote (Mesa de embalagem ou card Embalagem da ficha) antes de marcar que saiu.`,
+    });
+    expect((await db.select({ s: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, semFoto.orderId)))[0].s).toBe("paid");
+    expect(await outboxTypes(semFoto.orderId)).not.toContain("order.shipped");
+
+    const cash = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] }, paymentMethod: "cash" }),
+      { now: MORNING },
+    );
+    await expect(dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: MORNING })).rejects.toMatchObject({ code: "NOT_PACKED" });
+    await packed(cash.orderId);
+    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: MORNING })).to).toBe("pending_payment");
+
+    await packed(semFoto.orderId);
+    expect((await dispatchOrder(sdb, { orderId: semFoto.orderId, userId: FIXED_USER_ID, now: MORNING })).to).toBe("shipped");
+
+    // Pedido que saiu ANTES da regra (sem foto, dispatchedAt gravado): idempotente, e o motoboy voltando fecha.
+    const antigo = await paidMotoboyOrder(variantId, rateId, "2026-09-18", WINDOWS[1], MORNING, { packed: false });
+    await db
+      .update(schema.orders)
+      .set({ status: "shipped", deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1], rateName: "Motoboy Belém", label: "hoje", dispatchedAt: MORNING.toISOString() } })
+      .where(eq(schema.orders.id, antigo.orderId));
+    expect((await dispatchOrder(sdb, { orderId: antigo.orderId, userId: FIXED_USER_ID, now: MORNING })).idempotent).toBe(true);
+    expect((await completeDispatchedOrder(sdb, { orderId: antigo.orderId, userId: FIXED_USER_ID })).idempotent).toBe(false);
+    expect((await db.select({ s: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, antigo.orderId)))[0].s).toBe("delivered");
   });
 
   it("em separação (já embalado) também sai; pedido Correios ou online não pago é recusado", async () => {

@@ -31,6 +31,7 @@ import {
 } from "@/core/delivery/state";
 import { buildTrackingView, type TrackingView } from "@/core/delivery/tracking";
 import { normalizeReceivedBy, RECEIVED_BY_MAX_CHARS } from "@/core/orders/delivery";
+import { needsPackingBeforeDispatch, NOT_PACKED_CODE } from "@/core/orders/packing";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import type { PaymentMethod } from "@/core/orders/payment-methods";
 import { windowDateLabel } from "@/core/shipping/delivery-windows";
@@ -104,6 +105,9 @@ export async function listRunEligibleOrders(db: DbOrTx, input: { now?: Date } = 
     .filter((order) =>
       order.dispatchedAt !== null ? now.getTime() - order.dispatchedAt.getTime() <= ELIGIBLE_DISPATCH_MAX_MS : order.window.dayKey >= todayKey,
     )
+    // Embalar antes de sair: sem a foto do pacote não entra numa saída (quem
+    // já está na rua ou voltou para a loja continua elegível).
+    .filter((order) => !needsPackingBeforeDispatch({ status: order.status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.dispatchedAt?.toISOString() ?? null }))
     .map((order) => ({
       ...order,
       openRunId: openByOrder.get(order.id)?.runId ?? null,
@@ -175,6 +179,22 @@ export async function createDeliveryRun(db: DbOrTx, input: CreateDeliveryRunInpu
     }
     if ((await deliveredAwaitingClose(tx, uniqueIds)).size > 0) {
       throw new ServiceError("ORDER_ALREADY_DELIVERED", "Um dos pedidos já foi entregue pelo motoboy — registre o pagamento e feche na ficha.");
+    }
+    // Embalar antes de sair: conferido de uma vez, com TODOS os números, antes
+    // de criar a saída (dispatchOrder recusaria o primeiro e desfaria tudo).
+    const unpacked = await tx
+      .select({ orderNumber: orders.orderNumber, status: orders.status, packagePhotoPath: orders.packagePhotoPath, deliveryWindow: orders.deliveryWindow })
+      .from(orders)
+      .where(inArray(orders.id, uniqueIds));
+    const semFoto = unpacked
+      .filter((row) => needsPackingBeforeDispatch({ status: row.status, packagePhotoPath: row.packagePhotoPath, dispatchedAt: (row.deliveryWindow as { dispatchedAt?: string } | null)?.dispatchedAt ?? null }))
+      .map((row) => `#${row.orderNumber}`)
+      .sort();
+    if (semFoto.length > 0) {
+      throw new ServiceError(
+        NOT_PACKED_CODE,
+        `${semFoto.length === 1 ? `O pedido ${semFoto[0]} ainda não foi embalado` : `Os pedidos ${semFoto.join(", ")} ainda não foram embalados`}: registre a foto do pacote (Mesa de embalagem) antes de montar a saída.`,
+      );
     }
 
     const [run] = await tx

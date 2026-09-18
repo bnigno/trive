@@ -142,7 +142,8 @@ describe("listOrdersWithNeededBy / countOrdersMustShipToday", () => {
     expect(await countOrdersMustShipToday(sdb, { now: new Date("2026-10-09T12:00:00Z") })).toBe(3);
     await db.update(schema.orders).set({ shipBy: "2026-10-02" }).where(eq(schema.orders.id, red.orderId));
 
-    // Saiu com o motoboy: não conta mais como "precisa sair hoje".
+    // Saiu com o motoboy (embalado antes): não conta mais como "precisa sair hoje".
+    await db.update(schema.orders).set({ packagePhotoPath: `packages/${cash.orderId}/embalagem.jpg`, packedAt: NOW }).where(eq(schema.orders.id, cash.orderId));
     await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: NOW });
     expect(await countOrdersMustShipToday(sdb, { now: NOW })).toBe(1);
     expect((await listOrdersWithNeededBy(sdb, { now: NOW })).find((r) => r.orderNumber === cash.orderNumber)?.dispatched).toBe(true);

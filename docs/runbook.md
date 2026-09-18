@@ -330,6 +330,22 @@ Castanhal** a entrega é **só por motoboy**; no resto do Brasil é pelos
 - Cotação automática dos Correios (SuperFrete/Melhor Envio) fica para um PR
   próprio, quando a loja tiver a conta.
 
+## Embalar antes de sair (foto do pacote obrigatória)
+
+Desde 2026-09-18 (pedido #1016 pulou a etapa): **"Saiu"** (Rota do dia, ficha
+e "Montar saída" com GPS) e **"Marcar como enviado"** (Correios) só funcionam
+com a **foto do pacote** registrada — "Embalei — enviar foto" na Mesa de
+embalagem ou no card Embalagem da ficha (a foto vai à cliente pelo
+WhatsApp). O status "Em separação" sozinho não libera ("Iniciar separação" só
+muda o status). Sem foto: a Rota mostra "Falta embalar — foto do pacote" no
+lugar do botão, o pedido não entra na saída com GPS (a montagem recusa
+listando os números), e a ficha mostra o aviso no card Ações. **Dinheiro na
+entrega** embala ainda "aguardando pagamento" (a Mesa lista com o badge "Paga
+ao receber"; a foto libera o Saiu; o pagamento é marcado quando o motoboy
+volta). Pedidos que já tinham saído antes da regra fecham normalmente
+("Entregue — o motoboy voltou"). Regra em `src/core/orders/packing.ts`;
+`dispatchOrder`, `createDeliveryRun` e o novo `shipOrder` conferem.
+
 ## Entrega por motoboy: rota do dia e "Saiu"
 
 **/admin/pedidos/rota** lista os pedidos com janela de entrega (faixa

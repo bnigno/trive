@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Money } from "@/components/ui/money";
 import { PageHeader } from "@/components/ui/page-header";
 import { hourLabel, minutesOf } from "@/core/shipping/delivery-windows";
+import { needsPackingBeforeDispatch } from "@/core/orders/packing";
 import { routeDayLabel, type RouteWindowGroup } from "@/core/shipping/route";
 import { getDb } from "@/db/client";
 import { waMeUrl } from "@/lib/phone";
@@ -60,6 +61,8 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
   const wa = waMeUrl(order.phoneE164);
   const out = order.dispatchedAt !== null;
   const needsLook = !out && (late || order.paidAfterCutoff);
+  // Embalar antes de sair: sem a foto do pacote não há "Saiu" nem saída com GPS.
+  const needsPacking = needsPackingBeforeDispatch({ status: order.status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.dispatchedAt?.toISOString() ?? null });
   // Sem motoboy cadastrado não existe o form "montar-saida": checkbox órfão confunde.
   const canJoinRun = hasCouriers && run?.eligible === true && run.openRunId === null;
   return (
@@ -97,7 +100,7 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
             </Badge>
           ) : null}
           {order.isGift ? <Badge tone="warning">🎁 Presente · sem preço</Badge> : null}
-          {!order.packagePhotoPath ? <Badge tone="neutral">sem foto do pacote</Badge> : null}
+          {needsPacking ? <Badge tone="warning">Falta embalar — foto do pacote</Badge> : !order.packagePhotoPath ? <Badge tone="neutral">sem foto do pacote</Badge> : null}
         </div>
       </div>
 
@@ -119,6 +122,18 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
           </Link>
         ) : late ? (
           <p className="text-xs text-red-700 dark:text-red-300">A janela passou: reagende abaixo antes de marcar que saiu.</p>
+        ) : needsPacking ? (
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            Só sai depois da foto do pacote:{" "}
+            <Link href={`/admin/pedidos/${order.id}`} className="font-medium underline">
+              embalar na ficha
+            </Link>{" "}
+            ou na{" "}
+            <Link href="/admin/pedidos/embalar" className="font-medium underline">
+              Mesa de embalagem
+            </Link>
+            .
+          </p>
         ) : (
           <DispatchForm orderId={order.id} customerName={order.customerName} compact />
         )}

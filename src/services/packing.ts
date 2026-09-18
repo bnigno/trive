@@ -4,7 +4,7 @@
 // sobrescreve o mesmo path e NÃO reenvia (dedupe). O upload acontece antes
 // da transação (como addProductImage): recusa nunca deixa a linha torta, e
 // um arquivo órfão no path determinístico é inofensivo.
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
@@ -99,15 +99,18 @@ export async function packOrder(
   }
 
   const [order] = await db
-    .select({ id: orders.id, status: orders.status, packagePhotoPath: orders.packagePhotoPath })
+    .select({ id: orders.id, status: orders.status, paymentMethod: orders.paymentMethod, packagePhotoPath: orders.packagePhotoPath })
     .from(orders)
     .where(eq(orders.id, parsed.orderId))
     .limit(1);
   if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
-  if (order.status !== "paid" && order.status !== "preparing") {
+  // Dinheiro na entrega fica "aguardando pagamento" até o motoboy voltar —
+  // e o pacote precisa da foto antes de sair, como qualquer outro.
+  const cashPending = order.status === "pending_payment" && order.paymentMethod === "cash";
+  if (order.status !== "paid" && order.status !== "preparing" && !cashPending) {
     throw new ServiceError(
       "STATUS_INVALIDO",
-      "Só dá para registrar a embalagem de um pedido pago ou em separação.",
+      "Só dá para registrar a embalagem de um pedido pago, em separação ou pago na entrega.",
     );
   }
 
@@ -228,7 +231,11 @@ export async function listOrdersAwaitingPacking(
     .innerJoin(customers, eq(customers.id, orders.customerId))
     .where(
       and(
-        inArray(orders.status, ["paid", "preparing"]),
+        or(
+          inArray(orders.status, ["paid", "preparing"]),
+          // Dinheiro na entrega: embala antes de sair, ainda "aguardando pagamento".
+          and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+        ),
         isNull(orders.packagePhotoPath),
         // Motoboy que já saiu: a peça não está mais na mesa.
         sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
@@ -271,7 +278,11 @@ export async function countOrdersAwaitingPacking(db: DbOrTx): Promise<number> {
     .from(orders)
     .where(
       and(
-        inArray(orders.status, ["paid", "preparing"]),
+        or(
+          inArray(orders.status, ["paid", "preparing"]),
+          // Dinheiro na entrega: embala antes de sair, ainda "aguardando pagamento".
+          and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+        ),
         isNull(orders.packagePhotoPath),
         // Motoboy que já saiu: a peça não está mais na mesa.
         sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
