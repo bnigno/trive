@@ -796,9 +796,9 @@ pelo nome só dentro dela e religados (e conferidos) antes do commit.
    funciona depois de cadastrar o secret `DATABASE_URL` — em 18/09/2026 ele
    falhava desde 25/08 por falta dele):
 
-       mkdir -p ~/TRIVE-backups && pg_dump "$(grep '^DATABASE_URL=' .env.prod.local | cut -d= -f2-)" --no-owner --format=custom --file=~/TRIVE-backups/trive-pre-limpeza-$(date +%F).dump
+       mkdir -p "$HOME/TRIVE-backups" && pg_dump "$(grep '^DATABASE_URL=' .env.prod.local | cut -d= -f2-)" --no-owner --format=custom --file="$HOME/TRIVE-backups/trive-pre-limpeza-$(date +%F).dump"
 
-   Conferir com `pg_restore --list ~/TRIVE-backups/trive-pre-limpeza-*.dump | head`.
+   Conferir com `pg_restore --list "$HOME"/TRIVE-backups/trive-pre-limpeza-*.dump | head`.
    O `pg_dump` tem de ser da versão do servidor ou mais nova
    (`/opt/homebrew/opt/postgresql@17/bin/pg_dump`).
 2. Fila vazia: **/admin/fila** sem evento "processando" (o script recusa
@@ -833,7 +833,10 @@ do bucket (`receipts/ packages/ deliveries/ gifts/ editions/ looks/ atelier/`,
 inclusive órfãos); se algum falhar, lista os caminhos e sai com código 3 —
 apagar à mão no Supabase Storage. `--sem-storage` limpa só o banco.
 Códigos: 0 ok · 1 erro (nada gravado) · 2 recusado (confirmação, fila,
-ADAPTER_MODE) · 3 banco ok, arquivo(s) faltando.
+ADAPTER_MODE) · 3 banco ok, mas ou ficou arquivo por apagar (lista na tela)
+ou a varredura de órfãos do bucket não foi possível (conferir os prefixos
+no Supabase Storage). A peça de teste arquivada também sai do lançamento,
+das edições e dos links de story.
 
 ### Depois
 

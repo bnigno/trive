@@ -707,6 +707,10 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
           .where(and(inArray(schema.productVariants.productId, productIds), eq(schema.productVariants.isActive, true)))
           .returning({ id: schema.productVariants.id })
       ).length;
+      // E fora do teaser da estreia, das edições e dos links de story (a peça arquivada não filtra sozinha).
+      await tx.delete(schema.dropProducts).where(inArray(schema.dropProducts.productId, productIds));
+      await tx.delete(schema.cityEditionProducts).where(inArray(schema.cityEditionProducts.productId, productIds));
+      await tx.update(schema.campaignLinks).set({ productId: null, updatedAt: now }).where(inArray(schema.campaignLinks.productId, productIds));
     }
     const rateIds = plan.shippingRates.map((r) => r.id);
     if (rateIds.length > 0) await tx.delete(schema.shippingRates).where(inArray(schema.shippingRates.id, rateIds));

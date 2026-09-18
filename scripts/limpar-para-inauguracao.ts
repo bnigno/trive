@@ -162,7 +162,7 @@ async function main(): Promise<number> {
   try {
     return await purgeBucket(db, storage, report, before);
   } catch (error) {
-    console.error(`\nBanco limpo (auditoria #${report.auditLogId}), mas a limpeza do bucket falhou: ${error instanceof Error ? error.message : error}`);
+    console.error(`\nBanco limpo (auditoria #${report.auditLogId}), mas a limpeza do bucket falhou: ${describeError(error)}`);
     console.error("Apague à mão no Supabase Storage (bucket product-images):");
     for (const path of report.plan.storagePaths) console.error(`  ${path}`);
     return 3;
@@ -178,15 +178,34 @@ function printReport(report: LaunchResetReport, ownerName: string): void {
   console.log(`  próximo pedido: #${report.plan.orderNumbers.nextAfterReset}.`);
 }
 
+/** O drizzle embrulha o erro do Postgres: a mensagem de verdade ("deadlock detected", "permission denied") fica na causa. */
+function describeError(error: unknown): string {
+  const parts: string[] = [];
+  for (let e = error; e && typeof e === "object"; e = (e as { cause?: unknown }).cause) {
+    const message = (e as { message?: unknown }).message;
+    if (typeof message === "string" && message && !parts.includes(message)) parts.push(message.split("\n")[0]);
+  }
+  return parts.join(" ← ") || String(error);
+}
+
+function pgErrorCode(error: unknown): string | null {
+  for (let e = error; e && typeof e === "object"; e = (e as { cause?: unknown }).cause) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code;
+  }
+  return null;
+}
+
 /** Deadlock (40P01) ou trava ocupada (55P03) = alguém estava no meio de uma escrita; uma nova tentativa depois de 15 s costuma bastar. */
 async function applyWithRetry(db: ReturnType<typeof getDb>, userId: string): Promise<LaunchResetReport> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await applyLaunchReset(db, { userId });
     } catch (error) {
-      const code = (error as { code?: string }).code;
+      // O drizzle embrulha o erro do Postgres (DrizzleQueryError.cause); o código SQLSTATE está na causa.
+      const code = pgErrorCode(error);
       if (attempt < 3 && (code === "40P01" || code === "55P03")) {
-        console.warn(`Banco ocupado (${code === "40P01" ? "deadlock" : "trava ocupada"}); nada foi gravado. Nova tentativa em 15 s (${attempt}/2)…`);
+        console.warn(`Banco ocupado (${code === "40P01" ? "deadlock" : "trava ocupada"}: ${describeError(error)}); nada foi gravado. Nova tentativa em 15 s (${attempt}/2)…`);
         await new Promise((resolve) => setTimeout(resolve, 15_000));
         continue;
       }
@@ -218,6 +237,8 @@ async function purgeBucket(db: ReturnType<typeof getDb>, storage: ReturnType<typ
   if (failed.length > 0) {
     console.error("Apague à mão no Supabase Storage (bucket product-images):");
     for (const path of failed) console.error(`  ${path}`);
+  } else if (!sweepOk) {
+    console.error(`Os arquivos referenciados foram apagados; só a varredura de órfãos não foi possível — confira no Supabase Storage os prefixos ${STORAGE_WIPE_PREFIXES.join(" ")}.`);
   }
   return failed.length > 0 || !sweepOk ? 3 : 0;
 }
@@ -226,7 +247,7 @@ main()
   .then((code) => process.exit(code))
   .catch((error) => {
     // Só chega aqui antes do commit (a transação desfaz tudo) — depois dele os erros viram código 3 acima.
-    console.error(error instanceof Error ? error.message : error);
+    console.error(describeError(error));
     console.error("Nada foi gravado.");
     process.exit(1);
   });

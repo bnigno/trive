@@ -274,7 +274,8 @@ describe("applyLaunchReset", () => {
     expect(await rows("price_versions")).toBeGreaterThanOrEqual(2);
     expect(await rows("couriers")).toBe(1);
     expect(await rows("drops")).toBe(1);
-    expect(await rows("drop_products")).toBe(1);
+    // a peça de teste sai do lançamento (ligação apagada), o lançamento fica
+    expect(await rows("drop_products")).toBe(0);
     const suppliers = await db.select().from(schema.suppliers);
     expect(suppliers.map((s) => s.id)).toEqual([world.supplierId]);
     const entries = await db.select({ orderId: schema.financialEntries.orderId, supplierId: schema.financialEntries.supplierId }).from(schema.financialEntries);

@@ -44,7 +44,9 @@ describe("ordem da limpeza", () => {
 
   it("trava tudo que apaga ou atualiza, na ordem em que a aplicação escreve (pai antes do filho)", () => {
     for (const step of WIPE_STEPS) expect(LOCKED_TABLES).toContain(step);
-    for (const table of ["stock_levels", "coupons", "products", "product_variants", "shipping_rates", "email_threads"]) expect(LOCKED_TABLES).toContain(table);
+    for (const table of ["stock_levels", "coupons", "products", "product_variants", "drop_products", "city_edition_products", "campaign_links", "shipping_rates", "email_threads"]) {
+      expect(LOCKED_TABLES).toContain(table);
+    }
     expect(new Set(LOCKED_TABLES).size).toBe(LOCKED_TABLES.length);
     const at = (t: string) => LOCKED_TABLES.indexOf(t);
     // webhook da Z-API: inbound → conversa → mensagem → fila → auditoria
@@ -55,9 +57,11 @@ describe("ordem da limpeza", () => {
     // checkout: cliente → pedido → itens → estoque → fila
     expect(at("customers")).toBeLessThan(at("orders"));
     expect(at("orders")).toBeLessThan(at("order_items"));
-    expect(at("order_items")).toBeLessThan(at("stock_movements"));
-    expect(at("stock_movements")).toBeLessThan(at("stock_levels"));
-    expect(at("stock_levels")).toBeLessThan(at("outbox_events"));
+    expect(at("order_items")).toBeLessThan(at("stock_holds"));
+    // estoque: a reserva gentil trava stock_holds, lockLevel trava stock_levels e só então insere o movimento
+    expect(at("stock_holds")).toBeLessThan(at("stock_levels"));
+    expect(at("stock_levels")).toBeLessThan(at("stock_movements"));
+    expect(at("stock_movements")).toBeLessThan(at("outbox_events"));
   });
 
   it("desliga exatamente os cinco gatilhos de proteção, pelo nome", () => {

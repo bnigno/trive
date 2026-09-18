@@ -79,12 +79,15 @@ export const WIPE_DEPENDENCIES: readonly (readonly [child: WipeStep, parent: Wip
  * Travadas em EXCLUSIVE antes de qualquer DELETE: bloqueia escrita e
  * SELECT … FOR UPDATE (o turno da Lia), não leitura — a vitrine continua
  * servindo; webhooks e crons esperam o commit e já veem o banco limpo.
- * A ORDEM é a em que a aplicação escreve (webhook: inbound_events →
+ * A ORDEM segue a em que a aplicação escreve (webhook: inbound_events →
  * wa_conversations → wa_messages → outbox → audit; checkout: customers →
- * orders → itens → estoque → outbox → audit): quem já está no meio de uma
- * transação termina sem cruzar com a limpeza (sem deadlock). A ordem dos
- * DELETEs (WIPE_STEPS) continua filho → pai. email_threads entra porque a
- * FK de customers a atualiza (SET NULL).
+ * orders → itens → estoque; estoque: stock_holds → stock_levels (lockLevel)
+ * → stock_movements): quem já está no meio dessas transações termina sem
+ * cruzar com a limpeza. Nem todo fluxo cabe numa ordem só (saída de
+ * motoboy: runs → stops na criação, stops → orders na entrega) — para
+ * esses o script tenta de novo em deadlock. A ordem dos DELETEs
+ * (WIPE_STEPS) continua filho → pai. email_threads entra porque a FK de
+ * customers a atualiza (SET NULL).
  */
 export const LOCKED_TABLES: readonly string[] = [
   "inbound_events",
@@ -101,9 +104,9 @@ export const LOCKED_TABLES: readonly string[] = [
   "order_items",
   "order_status_history",
   "financial_entries",
-  "stock_movements",
-  "stock_levels",
   "stock_holds",
+  "stock_levels",
+  "stock_movements",
   "stock_alerts",
   "customer_looks",
   "site_carts",
@@ -116,6 +119,9 @@ export const LOCKED_TABLES: readonly string[] = [
   "coupons",
   "products",
   "product_variants",
+  "drop_products",
+  "city_edition_products",
+  "campaign_links",
   "shipping_rates",
   "outbox_events",
   "audit_log",
