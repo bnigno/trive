@@ -109,6 +109,12 @@ describe("axisValues", () => {
     expect(axisValues("tecido", variants)).toEqual([]);
     expect(axisValues("cor", [])).toEqual([]);
   });
+
+  it("junta valores que só diferem na caixa e devolve no padrão do catálogo", () => {
+    expect(
+      axisValues("cor", [{ cor: "RAJADO" }, { cor: "Rajado" }, { cor: " rajado " }, { cor: "Azul" }]),
+    ).toEqual(["Rajado", "Azul"]);
+  });
 });
 
 describe("variantLabel", () => {

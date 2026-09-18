@@ -586,6 +586,9 @@ export type AddVariantInput = z.input<typeof addVariantSchema>;
 
 export async function addVariant(db: ServiceDb, input: AddVariantInput) {
   const parsed = addVariantSchema.parse(input);
+  // Cor/tamanho no padrão do catálogo (como createProduct): "RAJADO" digitado
+  // vira "Rajado", senão a foto marcada com a cor não acha a variação.
+  const attributes = normalizeAttributeValues(parsed.attributes);
   try {
     return await db.transaction(async (tx) => {
       await requireProduct(tx, parsed.productId);
@@ -594,7 +597,7 @@ export async function addVariant(db: ServiceDb, input: AddVariantInput) {
         .values({
           productId: parsed.productId,
           sku: parsed.sku,
-          attributes: parsed.attributes,
+          attributes,
           barcodeEan: parsed.barcodeEan ?? null,
           weightGrams: parsed.weightGrams ?? null,
           lengthMm: parsed.lengthMm ?? null,
@@ -612,7 +615,7 @@ export async function addVariant(db: ServiceDb, input: AddVariantInput) {
         action: "variant.create",
         entityType: "product_variant",
         entityId: variant.id,
-        after: { productId: parsed.productId, sku: variant.sku, attributes: parsed.attributes },
+        after: { productId: parsed.productId, sku: variant.sku, attributes },
       });
       // Cor nova pode entrar no carrossel (quando tiver foto e preço).
       await enqueueProductCardRefresh(tx as unknown as DbOrTx, {
@@ -738,11 +741,9 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
       // Só entra no patch o que realmente mudou: o audit_log vira a trilha
       // limpa de→para (um Salvar sem mudança não grava nada).
       const patch: Partial<typeof current> = {};
-      if (
-        parsed.attributes !== undefined &&
-        stableJson(parsed.attributes) !== stableJson(current.attributes)
-      ) {
-        patch.attributes = parsed.attributes;
+      const attributes = parsed.attributes === undefined ? undefined : normalizeAttributeValues(parsed.attributes);
+      if (attributes !== undefined && stableJson(attributes) !== stableJson(current.attributes)) {
+        patch.attributes = attributes;
       }
       if (parsed.barcodeEan !== undefined && parsed.barcodeEan !== current.barcodeEan) {
         patch.barcodeEan = parsed.barcodeEan;
@@ -1126,10 +1127,11 @@ async function resolveImageColor(
         isNull(productVariants.deletedAt),
       ),
     );
-  const known = rows.some(
-    (row) =>
-      ((row.attributes ?? {}) as Record<string, string>)[colorAxis] === color,
-  );
+  // Variação gravada antes da normalização ("RAJADO") ainda casa com "Rajado".
+  const known = rows.some((row) => {
+    const stored = ((row.attributes ?? {}) as Record<string, string>)[colorAxis];
+    return Boolean(stored) && normalizeAxisValue(stored) === color;
+  });
   if (!known) {
     throw new ServiceError(
       "cor_invalida",
