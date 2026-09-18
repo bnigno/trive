@@ -1,5 +1,5 @@
 // Ferramentas de catálogo da vendedora: listar, detalhar, montar look e resolver peças/variações.
-import { and, eq, gt, ilike, inArray, isNull } from "drizzle-orm";
+import { and, eq, gt, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { CATALOG_MAX_LISTS_PER_CALL, CATALOG_RESEND_GUARD_MS, catalogListMessage, truncateOptionTitle } from "@/core/bot/option-list";
 import type { BotToolInputs } from "@/core/bot/tools";
 import {
@@ -99,6 +99,15 @@ async function catalogListsDelivered(db: DbOrTx, conversationId: string, lists: 
     );
   const delivered = new Set(rows.map((row) => row.body));
   return bodies.every((body) => delivered.has(body));
+}
+
+/**
+ * SKU por igualdade, sem maiúsculas — nunca ILIKE: "_" e "%" viravam curinga
+ * e um "%" solto devolvia a primeira variante da tabela. Bate no índice
+ * product_variants_sku_lower_unique_idx.
+ */
+function skuEquals(sku: string) {
+  return sql`lower(${productVariants.sku}) = lower(${sku.trim()})`;
 }
 
 /** O título da lista tocável: o nome da loja. */
@@ -455,7 +464,7 @@ export async function resolveProductDetail(
     .innerJoin(products, eq(products.id, productVariants.productId))
     .where(
       and(
-        ilike(productVariants.sku, trimmed),
+        skuEquals(trimmed),
         isNull(productVariants.deletedAt),
       ),
     )
@@ -694,7 +703,7 @@ export async function resolveVariantBySku(db: DbOrTx, sku: string) {
     )
     .where(
       and(
-        ilike(productVariants.sku, sku),
+        skuEquals(sku),
         eq(productVariants.isActive, true),
         isNull(productVariants.deletedAt),
       ),
@@ -729,7 +738,7 @@ export async function findVariantForBot(
     })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
-    .where(and(ilike(productVariants.sku, sku.trim()), isNull(productVariants.deletedAt)))
+    .where(and(skuEquals(sku), isNull(productVariants.deletedAt)))
     .limit(1);
   if (!row) return null;
   const axes = Array.isArray(row.attributesSchema) ? (row.attributesSchema as string[]) : [];

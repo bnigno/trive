@@ -34,6 +34,9 @@ describe("polishBotReply — marcadores da lista tocável", () => {
   it("o marcador com a faixa (e o de lista que falhou) some mesmo no meio da frase", () => {
     expect(polishBotReply("Já mandei tudo [lista tocável do catálogo (11–20 de 25) enviada ao cliente] logo acima.")).toBe("Já mandei tudo logo acima.");
     expect(polishBotReply("Olha [lista tocável do catálogo enviada ao cliente] aí.")).toBe("Olha aí.");
+    // O [sku: …] da sacola é só para a ferramenta: se o modelo copiar, some (charset estrito: nada da cliente vai junto).
+    expect(polishBotReply("Tirei o Cropped Íris [sku: CROPPED-IRIS-MARR-TAUN] da sacola.")).toBe("Tirei o Cropped Íris da sacola.");
+    expect(polishBotReply("Ficou 1× Vestido Dunas (Preto · M) — R$ 289,00 [sku: VEST-DUNAS-PRET-M]")).toBe("Ficou 1× Vestido Dunas (Preto · M) — R$ 289,00");
     expect(polishBotReply("Vou reenviar [lista tocável do catálogo (1–10 de 25) que NÃO chegou à cliente (falhou)] agora.")).toBe("Vou reenviar agora.");
   });
 });

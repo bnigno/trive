@@ -73,6 +73,15 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("confirmar_entrega");
   });
 
+  it("regra 13: peça na sacola não se adiciona de novo, quantidade é o total, SKU nunca vai para a cliente; regra 3 não promete SKU no histórico", () => {
+    const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
+    expect(prompt).toContain("peça que já está na sacola não se adiciona de novo");
+    expect(prompt).toContain("quantidade é o TOTAL da linha");
+    expect(prompt).toContain("NUNCA escreva um SKU para a cliente");
+    expect(prompt).toContain("valem dentro deste turno");
+    expect(prompt).not.toContain("ficam no histórico — não chame de novo");
+  });
+
   it("regra 26: fora da área do motoboy, Correios com frete calculado pela equipe — transferir, nunca inventar valor nem criar_pedido", () => {
     const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
     expect(prompt).toContain("26. FORA DA ÁREA DO MOTOBOY");

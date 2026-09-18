@@ -287,15 +287,23 @@ describe("sacola", () => {
 
     const state = await botState(conversationId);
     expect(state.cart).toEqual([
-      { sku: "CANECA-AZUL", quantidade: 2, nome: "Caneca Azul", variacao: "", precoCents: 4990 },
+      { sku: "CANECA-AZUL", variantId: expect.any(String), quantidade: 2, nome: "Caneca Azul", variacao: "", precoCents: 4990 },
     ]);
     expect(state.lastQuotes).toBeUndefined();
 
     const ver = await executor("ver_sacola", {});
-    expect(ver.text).toContain("• 2× Caneca Azul");
+    expect(ver.text).toContain("• 2× Caneca Azul — R$");
+    expect(ver.text).toContain("[sku: CANECA-AZUL]");
+
+    // Repetir a peça (o turno do "SIM") não dobra: quantidade é o total.
+    const repetida = await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+    expect(repetida.ok).toBe(true);
+    expect(repetida.text).toContain("[Já estava na sacola: 2× Caneca Azul — nada mudou.");
+    expect((await botState(conversationId)).cart).toMatchObject([{ quantidade: 2 }]);
 
     const naoTem = await executor("remover_da_sacola", { sku: "OUTRA" });
     expect(naoTem.ok).toBe(false);
+    expect(naoTem.text).toContain('Nada na sacola casa com "OUTRA"');
 
     const removeu = await executor("remover_da_sacola", { sku: "CANECA-AZUL" });
     expect(removeu.ok).toBe(true);
@@ -1258,6 +1266,105 @@ describe("listar_produtos 2.0", () => {
     expect(alem.ok).toBe(false);
     expect(alem.text).toContain("Não existe a página 5");
     expect(attachments.filter((a) => a.kind === "option_list")).toHaveLength(4);
+  });
+});
+
+describe("sacola robusta (incidente de 18/09: SKU velho, remover pelo nome, sem duplicar)", () => {
+  it("remover pelo nome como está na sacola, pelo SKU atual quando a linha guarda o velho, e ambíguo lista com [sku: …]", async () => {
+    const { variantId } = await createSimpleProduct("CROPPED-IRIS-MARR-TAUN", "Cropped Íris", 4499);
+    await createSimpleProduct("VEST-DUNAS-PRET-M", "Vestido Dunas", 28900);
+    const conversationId = await createConversation();
+    // A linha entrou quando a peça se chamava "Cropped Íris Suplex" e tinha outro SKU (a dona renomeou depois).
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "CROPPED-IRIS-SUPLEX-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris Suplex", variacao: "Marrom · Tam Único", precoCents: 4499 },
+            { sku: "VEST-DUNAS-PRET-M", quantidade: 1, nome: "Vestido Dunas", variacao: "Preto · M", precoCents: 28900 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const executor = executorFor(conversationId);
+
+    // Pelo SKU atual (o que detalhar_produto devolve): a variante casa com a linha velha.
+    const porSkuAtual = await executor("remover_da_sacola", { sku: "CROPPED-IRIS-MARR-TAUN" });
+    expect(porSkuAtual.ok).toBe(true);
+    expect(porSkuAtual.text).toContain("Tirei 1× Cropped Íris Suplex (Marrom · Tam Único) da sacola.");
+    expect((await botState(conversationId)).cart).toMatchObject([{ sku: "VEST-DUNAS-PRET-M" }]);
+
+    // Pelo nome, como a cliente fala.
+    const porNome = await executor("remover_da_sacola", { sku: "vestido dunas preto" });
+    expect(porNome.ok).toBe(true);
+    expect((await botState(conversationId)).cart).toEqual([]);
+
+    // Duas linhas parecidas: a ferramenta lista e pede o [sku: …].
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "CROPPED-IRIS-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris", variacao: "Marrom · Tam Único", precoCents: 4499 },
+            { sku: "CROPPED-IRIS-PRET-TAUN", quantidade: 1, nome: "Cropped Íris", variacao: "Preto · Tam Único", precoCents: 4499 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const ambiguo = await executor("remover_da_sacola", { sku: "cropped íris" });
+    expect(ambiguo.ok).toBe(false);
+    expect(ambiguo.text).toContain("serve para mais de uma linha");
+    expect(ambiguo.text).toContain("[sku: CROPPED-IRIS-MARR-TAUN]");
+    expect(ambiguo.text).toContain("[sku: CROPPED-IRIS-PRET-TAUN]");
+  });
+
+  it("ver_sacola cura a linha com SKU/nome velhos pela variante, junta a duplicata, e marca a peça que saiu de venda; criar_pedido manda tirar pelo nome", async () => {
+    const { variantId } = await createSimpleProduct("CROPPED-IRIS-MARR-TAUN", "Cropped Íris", 4499);
+    const morta = await createSimpleProduct("SAIA-LUA-P", "Saia Lua", 15900);
+    await db.update(schema.productVariants).set({ isActive: false }).where(eq(schema.productVariants.id, morta.variantId));
+    const conversationId = await createConversation();
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "CROPPED-IRIS-SUPLEX-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris Suplex", variacao: "Marrom · Tam Único", precoCents: 3999 },
+            { sku: "CROPPED-IRIS-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris", variacao: "Marrom · Tam Único", precoCents: 4499 },
+            { sku: "SAIA-LUA-P", variantId: morta.variantId, quantidade: 1, nome: "Saia Lua", variacao: "", precoCents: 15900 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const executor = executorFor(conversationId);
+
+    const ver = await executor("ver_sacola", {});
+    expect(ver.ok).toBe(true);
+    expect(ver.text).toContain("• 1× Cropped Íris — R$");
+    expect(ver.text).toContain('[Linha atualizada: o SKU de "Cropped Íris Suplex" mudou de CROPPED-IRIS-SUPLEX-MARR-TAUN para CROPPED-IRIS-MARR-TAUN.]');
+    expect(ver.text).toContain('[A linha "Saia Lua" não está mais à venda');
+    // A linha velha só aparece na nota da cura, não na sacola.
+    expect(ver.text.split("\n").filter((line) => line.startsWith("•")).join("\n")).not.toContain("SUPLEX");
+    const cart = (await botState(conversationId)).cart as { sku: string; quantidade: number; precoCents: number }[];
+    expect(cart.map((item) => [item.sku, item.quantidade, item.precoCents])).toEqual([
+      ["CROPPED-IRIS-MARR-TAUN", 1, 4499],
+      ["SAIA-LUA-P", 1, 15900],
+    ]);
+
+    const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "1" });
+    expect(pedido.ok).toBe(false);
+    expect(pedido.text).toContain('A sacola tem uma linha que não está mais à venda: "Saia Lua". Chame remover_da_sacola com esse nome');
+
+    const tirou = await executor("remover_da_sacola", { sku: "Saia Lua" });
+    expect(tirou.ok).toBe(true);
+    expect((await botState(conversationId)).cart).toMatchObject([{ sku: "CROPPED-IRIS-MARR-TAUN" }]);
+  });
+
+  it("busca por SKU é exata: '_' e '%' não são curingas (antes um '%' devolvia a primeira variante da tabela)", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    const executor = executorFor(await createConversation());
+    expect((await executor("adicionar_a_sacola", { sku: "CANECA_AZUL" })).ok).toBe(false);
+    expect((await executor("adicionar_a_sacola", { sku: "%" })).ok).toBe(false);
+    expect((await executor("adicionar_a_sacola", { sku: " caneca-azul " })).ok).toBe(true);
   });
 });
 

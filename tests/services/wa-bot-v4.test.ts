@@ -329,21 +329,27 @@ describe("validar_cupom", () => {
     expect((await execute("validar_cupom", { cupom: "DEZ10" })).ok).toBe(true);
     expect((await botState()).coupon).toMatchObject({ discountCents: 1798 });
 
-    const more = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    // Quantidade é o TOTAL da linha: 3 fixa 3 (não 2 + 3).
+    const more = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 3 });
+    expect(more.text).toContain("Ajustei Longo Dunas (Areia · M) de 2× para 3× (quantidade = total na sacola).");
     expect(more.text).toContain(`[Cupom DEZ10 continua válido: desconto de ${formatCentsBRL(2697)} nesta sacola.]`);
+    expect((await botState()).coupon).toMatchObject({ code: "DEZ10", discountCents: 2697 });
+    // Repetir sem quantidade: nada muda, e o cupom fica como está.
+    const again = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M" });
+    expect(again.text).toContain("nada mudou");
     expect((await botState()).coupon).toMatchObject({ code: "DEZ10", discountCents: 2697 });
 
     // Sacola cai abaixo do mínimo: o cupom deixa de valer e é esquecido.
     const less = await execute("remover_da_sacola", { sku: "DUNAS-AREIA-M" });
     expect(less.ok).toBe(true);
-    expect(less.text).toContain("Tirei da sacola.");
+    expect(less.text).toContain("Tirei 3× Longo Dunas (Areia · M) da sacola.");
     expect(less.text).toContain("[O cupom DEZ10 validado antes foi esquecido: a sacola ficou vazia.");
     expect((await botState()).coupon).toBeUndefined();
 
     await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 2 });
     expect((await execute("validar_cupom", { cupom: "DEZ10" })).ok).toBe(true);
     await db.update(schema.coupons).set({ minOrderCents: 50_000 }).where(eq(schema.coupons.code, "DEZ10"));
-    const changed = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    const changed = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 3 });
     expect(changed.text).toContain(`[O cupom DEZ10 deixou de valer para esta sacola: Este cupom vale para pedidos a partir de ${formatCentsBRL(50_000)}.`);
     expect((await botState()).coupon).toBeUndefined();
   });

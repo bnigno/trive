@@ -1,13 +1,11 @@
 // Ferramentas da sacola da vendedora.
-import { inArray } from "drizzle-orm";
-import { cartAdd, cartRemove, cartSubtotalCents, formatCartLines, type BotCartItem, type BotState } from "@/core/bot/memory";
+import { cartAdd, cartRemoveAt, cartSubtotalCents, findCartItem, formatCartLines, mergeCartByVariant, type BotCartItem, type BotState } from "@/core/bot/memory";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
-import { productVariants } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import { quoteCoupon, ServiceError as CouponServiceError } from "@/services/coupons";
-import { computeTotalWeightGrams } from "@/services/store-catalog";
+import { computeTotalWeightGrams, getSellableVariantById, getSellableVariantBySku } from "@/services/store-catalog";
 
 import { availableQtyOf, resolveVariantBySku } from "./catalog";
 import { readBotState, updateBotState } from "./shared";
@@ -73,33 +71,50 @@ export async function execAdicionarASacola(
       text: `Não encontrei o SKU "${input.sku}" no catálogo. Confirme a peça com detalhar_produto antes de pôr na sacola.`,
     };
   }
-  const available = await availableQtyOf(db, variant.variantId);
   const axes = (variant.attributesSchema ?? []) as string[];
   const variacao = variantLabel(
     (variant.attributes ?? {}) as Record<string, string>,
     axes,
   );
   const rotulo = variacao ? `${variant.name} (${variacao})` : variant.name;
-  if (available < input.quantidade) {
+
+  // Quantidade é o TOTAL da linha (nunca soma): repetir a chamada no turno
+  // do "SIM" não pode dobrar a peça. Já está igual → nada muda, e a cotação
+  // de frete e o cupom ficam como estão.
+  const before = await readBotState(db, ctx);
+  const existente = (before.cart ?? []).find((item) => item.sku.toLowerCase() === variant.sku.toLowerCase()) ?? null;
+  const quantidade = input.quantidade ?? existente?.quantidade ?? 1;
+  if (existente && existente.quantidade === quantidade && existente.variantId === variant.variantId) {
+    return {
+      ok: true,
+      text: [
+        `[Já estava na sacola: ${existente.quantidade}× ${rotulo} — nada mudou. Para outra quantidade, passe o TOTAL em quantidade; para tirar, remover_da_sacola.]`,
+        ...formatCartLines(before.cart),
+      ].join("\n"),
+    };
+  }
+  const available = await availableQtyOf(db, variant.variantId);
+  if (available < quantidade) {
     return {
       ok: false,
       text:
         available === 0
           ? `${rotulo} está esgotada agora. Ofereça outra cor ou tamanho disponível (detalhar_produto) ou avisar_quando_voltar com este SKU.`
-          : `${rotulo} tem só ${available} ${available === 1 ? "unidade" : "unidades"} disponível — pedi ${input.quantidade}. Ajuste a quantidade com a cliente.`,
+          : `${rotulo} tem só ${available} ${available === 1 ? "unidade" : "unidades"} disponível — pedi ${quantidade}. Ajuste a quantidade com a cliente.`,
     };
   }
 
-  const item: BotCartItem = {
+  const added = cartAdd(before.cart, {
     sku: variant.sku,
-    quantidade: input.quantidade,
+    variantId: variant.variantId,
+    quantidade,
     nome: variant.name,
     variacao,
     precoCents: variant.priceCents,
-  };
+  });
   const { state, couponNote } = await changeCart(db, ctx, (current) => ({
     ...current,
-    cart: cartAdd(current.cart, item),
+    cart: added.cart,
     // Sacola mudou: a cotação anterior valia para outro peso.
     lastQuotes: undefined,
     chosenRateId: undefined,
@@ -108,7 +123,9 @@ export async function execAdicionarASacola(
   return {
     ok: true,
     text: [
-      `Adicionei ${input.quantidade}× ${rotulo} à sacola.`,
+      existente
+        ? `Ajustei ${rotulo} de ${existente.quantidade}× para ${quantidade}× (quantidade = total na sacola).`
+        : `Adicionei ${quantidade}× ${rotulo} à sacola.`,
       ...formatCartLines(state.cart),
       ...(couponNote ? [couponNote] : []),
       "[Se a sacola tiver tudo, siga para o CEP e cotar_frete. Sugira UMA peça que completa o look só depois do pedido fechado.]",
@@ -116,12 +133,61 @@ export async function execAdicionarASacola(
   };
 }
 
+/**
+ * Como a variante da linha está no catálogo HOJE: `sellable` quando ativa
+ * (com o SKU/nome/preço atuais), `gone` quando não existe mais, foi
+ * desativada ou não tem preço.
+ */
+type CartLineStatus = { item: BotCartItem; healed: BotCartItem | null; gone: boolean };
+
+/**
+ * Confere cada linha da sacola com o catálogo: por variantId (o SKU é
+ * rótulo editável — a dona renomeia a peça e a linha ficaria órfã), senão
+ * pelo SKU. Linha que resolve com SKU/nome/preço diferentes é CURADA; linha
+ * que não resolve é marcada para a Lia tirar pelo nome. Grava só se algo
+ * mudou. A cura junta linha velha e nova da mesma variante.
+ */
+export async function reconcileCartLines(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+): Promise<{ cart: BotCartItem[]; notes: string[]; gone: BotCartItem[] }> {
+  const state = await readBotState(db, ctx);
+  const statuses: CartLineStatus[] = [];
+  for (const item of state.cart ?? []) {
+    const byId = item.variantId ? await getSellableVariantById(db, item.variantId) : null;
+    const variant = byId ?? (await getSellableVariantBySku(db, item.sku, { includeHidden: true }));
+    if (!variant) {
+      statuses.push({ item, healed: null, gone: true });
+      continue;
+    }
+    const variacao = variantLabel(variant.attributes, variant.attributesSchema);
+    const fresh: BotCartItem = { ...item, sku: variant.sku, variantId: variant.variantId, nome: variant.name, variacao, precoCents: variant.priceCents };
+    const changed = fresh.sku !== item.sku || fresh.variantId !== item.variantId || fresh.nome !== item.nome || fresh.variacao !== item.variacao || fresh.precoCents !== item.precoCents;
+    statuses.push({ item, healed: changed ? fresh : null, gone: false });
+  }
+  const notes = statuses
+    .filter((line) => line.healed && line.healed.sku !== line.item.sku)
+    .map((line) => `[Linha atualizada: o SKU de "${line.item.nome}" mudou de ${line.item.sku} para ${line.healed!.sku}.]`);
+  const merged = mergeCartByVariant(statuses.map((line) => line.healed ?? line.item));
+  const changed = statuses.some((line) => line.healed) || merged.length !== (state.cart ?? []).length;
+  const cart = changed
+    ? (await updateBotState(db, ctx, (current) => ({ ...current, cart: merged }))).cart ?? merged
+    : merged;
+  return { cart, notes, gone: statuses.filter((line) => line.gone).map((line) => line.item) };
+}
+
+function goneLines(gone: readonly BotCartItem[]): string[] {
+  return gone.map(
+    (item) => `[A linha "${item.variacao ? `${item.nome} (${item.variacao})` : item.nome}" não está mais à venda (peça desativada ou fora do catálogo): tire da sacola com remover_da_sacola usando esse nome, e ofereça outra.]`,
+  );
+}
+
 export async function execVerSacola(
   db: DbOrTx,
   ctx: BotExecutorContext,
 ): Promise<ToolResult> {
-  const state = await readBotState(db, ctx);
-  return { ok: true, text: formatCartLines(state.cart).join("\n") };
+  const { cart, notes, gone } = await reconcileCartLines(db, ctx);
+  return { ok: true, text: [...formatCartLines(cart), ...notes, ...goneLines(gone)].join("\n") };
 }
 
 export async function execRemoverDaSacola(
@@ -130,41 +196,48 @@ export async function execRemoverDaSacola(
   input: BotToolInputs["remover_da_sacola"],
 ): Promise<ToolResult> {
   const before = await readBotState(db, ctx);
-  const existed = (before.cart ?? []).some(
-    (item) => item.sku.toLowerCase() === input.sku.trim().toLowerCase(),
-  );
-  if (!existed) {
+  const cart = before.cart ?? [];
+  let match = findCartItem(cart, input.sku);
+  // A Lia tem o SKU atual (detalhar_produto) e a sacola guarda o velho: a variante decide.
+  if (match === null) {
+    const variant = await resolveVariantBySku(db, input.sku);
+    const index = variant ? cart.findIndex((item) => item.variantId === variant.variantId) : -1;
+    if (index >= 0) match = { item: cart[index], index };
+  }
+  if (match === null) {
     return {
       ok: false,
-      text: `O SKU "${input.sku}" não está na sacola.\n${formatCartLines(before.cart).join("\n")}`,
+      text: `Nada na sacola casa com "${input.sku}". Use o [sku: …] ou o nome como está na sacola:\n${formatCartLines(cart).join("\n")}`,
     };
   }
+  if ("ambiguous" in match) {
+    return {
+      ok: false,
+      text: `"${input.sku}" serve para mais de uma linha — passe o [sku: …] da que a cliente quer tirar:\n${formatCartLines(match.ambiguous).join("\n")}`,
+    };
+  }
+  const { index, item } = match;
   const { state, couponNote } = await changeCart(db, ctx, (current) => ({
     ...current,
-    cart: cartRemove(current.cart, input.sku),
+    cart: cartRemoveAt(current.cart, index),
     lastQuotes: undefined,
     chosenRateId: undefined,
     chosenOptionKey: undefined,
   }));
   return {
     ok: true,
-    text: ["Tirei da sacola.", ...formatCartLines(state.cart), ...(couponNote ? [couponNote] : [])].join("\n"),
+    text: [`Tirei ${item.quantidade}× ${item.variacao ? `${item.nome} (${item.variacao})` : item.nome} da sacola.`, ...formatCartLines(state.cart), ...(couponNote ? [couponNote] : [])].join("\n"),
   };
 }
 
+/** Peso da sacola pela variante (o SKU da linha pode ter mudado); linha que não resolve entra com o peso padrão. */
 export async function cartWeightGrams(db: DbOrTx, cart: readonly BotCartItem[]): Promise<number> {
-  const skus = cart.map((item) => item.sku);
-  const variants = await db
-    .select({ sku: productVariants.sku, weightGrams: productVariants.weightGrams })
-    .from(productVariants)
-    .where(inArray(productVariants.sku, skus));
-  const weightBySku = new Map(variants.map((v) => [v.sku, v.weightGrams]));
-  return computeTotalWeightGrams(
-    cart.map((item) => ({
-      weightGrams: weightBySku.get(item.sku) ?? null,
-      quantity: item.quantidade,
-    })),
-  );
+  const lines: { weightGrams: number | null; quantity: number }[] = [];
+  for (const item of cart) {
+    const variant = (item.variantId ? await getSellableVariantById(db, item.variantId) : null) ?? (await getSellableVariantBySku(db, item.sku, { includeHidden: true }));
+    lines.push({ weightGrams: variant?.weightGrams ?? null, quantity: item.quantidade });
+  }
+  return computeTotalWeightGrams(lines);
 }
 
 /**

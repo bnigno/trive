@@ -56,7 +56,7 @@ export type BotToolInputs = {
     pagina?: number;
   };
   detalhar_produto: { produto: string; cor?: string };
-  adicionar_a_sacola: { sku: string; quantidade: number };
+  adicionar_a_sacola: { sku: string; quantidade?: number };
   ver_sacola: Record<string, never>;
   remover_da_sacola: { sku: string };
   /** Código como a cliente escreveu; o executor normaliza e calcula sobre a sacola. */
@@ -224,8 +224,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         quantidade: {
           type: "integer",
           minimum: 1,
-          default: 1,
-          description: "Quantidade (inteiro, mínimo 1). Padrão 1.",
+          description: "Quantidade TOTAL desta peça na sacola (não soma): omita para 1; para mais unidades passe o total (ex.: 2). Chamar de novo com a peça já na sacola não muda nada.",
         },
       },
       required: ["sku"],
@@ -245,10 +244,15 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   },
   {
     name: "remover_da_sacola",
-    description: "Tira uma combinação (SKU) da sacola desta conversa.",
+    description: "Tira uma peça da sacola desta conversa: pelo SKU (o [sku: …] que ver_sacola e o caderninho mostram) ou pelo NOME como aparece na sacola (ex.: 'Cropped Íris Suplex'). Se duas linhas servirem, a ferramenta lista e você escolhe.",
     input_schema: {
       type: "object",
-      properties: { sku: skuProperty },
+      properties: {
+        sku: {
+          type: "string",
+          description: "O SKU da linha (o [sku: …] da sacola) ou o nome da peça como está na sacola.",
+        },
+      },
       required: ["sku"],
       additionalProperties: false,
     },
@@ -767,7 +771,7 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   }),
   adicionar_a_sacola: z.strictObject({
     sku: z.string().min(1),
-    quantidade: z.number().int().min(1).max(20).default(1),
+    quantidade: z.number().int().min(1).max(20).optional(),
   }),
   ver_sacola: z.strictObject({}),
   remover_da_sacola: z.strictObject({

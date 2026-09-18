@@ -4,7 +4,9 @@ import { formatCentsBRL } from "@/lib/money";
 import {
   addNote,
   cartAdd,
-  cartRemove,
+  cartRemoveAt,
+  findCartItem,
+  mergeCartByVariant,
   CART_MAX_QTY,
   cartSubtotalCents,
   formatCartLines,
@@ -56,27 +58,66 @@ describe("addNote", () => {
 });
 
 describe("sacola", () => {
-  it("soma quantidade do mesmo SKU (sem diferenciar caixa) e remove", () => {
-    let cart = cartAdd(undefined, VESTIDO);
-    cart = cartAdd(cart, { ...VESTIDO, sku: "vest-dunas-pret-m", quantidade: 2 });
-    expect(cart).toHaveLength(1);
-    expect(cart[0].quantidade).toBe(3);
-    expect(cartSubtotalCents(cart)).toBe(86700);
+  it("quantidade é o TOTAL da linha (nunca soma; sem diferenciar caixa): repetir não dobra, omitir mantém, explícita fixa", () => {
+    const primeira = cartAdd(undefined, VESTIDO);
+    expect(primeira.existed).toBeNull();
+    expect(primeira.cart[0].quantidade).toBe(1);
 
-    cart = cartRemove(cart, "VEST-DUNAS-PRET-M");
-    expect(cart).toEqual([]);
+    // A Lia repete adicionar_a_sacola no turno do "SIM": nada muda.
+    const repetida = cartAdd(primeira.cart, { ...VESTIDO, sku: "vest-dunas-pret-m", quantidade: undefined });
+    expect(repetida.existed?.sku).toBe("VEST-DUNAS-PRET-M");
+    expect(repetida.cart).toHaveLength(1);
+    expect(repetida.cart[0].quantidade).toBe(1);
+
+    const tres = cartAdd(repetida.cart, { ...VESTIDO, quantidade: 3 });
+    expect(tres.cart[0].quantidade).toBe(3);
+    expect(cartSubtotalCents(tres.cart)).toBe(86700);
+    const uma = cartAdd(tres.cart, { ...VESTIDO, quantidade: 1 });
+    expect(uma.cart[0].quantidade).toBe(1);
+
+    expect(cartRemoveAt(uma.cart, 0)).toEqual([]);
+    expect(cartRemoveAt(uma.cart, 5)).toHaveLength(1);
   });
 
   it("linha nova acima do teto é cortada (a ponte do site pode trazer 24; o caderninho aceita até 20)", () => {
-    const cart = cartAdd(undefined, { ...VESTIDO, quantidade: 24 });
+    const { cart } = cartAdd(undefined, { ...VESTIDO, quantidade: 24 });
     expect(cart[0].quantidade).toBe(CART_MAX_QTY);
     expect(parseBotState({ cart })).toEqual({ cart });
   });
 
-  it("formata linhas com variação e subtotal, e avisa sacola vazia", () => {
+  it("variantId torto não derruba o caderninho; ausente continua válido", () => {
+    expect(parseBotState({ cart: [{ ...VESTIDO, variantId: 42 }] })).toEqual({ cart: [VESTIDO] });
+    expect(parseBotState({ cart: [VESTIDO] })).toEqual({ cart: [VESTIDO] });
+    expect(parseBotState({ cart: [{ ...VESTIDO, variantId: "v1" }] })).toEqual({ cart: [{ ...VESTIDO, variantId: "v1" }] });
+  });
+
+  it("findCartItem: pelo SKU, pelo nome sem acento/variação, ambíguo e nenhum", () => {
+    const cropped: BotCartItem = { sku: "CROPPED-IRIS-SUPLEX-MARR-TAUN", quantidade: 1, nome: "Cropped Íris Suplex", variacao: "Marrom · Tam Único", precoCents: 4499 };
+    const croppedPreto: BotCartItem = { sku: "CROPPED-IRIS-SUPLEX-PRET-TAUN", quantidade: 1, nome: "Cropped Íris Suplex", variacao: "Preto · Tam Único", precoCents: 4499 };
+    const cart = [VESTIDO, cropped, croppedPreto];
+    expect(findCartItem(cart, " cropped-iris-suplex-marr-taun ")).toEqual({ item: cropped, index: 1 });
+    expect(findCartItem(cart, "cropped iris marrom")).toEqual({ item: cropped, index: 1 });
+    expect(findCartItem(cart, "Cropped Íris Suplex (Preto · Tam Único)")).toEqual({ item: croppedPreto, index: 2 });
+    expect(findCartItem(cart, "vestido dunas")).toEqual({ item: VESTIDO, index: 0 });
+    expect(findCartItem(cart, "cropped")).toEqual({ ambiguous: [cropped, croppedPreto] });
+    expect(findCartItem(cart, "saia midi")).toBeNull();
+    expect(findCartItem(cart, "  ")).toBeNull();
+    // O SKU atual da peça (a Lia leu em detalhar_produto) não é o da linha velha: por nome ainda acha.
+    expect(findCartItem(cart, "CROPPED-IRIS-MARR-TAUN")).toBeNull();
+  });
+
+  it("mergeCartByVariant: linha velha e nova da mesma variante viram uma (maior quantidade); sem variantId nada muda", () => {
+    const velha: BotCartItem = { ...VESTIDO, sku: "VEST-DUNAS-OLD", variantId: "v1", quantidade: 1 };
+    const nova: BotCartItem = { ...VESTIDO, variantId: "v1", quantidade: 2 };
+    const outra: BotCartItem = { ...VESTIDO, sku: "OUTRA", nome: "Outra", quantidade: 1 };
+    expect(mergeCartByVariant([velha, nova, outra])).toEqual([{ ...velha, quantidade: 2 }, outra]);
+    expect(mergeCartByVariant([outra, { ...outra }])).toHaveLength(2);
+  });
+
+  it("formata linhas com variação, subtotal e o [sku: …] para a ferramenta; avisa sacola vazia", () => {
     expect(formatCartLines(undefined)).toEqual(["Sacola vazia."]);
     expect(formatCartLines([VESTIDO])).toEqual([
-      `• 1× Vestido Dunas (Preto · M) — ${formatCentsBRL(28900)}`,
+      `• 1× Vestido Dunas (Preto · M) — ${formatCentsBRL(28900)} [sku: VEST-DUNAS-PRET-M]`,
       `Subtotal: ${formatCentsBRL(28900)} (frete à parte)`,
     ]);
   });
@@ -206,7 +247,7 @@ describe("renderContextNote", () => {
     expect(note).toContain("• Nome no WhatsApp: Maria");
     expect(note).toContain("• Anotações: veste M em vestidos; prefere tons terrosos");
     expect(note).toContain(
-      `• Sacola agora: 1× Vestido Dunas (Preto · M) — subtotal ${formatCentsBRL(28900)}`,
+      `• Sacola agora: 1× Vestido Dunas (Preto · M) [sku: VEST-DUNAS-PRET-M] — subtotal ${formatCentsBRL(28900)}`,
     );
     expect(note).toContain("• Peça em vista: Vestido Dunas (cor Preto)");
     expect(note).toContain(
