@@ -474,9 +474,16 @@ export default async function PedidoDetalhePage({
             </Card>
           ) : null}
 
-          {status === "paid" || status === "preparing" ? (
-            <Card title="Embalagem">
+          {status === "paid" || status === "preparing" || cashPending ? (
+            <Card title={cashPending ? "Embalagem (dinheiro na entrega)" : "Embalagem"}>
               <div className="flex flex-col gap-4">
+                {cashPending ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {order.deliveryWindow?.dispatchedAt
+                      ? "Dinheiro na entrega: o pacote já saiu com o motoboy — marque como pago só com o dinheiro na mão."
+                      : "Dinheiro na entrega: embale e registre a foto agora — o pedido só sai com o motoboy depois dela; marque como pago só com o dinheiro na mão."}
+                  </p>
+                ) : null}
                 <PackForm
                   orderId={order.id}
                   photoUrl={
@@ -497,20 +504,6 @@ export default async function PedidoDetalhePage({
                   />
                 ) : null}
               </div>
-            </Card>
-          ) : cashPending && (editionStatus.cards > 0 || editionStatus.letter) ? (
-            <Card title="Caixa">
-              <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-                Dinheiro na entrega: prepare a caixa agora e marque como pago só com o dinheiro na mão.
-              </p>
-              <EditionCardsLink
-                orderId={order.id}
-                generatedAt={order.editionCardsAt}
-                stale={editionCardsStale}
-                firstPurchase={editionStatus.isFirstPurchase}
-                letter={editionStatus.letter}
-                cards={editionStatus.cards}
-              />
             </Card>
           ) : order.packagePhotoPath && order.packedAt ? (
             <Card title="Embalagem">
@@ -544,6 +537,7 @@ export default async function PedidoDetalhePage({
               paymentMethod={order.paymentMethod}
               trackingCode={order.shippingTrackingCode}
               canRefund={owner}
+              packed={Boolean(order.packagePhotoPath)}
               motoboy={
                 order.deliveryWindow && order.customer
                   ? {

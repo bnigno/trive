@@ -9,8 +9,9 @@ import { getDb } from "@/db/client";
 import { requireOwner, requireUser } from "@/services/auth";
 import {
   ServiceError,
+  deliverByHand,
+  shipOrder,
   transitionOrder,
-  updateOrderTracking,
 } from "@/services/orders";
 import { deliverOrderWithPhoto } from "@/services/delivery";
 import { PACKAGE_PHOTO_MAX_BYTES, packOrder } from "@/services/packing";
@@ -33,6 +34,7 @@ function revalidateOrder(orderId: string): void {
   revalidatePath("/admin/pedidos");
   revalidatePath(`/admin/pedidos/${orderId}`);
   revalidatePath("/admin/pedidos/embalar");
+  revalidatePath("/admin/pedidos/rota");
   revalidatePath("/admin");
 }
 
@@ -97,11 +99,7 @@ export async function markShippedAction(
   try {
     const orderId = orderIdSchema.parse(formData.get("orderId"));
     const trackingCode = String(formData.get("trackingCode") ?? "").trim();
-    const db = getDb();
-    if (trackingCode) {
-      await updateOrderTracking(db, { orderId, trackingCode, userId: user.id });
-    }
-    await transitionOrder(db, { orderId, to: "shipped", userId: user.id });
+    await shipOrder(getDb(), { orderId, ...(trackingCode ? { trackingCode } : {}), userId: user.id });
     revalidateOrder(orderId);
     return {
       success: trackingCode
@@ -158,7 +156,15 @@ export async function markDeliveredAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  return runTransition(formData, "delivered", "Pedido marcado como entregue.");
+  const user = await requireUser();
+  try {
+    const orderId = orderIdSchema.parse(formData.get("orderId"));
+    await deliverByHand(getDb(), { orderId, userId: user.id });
+    revalidateOrder(orderId);
+    return { success: "Pedido marcado como entregue." };
+  } catch (error) {
+    return friendlyError(error);
+  }
 }
 
 export async function cancelOrderAction(
@@ -224,7 +230,9 @@ export async function packOrderAction(
     return {
       success: result.rephoto
         ? "Foto trocada. A cliente não recebe uma segunda mensagem — a nova foto fica na página do pedido."
-        : "Foto guardada e pedido em separação. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.",
+        : result.status === "pending_payment"
+          ? "Foto guardada: o pedido já pode sair com o motoboy (pagamento na entrega). Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes."
+          : "Foto guardada e pedido em separação. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.",
     };
   } catch (error) {
     return friendlyError(error);

@@ -53,6 +53,12 @@ describe("buildOrderJourney", () => {
     expect(comFoto[2]).toMatchObject({ label: "Embalado", state: "current", at: T3 });
   });
 
+  it("dinheiro na entrega embalado antes de pagar: 'Embalado' feito com a foto, com o pagamento ainda a seguir", () => {
+    const steps = buildOrderJourney(input({ status: "pending_payment", packedAt: T3 }))!;
+    expect(steps[1]).toMatchObject({ label: "Pagamento", state: "current" });
+    expect(steps[2]).toMatchObject({ label: "Embalado", state: "done", at: T3 });
+  });
+
   it("enviado: passos anteriores feitos; entregue direto de pago deixa o meio sem hora", () => {
     const enviado = buildOrderJourney(
       input({ status: "shipped", paidAt: T1, preparingAt: T2, packedAt: T3, shippedAt: T4 }),

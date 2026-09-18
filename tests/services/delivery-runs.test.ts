@@ -105,14 +105,22 @@ function input(variantId: string, rateId: string, over: Partial<CreateStoreOrder
   };
 }
 
-async function paidMotoboyOrder(variantId: string, rateId: string, dayKey = TODAY, w = WINDOWS[1], now = MORNING) {
+/** Embalar antes de sair: a foto do pacote registrada (o que packOrder grava), sem passar pela Mesa. */
+async function packed(orderId: string): Promise<void> {
+  await db.update(schema.orders).set({ packagePhotoPath: `packages/${orderId}/embalagem.jpg`, packedAt: new Date() }).where(eq(schema.orders.id, orderId));
+}
+
+async function paidMotoboyOrder(variantId: string, rateId: string, dayKey = TODAY, w = WINDOWS[1], now = MORNING, opts: { packed?: boolean } = {}) {
   const created = await createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey, ...w } }), { now });
   await transitionOrder(sdb, { orderId: created.orderId, to: "paid", userId: FIXED_USER_ID });
+  if (opts.packed !== false) await packed(created.orderId);
   return created;
 }
 
-async function cashMotoboyOrder(variantId: string, rateId: string, dayKey = TODAY, w = WINDOWS[1]) {
-  return createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey, ...w }, paymentMethod: "cash" }), { now: MORNING });
+async function cashMotoboyOrder(variantId: string, rateId: string, dayKey = TODAY, w = WINDOWS[1], opts: { packed?: boolean } = {}) {
+  const created = await createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey, ...w }, paymentMethod: "cash" }), { now: MORNING });
+  if (opts.packed !== false) await packed(created.orderId);
+  return created;
 }
 
 async function courier(name = "Carlos Motoboy", phone = "(91) 98765-4321") {
@@ -199,6 +207,23 @@ describe("listRunEligibleOrders", () => {
     expect(byId.has(pac.orderId)).toBe(false);
   });
 
+  it("embalar antes de sair: pedido sem foto não é elegível (pago e dinheiro), mas quem já está na rua ou voltou para a loja sem foto continua", async () => {
+    const { variantId, rateId } = await setup();
+    const semFoto = await paidMotoboyOrder(variantId, rateId, TODAY, WINDOWS[1], MORNING, { packed: false });
+    const cashSemFoto = await cashMotoboyOrder(variantId, rateId, TODAY, WINDOWS[1], { packed: false });
+    const comFoto = await paidMotoboyOrder(variantId, rateId);
+    // Saiu antes da regra: sem foto, mas já na rua.
+    const naRua = await paidMotoboyOrder(variantId, rateId, TODAY, WINDOWS[1], MORNING, { packed: false });
+    await db
+      .update(schema.orders)
+      .set({ status: "shipped", deliveryWindow: { dayKey: TODAY, ...WINDOWS[1], rateName: "Motoboy Belém", label: "hoje", dispatchedAt: AFTERNOON.toISOString() } })
+      .where(eq(schema.orders.id, naRua.orderId));
+    const eligible = (await listRunEligibleOrders(sdb, { now: AFTERNOON })).map((o) => o.orderNumber).sort();
+    expect(eligible).toEqual([comFoto.orderNumber, naRua.orderNumber].sort());
+    expect(eligible).not.toContain(semFoto.orderNumber);
+    expect(eligible).not.toContain(cashSemFoto.orderNumber);
+  });
+
   it("'Saiu' de mais de 48 h não é 'na rua': fica fora; pedido entregue pelo motoboy à espera da baixa também", async () => {
     const { variantId, rateId } = await setup();
     const old = await paidMotoboyOrder(variantId, rateId, "2026-09-15", WINDOWS[0], new Date("2026-09-15T13:30:00Z"));
@@ -258,6 +283,27 @@ describe("createDeliveryRun", () => {
     expect(run.createdBy).toBe(FIXED_USER_ID);
   });
 
+  it("montar saída com pedido sem foto recusa listando TODOS os números, antes de criar qualquer coisa", async () => {
+    const { variantId, rateId } = await setup();
+    const ok = await paidMotoboyOrder(variantId, rateId);
+    const a = await paidMotoboyOrder(variantId, rateId, TODAY, WINDOWS[1], MORNING, { packed: false });
+    const b = await cashMotoboyOrder(variantId, rateId, TODAY, WINDOWS[1], { packed: false });
+    const c = await courier();
+    await expect(createDeliveryRun(sdb, { courierId: c.id, orderIds: [ok.orderId, a.orderId, b.orderId], userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toMatchObject({
+      code: "NOT_PACKED",
+      message: `Os pedidos #${a.orderNumber}, #${b.orderNumber} ainda não foram embalados: registre a foto do pacote (Mesa de embalagem) antes de montar a saída.`,
+    });
+    expect(await db.select().from(schema.deliveryRuns)).toHaveLength(0);
+    expect(await db.select().from(schema.deliveryStops)).toHaveLength(0);
+    expect((await orderRow(ok.orderId)).status).toBe("paid");
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "order.shipped"))).toHaveLength(0);
+
+    await packed(a.orderId);
+    await packed(b.orderId);
+    const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [ok.orderId, a.orderId, b.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
+    expect(created.stops).toHaveLength(3);
+  });
+
   it("pedido que a dona já marcou como saído entra sem segundo aviso à cliente", async () => {
     const { variantId, rateId } = await setup();
     const paid = await paidMotoboyOrder(variantId, rateId);
@@ -275,6 +321,7 @@ describe("createDeliveryRun", () => {
     const correios = await setup({ kind: "correios" });
     const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }), { now: MORNING });
     await transitionOrder(sdb, { orderId: pac.orderId, to: "paid", userId: FIXED_USER_ID });
+    await packed(pac.orderId);
     const c = await courier();
 
     await expect(createDeliveryRun(sdb, { courierId: c.id, orderIds: [paid.orderId, pac.orderId], userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toThrow(/não é de motoboy/);
@@ -589,6 +636,7 @@ describe("leituras", () => {
       { now: MORNING },
     );
     await transitionOrder(sdb, { orderId: b.orderId, to: "paid", userId: FIXED_USER_ID });
+    await packed(b.orderId);
     const c = await courier();
     const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [a.orderId, b.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
     const geocoder = new FakeGeocoder();

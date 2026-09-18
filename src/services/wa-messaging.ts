@@ -113,6 +113,8 @@ export function buildOrderVars(input: {
 }): Record<string, string> {
   const window = input.deliveryWindow ?? null;
   return {
+    // Depois da embalagem: motoboy não tem rastreio.
+    proximo: window ? "ela sai com o motoboy e a gente te avisa na hora" : "em breve mandamos o rastreio",
     janela: window ? `${hourLabel(window.start)} e ${hourLabel(window.end)}` : "",
     dia: window ? deliveryDayWord(window.dayKey, input.now ?? new Date()) : "",
     presente: input.isGift ? "\n🎁 Presente — sem preço na embalagem" : "",

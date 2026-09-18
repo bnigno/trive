@@ -55,7 +55,8 @@ async function seedTemplate(isActive = true): Promise<void> {
   await db.insert(schema.waTemplates).values({
     key: "order_packed",
     label: "Peça embalada",
-    bodyTemplate: "{{nome}}, sua peça foi embalada com carinho. Acompanhe: {{link}}",
+    // O texto gravado em produção antes do {{proximo}}: a legenda do motoboy não pode prometer rastreio mesmo assim.
+    bodyTemplate: "{{nome}}, sua peça foi embalada com carinho 🤎\nO pedido #{{pedido}} já está pronto para seguir viagem — em breve mandamos o rastreio.\nAcompanhe: {{link}}",
     variables: ["nome", "link"],
     isActive,
   });
@@ -202,7 +203,18 @@ describe("packOrder", () => {
     expect(await packedEvents(orderId)).toHaveLength(1);
   });
 
-  it("recusa pedido fora de pago/separação e foto que não é imagem — sem tocar no storage", async () => {
+  it("dinheiro na entrega embala ainda 'aguardando pagamento': foto e carimbo, sem transição, e entra na mesa", async () => {
+    const { orderId } = await createPaidOrder({ status: "pending_payment" });
+    await db.update(schema.orders).set({ paymentMethod: "cash", paidAt: null }).where(eq(schema.orders.id, orderId));
+    expect((await listOrdersAwaitingPacking(sdb)).map((o) => o.id)).toContain(orderId);
+    const result = await packOrder(sdb, storage, { orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
+    expect(result).toMatchObject({ status: "pending_payment", transitioned: false, rephoto: false });
+    expect(result.packagePhotoPath).toBe(`packages/${orderId}/embalagem.jpg`);
+    expect(await packedEvents(orderId)).toHaveLength(1);
+    expect(await listOrdersAwaitingPacking(sdb)).toEqual([]);
+  });
+
+  it("recusa pedido fora de pago/separação/dinheiro na entrega e foto que não é imagem — sem tocar no storage", async () => {
     const { orderId } = await createPaidOrder({ status: "pending_payment" });
     await expect(
       packOrder(sdb, storage, {
@@ -258,6 +270,21 @@ describe("mesa de embalagem", () => {
 });
 
 describe("sendPackedWa", () => {
+  it("pedido de motoboy: a legenda não promete rastreio (nem com o template antigo gravado em produção)", async () => {
+    await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
+    await seedTemplate();
+    const { orderId } = await createPaidOrder();
+    await db
+      .update(schema.orders)
+      .set({ deliveryWindow: { dayKey: "2026-09-20", start: "19:00", end: "21:00", cutoff: "13:00", rateName: "Motoboy Belém", label: "sábado, 19h–21h" } })
+      .where(eq(schema.orders.id, orderId));
+    await packOrder(sdb, storage, { orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
+    expect(await sendPackedWa(sdb, provider, storage, { orderId })).toMatchObject({ sent: true });
+    expect(provider.sentImages[0].caption).toContain("ela sai com o motoboy e a gente te avisa na hora");
+    expect(provider.sentImages[0].caption).not.toContain("rastreio");
+  });
+
+
   it("envia a foto com a legenda uma vez; a segunda execução é 'ja_enviado'", async () => {
     await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
     await seedTemplate();
@@ -276,6 +303,7 @@ describe("sendPackedWa", () => {
     );
     expect(provider.sentImages[0].caption).toContain("Maria, sua peça foi embalada com carinho");
     expect(provider.sentImages[0].caption).toContain(publicToken);
+    expect(provider.sentImages[0].caption).toContain("em breve mandamos o rastreio");
 
     const messages = await db.select().from(schema.waMessages);
     expect(messages).toHaveLength(1);

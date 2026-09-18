@@ -165,6 +165,7 @@ export function OrderActions({
   trackingCode,
   canRefund,
   motoboy,
+  packed,
 }: {
   orderId: string;
   status: OrderStatus;
@@ -174,7 +175,14 @@ export function OrderActions({
   canRefund: boolean;
   /** Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio; dispatchedLabel = já saiu. */
   motoboy?: { customerName: string; dispatchedLabel: string | null } | null;
+  /** Foto do pacote registrada: só assim "Saiu" e "Marcar como enviado" aparecem (embalar antes de sair). */
+  packed: boolean;
 }) {
+  const packFirst = (
+    <p className="text-sm text-amber-800 dark:text-amber-200">
+      Só sai depois da foto do pacote: registre a embalagem no card <strong>Embalagem</strong> desta ficha (ou na Mesa de embalagem).
+    </p>
+  );
   if (status === "canceled" || status === "refunded") {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -233,12 +241,16 @@ export function OrderActions({
       {motoboy &&
       !motoboy.dispatchedLabel &&
       (status === "paid" || status === "preparing" || (status === "pending_payment" && paymentMethod === "cash")) ? (
-        <div className="flex flex-col gap-1">
-          <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            A peça foi com o motoboy: a cliente recebe “Saiu da TRIVÉ, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
-          </p>
-        </div>
+        packed ? (
+          <div className="flex flex-col gap-1">
+            <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              A peça foi com o motoboy: a cliente recebe “Saiu da TRIVÉ, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
+            </p>
+          </div>
+        ) : (
+          packFirst
+        )
       ) : null}
 
       {status === "paid" && !motoboy?.dispatchedLabel ? (
@@ -248,21 +260,25 @@ export function OrderActions({
             action={startPreparingAction}
             label="Iniciar separação"
             pendingLabel="Iniciando…"
-            hint="Sem foto — a cliente não recebe o aviso de embalagem. Prefira “Embalei” com a foto do pacote, no card Embalagem."
+            hint="Só muda o status — sem foto a cliente não recebe o aviso de embalagem, e o envio/“Saiu” só libera com a foto no card Embalagem."
           />
-          <AdvanceForm
-            orderId={orderId}
-            action={markDeliveredAction}
-            label="Marcar como entregue"
-            pendingLabel="Marcando…"
-            hint="Entrega direta, sem passar por separação e envio — ex.: dinheiro na entrega ou entrega em mãos."
-          />
+          {motoboy && !packed ? null : (
+            <AdvanceForm
+              orderId={orderId}
+              action={markDeliveredAction}
+              label="Marcar como entregue"
+              pendingLabel="Marcando…"
+              hint={
+                motoboy
+                  ? "Entrega direta (a cliente pegou na loja ou o motoboy já entregou sem o Saiu) — a foto do pacote já está registrada."
+                  : "Entrega em mãos (a cliente pegou na loja), sem separação nem envio — dispensa a foto do pacote."
+              }
+            />
+          )}
         </>
       ) : null}
 
-      {status === "preparing" && !motoboy ? (
-        <ShipForm orderId={orderId} currentTrackingCode={trackingCode} />
-      ) : null}
+      {status === "preparing" && !motoboy ? (packed ? <ShipForm orderId={orderId} currentTrackingCode={trackingCode} /> : packFirst) : null}
 
       {status === "shipped" && !motoboy?.dispatchedLabel ? (
         <AdvanceForm

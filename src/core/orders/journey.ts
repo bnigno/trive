@@ -57,8 +57,10 @@ export function buildOrderJourney(input: OrderJourneyInput): JourneyStep[] | nul
   };
 
   const paidState = stateOf(1);
-  const packedState = stateOf(2);
   const packedHappened = input.packedAt !== null;
+  // Dinheiro na entrega embala antes de pagar: a foto existe com o pagamento
+  // ainda "a seguir" — o passo é feito (ou atual) mesmo assim.
+  const packedState: JourneyStepState = packedHappened && stateOf(2) === "upcoming" ? "done" : stateOf(2);
   // 'paid' ainda não começou a separar: o passo é "Separação", a seguir.
   const packedLabel =
     packedState === "upcoming" || (input.status === "paid" && !packedHappened)

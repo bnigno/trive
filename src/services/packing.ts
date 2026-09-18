@@ -4,7 +4,7 @@
 // sobrescreve o mesmo path e NÃO reenvia (dedupe). O upload acontece antes
 // da transação (como addProductImage): recusa nunca deixa a linha torta, e
 // um arquivo órfão no path determinístico é inofensivo.
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { z } from "zod";
 
@@ -99,15 +99,18 @@ export async function packOrder(
   }
 
   const [order] = await db
-    .select({ id: orders.id, status: orders.status, packagePhotoPath: orders.packagePhotoPath })
+    .select({ id: orders.id, status: orders.status, paymentMethod: orders.paymentMethod, packagePhotoPath: orders.packagePhotoPath })
     .from(orders)
     .where(eq(orders.id, parsed.orderId))
     .limit(1);
   if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
-  if (order.status !== "paid" && order.status !== "preparing") {
+  // Dinheiro na entrega fica "aguardando pagamento" até o motoboy voltar —
+  // e o pacote precisa da foto antes de sair, como qualquer outro.
+  const cashPending = order.status === "pending_payment" && order.paymentMethod === "cash";
+  if (order.status !== "paid" && order.status !== "preparing" && !cashPending) {
     throw new ServiceError(
       "STATUS_INVALIDO",
-      "Só dá para registrar a embalagem de um pedido pago ou em separação.",
+      "Só dá para registrar a embalagem de um pedido pago, em separação ou pago na entrega.",
     );
   }
 
@@ -228,13 +231,18 @@ export async function listOrdersAwaitingPacking(
     .innerJoin(customers, eq(customers.id, orders.customerId))
     .where(
       and(
-        inArray(orders.status, ["paid", "preparing"]),
+        or(
+          inArray(orders.status, ["paid", "preparing"]),
+          // Dinheiro na entrega: embala antes de sair, ainda "aguardando pagamento".
+          and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+        ),
         isNull(orders.packagePhotoPath),
         // Motoboy que já saiu: a peça não está mais na mesa.
         sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
       ),
     )
-    .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
+    // Dinheiro na entrega não tem paidAt: entra pela hora do pedido, não no fim.
+    .orderBy(asc(sql`coalesce(${orders.paidAt}, ${orders.createdAt})`), asc(orders.orderNumber));
   if (rows.length === 0) return [];
 
 
@@ -271,13 +279,24 @@ export async function countOrdersAwaitingPacking(db: DbOrTx): Promise<number> {
     .from(orders)
     .where(
       and(
-        inArray(orders.status, ["paid", "preparing"]),
+        or(
+          inArray(orders.status, ["paid", "preparing"]),
+          // Dinheiro na entrega: embala antes de sair, ainda "aguardando pagamento".
+          and(eq(orders.status, "pending_payment"), eq(orders.paymentMethod, "cash")),
+        ),
         isNull(orders.packagePhotoPath),
         // Motoboy que já saiu: a peça não está mais na mesa.
         sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
       ),
     );
   return rows.length;
+}
+
+/** A janela do motoboy gravada no pedido (jsonb): só o que o {{dia}}/{{janela}} precisam. */
+function parseDeliveryWindowSnapshot(raw: unknown): { dayKey: string; start: string; end: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const w = raw as Record<string, unknown>;
+  return typeof w.dayKey === "string" && typeof w.start === "string" && typeof w.end === "string" ? { dayKey: w.dayKey, start: w.start, end: w.end } : null;
 }
 
 export type SendPackedResult =
@@ -309,6 +328,7 @@ export async function sendPackedWa(
       paymentMethod: orders.paymentMethod,
       packagePhotoPath: orders.packagePhotoPath,
       packedAt: orders.packedAt,
+      deliveryWindow: orders.deliveryWindow,
       customerId: customers.id,
       customerName: customers.fullName,
       phoneE164: customers.phoneE164,
@@ -346,7 +366,8 @@ export async function sendPackedWa(
     typeof settings["store_name"] === "string" && settings["store_name"].trim() !== ""
       ? settings["store_name"].trim()
       : STORE_NAME_DEFAULT;
-  const body = renderTemplate(
+  const window = parseDeliveryWindowSnapshot(row.deliveryWindow);
+  const rendered = renderTemplate(
     template.bodyTemplate,
     buildOrderVars({
       orderNumber: row.orderNumber,
@@ -357,8 +378,11 @@ export async function sendPackedWa(
       trackingCode: row.trackingCode,
       storeName,
       paymentMethod: row.paymentMethod,
+      deliveryWindow: window,
     }),
   );
+  // Template gravado antes de {{proximo}} (produção): motoboy não tem rastreio.
+  const body = window ? rendered.replace("em breve mandamos o rastreio", "ela sai com o motoboy e a gente te avisa na hora") : rendered;
 
   return sendMediaMessage(db, provider, {
     kind: "image",
