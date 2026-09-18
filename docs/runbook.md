@@ -770,6 +770,77 @@ para JPEG antes de subir.
 O **histórico de movimentações é a verdade**. Consultar o histórico do
 produto em **/admin/estoque**, contar fisicamente e, se a diferença for real,
 fazer **ajuste com motivo** (nunca "consertar" com venda/entrada falsa).
+Depois da limpeza pré-inauguração (abaixo) o saldo é exatamente a soma do
+histórico que sobrou (compras, ajustes, perdas).
+
+## Limpeza pré-inauguração (zerar clientes, conversas e pedidos de teste)
+
+Decisão da dona (2026-09-18): antes de abrir a loja, TODAS as conversas do
+WhatsApp, TODOS os clientes e TODOS os pedidos de teste (com entregas,
+saídas de motoboy, "chegou bem?", reservas, cartelas, fotos e comprovantes)
+saem de produção. Ficam: usuários, configurações, modelos de WhatsApp,
+catálogo (fotos, preços, custos), fornecedores e suas contas a pagar,
+entradas/ajustes/perdas de estoque, faixas de frete (menos a de teste),
+cupons (contador zerado), links de story, edições, lançamentos, motoboys
+cadastrados e e-mails. Estoque: os movimentos de venda/reserva de teste
+somem do livro e o saldo é recalculado só a partir do que sobra (o
+histórico continua sendo a verdade). Peças de teste ("teste", DEMO-*,
+TESTE-*) são arquivadas, a faixa "Frete grátis (teste de pagamento)" é
+apagada e o próximo pedido passa a ser o **#1001**. Tudo do banco numa
+única transação — ou tudo ou nada; os gatilhos de proteção são desligados
+pelo nome só dentro dela e religados (e conferidos) antes do commit.
+
+### Antes (obrigatório)
+
+1. Backup na hora: GitHub → Actions → **Backup** → *Run workflow*
+   (`gh workflow run backup.yml`, depois `gh run watch` e
+   `gh run download --name trive-backup`). Guardar fora da máquina.
+2. Fila vazia: **/admin/fila** sem evento "processando" (o script recusa
+   se houver). Um turno da Lia em andamento faz o script desistir em 10 s
+   ("lock timeout") — é só rodar de novo.
+3. Se houver testes de mão a fazer (catálogo, sacola, embalar → Saiu, GPS),
+   fazer ANTES; se fizer depois, rode a limpeza de novo antes de abrir.
+
+### Simulação (não grava nada)
+
+    npx tsx --env-file=.env.prod.local scripts/limpar-para-inauguracao.ts
+
+Conferir na saída: o host do banco, cada conversa e cliente listados (para
+confirmar que é tudo teste — telefones mascarados), as contagens, o estoque
+"antes → depois" por SKU e os ajustes manuais (se algum ajuste foi feito
+para "consertar" uma baixa de teste, o saldo recalculado fica errado —
+corrigir com novo ajuste depois), as peças a arquivar, a faixa de frete e
+as compras de fornecedor (ficam; de teste, apagar no painel).
+
+### Aplicar
+
+    npx tsx --env-file=.env.prod.local scripts/limpar-para-inauguracao.ts --apply --confirmo=LIMPAR-PRODUCAO
+
+Antes de abrir a transação o script exporta em JSON as linhas que vão sumir
+(pasta temporária, o caminho sai no log). Depois do commit apaga os arquivos
+do bucket (`receipts/ packages/ deliveries/ gifts/ editions/ looks/ atelier/`,
+inclusive órfãos); se algum falhar, lista os caminhos e sai com código 3 —
+apagar à mão no Supabase Storage. `--sem-storage` limpa só o banco.
+Códigos: 0 ok · 1 erro (nada gravado) · 2 recusado (confirmação, fila,
+ADAPTER_MODE) · 3 banco ok, arquivo(s) faltando.
+
+### Depois
+
+- Loja: home e uma peça (as de teste somem em até 5 min — a fila pede a
+  revalidação na hora).
+- Painel: /admin (vazio), /admin/pedidos, /admin/whatsapp/conversas,
+  /admin/estoque (saldos = entradas + ajustes), /admin/financeiro (só
+  fornecedor), /admin/fila.
+- Notificações antigas do Mercado Pago sobre pagamentos de teste podem cair
+  em /admin/fila como "pedido não encontrado" — **Descartar**.
+- O vigia do WhatsApp foi silenciado para os chats com movimento nas últimas
+  6 h; se um aviso "mensagem que não chegou" aparecer mesmo assim, é falso
+  (o registro foi apagado de propósito).
+- No celular que fez o quiz de estilo, abrir /estilo uma vez (a home pode
+  ficar em "Escolhendo as peças…" com a cartela antiga).
+- NÃO fazer pedido de teste depois: o próximo número é o #1001 da primeira
+  cliente. A limpeza fica registrada em `audit_log`
+  (`maintenance.launch_reset`) com todas as contagens.
 
 ## Backup e restauração
 

@@ -47,6 +47,11 @@ const SIGN_RULES: Record<
   reservation_release: { affects: "reserved", sign: "negative" },
 };
 
+/** Qual saldo o tipo de movimento altera: em mãos ou reservado. */
+export function movementAffects(type: MovementType): "onHand" | "reserved" {
+  return SIGN_RULES[type].affects;
+}
+
 export function applyMovement(
   level: StockLevel,
   m: StockMovement,
