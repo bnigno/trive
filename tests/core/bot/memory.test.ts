@@ -4,9 +4,11 @@ import { formatCentsBRL } from "@/lib/money";
 import {
   addNote,
   cartAdd,
+  cartIndexOf,
   cartRemoveAt,
   findCartItem,
   mergeCartByVariant,
+  sameProductName,
   CART_MAX_QTY,
   cartSubtotalCents,
   formatCartLines,
@@ -104,6 +106,22 @@ describe("sacola", () => {
     expect(findCartItem(cart, "  ")).toBeNull();
     // O SKU atual da peça (a Lia leu em detalhar_produto) não é o da linha velha: por nome ainda acha.
     expect(findCartItem(cart, "CROPPED-IRIS-MARR-TAUN")).toBeNull();
+    // Enfeites da fala não atrapalham; letra solta (tamanho) só casa por igualdade, nunca como prefixo de "marrom".
+    expect(findCartItem(cart, "tira o cropped marrom")).toEqual({ item: cropped, index: 1 });
+    expect(findCartItem(cart, "o cropped M")).toBeNull();
+    expect(findCartItem(cart, "vestido dunas M")).toEqual({ item: VESTIDO, index: 0 });
+    // Consulta que parece SKU (mas de outra variante) não casa por nome.
+    expect(findCartItem(cart, "CROPPED-IRIS-PINK-TAUN")).toBeNull();
+    expect(findCartItem(cart, "tira")).toBeNull();
+  });
+
+  it("cartIndexOf: a variante decide quando os dois lados a conhecem; SKU só como reserva; sameProductName ignora acento e caixa", () => {
+    const velha: BotCartItem = { ...VESTIDO, sku: "VEST-OLD", variantId: "v1" };
+    expect(cartIndexOf([velha], { sku: "VEST-NEW", variantId: "v1" })).toBe(0);
+    expect(cartIndexOf([velha], { sku: "VEST-OLD", variantId: "v2" })).toBe(-1);
+    expect(cartIndexOf([{ ...VESTIDO }], { sku: "vest-dunas-pret-m", variantId: "v9" })).toBe(0);
+    expect(sameProductName("Cropped Íris Suplex", "CROPPED ÍRIS")).toBe(true);
+    expect(sameProductName("Cropped Íris", "Blusa Brisa")).toBe(false);
   });
 
   it("mergeCartByVariant: linha velha e nova da mesma variante viram uma (maior quantidade); sem variantId nada muda", () => {

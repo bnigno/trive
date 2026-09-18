@@ -42,7 +42,7 @@ export function fixVocabulary(text: string): string {
  */
 const KNOWN_MARKERS: ReadonlyArray<RegExp> = [
   /\[foto enviada ao cliente\]\s*/giu,
-  /\s*\[sku:\s*[A-Za-z0-9._-]+\]/giu,
+  /[ \t]*\[sku:\s*[A-Za-z0-9._-]+\]/giu,
   /\[lista tocável do catálogo(?: \([^)]*\))? (?:enviada ao cliente|que NÃO chegou à cliente \(falhou\))\]\s*/giu,
   /\[mensagem enviada pela equipe da loja, não por você\]\s*/giu,
   /\[aviso automático[^\]]*\]\s*/giu,

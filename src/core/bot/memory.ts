@@ -135,7 +135,7 @@ export type BotCartItem = z.infer<typeof cartItemSchema>;
  */
 export function cartSet(cart: readonly BotCartItem[] | undefined, item: BotCartItem): BotCartItem[] {
   const atual = [...(cart ?? [])];
-  const indice = atual.findIndex((existente) => existente.sku.toLowerCase() === item.sku.toLowerCase());
+  const indice = cartIndexOf(atual, item);
   const linha = { ...item, quantidade: Math.min(CART_MAX_QTY, item.quantidade) };
   if (indice >= 0) {
     atual[indice] = { ...atual[indice], ...linha };
@@ -204,9 +204,23 @@ export function cartAdd(
   cart: readonly BotCartItem[] | undefined,
   item: Omit<BotCartItem, "quantidade"> & { quantidade?: number },
 ): { cart: BotCartItem[]; existed: BotCartItem | null; quantidade: number } {
-  const existed = (cart ?? []).find((existente) => existente.sku.toLowerCase() === item.sku.toLowerCase()) ?? null;
+  const indice = cartIndexOf(cart ?? [], item);
+  const existed = indice >= 0 ? (cart ?? [])[indice] : null;
   const quantidade = Math.min(CART_MAX_QTY, item.quantidade ?? existed?.quantidade ?? 1);
   return { cart: cartSet(cart, { ...item, quantidade }), existed, quantidade };
+}
+
+/**
+ * A mesma linha: pela variante quando os dois lados a conhecem (o SKU pode
+ * ter mudado); pelo SKU quando um dos lados veio sem variante (ponte do site,
+ * sacola de antes). SKU igual mas variantes diferentes = peças diferentes.
+ */
+export function cartIndexOf(cart: readonly BotCartItem[], item: { sku: string; variantId?: string }): number {
+  return cart.findIndex((existente) =>
+    existente.variantId && item.variantId
+      ? existente.variantId === item.variantId
+      : existente.sku.toLowerCase() === item.sku.toLowerCase(),
+  );
 }
 
 /** Tira UMA linha pela posição (a que findCartItem apontou) — nunca por SKU, que pode se repetir depois da cura. */
@@ -215,7 +229,7 @@ export function cartRemoveAt(cart: readonly BotCartItem[] | undefined, index: nu
 }
 
 /** "Cropped Íris (Marrom · Tam Único)" → ["cropped", "iris", "marrom", "tam", "unico"]. */
-function cartWords(text: string): string[] {
+export function cartWords(text: string): string[] {
   return text
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -224,13 +238,32 @@ function cartWords(text: string): string[] {
     .filter((word) => word.length > 0);
 }
 
+/** Palavras que a cliente (ou a Lia) põe em volta do nome e não são a peça. */
+const CART_QUERY_STOPWORDS = new Set(["o", "a", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "um", "uma", "no", "na", "com", "tira", "tirar", "tire", "remove", "remover", "quero", "esse", "essa", "este", "esta", "aquele", "aquela", "peca", "peça"]);
+
+/** Parece um SKU (sem espaço, só letras/dígitos/hífen): não é para casar por nome. */
+export function looksLikeSku(query: string): boolean {
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(query.trim()) && /\d|-/.test(query);
+}
+
+/** Mesma peça pelo nome (sem acento/caixa): todas as palavras de um lado estão no outro. */
+export function sameProductName(a: string, b: string): boolean {
+  const wa = cartWords(a);
+  const wb = cartWords(b);
+  if (wa.length === 0 || wb.length === 0) return false;
+  return wa.every((w) => wb.includes(w)) || wb.every((w) => wa.includes(w));
+}
+
 export type CartMatch = { item: BotCartItem; index: number } | { ambiguous: BotCartItem[] } | null;
 
 /**
  * Acha a linha que a Lia quer tirar: pelo SKU (como está na sacola), senão
  * pelo nome como a cliente fala ("o cropped marrom", "Cropped Íris Suplex") —
- * sem acento, sem maiúscula, cada palavra da consulta é prefixo de uma
- * palavra do rótulo (nome + variação). Duas linhas servindo → ambíguo.
+ * sem acento, sem maiúscula, sem as palavras de enfeite ("tira o …"); palavra
+ * de 1–2 letras (P, M, G, GG) só casa por igualdade, as outras por prefixo de
+ * alguma palavra do rótulo (nome + variação). Duas linhas servindo → ambíguo.
+ * Consulta que parece SKU não casa por nome (SKU de outra variante nunca
+ * tira a linha errada).
  */
 export function findCartItem(cart: readonly BotCartItem[] | undefined, query: string): CartMatch {
   const itens = cart ?? [];
@@ -239,11 +272,14 @@ export function findCartItem(cart: readonly BotCartItem[] | undefined, query: st
   const porSku = itens.map((item, index) => ({ item, index })).filter(({ item }) => item.sku.toLowerCase() === consulta.toLowerCase());
   if (porSku.length === 1) return porSku[0];
   if (porSku.length > 1) return { ambiguous: porSku.map(({ item }) => item) };
-  const palavras = cartWords(consulta);
+  if (looksLikeSku(consulta)) return null;
+  const palavras = cartWords(consulta).filter((palavra) => !CART_QUERY_STOPWORDS.has(palavra));
   if (palavras.length === 0) return null;
+  const casa = (rotulo: string[], palavra: string) =>
+    palavra.length <= 2 ? rotulo.includes(palavra) : rotulo.some((word) => word.startsWith(palavra));
   const porNome = itens
     .map((item, index) => ({ item, index, rotulo: cartWords(cartItemLabel(item)) }))
-    .filter(({ rotulo }) => palavras.every((palavra) => rotulo.some((word) => word.startsWith(palavra))));
+    .filter(({ rotulo }) => palavras.every((palavra) => casa(rotulo, palavra)));
   if (porNome.length === 1) return { item: porNome[0].item, index: porNome[0].index };
   if (porNome.length > 1) return { ambiguous: porNome.map(({ item }) => item) };
   return null;

@@ -115,6 +115,12 @@ export async function execCriarPedido(
   let cartLines = state.cart ?? [];
   if (!input.itens) {
     const reconciled = await reconcileCartLines(db, ctx);
+    if (reconciled.material) {
+      return {
+        ok: false,
+        text: `A sacola mudou desde o resumo (${reconciled.notes.join(" ")}). Mostre o resumo atualizado à cliente e, com o SIM dela, chame criar_pedido de novo.\n${formatCartLines(reconciled.cart).join("\n")}`,
+      };
+    }
     if (reconciled.gone.length > 0) {
       const nomes = reconciled.gone.map((item) => `"${item.variacao ? `${item.nome} (${item.variacao})` : item.nome}"`).join(", ");
       return {

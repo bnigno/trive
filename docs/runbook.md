@@ -411,10 +411,15 @@ e a sacola não mostrava SKU nenhum). Desde então:
 - **`remover_da_sacola` aceita o SKU ou o nome** como está na sacola
   ("cropped íris marrom"); com o SKU atual de uma linha velha, a variante
   decide; duas linhas parecidas → ela lista com `[sku: …]` e pede a escolha.
-- **Linha velha se cura**: `ver_sacola` e `criar_pedido` conferem cada linha
-  no catálogo (por variante, senão por SKU), regravam SKU/nome/preço atuais e
-  juntam duplicatas da mesma variante; peça desativada/apagada é marcada
-  "não está mais à venda — tire pelo nome" (`criar_pedido` recusa até tirar).
+- **Linha velha se cura**: `adicionar_a_sacola`, `ver_sacola` e `criar_pedido`
+  conferem cada linha no catálogo — linha com id de variante só pela variante
+  (SKU reaproveitado por outra peça nunca troca a linha); linha sem id (ponte
+  do site, sacola de antes) pelo SKU, e só se o nome bater. Regravam
+  SKU/nome/preço atuais e juntam duplicatas da mesma variante; **preço que
+  mudou ou linhas juntadas → `criar_pedido` recusa e pede o resumo de novo**
+  (a cliente nunca fecha com valor que não viu); peça desativada/apagada é
+  marcada "não está mais à venda — tire pelo nome" (`criar_pedido` recusa
+  até tirar).
 - Busca por SKU é **exata** (`lower(sku) =`), não mais `ILIKE`: `_`/`%` não
   são curingas (um `%` solto devolvia a primeira variante da tabela).
 
