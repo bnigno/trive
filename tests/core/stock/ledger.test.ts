@@ -6,6 +6,7 @@ import {
   SignError,
   applyMovement,
   isLowStock,
+  movementAffects,
   movementsForTransition,
   type StockLevel,
   type StockMovement,
@@ -239,5 +240,24 @@ describe("isLowStock", () => {
     expect(isLowStock({ onHand: 0, reserved: 0 }, 0)).toBe(true);
     expect(isLowStock({ onHand: 10, reserved: 0 }, 9)).toBe(false);
     expect(isLowStock({ onHand: 10, reserved: 0 }, 10)).toBe(true);
+  });
+});
+
+describe("movementAffects", () => {
+  it("reserva e liberação mexem no reservado; o resto, no em mãos", () => {
+    expect(movementAffects("reservation")).toBe("reserved");
+    expect(movementAffects("reservation_release")).toBe("reserved");
+    for (const type of ["purchase_in", "return_in", "sale_out", "loss", "adjustment"] as const) {
+      expect(movementAffects(type)).toBe("onHand");
+    }
+  });
+
+  it("bate com o que applyMovement faz de verdade", () => {
+    for (const type of MOVEMENT_TYPES) {
+      const delta = type === "sale_out" || type === "loss" || type === "reservation_release" ? -1 : 1;
+      const next = applyMovement(LEVEL, { type, quantityDelta: delta });
+      const changed = next.onHand !== LEVEL.onHand ? "onHand" : "reserved";
+      expect(movementAffects(type)).toBe(changed);
+    }
   });
 });

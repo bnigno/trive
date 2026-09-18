@@ -770,6 +770,91 @@ para JPEG antes de subir.
 O **histórico de movimentações é a verdade**. Consultar o histórico do
 produto em **/admin/estoque**, contar fisicamente e, se a diferença for real,
 fazer **ajuste com motivo** (nunca "consertar" com venda/entrada falsa).
+Depois da limpeza pré-inauguração (abaixo) o saldo é exatamente a soma do
+histórico que sobrou (compras, ajustes, perdas).
+
+## Limpeza pré-inauguração (zerar clientes, conversas e pedidos de teste)
+
+Decisão da dona (2026-09-18): antes de abrir a loja, TODAS as conversas do
+WhatsApp, TODOS os clientes e TODOS os pedidos de teste (com entregas,
+saídas de motoboy, "chegou bem?", reservas, cartelas, fotos e comprovantes)
+saem de produção. Ficam: usuários, configurações, modelos de WhatsApp,
+catálogo (fotos, preços, custos), fornecedores e suas contas a pagar,
+entradas/ajustes/perdas de estoque, faixas de frete (menos a de teste),
+cupons (contador zerado), links de story, edições, lançamentos, motoboys
+cadastrados e e-mails. Estoque: os movimentos de venda/reserva de teste
+somem do livro e o saldo é recalculado só a partir do que sobra (o
+histórico continua sendo a verdade). Peças de teste ("teste", DEMO-*,
+TESTE-*) são arquivadas, a faixa "Frete grátis (teste de pagamento)" é
+apagada e o próximo pedido passa a ser o **#1001**. Tudo do banco numa
+única transação — ou tudo ou nada; os gatilhos de proteção são desligados
+pelo nome só dentro dela e religados (e conferidos) antes do commit.
+
+### Antes (obrigatório)
+
+1. Backup na hora, pelo computador (o workflow **Backup** do GitHub só
+   funciona depois de cadastrar o secret `DATABASE_URL` — em 18/09/2026 ele
+   falhava desde 25/08 por falta dele):
+
+       mkdir -p "$HOME/TRIVE-backups" && pg_dump "$(grep '^DATABASE_URL=' .env.prod.local | cut -d= -f2-)" --no-owner --format=custom --file="$HOME/TRIVE-backups/trive-pre-limpeza-$(date +%F).dump"
+
+   Conferir com `pg_restore --list "$HOME"/TRIVE-backups/trive-pre-limpeza-*.dump | head`.
+   O `pg_dump` tem de ser da versão do servidor ou mais nova
+   (`/opt/homebrew/opt/postgresql@17/bin/pg_dump`).
+2. Fila vazia: **/admin/fila** sem evento "processando" (o script recusa
+   se houver, antes e dentro da transação). Se um webhook ou um turno da
+   Lia estiver no meio de uma escrita, o banco pode responder "deadlock"
+   ou "trava ocupada": a transação desfaz tudo e o script tenta de novo
+   sozinho (2 vezes, 15 s de intervalo) — depois disso, rodar de novo.
+3. Se houver testes de mão a fazer (catálogo, sacola, embalar → Saiu, GPS),
+   fazer ANTES; se fizer depois, rode a limpeza de novo antes de abrir.
+
+### Simulação (não grava nada)
+
+    npx tsx --env-file=.env.prod.local scripts/limpar-para-inauguracao.ts
+
+Conferir na saída: o host do banco, cada conversa e cliente listados (para
+confirmar que é tudo teste — telefones mascarados), as contagens, o estoque
+"antes → depois" por SKU e os ajustes manuais (se algum ajuste foi feito
+para "consertar" uma baixa de teste, o saldo recalculado fica errado —
+corrigir com novo ajuste depois), as peças a arquivar (as variantes delas são desativadas, para sumirem
+também do controle de estoque), a faixa de frete e as compras de
+fornecedor (ficam; de teste, apagar no painel). Se aparecer "AVISO: o
+--apply vai RECUSAR", há um movimento de reserva sem pedido ou um saldo
+que ficaria negativo — corrigir no histórico antes.
+
+### Aplicar
+
+    npx tsx --env-file=.env.prod.local scripts/limpar-para-inauguracao.ts --apply --confirmo=LIMPAR-PRODUCAO
+
+Antes de abrir a transação o script exporta em JSON as linhas que vão sumir
+(pasta temporária, o caminho sai no log). Depois do commit apaga os arquivos
+do bucket (`receipts/ packages/ deliveries/ gifts/ editions/ looks/ atelier/`,
+inclusive órfãos); se algum falhar, lista os caminhos e sai com código 3 —
+apagar à mão no Supabase Storage. `--sem-storage` limpa só o banco.
+Códigos: 0 ok · 1 erro (nada gravado) · 2 recusado (confirmação, fila,
+ADAPTER_MODE) · 3 banco ok, mas ou ficou arquivo por apagar (lista na tela)
+ou a varredura de órfãos do bucket não foi possível (conferir os prefixos
+no Supabase Storage). A peça de teste arquivada também sai do lançamento,
+das edições e dos links de story.
+
+### Depois
+
+- Loja: home e uma peça (as de teste somem em até 5 min — a fila pede a
+  revalidação na hora).
+- Painel: /admin (vazio), /admin/pedidos, /admin/whatsapp/conversas,
+  /admin/estoque (saldos = entradas + ajustes), /admin/financeiro (só
+  fornecedor), /admin/fila.
+- Notificações antigas do Mercado Pago sobre pagamentos de teste podem cair
+  em /admin/fila como "pedido não encontrado" — **Descartar**.
+- O vigia do WhatsApp foi silenciado para os chats com movimento nas últimas
+  6 h; se um aviso "mensagem que não chegou" aparecer mesmo assim, é falso
+  (o registro foi apagado de propósito).
+- No celular que fez o quiz de estilo, abrir /estilo uma vez (a home pode
+  ficar em "Escolhendo as peças…" com a cartela antiga).
+- NÃO fazer pedido de teste depois: o próximo número é o #1001 da primeira
+  cliente. A limpeza fica registrada em `audit_log`
+  (`maintenance.launch_reset`) com todas as contagens.
 
 ## Backup e restauração
 
