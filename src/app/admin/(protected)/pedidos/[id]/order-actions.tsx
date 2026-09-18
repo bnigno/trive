@@ -262,13 +262,19 @@ export function OrderActions({
             pendingLabel="Iniciando…"
             hint="Só muda o status — sem foto a cliente não recebe o aviso de embalagem, e o envio/“Saiu” só libera com a foto no card Embalagem."
           />
-          <AdvanceForm
-            orderId={orderId}
-            action={markDeliveredAction}
-            label="Marcar como entregue"
-            pendingLabel="Marcando…"
-            hint="Entrega direta, sem passar por separação e envio — ex.: dinheiro na entrega ou entrega em mãos."
-          />
+          {motoboy && !packed ? null : (
+            <AdvanceForm
+              orderId={orderId}
+              action={markDeliveredAction}
+              label="Marcar como entregue"
+              pendingLabel="Marcando…"
+              hint={
+                motoboy
+                  ? "Entrega direta (a cliente pegou na loja ou o motoboy já entregou sem o Saiu) — a foto do pacote já está registrada."
+                  : "Entrega em mãos (a cliente pegou na loja), sem separação nem envio — dispensa a foto do pacote."
+              }
+            />
+          )}
         </>
       ) : null}
 

@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { deliveryLine, isStaleShipment, normalizeReceivedBy, RECEIVED_BY_MAX_CHARS, STALE_SHIPMENT_DAYS } from "@/core/orders/delivery";
+import { needsPackingBeforeDispatch, NOT_PACKED_CODE } from "@/core/orders/packing";
 import { type OrderStatus } from "@/core/orders/state-machine";
 import { renderTemplate } from "@/core/whatsapp/render";
 import { auditLog, customers, deliveryStops, orders, waMessages, waTemplates } from "@/db/schema";
@@ -96,12 +97,17 @@ export async function deliverOrderWithPhoto(
         deliveredPhotoPath: orders.deliveredPhotoPath,
         deliveryWindow: orders.deliveryWindow,
         paymentMethod: orders.paymentMethod,
+        packagePhotoPath: orders.packagePhotoPath,
       })
       .from(orders)
       .where(eq(orders.id, parsed.orderId));
-  const assertAllowed = (order: { status: string; deliveryWindow: { dispatchedAt?: string } | null; paymentMethod: string | null }): OrderStatus => {
+  const assertAllowed = (order: { orderNumber: number; status: string; deliveryWindow: { dispatchedAt?: string } | null; paymentMethod: string | null; packagePhotoPath: string | null }): OrderStatus => {
     const status = order.status as OrderStatus;
     const dispatched = Boolean(order.deliveryWindow?.dispatchedAt);
+    // Embalar antes de sair: pedido de motoboy ainda na loja só sai com a foto do pacote — mesmo "em mãos".
+    if (status !== "delivered" && order.deliveryWindow && needsPackingBeforeDispatch({ status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.deliveryWindow.dispatchedAt ?? null })) {
+      throw new ServiceError(NOT_PACKED_CODE, `O pedido #${order.orderNumber} ainda não foi embalado: registre a foto do pacote antes de registrar a entrega.`);
+    }
     if (status !== "delivered" && !canDeliverWithPhoto(status, { dispatched, paymentMethod: order.paymentMethod })) {
       throw new ServiceError(
         "STATUS_INVALIDO",
@@ -356,7 +362,14 @@ export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwait
         isNull(orders.deliveredPhotoPath),
         or(
           eq(orders.status, "shipped"),
-          and(eq(orders.status, "paid"), or(eq(orders.paymentMethod, "cash"), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`)),
+          // Pago em dinheiro ainda na loja: só sem janela (em mãos) ou já embalado — motoboy sem foto não sai.
+          and(
+            eq(orders.status, "paid"),
+            or(
+              and(eq(orders.paymentMethod, "cash"), or(isNull(orders.deliveryWindow), isNotNull(orders.packagePhotoPath))),
+              sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`,
+            ),
+          ),
           and(inArray(orders.status, ["preparing", "pending_payment"]), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`),
         ),
       ),

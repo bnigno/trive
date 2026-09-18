@@ -479,7 +479,9 @@ export default async function PedidoDetalhePage({
               <div className="flex flex-col gap-4">
                 {cashPending ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Dinheiro na entrega: embale e registre a foto agora — o pedido só sai com o motoboy depois dela; marque como pago só com o dinheiro na mão.
+                    {order.deliveryWindow?.dispatchedAt
+                      ? "Dinheiro na entrega: o pacote já saiu com o motoboy — marque como pago só com o dinheiro na mão."
+                      : "Dinheiro na entrega: embale e registre a foto agora — o pedido só sai com o motoboy depois dela; marque como pago só com o dinheiro na mão."}
                   </p>
                 ) : null}
                 <PackForm

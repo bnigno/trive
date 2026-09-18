@@ -124,10 +124,10 @@ export const initialWaTemplates: Array<{
     label: "Peça embalada (legenda da foto)",
     bodyTemplate:
       "{{nome}}, sua peça foi embalada com carinho 🤎\n" +
-      "O pedido #{{pedido}} já está pronto para seguir viagem — em breve mandamos o rastreio.\n" +
+      "O pedido #{{pedido}} já está pronto para seguir viagem — {{proximo}}.\n" +
       "Acompanhe: {{link}}\n" +
       "Para não receber avisos, responda SAIR.",
-    variables: ["nome", "pedido", "link"],
+    variables: ["nome", "pedido", "link", "proximo"],
   },
   {
     // Cancelamento (pela dona ou por expiração da reserva): motivo em

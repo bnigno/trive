@@ -187,9 +187,11 @@ export async function createDeliveryRun(db: DbOrTx, input: CreateDeliveryRunInpu
       .from(orders)
       .where(inArray(orders.id, uniqueIds));
     const semFoto = unpacked
+      // Pedido sem janela não é de motoboy: dispatchOrder recusa com a mensagem certa (NOT_MOTOBOY), não "sem foto".
+      .filter((row) => row.deliveryWindow !== null)
       .filter((row) => needsPackingBeforeDispatch({ status: row.status, packagePhotoPath: row.packagePhotoPath, dispatchedAt: (row.deliveryWindow as { dispatchedAt?: string } | null)?.dispatchedAt ?? null }))
-      .map((row) => `#${row.orderNumber}`)
-      .sort();
+      .sort((a, b) => a.orderNumber - b.orderNumber)
+      .map((row) => `#${row.orderNumber}`);
     if (semFoto.length > 0) {
       throw new ServiceError(
         NOT_PACKED_CODE,

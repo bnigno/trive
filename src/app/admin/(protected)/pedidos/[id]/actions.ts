@@ -9,6 +9,7 @@ import { getDb } from "@/db/client";
 import { requireOwner, requireUser } from "@/services/auth";
 import {
   ServiceError,
+  deliverByHand,
   shipOrder,
   transitionOrder,
 } from "@/services/orders";
@@ -155,7 +156,15 @@ export async function markDeliveredAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  return runTransition(formData, "delivered", "Pedido marcado como entregue.");
+  const user = await requireUser();
+  try {
+    const orderId = orderIdSchema.parse(formData.get("orderId"));
+    await deliverByHand(getDb(), { orderId, userId: user.id });
+    revalidateOrder(orderId);
+    return { success: "Pedido marcado como entregue." };
+  } catch (error) {
+    return friendlyError(error);
+  }
 }
 
 export async function cancelOrderAction(

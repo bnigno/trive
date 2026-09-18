@@ -112,25 +112,32 @@ export async function buildDailyDigestData(
     .from(orders)
     .where(and(gte(orders.createdAt, from), lt(orders.createdAt, to)));
 
+  // A mesma régua da Mesa de embalagem e do painel: "a embalar" = sem foto e
+  // ainda na loja (pago, em separação ou dinheiro na entrega); "a enviar" =
+  // com foto e ainda na loja; "a pagar" = aguardando pagamento online.
   const waitingRows = await db
     .select({
       status: orders.status,
+      paymentMethod: orders.paymentMethod,
       hasPhoto: sql<boolean>`${orders.packagePhotoPath} is not null`,
+      dispatched: sql<boolean>`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') <> ''`,
       value: count(),
     })
     .from(orders)
     .where(inArray(orders.status, ["pending_payment", "paid", "preparing"]))
-    .groupBy(orders.status, sql`${orders.packagePhotoPath} is not null`);
+    .groupBy(orders.status, orders.paymentMethod, sql`${orders.packagePhotoPath} is not null`, sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') <> ''`);
   let pendingPayment = 0;
   let toPack = 0;
   let toShip = 0;
   for (const row of waitingRows) {
-    if (row.status === "pending_payment") pendingPayment += row.value;
-    else if (row.status === "paid") toPack += row.value;
-    else if (row.status === "preparing") {
-      if (row.hasPhoto) toShip += row.value;
-      else toPack += row.value;
+    const cashOnDelivery = row.status === "pending_payment" && row.paymentMethod === "cash";
+    if (row.status === "pending_payment" && !cashOnDelivery) {
+      pendingPayment += row.value;
+      continue;
     }
+    if (row.dispatched) continue; // já na rua: não é a embalar nem a enviar
+    if (row.hasPhoto) toShip += row.value;
+    else toPack += row.value;
   }
 
   const [conversationsAwaitingOwner, bot, stock, top, storeName, mustShipToday, editions] = await Promise.all([

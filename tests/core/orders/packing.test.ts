@@ -9,6 +9,8 @@ describe("needsPackingBeforeDispatch", () => {
     expect(needsPackingBeforeDispatch({ status: "paid", packagePhotoPath: null })).toBe(true);
     expect(needsPackingBeforeDispatch({ status: "preparing", packagePhotoPath: null, dispatchedAt: null })).toBe(true);
     expect(needsPackingBeforeDispatch({ status: "pending_payment", packagePhotoPath: undefined })).toBe(true);
+    // dispatchedAt vazio ("") é "não saiu", como no SQL da Mesa.
+    expect(needsPackingBeforeDispatch({ status: "paid", packagePhotoPath: null, dispatchedAt: "" })).toBe(true);
   });
 
   it("com foto libera; quem já saiu (dispatchedAt), enviado ou entregue não é barrado — pedidos de antes da regra fecham normalmente", () => {

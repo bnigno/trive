@@ -343,8 +343,19 @@ listando os números), e a ficha mostra o aviso no card Ações. **Dinheiro na
 entrega** embala ainda "aguardando pagamento" (a Mesa lista com o badge "Paga
 ao receber"; a foto libera o Saiu; o pagamento é marcado quando o motoboy
 volta). Pedidos que já tinham saído antes da regra fecham normalmente
-("Entregue — o motoboy voltou"). Regra em `src/core/orders/packing.ts`;
-`dispatchOrder`, `createDeliveryRun` e o novo `shipOrder` conferem.
+("Entregue — o motoboy voltou"). **Entrega em mãos** ("Marcar como entregue"
+e "Entregue — enviar foto" na Mesa de entrega): pedido **de motoboy** ainda
+na loja também exige a foto do pacote; pedido sem janela (a cliente pegou na
+loja) dispensa. A legenda da foto da embalagem usa `{{proximo}}`: motoboy →
+"ela sai com o motoboy e a gente te avisa na hora", Correios → "em breve
+mandamos o rastreio" (o template antigo em produção é corrigido na hora do
+envio; para trocar o texto de vez, `scripts/sync-seed.ts --templates
+order_packed --force-templates` ou edite em WhatsApp › Modelos). O Bom dia
+conta "a embalar"/"a enviar" com a mesma régua da Mesa. **Na virada**:
+pedidos pagos/em separação já postados nos Correios sem foto precisam de
+"Marcar como enviado" antes do deploy ou de uma foto tardia depois.
+Regra em `src/core/orders/packing.ts`; `dispatchOrder`, `createDeliveryRun`,
+`shipOrder`, `deliverByHand` e `deliverOrderWithPhoto` conferem.
 
 ## Entrega por motoboy: rota do dia e "Saiu"
 

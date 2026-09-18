@@ -227,6 +227,24 @@ describe("sendDeliveredWa", () => {
 });
 
 describe("listOrdersAwaitingDelivery", () => {
+  it("embalar antes de sair: motoboy pago em dinheiro sem foto do pacote não vira entregue 'em mãos' e não entra na mesa de entrega; com foto, sim", async () => {
+    const moto = await createOrder({ status: "paid", paymentMethod: "cash" });
+    await db
+      .update(schema.orders)
+      .set({ deliveryWindow: { dayKey: "2026-09-20", start: "19:00", end: "21:00", cutoff: "13:00", rateName: "Motoboy", label: "sábado, 19h–21h" } })
+      .where(eq(schema.orders.id, moto.orderId));
+    await expect(
+      deliverOrderWithPhoto(sdb, storage, { orderId: moto.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId }),
+    ).rejects.toMatchObject({ code: "NOT_PACKED" });
+    expect((await listOrdersAwaitingDelivery(sdb)).map((row) => row.id)).not.toContain(moto.orderId);
+    expect(storage.list()).toEqual([]);
+
+    await db.update(schema.orders).set({ packagePhotoPath: `packages/${moto.orderId}/embalagem.jpg`, packedAt: new Date() }).where(eq(schema.orders.id, moto.orderId));
+    expect((await listOrdersAwaitingDelivery(sdb)).map((row) => row.id)).toContain(moto.orderId);
+    await deliverOrderWithPhoto(sdb, storage, { orderId: moto.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
+    expect((await db.select().from(schema.orders).where(eq(schema.orders.id, moto.orderId)))[0].status).toBe("delivered");
+  });
+
   it("enviados, pagos em dinheiro, motoboy que saiu (inclusive dinheiro a receber) — os mais antigos primeiro; motoboy pago que não saiu e Correios na prateleira ficam de fora", async () => {
     const shipped = await createOrder();
     const cash = await createOrder({ status: "paid", paymentMethod: "cash" });

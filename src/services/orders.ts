@@ -481,7 +481,7 @@ export async function updateOrderTracking(
 
 const shipOrderSchema = z.object({
   orderId: z.uuid(),
-  trackingCode: z.string().trim().max(120).optional(),
+  trackingCode: z.string().trim().min(1).max(100).optional(),
   userId: z.uuid(),
 });
 
@@ -514,7 +514,11 @@ export async function shipOrder(
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     const from = order.status as OrderStatus;
     const base = { orderId: order.id, orderNumber: order.orderNumber, from };
-    if (from === "shipped" || from === "delivered") return { ...base, to: from, idempotent: true };
+    if (from === "shipped" || from === "delivered") {
+      // Já enviado: só o rastreio novo, se veio — não some em silêncio.
+      if (parsed.trackingCode) await updateOrderTracking(tx, { orderId: order.id, trackingCode: parsed.trackingCode, userId: parsed.userId });
+      return { ...base, to: from, idempotent: true };
+    }
     if (order.deliveryWindow) {
       throw new ServiceError("MOTOBOY_ORDER", "Este pedido é de motoboy — marque a saída pelo botão Saiu (Rota do dia ou ficha).");
     }
@@ -533,6 +537,27 @@ export async function shipOrder(
     await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
     return { ...base, to: "shipped", idempotent: false };
   });
+}
+
+/**
+ * "Marcar como entregue" direto (paid → delivered: entrega em mãos, dinheiro
+ * na entrega baixado). Pedido de motoboy ainda na loja precisa da foto do
+ * pacote antes (embalar antes de sair); sem janela, a entrega em mãos
+ * dispensa a foto.
+ */
+export async function deliverByHand(db: DbOrTx, input: { orderId: string; userId: string }): Promise<Awaited<ReturnType<typeof transitionOrder>>> {
+  const parsed = z.object({ orderId: z.uuid(), userId: z.uuid() }).parse(input);
+  const [order] = await db
+    .select({ orderNumber: orders.orderNumber, status: orders.status, deliveryWindow: orders.deliveryWindow, packagePhotoPath: orders.packagePhotoPath })
+    .from(orders)
+    .where(eq(orders.id, parsed.orderId))
+    .limit(1);
+  if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
+  const window = order.deliveryWindow as { dispatchedAt?: string } | null;
+  if (window && needsPackingBeforeDispatch({ status: order.status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: window.dispatchedAt ?? null })) {
+    throw new ServiceError(NOT_PACKED_CODE, `O pedido #${order.orderNumber} ainda não foi embalado: registre a foto do pacote antes de marcar como entregue.`);
+  }
+  return transitionOrder(db, { orderId: parsed.orderId, to: "delivered", userId: parsed.userId });
 }
 
 // ---------------------------------------------------------------------------

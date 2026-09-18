@@ -18,7 +18,8 @@ export const metadata: Metadata = {
 };
 
 /** "pago há 3h" / "pago ontem" para o dono decidir a ordem da mesa. */
-function paidAgo(paidAt: Date | null): string {
+function paidAgo(paidAt: Date | null, status?: string): string {
+  if (status === "pending_payment") return "paga na entrega";
   if (!paidAt) return "pago";
   const hours = Math.floor((Date.now() - paidAt.getTime()) / 3_600_000);
   if (hours < 1) return "pago agora há pouco";
@@ -74,7 +75,7 @@ export default async function EmbalarPage() {
                   </p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     {order.itemsCount} {order.itemsCount === 1 ? "peça" : "peças"} ·{" "}
-                    <Money cents={order.totalCents} /> · {paidAgo(order.paidAt)}
+                    <Money cents={order.totalCents} /> · {paidAgo(order.paidAt, order.status)}
                     {order.paidAt ? (
                       <span className="block">{formatDateTimeSP(order.paidAt)}</span>
                     ) : null}

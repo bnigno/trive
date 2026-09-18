@@ -241,7 +241,8 @@ export async function listOrdersAwaitingPacking(
         sql`coalesce(${orders.deliveryWindow}->>'dispatchedAt', '') = ''`,
       ),
     )
-    .orderBy(asc(orders.paidAt), asc(orders.orderNumber));
+    // Dinheiro na entrega não tem paidAt: entra pela hora do pedido, não no fim.
+    .orderBy(asc(sql`coalesce(${orders.paidAt}, ${orders.createdAt})`), asc(orders.orderNumber));
   if (rows.length === 0) return [];
 
 
@@ -291,6 +292,13 @@ export async function countOrdersAwaitingPacking(db: DbOrTx): Promise<number> {
   return rows.length;
 }
 
+/** A janela do motoboy gravada no pedido (jsonb): só o que o {{dia}}/{{janela}} precisam. */
+function parseDeliveryWindowSnapshot(raw: unknown): { dayKey: string; start: string; end: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const w = raw as Record<string, unknown>;
+  return typeof w.dayKey === "string" && typeof w.start === "string" && typeof w.end === "string" ? { dayKey: w.dayKey, start: w.start, end: w.end } : null;
+}
+
 export type SendPackedResult =
   | Awaited<ReturnType<typeof sendMediaMessage>>
   | { skipped: "sem_telefone" | "sem_template" | "sem_foto" };
@@ -320,6 +328,7 @@ export async function sendPackedWa(
       paymentMethod: orders.paymentMethod,
       packagePhotoPath: orders.packagePhotoPath,
       packedAt: orders.packedAt,
+      deliveryWindow: orders.deliveryWindow,
       customerId: customers.id,
       customerName: customers.fullName,
       phoneE164: customers.phoneE164,
@@ -357,7 +366,8 @@ export async function sendPackedWa(
     typeof settings["store_name"] === "string" && settings["store_name"].trim() !== ""
       ? settings["store_name"].trim()
       : STORE_NAME_DEFAULT;
-  const body = renderTemplate(
+  const window = parseDeliveryWindowSnapshot(row.deliveryWindow);
+  const rendered = renderTemplate(
     template.bodyTemplate,
     buildOrderVars({
       orderNumber: row.orderNumber,
@@ -368,8 +378,11 @@ export async function sendPackedWa(
       trackingCode: row.trackingCode,
       storeName,
       paymentMethod: row.paymentMethod,
+      deliveryWindow: window,
     }),
   );
+  // Template gravado antes de {{proximo}} (produção): motoboy não tem rastreio.
+  const body = window ? rendered.replace("em breve mandamos o rastreio", "ela sai com o motoboy e a gente te avisa na hora") : rendered;
 
   return sendMediaMessage(db, provider, {
     kind: "image",
