@@ -19,9 +19,11 @@ import {
   ORDER_NUMBER_SEQUENCE,
   OUTBOX_FINISHED_STATUSES,
   RESERVED_MOVEMENT_TYPES,
+  WIPED_AUDIT_ACTIONS,
   WIPED_AUDIT_ENTITY_TYPES,
   WIPED_OUTBOX_AGGREGATES,
   WIPE_STEPS,
+  LaunchResetInvariantError,
   assertLevelInvariants,
   intakeStoragePaths,
   isTestProduct,
@@ -97,6 +99,8 @@ export interface LaunchResetPlan {
       note: string | null;
       createdAt: Date;
     }[];
+    /** Saldos que o recálculo produziria inválidos (reservado ≠ 0 ou em mãos < 0): o apply vai recusar. */
+    invalid: { sku: string; onHand: number; reserved: number }[];
   };
   coupons: { code: string; usedCount: number }[];
   products: {
@@ -134,11 +138,13 @@ export interface LaunchResetReport {
   deleted: Record<WipeStep, number>;
   levelsWritten: number;
   productsArchived: string[];
+  variantsDeactivated: number;
   ratesDeleted: string[];
   couponsReset: number;
   watchdogSilenced: number;
   auditLogId: number;
-  revalidateEvents: number;
+  /** Pedidos de revalidação da vitrine enfileirados depois do commit; null = a fila falhou (o banco já está limpo). */
+  revalidateEvents: number | null;
 }
 
 export const LAUNCH_RESET_AUDIT_ACTION = "maintenance.launch_reset";
@@ -168,7 +174,8 @@ function auditDeleteWhere(deletedEntryIds: readonly string[]) {
   const wipedEntity = inArray(schema.auditLog.entityType, [...WIPED_AUDIT_ENTITY_TYPES]);
   const wipedEntries =
     deletedEntryIds.length > 0 ? and(eq(schema.auditLog.entityType, "financial_entry"), inArray(schema.auditLog.entityId, [...deletedEntryIds])) : undefined;
-  return and(wipedEntries ? or(wipedEntity, wipedEntries) : wipedEntity, notInArray(schema.auditLog.action, [...KEPT_AUDIT_ACTIONS]));
+  const wipedAction = inArray(schema.auditLog.action, [...WIPED_AUDIT_ACTIONS]);
+  return and(or(wipedEntity, wipedAction, wipedEntries), notInArray(schema.auditLog.action, [...KEPT_AUDIT_ACTIONS]));
 }
 
 async function countRows(db: DbOrTx, table: PgTable, where?: SQL): Promise<number> {
@@ -397,6 +404,13 @@ async function collectPlan(db: DbOrTx, now: Date): Promise<LaunchResetPlan> {
     })
     .filter((change) => change.before.onHand !== change.after.onHand || change.before.reserved !== change.after.reserved)
     .sort((a, b) => a.sku.localeCompare(b.sku));
+  let invalid: LaunchResetPlan["stock"]["invalid"] = [];
+  try {
+    assertLevelInvariants([...ledgerAfter.values()], (id) => label(id).sku);
+  } catch (error) {
+    if (!(error instanceof LaunchResetInvariantError)) throw error;
+    invalid = [...error.violations];
+  }
   const manual = await db
     .select({
       variantId: schema.stockMovements.productVariantId,
@@ -437,7 +451,7 @@ async function collectPlan(db: DbOrTx, now: Date): Promise<LaunchResetPlan> {
     })
     .from(schema.drops)
     .innerJoin(schema.dropInvites, eq(schema.dropInvites.dropId, schema.drops.id))
-    .where(inArray(schema.drops.status, ["scheduled", "vip"]))
+    .where(inArray(schema.drops.status, ["scheduled", "vip_sent"]))
     .groupBy(schema.drops.id, schema.drops.name, schema.drops.publishAt);
   const [maxOrder] = await db.select({ max: sql<number | null>`max(${schema.orders.orderNumber})::int` }).from(schema.orders);
 
@@ -482,6 +496,7 @@ async function collectPlan(db: DbOrTx, now: Date): Promise<LaunchResetPlan> {
         note: m.note,
         createdAt: m.createdAt,
       })),
+      invalid,
     },
     coupons,
     products: products.map((p) => ({ ...p, linkedTo: links.get(p.id) ?? [] })),
@@ -523,6 +538,8 @@ async function deleteAll(tx: DbOrTx, table: PgTable & { id: AnyPgColumn }, where
   return rows.length;
 }
 
+const LEVEL_UPSERT_BATCH = 200;
+
 async function recomputeStockLevels(tx: DbOrTx): Promise<number> {
   const levels = await variantLevels(tx);
   const sums = await ledgerSums(tx, false);
@@ -532,21 +549,18 @@ async function recomputeStockLevels(tx: DbOrTx): Promise<number> {
   );
   const skuOf = new Map(levels.map((l) => [l.variantId, l.sku]));
   assertLevelInvariants(recomputed, (id) => skuOf.get(id) ?? id);
-  for (const level of recomputed) {
+  // Em lotes: pelo pooler cada ida e volta custa dezenas de ms e a transação segura as travas.
+  for (let i = 0; i < recomputed.length; i += LEVEL_UPSERT_BATCH) {
     await tx
       .insert(schema.stockLevels)
-      .values({
-        productVariantId: level.productVariantId,
-        onHand: level.onHand,
-        reserved: level.reserved,
-      })
+      .values(
+        recomputed
+          .slice(i, i + LEVEL_UPSERT_BATCH)
+          .map((level) => ({ productVariantId: level.productVariantId, onHand: level.onHand, reserved: level.reserved })),
+      )
       .onConflictDoUpdate({
         target: schema.stockLevels.productVariantId,
-        set: {
-          onHand: level.onHand,
-          reserved: level.reserved,
-          updatedAt: sql`now()`,
-        },
+        set: { onHand: sql`excluded.on_hand`, reserved: sql`excluded.reserved`, updatedAt: sql`now()` },
       });
   }
   return recomputed.length;
@@ -603,15 +617,23 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
     await tx.execute(sql.raw(`LOCK TABLE ${LOCKED_TABLES.map((t) => `"${t}"`).join(", ")} IN EXCLUSIVE MODE`));
 
     const plan = await collectPlan(tx, now);
+    if (plan.outbox.processing > 0) {
+      throw new ServiceError(
+        "QUEUE_BUSY",
+        `A fila está processando ${plan.outbox.processing} evento(s) agora — espere um minuto e tente de novo. Nada foi gravado.`,
+      );
+    }
     const activeConversations = await tx
       .select({
         phoneE164: schema.waConversations.phoneE164,
         lid: schema.waConversations.lid,
+        customerPhoneE164: schema.customers.phoneE164,
         lastInboundAt: schema.waConversations.lastInboundAt,
         lastOutboundAt: schema.waConversations.lastOutboundAt,
         updatedAt: schema.waConversations.updatedAt,
       })
-      .from(schema.waConversations);
+      .from(schema.waConversations)
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.waConversations.customerId));
     const deletedEntryIds = (
       await tx.select({ id: schema.financialEntries.id }).from(schema.financialEntries).where(isNotNull(schema.financialEntries.orderId))
     ).map((r) => r.id);
@@ -674,8 +696,17 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
       await tx.update(schema.coupons).set({ usedCount: 0, updatedAt: now }).where(gt(schema.coupons.usedCount, 0)).returning({ id: schema.coupons.id })
     ).length;
     const productIds = plan.products.map((p) => p.id);
+    let variantsDeactivated = 0;
     if (productIds.length > 0) {
       await tx.update(schema.products).set({ status: "archived", updatedAt: now }).where(inArray(schema.products.id, productIds));
+      // Fora da vitrine E do controle de estoque/estoque baixo do painel.
+      variantsDeactivated = (
+        await tx
+          .update(schema.productVariants)
+          .set({ isActive: false, updatedAt: now })
+          .where(and(inArray(schema.productVariants.productId, productIds), eq(schema.productVariants.isActive, true)))
+          .returning({ id: schema.productVariants.id })
+      ).length;
     }
     const rateIds = plan.shippingRates.map((r) => r.id);
     if (rateIds.length > 0) await tx.delete(schema.shippingRates).where(inArray(schema.shippingRates.id, rateIds));
@@ -707,6 +738,7 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
           deleted,
           levelsWritten,
           productsArchived: plan.products.map((p) => p.slug),
+          variantsDeactivated,
           ratesDeleted: plan.shippingRates.map((r) => r.name),
           couponsReset,
           watchdogSilenced: silence.length,
@@ -726,6 +758,7 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
       deleted,
       levelsWritten,
       productsArchived: plan.products.map((p) => p.slug),
+      variantsDeactivated,
       ratesDeleted: plan.shippingRates.map((r) => r.name),
       couponsReset,
       watchdogSilenced: silence.length,
@@ -733,21 +766,27 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
     };
   });
 
-  // Fora da transação: a vitrine é ISR (5 min); a fila pede a revalidação agora.
-  const paths = ["/", "/produtos", "/estreia", ...result.productsArchived.map((slug) => `/produto/${slug}`)];
-  let revalidateEvents = 0;
-  for (let i = 0; i < paths.length; i += REVALIDATE_PATHS_PER_EVENT) {
-    const id = await enqueueOutboxEvent(
-      db,
-      {
-        eventType: "store.revalidate",
-        dedupeKey: `store.revalidate:launch-reset:${now.getTime()}:${i}`,
-        payload: { paths: paths.slice(i, i + REVALIDATE_PATHS_PER_EVENT) },
-      },
-      { kick: false },
-    );
-    if (id) revalidateEvents += 1;
+  // Fora da transação: a vitrine é ISR (5 min); a fila pede a revalidação
+  // agora. O banco já está limpo — uma falha aqui é só aviso (ISR resolve).
+  const paths = ["/", "/produtos", "/estreia", ...result.productsArchived.filter((slug) => /^[a-z0-9-]+$/.test(slug)).map((slug) => `/produto/${slug}`)];
+  let revalidateEvents: number | null = 0;
+  try {
+    for (let i = 0; i < paths.length; i += REVALIDATE_PATHS_PER_EVENT) {
+      const id = await enqueueOutboxEvent(
+        db,
+        {
+          eventType: "store.revalidate",
+          dedupeKey: `store.revalidate:launch-reset:${now.getTime()}:${i}`,
+          payload: { paths: paths.slice(i, i + REVALIDATE_PATHS_PER_EVENT) },
+        },
+        { kick: false },
+      );
+      if (id) revalidateEvents += 1;
+    }
+    await kickOutbox();
+  } catch (error) {
+    console.warn(`[launch-reset] revalidação da vitrine não enfileirada (a ISR resolve em 5 min):`, error instanceof Error ? error.message : error);
+    revalidateEvents = null;
   }
-  await kickOutbox();
   return { ...result, revalidateEvents };
 }

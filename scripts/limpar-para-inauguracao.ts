@@ -20,7 +20,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { LAUNCH_RESET_CONFIRMATION, STORAGE_WIPE_PREFIXES, WIPE_STEPS, describeDatabaseTarget, isWipeStoragePath } from "@/core/maintenance/launch-reset";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
-import { applyLaunchReset, assertQueueIdle, planLaunchReset, type LaunchResetPlan } from "@/services/launch-reset";
+import { applyLaunchReset, assertQueueIdle, planLaunchReset, type LaunchResetPlan, type LaunchResetReport } from "@/services/launch-reset";
 
 const STORE_TZ = "America/Sao_Paulo";
 const BUCKET = "product-images";
@@ -53,6 +53,10 @@ function printPlan(plan: LaunchResetPlan): void {
     console.log("Ajustes e perdas lançados à mão (ficam — confira se algum foi para 'consertar' uma baixa de teste):");
     for (const m of plan.stock.manualMovements) console.log(`  • ${when(m.createdAt)} ${m.sku} ${m.type} ${m.quantityDelta > 0 ? "+" : ""}${m.quantityDelta}${m.note ? ` — ${m.note}` : ""}`);
   }
+  if (plan.stock.invalid.length > 0) {
+    console.log("AVISO: o --apply vai RECUSAR — o recálculo deixaria saldo inválido (reservado ≠ 0 ou em mãos < 0). Corrija no histórico antes:");
+    for (const v of plan.stock.invalid) console.log(`  • ${v.sku}: em mãos ${v.onHand}, reservado ${v.reserved}`);
+  }
   if (plan.stock.preDivergences.length > 0) {
     console.log("AVISO: o saldo já não batia com o histórico ANTES da limpeza; ela deixa o saldo igual ao histórico:");
     for (const d of plan.stock.preDivergences) console.log(`  • ${d.sku}: saldo ${d.level.onHand}/${d.level.reserved}, histórico ${d.ledger.onHand}/${d.ledger.reserved}`);
@@ -83,8 +87,10 @@ async function exportRows(db: ReturnType<typeof getDb>, dir: string): Promise<vo
     stock_movements: `WHERE reference_type IN ('order', 'hold')`,
     financial_entries: `WHERE order_id IS NOT NULL`,
   };
-  for (const table of WIPE_STEPS) {
-    const rows = rowsOf<Record<string, unknown>>(await db.execute(sql.raw(`SELECT * FROM "${table}" ${partial[table] ?? ""}`)));
+  // Também o que é atualizado/apagado fora da lista: faixas, peças, cupons e saldos de antes.
+  const extra = ["shipping_rates", "products", "product_variants", "coupons", "stock_levels"];
+  for (const table of [...WIPE_STEPS, ...extra]) {
+    const rows = rowsOf<Record<string, unknown>>(await db.execute(sql.raw(`SELECT * FROM "${table}" ${partial[table as (typeof WIPE_STEPS)[number]] ?? ""}`)));
     writeFileSync(join(dir, `${table}.json`), JSON.stringify(rows, null, 1));
   }
   console.log(`Linhas exportadas em ${dir} (uma cópia do que vai sumir; apague quando não precisar mais).`);
@@ -136,25 +142,65 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // O storage real precisa das variáveis do Supabase: falhar AQUI, não depois do commit.
+  const storage = skipStorage ? null : getFileStorage();
+
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   await exportRows(db, arg("exportar") ?? join(tmpdir(), `trive-limpeza-${stamp}`));
 
   const before = skipStorage ? null : await listBucketPaths(db, ["products", "cards"]);
-  const report = await applyLaunchReset(db, { userId: owner.id });
-  console.log(`\nGravado (auditoria #${report.auditLogId}, ${owner.name ?? owner.id}).`);
-  for (const [table, n] of Object.entries(report.deleted)) if (n > 0) console.log(`  apagado ${table}: ${n}`);
-  console.log(`  saldos recalculados: ${report.levelsWritten}; cupons zerados: ${report.couponsReset}; peças arquivadas: ${report.productsArchived.join(", ") || "nenhuma"}; faixas apagadas: ${report.ratesDeleted.join(", ") || "nenhuma"}; vigia silenciado para ${report.watchdogSilenced} endereço(s); ${report.revalidateEvents} pedido(s) de revalidação da vitrine.`);
-  console.log(`  próximo pedido: #${report.plan.orderNumbers.nextAfterReset}.`);
+  const report = await applyWithRetry(db, owner.id);
+  printReport(report, owner.name ?? owner.id);
 
-  if (skipStorage) {
+  if (!storage) {
     console.log("\nArquivos do bucket não tocados (--sem-storage). Caminhos referenciados:");
     for (const path of report.plan.storagePaths) console.log(`  ${path}`);
     return 0;
   }
 
-  const orphans = (await listBucketPaths(db, STORAGE_WIPE_PREFIXES)) ?? [];
-  const paths = [...new Set([...report.plan.storagePaths, ...orphans])].filter(isWipeStoragePath).sort();
-  const storage = getFileStorage();
+  // Daqui em diante o banco JÁ ESTÁ LIMPO: qualquer erro é "faltou arquivo", nunca "nada foi gravado".
+  try {
+    return await purgeBucket(db, storage, report, before);
+  } catch (error) {
+    console.error(`\nBanco limpo (auditoria #${report.auditLogId}), mas a limpeza do bucket falhou: ${error instanceof Error ? error.message : error}`);
+    console.error("Apague à mão no Supabase Storage (bucket product-images):");
+    for (const path of report.plan.storagePaths) console.error(`  ${path}`);
+    return 3;
+  }
+}
+
+function printReport(report: LaunchResetReport, ownerName: string): void {
+  console.log(`\nGravado (auditoria #${report.auditLogId}, ${ownerName}).`);
+  for (const [table, n] of Object.entries(report.deleted)) if (n > 0) console.log(`  apagado ${table}: ${n}`);
+  console.log(
+    `  saldos recalculados: ${report.levelsWritten}; cupons zerados: ${report.couponsReset}; peças arquivadas: ${report.productsArchived.join(", ") || "nenhuma"} (${report.variantsDeactivated} variante(s) desativada(s)); faixas apagadas: ${report.ratesDeleted.join(", ") || "nenhuma"}; vigia silenciado para ${report.watchdogSilenced} endereço(s); ${report.revalidateEvents === null ? "revalidação da vitrine NÃO enfileirada (a ISR resolve em 5 min)" : `${report.revalidateEvents} pedido(s) de revalidação da vitrine`}.`,
+  );
+  console.log(`  próximo pedido: #${report.plan.orderNumbers.nextAfterReset}.`);
+}
+
+/** Deadlock (40P01) ou trava ocupada (55P03) = alguém estava no meio de uma escrita; uma nova tentativa depois de 15 s costuma bastar. */
+async function applyWithRetry(db: ReturnType<typeof getDb>, userId: string): Promise<LaunchResetReport> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await applyLaunchReset(db, { userId });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (attempt < 3 && (code === "40P01" || code === "55P03")) {
+        console.warn(`Banco ocupado (${code === "40P01" ? "deadlock" : "trava ocupada"}); nada foi gravado. Nova tentativa em 15 s (${attempt}/2)…`);
+        await new Promise((resolve) => setTimeout(resolve, 15_000));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+async function purgeBucket(db: ReturnType<typeof getDb>, storage: ReturnType<typeof getFileStorage>, report: LaunchResetReport, before: string[] | null): Promise<number> {
+  const orphans = await listBucketPaths(db, STORAGE_WIPE_PREFIXES);
+  // Listagem que falha OU volta vazia com fotos de produto existentes: não dá para prometer os órfãos.
+  const sweepOk = orphans !== null && before !== null && before.length > 0;
+  if (!sweepOk) console.warn("(a varredura de órfãos no bucket não foi possível — só os arquivos referenciados serão apagados)");
+  const paths = [...new Set([...report.plan.storagePaths, ...(orphans ?? [])])].filter(isWipeStoragePath).sort();
   const failed: string[] = [];
   for (const path of paths) {
     try {
@@ -165,21 +211,21 @@ async function main(): Promise<number> {
     }
   }
   console.log(`\nBucket: ${paths.length - failed.length} arquivo(s) apagado(s)${failed.length ? `, ${failed.length} falhou(aram)` : ""}.`);
-  const after = await listBucketPaths(db, ["products", "cards"]);
+  const after = sweepOk ? await listBucketPaths(db, ["products", "cards"]) : null;
   if (before && after && before.length !== after.length) {
     console.error(`ATENÇÃO: fotos de produto/cartões mudaram de ${before.length} para ${after.length} — confira o bucket.`);
   }
   if (failed.length > 0) {
     console.error("Apague à mão no Supabase Storage (bucket product-images):");
     for (const path of failed) console.error(`  ${path}`);
-    return 3;
   }
-  return 0;
+  return failed.length > 0 || !sweepOk ? 3 : 0;
 }
 
 main()
   .then((code) => process.exit(code))
   .catch((error) => {
+    // Só chega aqui antes do commit (a transação desfaz tudo) — depois dele os erros viram código 3 acima.
     console.error(error instanceof Error ? error.message : error);
     console.error("Nada foi gravado.");
     process.exit(1);

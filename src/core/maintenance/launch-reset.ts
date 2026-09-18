@@ -79,8 +79,47 @@ export const WIPE_DEPENDENCIES: readonly (readonly [child: WipeStep, parent: Wip
  * Travadas em EXCLUSIVE antes de qualquer DELETE: bloqueia escrita e
  * SELECT … FOR UPDATE (o turno da Lia), não leitura — a vitrine continua
  * servindo; webhooks e crons esperam o commit e já veem o banco limpo.
+ * A ORDEM é a em que a aplicação escreve (webhook: inbound_events →
+ * wa_conversations → wa_messages → outbox → audit; checkout: customers →
+ * orders → itens → estoque → outbox → audit): quem já está no meio de uma
+ * transação termina sem cruzar com a limpeza (sem deadlock). A ordem dos
+ * DELETEs (WIPE_STEPS) continua filho → pai. email_threads entra porque a
+ * FK de customers a atualiza (SET NULL).
  */
-export const LOCKED_TABLES: readonly string[] = [...WIPE_STEPS, "stock_levels", "coupons", "products", "shipping_rates"];
+export const LOCKED_TABLES: readonly string[] = [
+  "inbound_events",
+  "wa_conversations",
+  "wa_messages",
+  "wa_followups",
+  "wa_suggestions",
+  "atelier_intakes",
+  "customers",
+  "customer_addresses",
+  "email_threads",
+  "customer_profiles",
+  "orders",
+  "order_items",
+  "order_status_history",
+  "financial_entries",
+  "stock_movements",
+  "stock_levels",
+  "stock_holds",
+  "stock_alerts",
+  "customer_looks",
+  "site_carts",
+  "drop_invites",
+  "drop_waitlist",
+  "delivery_runs",
+  "delivery_stops",
+  "delivery_positions",
+  "delivery_feedback",
+  "coupons",
+  "products",
+  "product_variants",
+  "shipping_rates",
+  "outbox_events",
+  "audit_log",
+];
 
 /**
  * Gatilhos de proteção (drizzle/0002_fase1_guards.sql) desligados pelo nome,
@@ -121,6 +160,8 @@ export const WIPED_AUDIT_ENTITY_TYPES: readonly string[] = [
   "drop_invite",
   "drop_waitlist",
 ];
+/** Ações que guardam telefone numa entidade que fica (o lançamento): saem também. */
+export const WIPED_AUDIT_ACTIONS: readonly string[] = ["drop.waitlist_join"];
 /** Linhas de dedupe de alertas (1 h de carência): ficam, senão o alerta repete. */
 export const KEPT_AUDIT_ACTIONS: readonly string[] = ["wa.watchdog_alert", "wa.session_alert", "system.function_failed_alert"];
 
@@ -281,6 +322,8 @@ export function watchdogSilenceRows(
   conversations: readonly {
     phoneE164: string;
     lid: string | null;
+    /** Telefone do cadastro ligado: a Z-API pode listar pelo número real um chat que aqui nasceu só com LID. */
+    customerPhoneE164?: string | null;
     lastInboundAt: Date | null;
     lastOutboundAt: Date | null;
     updatedAt: Date;
@@ -294,6 +337,7 @@ export function watchdogSilenceRows(
     if (!stamps.some((stamp) => stamp && stamp.getTime() > since)) continue;
     addresses.add(conversation.phoneE164);
     if (conversation.lid) addresses.add(conversation.lid);
+    if (conversation.customerPhoneE164) addresses.add(conversation.customerPhoneE164);
   }
   return [...addresses].map((address) => ({ address, lastMessageAt: now }));
 }

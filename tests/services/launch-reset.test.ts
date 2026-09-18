@@ -93,7 +93,7 @@ async function seedWorld() {
   const demo = await createTestVariant(db, { sku: "DEMO-01", name: "Vestido Demo" });
   const [drop] = await db
     .insert(schema.drops)
-    .values({ name: "Estreia", status: "scheduled", publishAt: new Date("2026-09-20T12:00:00Z") })
+    .values({ name: "Estreia", status: "vip_sent", publishAt: new Date("2026-09-20T12:00:00Z"), vipSentAt: NOW })
     .returning({ id: schema.drops.id });
   await db.insert(schema.dropProducts).values({ dropId: drop.id, productId: demo.productId });
 
@@ -184,6 +184,7 @@ async function seedWorld() {
     { actorType: "system", action: "wa.watchdog_alert", entityType: "wa_conversation", entityId: "+5591900000000", after: { lastMessageAt: NOW.toISOString() } },
     { actorType: "system", action: "wa.session_alert", entityType: "wa_session", entityId: "session" },
     { actorType: "user", actorId: FIXED_USER_ID, action: "product.update", entityType: "product", entityId: real.productId },
+    { actorType: "customer", action: "drop.waitlist_join", entityType: "drop", entityId: drop.id, after: { phoneE164: "+5591955554444" } },
   ]);
 
   return { supplierId, real, realM, testProduct, demo, rate: rate.id, testRate: testRate.id, coupon: coupon.id, order, conversation, intake, look, courier, drop };
@@ -212,6 +213,7 @@ describe("planLaunchReset", () => {
       { sku: "LONGO-DUNAS-P", productName: "Longo Dunas", before: { onHand: 4, reserved: 0 }, after: { onHand: 5, reserved: 0 } },
     ]);
     expect(plan.stock.preDivergences).toEqual([]);
+    expect(plan.stock.invalid).toEqual([]);
     expect(plan.stock.manualMovements).toEqual([expect.objectContaining({ sku: "LONGO-DUNAS-M", type: "adjustment", quantityDelta: 1, note: "contagem da prateleira" })]);
     expect(plan.coupons).toEqual([{ code: "BEMVINDO10", usedCount: 2 }]);
     expect(plan.products.map((p) => p.name).sort()).toEqual(["Pagamento de Teste", "Vestido Demo"]);
@@ -239,9 +241,13 @@ describe("planLaunchReset", () => {
     expect(await rows("customers")).toBe(1);
   });
 
-  it("recusa com a fila no meio de um handler", async () => {
+  it("recusa com a fila no meio de um handler — antes e dentro da transação", async () => {
+    await seedWorld();
     await db.insert(schema.outboxEvents).values({ eventType: "wa.send", status: "processing", dedupeKey: "busy" });
     await expect(assertQueueIdle(sdb)).rejects.toMatchObject({ code: "QUEUE_BUSY" });
+    await expect(applyLaunchReset(asDb, { userId: FIXED_USER_ID, now: NOW })).rejects.toMatchObject({ code: "QUEUE_BUSY" });
+    expect(await rows("customers")).toBe(1);
+    expect(Object.values(await triggerStates())).toEqual(["O", "O", "O", "O", "O"]);
   });
 });
 
@@ -282,6 +288,10 @@ describe("applyLaunchReset", () => {
     expect(products.find((p) => p.name === "Pagamento de Teste")?.status).toBe("archived");
     expect(products.find((p) => p.name === "Vestido Demo")?.status).toBe("archived");
     expect(products.filter((p) => p.name === "Longo Dunas").every((p) => p.status === "active")).toBe(true);
+    const variants = await db.select({ sku: schema.productVariants.sku, isActive: schema.productVariants.isActive }).from(schema.productVariants);
+    expect(variants.filter((v) => v.sku.startsWith("LONGO")).every((v) => v.isActive)).toBe(true);
+    expect(variants.filter((v) => !v.sku.startsWith("LONGO")).every((v) => !v.isActive)).toBe(true);
+    expect(report.variantsDeactivated).toBe(2);
 
     // Livro: só compra e ajuste; saldo = livro; limiar preservado.
     const movements = await db.select({ type: schema.stockMovements.type, referenceType: schema.stockMovements.referenceType }).from(schema.stockMovements);
@@ -302,8 +312,8 @@ describe("applyLaunchReset", () => {
     expect(keys.some((k) => ["drop-invite", "mp-event", "done-send"].includes(k))).toBe(false);
     // Os eventos de estoque da própria semeadura (agregado product_variant, pendentes) sobrevivem de propósito.
     expect(keys.every((k) => k.startsWith("keep-") || k.startsWith("stock.") || k.startsWith("store.revalidate"))).toBe(true);
-    expect(outbox.filter((o) => o.eventType === "store.revalidate")).toHaveLength(report.revalidateEvents);
     expect(report.revalidateEvents).toBe(1);
+    expect(outbox.filter((o) => o.eventType === "store.revalidate")).toHaveLength(1);
     const inbound = await db.select({ id: schema.inboundEvents.externalEventId }).from(schema.inboundEvents);
     expect(inbound.map((i) => i.id).sort()).toEqual(["mail-1", "mp-1", "recent"]);
 
@@ -313,6 +323,7 @@ describe("applyLaunchReset", () => {
     expect(audit.some((a) => a.action === "wa.session_alert")).toBe(true);
     expect(audit.some((a) => a.action === "stock.receive" || a.action === "stock.purchase" || a.entityType === "stock_level" || a.entityType === "financial_entry")).toBe(true);
     expect(audit.some((a) => a.entityType === "order" || a.entityType === "customer")).toBe(false);
+    expect(audit.some((a) => a.action === "drop.waitlist_join")).toBe(false);
     const silenced = audit.filter((a) => a.action === "wa.watchdog_alert").map((a) => a.entityId).sort();
     expect(silenced).toEqual(["+5591900000000", "+5591988881234", "220839349862480@lid"]);
     expect(report.watchdogSilenced).toBe(2);
@@ -351,6 +362,8 @@ describe("applyLaunchReset", () => {
       referenceType: "product",
       idempotencyKey: "avulsa",
     });
+    const plan = await planLaunchReset(sdb, { now: NOW });
+    expect(plan.stock.invalid).toEqual([{ sku: "LONGO-DUNAS-M", onHand: 4, reserved: 1 }]);
     await expect(applyLaunchReset(asDb, { userId: FIXED_USER_ID, now: NOW })).rejects.toBeInstanceOf(LaunchResetInvariantError);
     expect(await rows("customers")).toBe(1);
     expect(await rows("orders")).toBe(1);

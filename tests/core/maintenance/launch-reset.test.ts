@@ -11,6 +11,7 @@ import {
   RESERVED_MOVEMENT_TYPES,
   STORAGE_WIPE_PREFIXES,
   WATCHDOG_SILENCE_WINDOW_MS,
+  WIPED_AUDIT_ACTIONS,
   WIPE_DEPENDENCIES,
   WIPE_STEPS,
   assertLevelInvariants,
@@ -41,9 +42,22 @@ describe("ordem da limpeza", () => {
     }
   });
 
-  it("trava tudo que apaga ou atualiza", () => {
+  it("trava tudo que apaga ou atualiza, na ordem em que a aplicação escreve (pai antes do filho)", () => {
     for (const step of WIPE_STEPS) expect(LOCKED_TABLES).toContain(step);
-    for (const table of ["stock_levels", "coupons", "products", "shipping_rates"]) expect(LOCKED_TABLES).toContain(table);
+    for (const table of ["stock_levels", "coupons", "products", "product_variants", "shipping_rates", "email_threads"]) expect(LOCKED_TABLES).toContain(table);
+    expect(new Set(LOCKED_TABLES).size).toBe(LOCKED_TABLES.length);
+    const at = (t: string) => LOCKED_TABLES.indexOf(t);
+    // webhook da Z-API: inbound → conversa → mensagem → fila → auditoria
+    expect(at("inbound_events")).toBeLessThan(at("wa_conversations"));
+    expect(at("wa_conversations")).toBeLessThan(at("wa_messages"));
+    expect(at("wa_messages")).toBeLessThan(at("outbox_events"));
+    expect(at("outbox_events")).toBeLessThan(at("audit_log"));
+    // checkout: cliente → pedido → itens → estoque → fila
+    expect(at("customers")).toBeLessThan(at("orders"));
+    expect(at("orders")).toBeLessThan(at("order_items"));
+    expect(at("order_items")).toBeLessThan(at("stock_movements"));
+    expect(at("stock_movements")).toBeLessThan(at("stock_levels"));
+    expect(at("stock_levels")).toBeLessThan(at("outbox_events"));
   });
 
   it("desliga exatamente os cinco gatilhos de proteção, pelo nome", () => {
@@ -63,6 +77,7 @@ describe("ordem da limpeza", () => {
     expect(FIRST_REAL_ORDER_NUMBER).toBe(1001);
     expect(INBOUND_ZAPI_KEEP_HOURS).toBe(24);
     expect(KEPT_AUDIT_ACTIONS).toContain("wa.watchdog_alert");
+    expect(WIPED_AUDIT_ACTIONS).toContain("drop.waitlist_join");
   });
 });
 
@@ -190,18 +205,19 @@ describe("arquivos do bucket", () => {
 
 describe("silêncio do vigia", () => {
   const now = new Date("2026-09-18T12:00:00Z");
-  it("cobre telefone e LID de quem teve movimento na janela do vigia", () => {
+  it("cobre telefone, LID e o telefone do cadastro de quem teve movimento na janela do vigia", () => {
     const recent = new Date(now.getTime() - 60 * 60_000);
     const old = new Date(now.getTime() - WATCHDOG_SILENCE_WINDOW_MS - 60_000);
     const rows = watchdogSilenceRows(
       [
         { phoneE164: "+5591988887777", lid: "123@lid", lastInboundAt: recent, lastOutboundAt: null, updatedAt: old },
         { phoneE164: "+5591911112222", lid: null, lastInboundAt: null, lastOutboundAt: null, updatedAt: recent },
-        { phoneE164: "+5591933334444", lid: "999@lid", lastInboundAt: old, lastOutboundAt: old, updatedAt: old },
+        { phoneE164: "456@lid", lid: "456@lid", customerPhoneE164: "+5591955556666", lastInboundAt: recent, lastOutboundAt: null, updatedAt: recent },
+        { phoneE164: "+5591933334444", lid: "999@lid", customerPhoneE164: "+5591900001111", lastInboundAt: old, lastOutboundAt: old, updatedAt: old },
       ],
       now,
     );
-    expect(rows.map((r) => r.address).sort()).toEqual(["+5591911112222", "+5591988887777", "123@lid"]);
+    expect(rows.map((r) => r.address).sort()).toEqual(["+5591911112222", "+5591955556666", "+5591988887777", "123@lid", "456@lid"]);
     expect(rows.every((r) => r.lastMessageAt === now)).toBe(true);
   });
 });

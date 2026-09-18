@@ -792,12 +792,20 @@ pelo nome só dentro dela e religados (e conferidos) antes do commit.
 
 ### Antes (obrigatório)
 
-1. Backup na hora: GitHub → Actions → **Backup** → *Run workflow*
-   (`gh workflow run backup.yml`, depois `gh run watch` e
-   `gh run download --name trive-backup`). Guardar fora da máquina.
+1. Backup na hora, pelo computador (o workflow **Backup** do GitHub só
+   funciona depois de cadastrar o secret `DATABASE_URL` — em 18/09/2026 ele
+   falhava desde 25/08 por falta dele):
+
+       mkdir -p ~/TRIVE-backups && pg_dump "$(grep '^DATABASE_URL=' .env.prod.local | cut -d= -f2-)" --no-owner --format=custom --file=~/TRIVE-backups/trive-pre-limpeza-$(date +%F).dump
+
+   Conferir com `pg_restore --list ~/TRIVE-backups/trive-pre-limpeza-*.dump | head`.
+   O `pg_dump` tem de ser da versão do servidor ou mais nova
+   (`/opt/homebrew/opt/postgresql@17/bin/pg_dump`).
 2. Fila vazia: **/admin/fila** sem evento "processando" (o script recusa
-   se houver). Um turno da Lia em andamento faz o script desistir em 10 s
-   ("lock timeout") — é só rodar de novo.
+   se houver, antes e dentro da transação). Se um webhook ou um turno da
+   Lia estiver no meio de uma escrita, o banco pode responder "deadlock"
+   ou "trava ocupada": a transação desfaz tudo e o script tenta de novo
+   sozinho (2 vezes, 15 s de intervalo) — depois disso, rodar de novo.
 3. Se houver testes de mão a fazer (catálogo, sacola, embalar → Saiu, GPS),
    fazer ANTES; se fizer depois, rode a limpeza de novo antes de abrir.
 
@@ -809,8 +817,11 @@ Conferir na saída: o host do banco, cada conversa e cliente listados (para
 confirmar que é tudo teste — telefones mascarados), as contagens, o estoque
 "antes → depois" por SKU e os ajustes manuais (se algum ajuste foi feito
 para "consertar" uma baixa de teste, o saldo recalculado fica errado —
-corrigir com novo ajuste depois), as peças a arquivar, a faixa de frete e
-as compras de fornecedor (ficam; de teste, apagar no painel).
+corrigir com novo ajuste depois), as peças a arquivar (as variantes delas são desativadas, para sumirem
+também do controle de estoque), a faixa de frete e as compras de
+fornecedor (ficam; de teste, apagar no painel). Se aparecer "AVISO: o
+--apply vai RECUSAR", há um movimento de reserva sem pedido ou um saldo
+que ficaria negativo — corrigir no histórico antes.
 
 ### Aplicar
 
