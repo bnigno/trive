@@ -10,6 +10,9 @@ import {
 } from "@/components/ui/form";
 import { addVariantAction, updateVariantAction, type FormState } from "./actions";
 
+/** O que o dono digita vira o padrão do catálogo (é a chave que liga foto, Lia e vitrine à variação). */
+const AXIS_VALUE_HINT = "Fica no padrão do catálogo: Rajado, Verde Musgo; tamanhos P, M, G.";
+
 const initialState: FormState = {};
 
 export function AddVariantForm({
@@ -26,7 +29,7 @@ export function AddVariantForm({
       <input type="hidden" name="productId" value={productId} />
       <div className="flex flex-wrap items-end gap-3">
         {axes.map((axis) => (
-          <Field key={axis} label={axis} className="min-w-32 flex-1">
+          <Field key={axis} label={axis} className="min-w-32 flex-1" hint={AXIS_VALUE_HINT}>
             <Input name={`attr:${axis}`} required />
           </Field>
         ))}
@@ -101,7 +104,7 @@ export function EditVariantForm({
           />
         </Field>
         {editableAxes.map((axis) => (
-          <Field key={axis} label={axis} className="min-w-32 flex-1">
+          <Field key={axis} label={axis} className="min-w-32 flex-1" hint={AXIS_VALUE_HINT}>
             <Input
               name={`attr:${axis}`}
               defaultValue={variant.attributes[axis] ?? ""}

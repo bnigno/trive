@@ -1121,6 +1121,97 @@ describe("updateVariant — código (SKU) editável", () => {
       }),
     ).rejects.toMatchObject({ code: "sku_duplicado" });
   });
+
+  it("addVariant e updateVariant gravam cor/tamanho no padrão do catálogo (RAJADO → Rajado, m → M)", async () => {
+    const { product } = await createProduct(db, {
+      name: "Bermuda Jeans",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [{ sku: "BERMUDA-AZ-36", attributes: { cor: "Azul", tamanho: "36" } }],
+      userId: FIXED_USER_ID,
+    });
+    const created = await addVariant(db, {
+      productId: product.id,
+      sku: "BERMUDA-RAJA-34",
+      attributes: { cor: "RAJADO", tamanho: "34" },
+      userId: FIXED_USER_ID,
+    });
+    expect(created.attributes).toEqual({ cor: "Rajado", tamanho: "34" });
+    const [audit] = await db
+      .select({ after: schema.auditLog.after })
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, created.id));
+    expect((audit.after as { attributes: unknown }).attributes).toEqual({ cor: "Rajado", tamanho: "34" });
+
+    const updated = await updateVariant(db, {
+      variantId: created.id,
+      attributes: { cor: "  rajado ", tamanho: "m" },
+      userId: FIXED_USER_ID,
+    });
+    expect(updated.attributes).toEqual({ cor: "Rajado", tamanho: "M" });
+
+    // Só a caixa diferente da existente = a mesma combinação: o banco recusa.
+    await expect(
+      addVariant(db, {
+        productId: product.id,
+        sku: "BERMUDA-AZ-36-B",
+        attributes: { cor: "AZUL", tamanho: "36" },
+        userId: FIXED_USER_ID,
+      }),
+    ).rejects.toMatchObject({ code: "atributos_duplicados" });
+  });
+
+  it("editar só o peso de uma variação crua que colide com uma irmã só na caixa grava o peso e deixa os atributos", async () => {
+    const { product, variants } = await createProduct(db, {
+      name: "Bermuda Gêmea",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "BG-RAJ-34-A", attributes: { cor: "Rajado", tamanho: "34" } },
+        { sku: "BG-RAJ-34-B", attributes: { cor: "Azul", tamanho: "34" } },
+      ],
+      userId: FIXED_USER_ID,
+    });
+    const raw = variants[1];
+    await db.update(schema.productVariants).set({ attributes: { cor: "RAJADO", tamanho: "34" } }).where(eq(schema.productVariants.id, raw.id));
+
+    // O formulário reenvia os atributos como estão: a normalização bateria com a irmã "Rajado".
+    const updated = await updateVariant(db, { variantId: raw.id, attributes: { cor: "RAJADO", tamanho: "34" }, weightGrams: 420, userId: FIXED_USER_ID });
+    expect(updated.weightGrams).toBe(420);
+    expect(updated.attributes).toEqual({ cor: "RAJADO", tamanho: "34" });
+
+    // Mudança de verdade para a combinação da irmã continua barrada pelo banco.
+    const third = await addVariant(db, { productId: product.id, sku: "BG-VER-34", attributes: { cor: "Verde", tamanho: "34" }, userId: FIXED_USER_ID });
+    await expect(
+      updateVariant(db, { variantId: third.id, attributes: { cor: "rajado", tamanho: "34" }, userId: FIXED_USER_ID }),
+    ).rejects.toMatchObject({ code: "atributos_duplicados" });
+    // E sem irmã na forma normalizada, o Salvar normaliza de vez.
+    const [sibling] = variants;
+    await updateVariant(db, { variantId: sibling.id, attributes: { cor: "Preto", tamanho: "34" }, userId: FIXED_USER_ID });
+    const fixed = await updateVariant(db, { variantId: raw.id, attributes: { cor: "RAJADO", tamanho: "34" }, userId: FIXED_USER_ID });
+    expect(fixed.attributes).toEqual({ cor: "Rajado", tamanho: "34" });
+  });
+
+  it("foto marcada com a cor casa com variação antiga gravada crua (\"RAJADO\")", async () => {
+    const storage = new FakeFileStorage();
+    const { product, variants } = await createProduct(db, {
+      name: "Bermuda Antiga",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [{ sku: "BERM-ANT-34", attributes: { cor: "Rajado", tamanho: "34" } }],
+      userId: FIXED_USER_ID,
+    });
+    // Como ficava antes desta correção: valor cru, direto no banco.
+    await db.update(schema.productVariants).set({ attributes: { cor: "RAJADO", tamanho: "34" } }).where(eq(schema.productVariants.id, variants[0].id));
+
+    const image = await addProductImage(db, storage, {
+      productId: product.id,
+      data: await makePng(),
+      contentType: "image/png",
+      color: "Rajado",
+      userId: FIXED_USER_ID,
+    });
+    expect(image.color).toBe("Rajado");
+    const retagged = await setProductImageColor(db, { imageId: image.id, color: "rajado", userId: FIXED_USER_ID });
+    expect(retagged.color).toBe("Rajado");
+  });
 });
 
 describe("ficha da peça e fita métrica", () => {

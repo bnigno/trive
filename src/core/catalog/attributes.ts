@@ -9,7 +9,9 @@ export interface CatalogAxis {
 }
 
 /** Siglas de tamanho vão inteiras em caixa alta; o resto é Capitalizado. */
-const SIZE_TOKENS = new Set(["PP", "P", "M", "G", "GG", "XG"]);
+const SIZE_TOKENS = new Set(["PP", "P", "M", "G", "GG", "XG", "XGG", "EG", "U", "XS", "S", "L", "XL", "XXL"]);
+/** Dentro de uma palavra, "/" e "-" separam siglas: "P/M" fica "P/M", "38-40" fica "38-40". */
+const TOKEN_SEPARATORS = /([/-])/;
 
 export const VARIANT_LABEL_SEPARATOR = " · ";
 
@@ -29,9 +31,16 @@ export function normalizeAxisValue(value: string): string {
 }
 
 function capitalizeWord(word: string): string {
-  const upper = word.toUpperCase();
+  return word
+    .split(TOKEN_SEPARATORS)
+    .map((part) => (TOKEN_SEPARATORS.test(part) ? part : capitalizeToken(part)))
+    .join("");
+}
+
+function capitalizeToken(token: string): string {
+  const upper = token.toUpperCase();
   if (SIZE_TOKENS.has(upper)) return upper;
-  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
 }
 
 /**
@@ -67,9 +76,10 @@ export function variantLabel(
 }
 
 /**
- * Os valores que um eixo realmente tem nas variantes, sem repetir e na ordem em
- * que aparecem. É o que o dono pode escolher para etiquetar uma foto: cor que
- * nenhuma variante tem não vira opção.
+ * Os valores que um eixo realmente tem nas variantes, no padrão do catálogo,
+ * sem repetir e na ordem em que aparecem. É o que o dono pode escolher para
+ * etiquetar uma foto: cor que nenhuma variante tem não vira opção, e uma
+ * variante antiga gravada como "RAJADO" aparece uma vez só, como "Rajado".
  */
 export function axisValues(
   axis: string,
@@ -77,7 +87,7 @@ export function axisValues(
 ): string[] {
   const values: string[] = [];
   for (const attributes of variantAttributes) {
-    const value = attributes[axis];
+    const value = normalizeAxisValue(attributes[axis] ?? "");
     if (value && !values.includes(value)) values.push(value);
   }
   return values;
