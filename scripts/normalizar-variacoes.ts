@@ -48,6 +48,7 @@ async function main(): Promise<void> {
 
   let changed = 0;
   let collisions = 0;
+  let failed = 0;
   const tag = apply ? "" : " (simulação)";
   for (const row of rows) {
     const current = (row.attributes ?? {}) as Record<string, string>;
@@ -59,22 +60,24 @@ async function main(): Promise<void> {
       console.log(`COLISÃO ${row.productName} — ${row.sku}: ${show(current)} → ${show(target)} bate com ${siblings.filter((s) => s !== row.sku).join(", ")}. Junte ou apague uma delas no painel; nada feito.`);
       continue;
     }
-    changed += 1;
     console.log(`${row.productName} — ${row.sku}: ${show(current)} → ${show(target)}${tag}`);
     if (apply) {
       try {
         await updateVariant(db, { variantId: row.id, attributes: current, userId: owner.id });
       } catch (error) {
+        failed += 1;
         console.error(`  falhou: ${error instanceof Error ? error.message : error}`);
+        continue;
       }
     }
+    changed += 1;
   }
   console.log(
     changed === 0 && collisions === 0
       ? "Nada a fazer: todas as variações já estão no padrão."
-      : `${changed} variação(ões) ${apply ? "regravada(s)" : "a regravar"}${collisions ? `, ${collisions} colisão(ões) para resolver no painel` : ""}.${apply ? ` Auditoria: ${owner.name ?? owner.id}.` : " Rode com --apply para gravar."}`,
+      : `${changed} variação(ões) ${apply ? "regravada(s)" : "a regravar"}${collisions ? `, ${collisions} colisão(ões) para resolver no painel` : ""}${failed ? `, ${failed} falhou(aram)` : ""}.${apply ? ` Auditoria: ${owner.name ?? owner.id}.` : " Rode com --apply para gravar."}`,
   );
-  process.exit(0);
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((error) => {

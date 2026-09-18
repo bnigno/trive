@@ -743,7 +743,29 @@ export async function updateVariant(db: ServiceDb, input: UpdateVariantInput) {
       const patch: Partial<typeof current> = {};
       const attributes = parsed.attributes === undefined ? undefined : normalizeAttributeValues(parsed.attributes);
       if (attributes !== undefined && stableJson(attributes) !== stableJson(current.attributes)) {
-        patch.attributes = attributes;
+        // Variação antiga gravada crua ("RAJADO"): o formulário reenvia o mesmo
+        // valor e a normalização vira patch. Se uma irmã já ocupa a forma
+        // normalizada, o UNIQUE estouraria num Salvar em que o dono só mexeu
+        // no peso — nesse caso os atributos ficam como estão e o resto grava.
+        const onlyNormalization =
+          stableJson(attributes) === stableJson(normalizeAttributeValues((current.attributes ?? {}) as Record<string, string>));
+        const collides =
+          onlyNormalization &&
+          (
+            await tx
+              .select({ id: productVariants.id })
+              .from(productVariants)
+              .where(
+                and(
+                  eq(productVariants.productId, current.productId),
+                  isNull(productVariants.deletedAt),
+                  ne(productVariants.id, current.id),
+                  sql`${productVariants.attributes} = ${JSON.stringify(attributes)}::jsonb`,
+                ),
+              )
+              .limit(1)
+          ).length > 0;
+        if (!collides) patch.attributes = attributes;
       }
       if (parsed.barcodeEan !== undefined && parsed.barcodeEan !== current.barcodeEan) {
         patch.barcodeEan = parsed.barcodeEan;

@@ -50,6 +50,18 @@ describe("normalizeAxisValue", () => {
     expect(normalizeAxisValue("   ")).toBe("");
   });
 
+  it("tamanhos compostos e siglas fora da lista básica não são desfigurados", () => {
+    expect(normalizeAxisValue("P/M")).toBe("P/M");
+    expect(normalizeAxisValue("p/m")).toBe("P/M");
+    expect(normalizeAxisValue("38/40")).toBe("38/40");
+    expect(normalizeAxisValue("38-40")).toBe("38-40");
+    expect(normalizeAxisValue("xgg")).toBe("XGG");
+    expect(normalizeAxisValue("Tam Único")).toBe("Tam Único");
+    expect(normalizeAxisValue("unico")).toBe("Unico");
+    expect(normalizeAxisValue("verde-musgo")).toBe("Verde-Musgo");
+    expect(normalizeAxisValue("2 anos")).toBe("2 Anos");
+  });
+
   it("é idempotente", () => {
     const once = normalizeAxisValue("  azul   MARINHO ");
     expect(normalizeAxisValue(once)).toBe(once);
