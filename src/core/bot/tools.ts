@@ -149,7 +149,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "listar_produtos",
     description:
-      "Busca peças no catálogo (nomes, preços reais e disponibilidade) E envia à cliente a lista tocável do catálogo com botões. Chame SEMPRE que a cliente quiser ver ou escolher peças — inclusive 'quero ver outra' e mesmo que uma lista já tenha aparecido antes (só a chamada envia os botões). Use os filtros para curar: categoria (ex.: 'vestidos'), cor, tamanho, preço máximo, busca por nome ou descrição. Cabem 10 peças por página; passe pagina para ver as próximas.",
+      "Busca peças no catálogo (nomes, preços reais e disponibilidade) E envia à cliente a lista tocável do catálogo com botões. Chame SEMPRE que a cliente quiser ver ou escolher peças — inclusive 'quero ver outra' e mesmo que uma lista já tenha aparecido antes (só a chamada envia os botões). Use os filtros para curar: categoria (ex.: 'vestidos'), cor, tamanho, preço máximo, busca por nome ou descrição. Sem pagina, manda o catálogo inteiro de uma vez, em até 3 listas de 10 (o WhatsApp só aceita 10 por lista); o resultado diz se ficou alguma peça de fora — só então passe pagina para as próximas.",
     input_schema: {
       type: "object",
       properties: {
@@ -185,7 +185,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
           type: "integer",
           minimum: 1,
           default: 1,
-          description: "Página da lista (10 peças por página). Padrão 1.",
+          description: "Só quando o resultado disser que há mais peças: a página seguinte (10 por página). Sem pagina, vai o catálogo inteiro em até 3 listas.",
         },
       },
       required: [],

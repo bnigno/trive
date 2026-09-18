@@ -140,7 +140,9 @@ export async function isBotEnabled(db: DbOrTx): Promise<boolean> {
  */
 export function historyTextFor(kind: string, body: string): string {
   if (kind === "option_list") {
-    return "[lista tocável do catálogo enviada ao cliente]";
+    // A faixa ("11–20 de 25") diz ao modelo que o catálogo inteiro já está na conversa.
+    const faixa = body.match(/\((\d+–\d+ de \d+)\)/);
+    return faixa ? `[lista tocável do catálogo (${faixa[1]}) enviada ao cliente]` : "[lista tocável do catálogo enviada ao cliente]";
   }
   if (kind === "image") {
     return `[foto enviada ao cliente] ${body}`;
@@ -173,7 +175,9 @@ export function historyTextForOutbound(input: {
       ? `[mensagem de voz ${failed ? "que NÃO chegou à cliente (falhou)" : "enviada à cliente"}] ${input.body}`
       : failed && input.kind === "image"
         ? `[foto que NÃO chegou ao cliente (falhou)] ${input.body}`
-        : historyTextFor(input.kind, input.body);
+        : failed && input.kind === "option_list"
+          ? historyTextFor(input.kind, input.body).replace("enviada ao cliente", "que NÃO chegou à cliente (falhou)")
+          : historyTextFor(input.kind, input.body);
   if (isProactiveBotReply(input.dedupeKey)) {
     return `[você chamou como combinado] ${text}`;
   }
@@ -198,6 +202,7 @@ export function buildToolExecutor(
     ...baseCtx,
     ...(baseCtx.dryRun && !baseCtx.stateOverlay ? { stateOverlay: { current: null } } : {}),
     turnAudioUrls: baseCtx.turnAudioUrls ?? new Set<string>(),
+    turnLists: { count: 0 },
     emitCard: makeCardEmitter(db, baseCtx),
   };
   return async (name, rawInput) => {

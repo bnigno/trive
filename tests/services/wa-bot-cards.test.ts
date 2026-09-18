@@ -168,6 +168,23 @@ describe("listar_produtos + cartão editorial", () => {
     expect(second.attachments.map((attachment) => attachment.kind)).toEqual(["option_list"]);
   });
 
+  it("catálogo inteiro (sem pagina): as listas saem todas e o cartão é um só, com as fotos da primeira lista", async () => {
+    for (let index = 1; index <= 10; index += 1) {
+      await createProduct(`EXTRA${index}`, `Peça Extra ${index}`, 9900);
+    }
+    const { executeTool, attachments } = executor();
+    const result = await executeTool("listar_produtos", {});
+    expect(result.ok).toBe(true);
+    expect(result.text).toMatch(/1[34] peças encontradas — todas enviadas em 2 listas tocáveis\./);
+    expect(attachments.map((attachment) => attachment.kind)).toEqual(["option_list", "option_list", "image"]);
+    expect(render).toHaveBeenCalledTimes(1);
+    // O cartão é das 3 primeiras com foto da PRIMEIRA lista.
+    const primeira = attachments[0];
+    const nomes = primeira.kind === "option_list" ? primeira.options.slice(0, 3).map((o) => o.title) : [];
+    const data = render.mock.calls[0][0];
+    expect(data.kind === "catalog" ? data.items.map((item) => item.name) : []).toEqual(nomes);
+  });
+
   it("com bot_cards_enabled=false, sem deps ou com render falhando: só a lista, e o texto segue", async () => {
     await db.insert(schema.settings).values({ key: "bot_cards_enabled", value: false });
     const off = executor();

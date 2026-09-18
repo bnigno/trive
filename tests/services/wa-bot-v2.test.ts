@@ -2,7 +2,7 @@
 // caderninho injetado no turno, histórico com origem marcada, resposta em
 // balões, catálogo com filtros/paginação, detalhe sem escolher em silêncio,
 // transferência com resumo e modo ensaio (dryRun).
-import { and, eq } from "drizzle-orm";
+import { and, eq, ilike } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -1087,10 +1087,177 @@ describe("listar_produtos 2.0", () => {
     await runBotTurn(sdb, assistant, provider, { conversationId });
 
     const texto = assistant.turns[0].reply ?? "";
-    expect(texto).toContain("12 peças encontradas — mostrando 11 a 12 (página 2 de 2");
+    expect(texto).toContain("12 peças encontradas — mostrando 11 a 12 (página 2 de 2; é a última)");
     expect(provider.sentOptionLists).toHaveLength(1);
     expect(provider.sentOptionLists[0].options).toHaveLength(2);
     expect(provider.sentOptionLists[0].message).toContain("(11–12 de 12)");
+  });
+
+  it("sem pagina, o catálogo inteiro vai em até 3 listas de uma vez, na ordem, antes do texto; a mesma pergunta em 30 min manda só a primeira", async () => {
+    for (let i = 1; i <= 25; i++) {
+      await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
+    }
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "me mostra o catálogo");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: (texts) => texts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+
+    const texto = assistant.turns[0].reply ?? "";
+    expect(texto).toContain("25 peças encontradas — todas enviadas em 3 listas tocáveis.");
+    expect(texto).toContain("• Peça 1 —");
+    expect(texto).toContain("foi enviada ao cliente em 3 listas — o catálogo completo. Responda em 1 ou 2 frases curtas: diga que mandou o catálogo completo");
+    expect(texto).not.toContain("passe pagina");
+    expect(provider.sentOptionLists).toHaveLength(3);
+    expect(provider.sentOptionLists.map((list) => list.options.length)).toEqual([10, 10, 5]);
+    expect(provider.sentOptionLists.map((list) => list.message)).toEqual([
+      "Toque abaixo e veja o catálogo 👇 (1–10 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (11–20 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (21–25 de 25)",
+    ]);
+    // Mais nova primeiro: a última linha da última lista é a peça mais antiga.
+    expect(provider.sentOptionLists[2].options[4].title).toBe("Peça 1");
+    // As três listas saem antes do balão de texto, na ordem.
+    const seq = (id: string) => Number(id.split("-").at(-1));
+    const listas = provider.sentOptionLists.map((list) => seq(list.providerMessageId));
+    expect(listas[0]).toBeLessThan(listas[1]);
+    expect(listas[1]).toBeLessThan(listas[2]);
+    const balao = provider.sentMessages.find((m) => m.body.includes("25 peças encontradas"));
+    expect(balao).toBeDefined();
+    expect(listas[2]).toBeLessThan(seq(balao!.providerMessageId));
+    // As mensagens do turno têm created_at crescente: a thread e o histórico saem na ordem de envio.
+    const rows = await db
+      .select({ kind: schema.waMessages.kind, body: schema.waMessages.body, createdAt: schema.waMessages.createdAt })
+      .from(schema.waMessages)
+      .where(eq(schema.waMessages.conversationId, conversationId))
+      .orderBy(schema.waMessages.createdAt, schema.waMessages.id);
+    const ordem = rows.filter((row) => row.kind === "option_list" || row.body.includes("25 peças encontradas")).map((row) => (row.kind === "option_list" ? row.body.match(/\((\d+–\d+)/)?.[1] : "texto"));
+    expect(ordem).toEqual(["1–10", "11–20", "21–25", "texto"]);
+
+    // "Quero ver outra" logo depois: só a primeira lista de novo, e o modelo sabe que o resto já está na conversa.
+    provider.sentOptionLists.length = 0;
+    await addInbound(conversationId, "quero ver outra");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: (texts) => texts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists).toHaveLength(1);
+    expect(provider.sentOptionLists[0].message).toContain("(1–10 de 25)");
+    const repetida = assistant.turns[1].reply ?? "";
+    expect(repetida).toContain("25 peças encontradas — a 1ª lista reenviada; as listas 2 a 3 já estão na conversa");
+    expect(repetida).toContain("Só chame pagina: 2 a 3 se ela disser que não acha as listas");
+    expect(repetida).not.toContain("todas enviadas");
+    expect(repetida).not.toContain("• Peça 1 —");
+    // O histórico mostra as faixas das listas anteriores: o modelo sabe que o catálogo inteiro já está na conversa.
+    expect(assistant.inputs[1].history.map((message) => message.text)).toContain("[lista tocável do catálogo (21–25 de 25) enviada ao cliente]");
+
+    // Filtro diferente (outra chave) não conta como repetição: sai inteiro — mas respeita o teto do turno.
+    provider.sentOptionLists.length = 0;
+    await addInbound(conversationId, "e até 120 reais?");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: { preco_maximo_reais: 120 } }],
+      replyTemplate: (texts) => texts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists).toHaveLength(2);
+    expect(provider.sentOptionLists.map((list) => list.message)).toEqual([
+      "Toque abaixo e veja o catálogo 👇 (1–10 de 12)",
+      "Toque abaixo e veja o catálogo 👇 (11–12 de 12)",
+    ]);
+    expect(assistant.turns[2].reply ?? "").toContain(`12 peças encontradas (até ${formatCentsBRL(12000)}) — todas enviadas em 2 listas tocáveis.`);
+
+    // A guarda expira: com as listas 2 e 3 enviadas há 31 min, o catálogo sai inteiro de novo.
+    await db
+      .update(schema.waMessages)
+      .set({ createdAt: new Date(Date.now() - 31 * 60 * 1000) })
+      .where(eq(schema.waMessages.conversationId, conversationId));
+    provider.sentOptionLists.length = 0;
+    await addInbound(conversationId, "manda o catálogo de novo");
+    assistant.enqueueScript({
+      toolCalls: [{ name: "listar_produtos", input: {} }],
+      replyTemplate: (texts) => texts[0],
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists).toHaveLength(3);
+  });
+
+  it("lista do meio que falhou na Z-API não conta como entregue: o catálogo sai inteiro de novo e o histórico avisa que ela não chegou", async () => {
+    for (let i = 1; i <= 25; i++) {
+      await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
+    }
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "catálogo");
+    assistant.enqueueScript({ toolCalls: [{ name: "listar_produtos", input: {} }], replyTemplate: (texts) => texts[0] });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists).toHaveLength(3);
+    // A 2ª lista "falhou" no provedor.
+    await db
+      .update(schema.waMessages)
+      .set({ status: "failed" })
+      .where(and(eq(schema.waMessages.conversationId, conversationId), eq(schema.waMessages.kind, "option_list"), ilike(schema.waMessages.body, "%(11–20 de 25)%")));
+
+    provider.sentOptionLists.length = 0;
+    await addInbound(conversationId, "quero ver outra");
+    assistant.enqueueScript({ toolCalls: [{ name: "listar_produtos", input: {} }], replyTemplate: (texts) => texts[0] });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists).toHaveLength(3);
+    expect(assistant.inputs[1].history.map((message) => message.text)).toContain("[lista tocável do catálogo (11–20 de 25) que NÃO chegou à cliente (falhou)]");
+  });
+
+  it("duas buscas no mesmo turno: a segunda leva só a primeira lista (teto de 3 por turno) e a nota manda esperar a próxima mensagem", async () => {
+    for (let i = 1; i <= 25; i++) {
+      await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
+    }
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "me mostra tudo e também o que tem até 150");
+    assistant.enqueueScript({
+      toolCalls: [
+        { name: "listar_produtos", input: {} },
+        { name: "listar_produtos", input: { preco_maximo_reais: 150 } },
+      ],
+      replyTemplate: (texts) => texts.join("\n=====\n"),
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(provider.sentOptionLists.map((list) => list.message)).toEqual([
+      "Toque abaixo e veja o catálogo 👇 (1–10 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (11–20 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (21–25 de 25)",
+      "Toque abaixo e veja o catálogo 👇 (1–10 de 15)",
+    ]);
+    const segunda = ((assistant.turns[0].reply ?? "").split("=====")[1] ?? "").trim();
+    expect(segunda).toContain(`15 peças encontradas (até ${formatCentsBRL(15000)}) — as 10 primeiras enviadas em 1 lista tocável.`);
+    expect(segunda).toContain("Teto de 3 listas por mensagem já alcançado neste turno");
+    expect(segunda).toContain("pagina: 2 numa PRÓXIMA mensagem dela");
+  });
+
+  it("acima de 30 peças: 3 listas e a nota de que há mais (pagina: 4, só numa próxima mensagem); página além do fim não reenvia nada", async () => {
+    for (let i = 1; i <= 31; i++) {
+      await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
+    }
+    const conversationId = await createConversation();
+    const attachments: { kind: string }[] = [];
+    const executor = buildToolExecutor(sdb, { conversationId, phoneE164: PHONE, customerId: null, lastInboundId: DUMMY_INBOUND_ID, onAttachment: (a) => attachments.push(a) });
+    const tudo = await executor("listar_produtos", {});
+    expect(tudo.ok).toBe(true);
+    expect(tudo.text).toContain("31 peças encontradas — as 30 primeiras enviadas em 3 listas tocáveis.");
+    expect(tudo.text).toContain("[Há mais 1 peça além destas 30. NÃO chame pagina agora");
+    expect(tudo.text).toContain("pagina: 4");
+    expect(tudo.text).not.toContain("catálogo completo");
+    expect(attachments.filter((a) => a.kind === "option_list")).toHaveLength(3);
+    // Mais nova primeiro: a que fica de fora é a mais antiga.
+    expect(tudo.text).not.toContain("• Peça 1 —");
+
+    const pagina4 = await executor("listar_produtos", { pagina: 4 });
+    expect(pagina4.text).toContain("mostrando 31 a 31 (página 4 de 4; é a última)");
+    expect(pagina4.text).toContain("• Peça 1 —");
+
+    const alem = await executor("listar_produtos", { pagina: 5 });
+    expect(alem.ok).toBe(false);
+    expect(alem.text).toContain("Não existe a página 5");
+    expect(attachments.filter((a) => a.kind === "option_list")).toHaveLength(4);
   });
 });
 

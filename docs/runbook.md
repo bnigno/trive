@@ -396,6 +396,23 @@ prazo é o da faixa de Correios mais lenta em Frete. Template do Bom dia em
 produção: `scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
 (confira antes se a dona editou o texto).
 
+## Lia: o catálogo inteiro em até 3 listas
+
+A lista tocável do WhatsApp aceita **10 linhas**. Desde 2026-09-17, `listar_produtos`
+sem `pagina` manda o catálogo **inteiro de uma vez**, em até **3 listas** de 10
+("Toque abaixo e veja o catálogo 👇 (11–20 de 25)"), na ordem, antes do texto
+da Lia, com o cartão de fotos junto da primeira. Acima de 30 peças vão as 3
+primeiras listas e a Lia sugere um filtro (categoria, cor, tamanho, preço) ou
+pede as próximas com `pagina: 4` (só numa próxima mensagem da cliente). O
+mesmo catálogo pedido de novo em **30 min** manda só a primeira lista: a
+guarda lê o que foi **entregue** (`wa_messages` do tipo lista, `sent`, com o
+mesmo conteúdo) — lista que falhou na Z-API, copiloto e ensaio não enganam —
+e o histórico marca cada lista com a faixa ("[lista tocável do catálogo
+(21–25 de 25) enviada ao cliente]", ou "que NÃO chegou à cliente (falhou)"),
+então a Lia sabe o que está na conversa. Teto de 3 listas por turno mesmo
+com duas buscas (a segunda leva só a primeira lista). Tetos em
+`src/core/bot/option-list.ts`.
+
 ## Lia e as Edições de Belém
 
 A planta da loja da Lia lista as edições ativas (no ar ou por vir) e ela
