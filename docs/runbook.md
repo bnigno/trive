@@ -396,6 +396,33 @@ prazo é o da faixa de Correios mais lenta em Frete. Template do Bom dia em
 produção: `scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
 (confira antes se a dona editou o texto).
 
+## Lia: sacola robusta (SKU visível, remover pelo nome, quantidade = total)
+
+Incidente de 18/09: a Lia pôs a mesma peça 2×, pôs uma peça errada e não
+conseguiu tirá-la (a linha guardava um SKU antigo — a dona renomeou a peça —
+e a sacola não mostrava SKU nenhum). Desde então:
+
+- A sacola guarda também o **id da variante**; `ver_sacola` e o caderninho
+  mostram cada linha com `[sku: …]` (só a Lia lê; se copiar, o texto some
+  antes de chegar à cliente). Regra 13 do prompt: SKU nunca vai para a cliente.
+- **`adicionar_a_sacola`: quantidade é o TOTAL da linha**, nunca soma —
+  repetir a chamada (o turno do "SIM") não muda nada; para 2 unidades a Lia
+  passa `quantidade: 2`.
+- **`remover_da_sacola` aceita o SKU ou o nome** como está na sacola
+  ("cropped íris marrom"); com o SKU atual de uma linha velha, a variante
+  decide; duas linhas parecidas → ela lista com `[sku: …]` e pede a escolha.
+- **Linha velha se cura**: `adicionar_a_sacola`, `ver_sacola` e `criar_pedido`
+  conferem cada linha no catálogo — linha com id de variante só pela variante
+  (SKU reaproveitado por outra peça nunca troca a linha); linha sem id (ponte
+  do site, sacola de antes) pelo SKU, e só se o nome bater. Regravam
+  SKU/nome/preço atuais e juntam duplicatas da mesma variante; **preço que
+  mudou ou linhas juntadas → `criar_pedido` recusa e pede o resumo de novo**
+  (a cliente nunca fecha com valor que não viu); peça desativada/apagada é
+  marcada "não está mais à venda — tire pelo nome" (`criar_pedido` recusa
+  até tirar).
+- Busca por SKU é **exata** (`lower(sku) =`), não mais `ILIKE`: `_`/`%` não
+  são curingas (um `%` solto devolvia a primeira variante da tabela).
+
 ## Lia: o catálogo inteiro em até 3 listas
 
 A lista tocável do WhatsApp aceita **10 linhas**. Desde 2026-09-17, `listar_produtos`

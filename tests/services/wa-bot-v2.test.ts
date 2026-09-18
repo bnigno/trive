@@ -287,15 +287,23 @@ describe("sacola", () => {
 
     const state = await botState(conversationId);
     expect(state.cart).toEqual([
-      { sku: "CANECA-AZUL", quantidade: 2, nome: "Caneca Azul", variacao: "", precoCents: 4990 },
+      { sku: "CANECA-AZUL", variantId: expect.any(String), quantidade: 2, nome: "Caneca Azul", variacao: "", precoCents: 4990 },
     ]);
     expect(state.lastQuotes).toBeUndefined();
 
     const ver = await executor("ver_sacola", {});
-    expect(ver.text).toContain("• 2× Caneca Azul");
+    expect(ver.text).toContain("• 2× Caneca Azul — R$");
+    expect(ver.text).toContain("[sku: CANECA-AZUL]");
+
+    // Repetir a peça (o turno do "SIM") não dobra: quantidade é o total.
+    const repetida = await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+    expect(repetida.ok).toBe(true);
+    expect(repetida.text).toContain("[Já estava na sacola: 2× Caneca Azul — nada mudou.");
+    expect((await botState(conversationId)).cart).toMatchObject([{ quantidade: 2 }]);
 
     const naoTem = await executor("remover_da_sacola", { sku: "OUTRA" });
     expect(naoTem.ok).toBe(false);
+    expect(naoTem.text).toContain('Nada na sacola casa com "OUTRA"');
 
     const removeu = await executor("remover_da_sacola", { sku: "CANECA-AZUL" });
     expect(removeu.ok).toBe(true);
@@ -1258,6 +1266,182 @@ describe("listar_produtos 2.0", () => {
     expect(alem.ok).toBe(false);
     expect(alem.text).toContain("Não existe a página 5");
     expect(attachments.filter((a) => a.kind === "option_list")).toHaveLength(4);
+  });
+});
+
+describe("sacola robusta (incidente de 18/09: SKU velho, remover pelo nome, sem duplicar)", () => {
+  it("remover pelo nome como está na sacola, pelo SKU atual quando a linha guarda o velho, e ambíguo lista com [sku: …]", async () => {
+    const { variantId } = await createSimpleProduct("CROPPED-IRIS-MARR-TAUN", "Cropped Íris", 4499);
+    await createSimpleProduct("VEST-DUNAS-PRET-M", "Vestido Dunas", 28900);
+    const conversationId = await createConversation();
+    // A linha entrou quando a peça se chamava "Cropped Íris Suplex" e tinha outro SKU (a dona renomeou depois).
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "CROPPED-IRIS-SUPLEX-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris Suplex", variacao: "Marrom · Tam Único", precoCents: 4499 },
+            { sku: "VEST-DUNAS-PRET-M", quantidade: 1, nome: "Vestido Dunas", variacao: "Preto · M", precoCents: 28900 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const executor = executorFor(conversationId);
+
+    // Pelo SKU atual (o que detalhar_produto devolve): a variante casa com a linha velha.
+    const porSkuAtual = await executor("remover_da_sacola", { sku: "CROPPED-IRIS-MARR-TAUN" });
+    expect(porSkuAtual.ok).toBe(true);
+    expect(porSkuAtual.text).toContain("Tirei 1× Cropped Íris Suplex (Marrom · Tam Único) da sacola.");
+    expect((await botState(conversationId)).cart).toMatchObject([{ sku: "VEST-DUNAS-PRET-M" }]);
+
+    // Pelo nome, como a cliente fala.
+    const porNome = await executor("remover_da_sacola", { sku: "vestido dunas preto" });
+    expect(porNome.ok).toBe(true);
+    expect((await botState(conversationId)).cart).toEqual([]);
+
+    // Duas linhas parecidas: a ferramenta lista e pede o [sku: …].
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "CROPPED-IRIS-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris", variacao: "Marrom · Tam Único", precoCents: 4499 },
+            { sku: "CROPPED-IRIS-PRET-TAUN", quantidade: 1, nome: "Cropped Íris", variacao: "Preto · Tam Único", precoCents: 4499 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const ambiguo = await executor("remover_da_sacola", { sku: "cropped íris" });
+    expect(ambiguo.ok).toBe(false);
+    expect(ambiguo.text).toContain("serve para mais de uma linha");
+    expect(ambiguo.text).toContain("[sku: CROPPED-IRIS-MARR-TAUN]");
+    expect(ambiguo.text).toContain("[sku: CROPPED-IRIS-PRET-TAUN]");
+  });
+
+  it("ver_sacola cura a linha com SKU/nome velhos pela variante, junta a duplicata, e marca a peça que saiu de venda; criar_pedido manda tirar pelo nome", async () => {
+    const { variantId } = await createSimpleProduct("CROPPED-IRIS-MARR-TAUN", "Cropped Íris", 4499);
+    const morta = await createSimpleProduct("SAIA-LUA-P", "Saia Lua", 15900);
+    await db.update(schema.productVariants).set({ isActive: false }).where(eq(schema.productVariants.id, morta.variantId));
+    const conversationId = await createConversation();
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "CROPPED-IRIS-SUPLEX-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris Suplex", variacao: "Marrom · Tam Único", precoCents: 3999 },
+            { sku: "CROPPED-IRIS-MARR-TAUN", variantId, quantidade: 1, nome: "Cropped Íris", variacao: "Marrom · Tam Único", precoCents: 4499 },
+            { sku: "SAIA-LUA-P", variantId: morta.variantId, quantidade: 1, nome: "Saia Lua", variacao: "", precoCents: 15900 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const executor = executorFor(conversationId);
+
+    const ver = await executor("ver_sacola", {});
+    expect(ver.ok).toBe(true);
+    expect(ver.text).toContain("• 1× Cropped Íris — R$");
+    expect(ver.text).toContain('[Linha "Cropped Íris Suplex (Marrom · Tam Único)": o SKU mudou de CROPPED-IRIS-SUPLEX-MARR-TAUN para CROPPED-IRIS-MARR-TAUN; o nome mudou de "Cropped Íris Suplex" para "Cropped Íris"; o PREÇO mudou de');
+    expect(ver.text).toContain("[Linhas da mesma peça foram juntadas numa só");
+    expect(ver.text).toContain('[A linha "Saia Lua" não está mais à venda');
+    // A linha velha só aparece na nota da cura, não na sacola.
+    expect(ver.text.split("\n").filter((line) => line.startsWith("•")).join("\n")).not.toContain("SUPLEX");
+    const cart = (await botState(conversationId)).cart as { sku: string; quantidade: number; precoCents: number }[];
+    expect(cart.map((item) => [item.sku, item.quantidade, item.precoCents])).toEqual([
+      ["CROPPED-IRIS-MARR-TAUN", 1, 4499],
+      ["SAIA-LUA-P", 1, 15900],
+    ]);
+
+    const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "1" });
+    expect(pedido.ok).toBe(false);
+    expect(pedido.text).toContain('A sacola tem uma linha que não está mais à venda: "Saia Lua". Chame remover_da_sacola com esse nome');
+
+    const tirou = await executor("remover_da_sacola", { sku: "Saia Lua" });
+    expect(tirou.ok).toBe(true);
+    expect((await botState(conversationId)).cart).toMatchObject([{ sku: "CROPPED-IRIS-MARR-TAUN" }]);
+  });
+
+  it("SKU reaproveitado por OUTRA peça não troca a linha em silêncio; linha velha da mesma variante + SKU atual vira uma linha só; linha da ponte (sem variantId) repetida é 'nada mudou'", async () => {
+    // A dona apagou "Vestido Aurora" (SKU TRV-001) e criou "Blusa Brisa" com o mesmo SKU.
+    const brisa = await createSimpleProduct("TRV-001", "Blusa Brisa", 9900);
+    const { variantId: croppedId } = await createSimpleProduct("CROPPED-IRIS-MARR-TAUN", "Cropped Íris", 4499);
+    const conversationId = await createConversation();
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [
+            { sku: "TRV-001", quantidade: 1, nome: "Vestido Aurora", variacao: "", precoCents: 28900 },
+            { sku: "CROPPED-IRIS-SUPLEX-MARR-TAUN", variantId: croppedId, quantidade: 2, nome: "Cropped Íris Suplex", variacao: "", precoCents: 4499 },
+          ],
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const executor = executorFor(conversationId);
+
+    const ver = await executor("ver_sacola", {});
+    expect(ver.text).toContain('[O SKU TRV-001 hoje é de outra peça ("Blusa Brisa"); a linha "Vestido Aurora" não está mais à venda');
+    expect(ver.text).not.toContain("1× Blusa Brisa");
+    expect(ver.text).toContain("• 2× Cropped Íris — R$");
+    // A linha da Blusa nunca entrou; o Cropped foi curado (SKU atual) sem duplicar.
+    let cart = (await botState(conversationId)).cart as { sku: string; nome: string; quantidade: number }[];
+    expect(cart.map((item) => [item.sku, item.nome, item.quantidade])).toEqual([
+      ["TRV-001", "Vestido Aurora", 1],
+      ["CROPPED-IRIS-MARR-TAUN", "Cropped Íris", 2],
+    ]);
+
+    // "Quero só uma": a Lia manda o SKU atual com quantidade 1 → ajusta a MESMA linha (não cria outra).
+    const uma = await executor("adicionar_a_sacola", { sku: "CROPPED-IRIS-MARR-TAUN", quantidade: 1 });
+    expect(uma.ok).toBe(true);
+    expect(uma.text).toContain("Ajustei Cropped Íris de 2× para 1×");
+    cart = (await botState(conversationId)).cart as { sku: string; nome: string; quantidade: number }[];
+    expect(cart.filter((item) => item.sku === "CROPPED-IRIS-MARR-TAUN")).toHaveLength(1);
+    expect(cart.find((item) => item.sku === "CROPPED-IRIS-MARR-TAUN")?.quantidade).toBe(1);
+
+    // Linha que veio da ponte do site (sem variantId): repetir sem quantidade é "nada mudou" e a cotação fica.
+    await db
+      .update(schema.waConversations)
+      .set({
+        botState: {
+          cart: [{ sku: "TRV-001", quantidade: 1, nome: "Blusa Brisa", variacao: "", precoCents: 9900 }],
+          lastCep: "01310100",
+          lastQuotes: [{ rateId: "x", name: "PAC", priceCents: 1, deliveryDaysMin: 1, deliveryDaysMax: 1 }],
+          lastQuotedAt: new Date().toISOString(),
+        },
+      })
+      .where(eq(schema.waConversations.id, conversationId));
+    const repetida = await executor("adicionar_a_sacola", { sku: "TRV-001" });
+    expect(repetida.ok).toBe(true);
+    expect(repetida.text).toContain("nada mudou");
+    expect(repetida.text).not.toContain("Ajustei");
+    const state = await botState(conversationId);
+    expect(state.lastQuotes).toHaveLength(1);
+    expect((state.cart as { variantId?: string }[])[0].variantId).toBe(brisa.variantId);
+  });
+
+  it("preço que mudou no catálogo: ver_sacola avisa e criar_pedido pede o resumo de novo em vez de fechar com valor que a cliente não viu", async () => {
+    const { variantId } = await createSimpleProduct("VEST-AURORA-M", "Vestido Aurora", 44990);
+    const conversationId = await createConversation();
+    await db
+      .update(schema.waConversations)
+      .set({ botState: { cart: [{ sku: "VEST-AURORA-M", variantId, quantidade: 1, nome: "Vestido Aurora", variacao: "", precoCents: 39900 }] } })
+      .where(eq(schema.waConversations.id, conversationId));
+    const executor = executorFor(conversationId);
+    const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "1" });
+    expect(pedido.ok).toBe(false);
+    expect(pedido.text).toContain("A sacola mudou desde o resumo");
+    expect(pedido.text).toContain(`o PREÇO mudou de ${formatCentsBRL(39900)} para ${formatCentsBRL(44990)}`);
+    // Curada e gravada: a segunda chamada já passa desta checagem (cai na cotação de frete, que não existe).
+    const deNovo = await executor("criar_pedido", { ...IDENTITY, frete: "1" });
+    expect(deNovo.text).not.toContain("A sacola mudou desde o resumo");
+    expect((await botState(conversationId)).cart).toMatchObject([{ precoCents: 44990 }]);
+  });
+
+  it("busca por SKU é exata: '_' e '%' não são curingas (antes um '%' devolvia a primeira variante da tabela)", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    const executor = executorFor(await createConversation());
+    expect((await executor("adicionar_a_sacola", { sku: "CANECA_AZUL" })).ok).toBe(false);
+    expect((await executor("adicionar_a_sacola", { sku: "%" })).ok).toBe(false);
+    expect((await executor("adicionar_a_sacola", { sku: " caneca-azul " })).ok).toBe(true);
   });
 });
 

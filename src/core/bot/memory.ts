@@ -21,6 +21,12 @@ export const CART_MAX_QTY = 20;
 
 const cartItemSchema = z.object({
   sku: z.string().min(1),
+  /**
+   * A variante de verdade (id). O SKU é rótulo editável — quando a dona
+   * renomeia a peça ou o código, é por aqui que a linha se cura. Lenient:
+   * valor torto não pode derrubar o caderninho inteiro (parseBotState → {}).
+   */
+  variantId: z.string().optional().catch(undefined),
   quantidade: z.number().int().min(1).max(CART_MAX_QTY),
   nome: z.string().min(1),
   /** Rótulo da combinação (ex.: "Preto · M"); vazio para peça sem variação. */
@@ -129,7 +135,7 @@ export type BotCartItem = z.infer<typeof cartItemSchema>;
  */
 export function cartSet(cart: readonly BotCartItem[] | undefined, item: BotCartItem): BotCartItem[] {
   const atual = [...(cart ?? [])];
-  const indice = atual.findIndex((existente) => existente.sku.toLowerCase() === item.sku.toLowerCase());
+  const indice = cartIndexOf(atual, item);
   const linha = { ...item, quantidade: Math.min(CART_MAX_QTY, item.quantidade) };
   if (indice >= 0) {
     atual[indice] = { ...atual[indice], ...linha };
@@ -187,35 +193,113 @@ export function addNote(notes: readonly string[] | undefined, nota: string): str
   return [...atual, limpa].slice(-NOTES_MAX);
 }
 
+/**
+ * Coloca a peça na sacola com a quantidade como TOTAL da linha — nunca soma:
+ * a Lia repete adicionar_a_sacola no turno do "SIM" e a cliente não pode
+ * acabar com 2×. `quantidade` omitida garante a linha com 1 (ou mantém a
+ * que já estava). Devolve também se a linha já existia, para a ferramenta
+ * explicar o que (não) mudou.
+ */
 export function cartAdd(
   cart: readonly BotCartItem[] | undefined,
-  item: BotCartItem,
-): BotCartItem[] {
-  const atual = [...(cart ?? [])];
-  const indice = atual.findIndex(
-    (existente) => existente.sku.toLowerCase() === item.sku.toLowerCase(),
-  );
-  if (indice >= 0) {
-    const existente = atual[indice];
-    atual[indice] = {
-      ...existente,
-      ...item,
-      quantidade: Math.min(CART_MAX_QTY, existente.quantidade + item.quantidade),
-    };
-    return atual;
-  }
-  // Linha nova também respeita o teto: uma sacola do site com 24 unidades não
-  // pode deixar o caderninho inválido (parseBotState devolveria {}).
-  return [...atual, { ...item, quantidade: Math.min(CART_MAX_QTY, item.quantidade) }].slice(-CART_MAX_ITEMS);
+  item: Omit<BotCartItem, "quantidade"> & { quantidade?: number },
+): { cart: BotCartItem[]; existed: BotCartItem | null; quantidade: number } {
+  const indice = cartIndexOf(cart ?? [], item);
+  const existed = indice >= 0 ? (cart ?? [])[indice] : null;
+  const quantidade = Math.min(CART_MAX_QTY, item.quantidade ?? existed?.quantidade ?? 1);
+  return { cart: cartSet(cart, { ...item, quantidade }), existed, quantidade };
 }
 
-export function cartRemove(
-  cart: readonly BotCartItem[] | undefined,
-  sku: string,
-): BotCartItem[] {
-  return (cart ?? []).filter(
-    (item) => item.sku.toLowerCase() !== sku.trim().toLowerCase(),
+/**
+ * A mesma linha: pela variante quando os dois lados a conhecem (o SKU pode
+ * ter mudado); pelo SKU quando um dos lados veio sem variante (ponte do site,
+ * sacola de antes). SKU igual mas variantes diferentes = peças diferentes.
+ */
+export function cartIndexOf(cart: readonly BotCartItem[], item: { sku: string; variantId?: string }): number {
+  return cart.findIndex((existente) =>
+    existente.variantId && item.variantId
+      ? existente.variantId === item.variantId
+      : existente.sku.toLowerCase() === item.sku.toLowerCase(),
   );
+}
+
+/** Tira UMA linha pela posição (a que findCartItem apontou) — nunca por SKU, que pode se repetir depois da cura. */
+export function cartRemoveAt(cart: readonly BotCartItem[] | undefined, index: number): BotCartItem[] {
+  return (cart ?? []).filter((_, i) => i !== index);
+}
+
+/** "Cropped Íris (Marrom · Tam Único)" → ["cropped", "iris", "marrom", "tam", "unico"]. */
+export function cartWords(text: string): string[] {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
+}
+
+/** Palavras que a cliente (ou a Lia) põe em volta do nome e não são a peça. */
+const CART_QUERY_STOPWORDS = new Set(["o", "a", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "um", "uma", "no", "na", "com", "tira", "tirar", "tire", "remove", "remover", "quero", "esse", "essa", "este", "esta", "aquele", "aquela", "peca", "peça"]);
+
+/** Parece um SKU (sem espaço, só letras/dígitos/hífen): não é para casar por nome. */
+export function looksLikeSku(query: string): boolean {
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(query.trim()) && /\d|-/.test(query);
+}
+
+/** Mesma peça pelo nome (sem acento/caixa): todas as palavras de um lado estão no outro. */
+export function sameProductName(a: string, b: string): boolean {
+  const wa = cartWords(a);
+  const wb = cartWords(b);
+  if (wa.length === 0 || wb.length === 0) return false;
+  return wa.every((w) => wb.includes(w)) || wb.every((w) => wa.includes(w));
+}
+
+export type CartMatch = { item: BotCartItem; index: number } | { ambiguous: BotCartItem[] } | null;
+
+/**
+ * Acha a linha que a Lia quer tirar: pelo SKU (como está na sacola), senão
+ * pelo nome como a cliente fala ("o cropped marrom", "Cropped Íris Suplex") —
+ * sem acento, sem maiúscula, sem as palavras de enfeite ("tira o …"); palavra
+ * de 1–2 letras (P, M, G, GG) só casa por igualdade, as outras por prefixo de
+ * alguma palavra do rótulo (nome + variação). Duas linhas servindo → ambíguo.
+ * Consulta que parece SKU não casa por nome (SKU de outra variante nunca
+ * tira a linha errada).
+ */
+export function findCartItem(cart: readonly BotCartItem[] | undefined, query: string): CartMatch {
+  const itens = cart ?? [];
+  const consulta = query.trim();
+  if (consulta === "") return null;
+  const porSku = itens.map((item, index) => ({ item, index })).filter(({ item }) => item.sku.toLowerCase() === consulta.toLowerCase());
+  if (porSku.length === 1) return porSku[0];
+  if (porSku.length > 1) return { ambiguous: porSku.map(({ item }) => item) };
+  if (looksLikeSku(consulta)) return null;
+  const palavras = cartWords(consulta).filter((palavra) => !CART_QUERY_STOPWORDS.has(palavra));
+  if (palavras.length === 0) return null;
+  const casa = (rotulo: string[], palavra: string) =>
+    palavra.length <= 2 ? rotulo.includes(palavra) : rotulo.some((word) => word.startsWith(palavra));
+  const porNome = itens
+    .map((item, index) => ({ item, index, rotulo: cartWords(cartItemLabel(item)) }))
+    .filter(({ rotulo }) => palavras.every((palavra) => casa(rotulo, palavra)));
+  if (porNome.length === 1) return { item: porNome[0].item, index: porNome[0].index };
+  if (porNome.length > 1) return { ambiguous: porNome.map(({ item }) => item) };
+  return null;
+}
+
+/**
+ * Depois da cura (SKU velho → atual), a linha velha e a nova da MESMA
+ * variante viram uma só, com a maior quantidade. Linha sem variantId fica.
+ */
+export function mergeCartByVariant(cart: readonly BotCartItem[] | undefined): BotCartItem[] {
+  const resultado: BotCartItem[] = [];
+  for (const item of cart ?? []) {
+    const indice = item.variantId ? resultado.findIndex((linha) => linha.variantId === item.variantId) : -1;
+    if (indice >= 0) {
+      resultado[indice] = { ...resultado[indice], quantidade: Math.max(resultado[indice].quantidade, item.quantidade) };
+    } else {
+      resultado.push(item);
+    }
+  }
+  return resultado;
 }
 
 export function cartSubtotalCents(cart: readonly BotCartItem[] | undefined): number {
@@ -229,14 +313,18 @@ function cartItemLabel(item: BotCartItem): string {
   return item.variacao ? `${item.nome} (${item.variacao})` : item.nome;
 }
 
-/** Linhas da sacola prontas para o modelo: "• 1× Vestido (Preto · M) — R$ 289,00". */
+/**
+ * Linhas da sacola prontas para o modelo: "• 1× Vestido (Preto · M) — R$ 289,00 [sku: X]".
+ * O [sku: …] é só para a ferramenta (remover, quantidade): o colchete é
+ * interno (regra 23) e polishBotReply o tira se o modelo copiar.
+ */
 export function formatCartLines(cart: readonly BotCartItem[] | undefined): string[] {
   const itens = cart ?? [];
   if (itens.length === 0) return ["Sacola vazia."];
   return [
     ...itens.map(
       (item) =>
-        `• ${item.quantidade}× ${cartItemLabel(item)} — ${formatCentsBRL(item.precoCents * item.quantidade)}`,
+        `• ${item.quantidade}× ${cartItemLabel(item)} — ${formatCentsBRL(item.precoCents * item.quantidade)} [sku: ${item.sku}]`,
     ),
     `Subtotal: ${formatCentsBRL(cartSubtotalCents(itens))} (frete à parte)`,
   ];
@@ -283,7 +371,7 @@ export function renderContextNote(
   if (state.cart && state.cart.length > 0) {
     linhas.push(
       `• Sacola agora: ${state.cart
-        .map((item) => `${item.quantidade}× ${cartItemLabel(item)}`)
+        .map((item) => `${item.quantidade}× ${cartItemLabel(item)} [sku: ${item.sku}]`)
         .join(", ")} — subtotal ${formatCentsBRL(cartSubtotalCents(state.cart))}`,
     );
   }

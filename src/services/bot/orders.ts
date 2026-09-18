@@ -11,6 +11,7 @@ import {
   summarizePurchaseHistory,
   type PurchaseOrderSummary,
 } from "@/core/bot/purchases";
+import { formatCartLines } from "@/core/bot/memory";
 import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
@@ -36,6 +37,7 @@ import { orderPublicUrl } from "@/services/wa-messaging";
 import { confirmDeliveryForCustomer, lastShipmentMemoryLine } from "@/services/delivery";
 
 import { resolveVariantBySku } from "./catalog";
+import { reconcileCartLines } from "./cart";
 import { loadSavedRegistration, resolveSavedIdentity } from "./customer";
 import type { OrderIdentity } from "./customer";
 import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, readBotState, updateBotState } from "./shared";
@@ -107,10 +109,30 @@ export async function execCriarPedido(
     };
   }
 
-  // Itens: os passados explicitamente ou, no caminho normal, a sacola.
+  // Itens: os passados explicitamente ou, no caminho normal, a sacola —
+  // conferida com o catálogo antes (o SKU da linha pode ter mudado; linha
+  // que não está mais à venda tem de sair pelo nome, não "confirmar de novo").
+  let cartLines = state.cart ?? [];
+  if (!input.itens) {
+    const reconciled = await reconcileCartLines(db, ctx);
+    if (reconciled.material) {
+      return {
+        ok: false,
+        text: `A sacola mudou desde o resumo (${reconciled.notes.join(" ")}). Mostre o resumo atualizado à cliente e, com o SIM dela, chame criar_pedido de novo.\n${formatCartLines(reconciled.cart).join("\n")}`,
+      };
+    }
+    if (reconciled.gone.length > 0) {
+      const nomes = reconciled.gone.map((item) => `"${item.variacao ? `${item.nome} (${item.variacao})` : item.nome}"`).join(", ");
+      return {
+        ok: false,
+        text: `A sacola tem ${reconciled.gone.length === 1 ? "uma linha que não está mais à venda" : "linhas que não estão mais à venda"}: ${nomes}. Chame remover_da_sacola com esse nome, mostre o resumo atualizado e, com o SIM da cliente, chame criar_pedido de novo.\n${formatCartLines(reconciled.cart).join("\n")}`,
+      };
+    }
+    cartLines = reconciled.cart;
+  }
   const requested =
     input.itens ??
-    (state.cart ?? []).map((item) => ({ sku: item.sku, quantidade: item.quantidade }));
+    cartLines.map((item) => ({ sku: item.sku, quantidade: item.quantidade }));
   if (requested.length === 0) {
     return {
       ok: false,
