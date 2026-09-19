@@ -133,6 +133,59 @@ describe("rajada de mensagens: um turno por mensagem, mas o modelo roda uma vez"
     expect(provider.sentMessages.map((m) => m.body)).toEqual(["Em Belém, motoboy no mesmo dia 🤎"]);
   });
 
+  it("mensagem que chegou enquanto o modelo pensava: o turno seguinte responde a ela, com a resposta anterior no lugar certo (caso real de 19/09: a API recusa histórico que termina com a assistente)", async () => {
+    const conversationId = await createConversation();
+    const base = Date.now() - 60_000;
+    const a = await addMessage(conversationId, "inbound", "Mercadinho camarada", new Date(base));
+    const b = await addMessage(conversationId, "inbound", "9", new Date(base + 3_000));
+    await addMessage(conversationId, "inbound", "Não precisa de nota", new Date(base + 13_000));
+    // A resposta ao "9" saiu DEPOIS do "Não precisa de nota" (o modelo estava pensando quando ela chegou).
+    await db.insert(schema.waMessages).values({
+      conversationId,
+      direction: "outbound",
+      body: "Combinado, motoboy amanhã 9h–12h 🤎 Agora me confirma seu nome completo e o CPF?",
+      dedupeKey: `wa.bot_reply:${b}`,
+      status: "sent",
+      createdAt: new Date(base + 14_000),
+    });
+    assistant.enqueueScript({ replyTemplate: "Sem problema, fica sem nota 🤎 Só o nome, então?" });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ replied: true, handedOff: false });
+    const history = assistant.inputs[0].history;
+    const roles = history.slice(-4).map((m) => `${m.role}:${m.text.slice(0, 12)}`);
+    expect(roles).toEqual(["user:Mercadinho c", "user:9", "assistant:Combinado, m", "user:Não precisa "]);
+    expect(history.at(-1)?.role).toBe("user");
+    expect(provider.sentMessages.map((m) => m.body)).toEqual(["Sem problema, fica sem nota 🤎 Só o nome, então?"]);
+    void a;
+  });
+
+  it("aviso automático ou mensagem da equipe entram como contexto (papel de usuário), e depois da resposta da Lia não há o que responder", async () => {
+    const conversationId = await createConversation();
+    const base = Date.now() - 60_000;
+    const a = await addMessage(conversationId, "inbound", "Quero um vestido", new Date(base));
+    await db.insert(schema.waMessages).values([
+      { conversationId, direction: "outbound", body: "Oi, aqui é o Fabiano", dedupeKey: "wa.send:manual-1", status: "sent", createdAt: new Date(base + 1_000) },
+      { conversationId, direction: "outbound", body: "Temos o Longo Dunas 🤎", dedupeKey: `wa.bot_reply:${a}`, status: "sent", createdAt: new Date(base + 2_000) },
+      { conversationId, direction: "outbound", body: "Seu pedido #1001 foi pago!", dedupeKey: "order.paid:1001", templateKey: "order_paid", status: "sent", createdAt: new Date(base + 3_000) },
+    ]);
+    // O evento de "Quero um vestido" chega atrasado: a Lia já respondeu; o template depois não é pergunta nova.
+    expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ skipped: "ja_respondida" });
+    expect(assistant.inputs).toHaveLength(0);
+
+    // Ela volta a falar: a equipe e o aviso aparecem como contexto, nunca como fala da Lia.
+    await addMessage(conversationId, "inbound", "Quero o M", new Date(base + 4_000));
+    assistant.enqueueScript({ replyTemplate: "M separado 🤎" });
+    expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ replied: true, handedOff: false });
+    const history = assistant.inputs[0].history.slice(-5);
+    expect(history.map((m) => m.role)).toEqual(["user", "assistant", "user", "user", "user"]);
+    expect(history[0].text).toBe("Quero um vestido");
+    expect(history[1].text).toBe("Temos o Longo Dunas 🤎");
+    expect(history[2].text).toBe("[mensagem enviada pela equipe da loja, não por você] Oi, aqui é o Fabiano");
+    expect(history[3].text).toBe("[aviso automático da loja] Seu pedido #1001 foi pago!");
+    expect(history[4].text).toBe("Quero o M");
+  });
+
   it("mensagem nova depois da resposta volta a rodar o modelo", async () => {
     const conversationId = await createConversation();
     await addMessage(conversationId, "inbound", "Oi");

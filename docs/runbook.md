@@ -716,6 +716,19 @@ escreveu enquanto isso, a Lia responde na hora. O detalhe técnico (status,
 código, tentativa) fica no audit `wa.bot_turn_failed` e nos logs da Vercel
 (`[assistant] falha na API da Anthropic`).
 
+- **"erro 400 da API (invalid_request_error): …"** — pedido malformado, é
+  bug nosso e a frase da API vem no motivo (painel › faixa da transferência
+  e `audit_log` `wa.bot_turn_failed`). Caso real de 19/09/2026: *"This
+  model does not support assistant message prefill. The conversation must
+  end with a user message"* — a cliente mandou uma mensagem enquanto a Lia
+  ainda pensava a resposta anterior; a resposta saiu depois e o turno
+  seguinte montou o histórico terminando com a própria Lia. Desde então o
+  histórico cola cada resposta à mensagem que ela respondeu (a nova fica por
+  último) e um turno sem mensagem nova da cliente não roda o modelo. Depois
+  de qualquer transferência por erro, **Devolver à Lia** religa a vendedora
+  naquela conversa (o silêncio de 24 h é só dela) e ela responde o que ficou
+  pendente.
+
 ## A Lia não respondeu uma cliente (a mensagem nem aparece no painel)
 
 Caso real de 16/09/2026: dois dias sem nenhuma mensagem chegar ao sistema,
