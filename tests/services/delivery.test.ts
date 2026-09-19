@@ -21,6 +21,8 @@ import {
   listStaleShipments,
   sendDeliveredWa,
 } from "@/services/delivery";
+import { completeDispatchedOrder } from "@/services/delivery-routes";
+import { transitionOrder } from "@/services/orders";
 import { createStoreOrder, getPublicOrder, type CreateStoreOrderInput } from "@/services/store-orders";
 import { createTestDb, createTestUser, createTestVariant, type TestDb } from "../helpers/db";
 
@@ -264,6 +266,18 @@ describe("listOrdersAwaitingDelivery", () => {
     expect(await countOrdersAwaitingDelivery(sdb)).toBe(4);
     await deliverOrderWithPhoto(sdb, storage, { orderId: shipped.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
     expect(await countOrdersAwaitingDelivery(sdb)).toBe(3);
+  });
+
+  it("dinheiro na entrega já fotografado pelo motoboy continua na mesa até a dona receber e fechar", async () => {
+    const cashOut = await createOrder({ status: "pending_payment", paymentMethod: "cash", dispatched: true });
+    await db.update(schema.orders).set({ deliveredPhotoPath: `deliveries/${cashOut.orderId}/entrega-motoboy.jpg` }).where(eq(schema.orders.id, cashOut.orderId));
+    expect((await listOrdersAwaitingDelivery(sdb)).find((row) => row.id === cashOut.orderId)).toMatchObject({ awaitingPayment: true, hasPhoto: true });
+
+    await transitionOrder(sdb, { orderId: cashOut.orderId, to: "paid", userId });
+    expect((await listOrdersAwaitingDelivery(sdb)).find((row) => row.id === cashOut.orderId)).toMatchObject({ awaitingPayment: false, hasPhoto: true, status: "paid" });
+
+    await completeDispatchedOrder(sdb, { orderId: cashOut.orderId, userId });
+    expect((await listOrdersAwaitingDelivery(sdb)).some((row) => row.id === cashOut.orderId)).toBe(false);
   });
 });
 

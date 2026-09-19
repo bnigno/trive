@@ -6,11 +6,14 @@
 import { revalidatePath } from "next/cache";
 import { z, ZodError } from "zod";
 
+import { getFileStorage } from "@/adapters/storage";
 import { InvalidRunTransitionError, FAILURE_REASONS } from "@/core/delivery/state";
 import { InvalidTransitionError } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { completeStop, failStop, finishDeliveryRun, startDeliveryRun } from "@/services/delivery-runs";
 import { ServiceError } from "@/services/orders";
+import { PACKAGE_PHOTO_MAX_BYTES } from "@/services/packing";
+import { parseCompleteStopForm } from "./complete-form";
 
 export type CourierActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
@@ -47,21 +50,30 @@ const completeSchema = z.object({
   position: positionSchema,
 });
 
-export async function completeStopAction(input: z.input<typeof completeSchema>): Promise<CourierActionResult> {
+/** A foto da entrega é obrigatória: sem ela a parada não fecha (o service também confere). */
+export async function completeStopAction(formData: FormData): Promise<CourierActionResult> {
   try {
-    const parsed = completeSchema.parse(input);
-    const result = await completeStop(getDb(), {
+    const { photo, ...fields } = parseCompleteStopForm(formData);
+    const parsed = completeSchema.parse(fields);
+    if (!photo) return { ok: false, error: "Tire a foto da entrega no endereço para confirmar." };
+    if (!photo.type.startsWith("image/")) return { ok: false, error: "O arquivo precisa ser uma imagem (JPG, PNG ou HEIC)." };
+    if (photo.size > PACKAGE_PHOTO_MAX_BYTES) return { ok: false, error: "A foto passou de 8 MB. Tire a foto direto pela câmera." };
+    const result = await completeStop(getDb(), getFileStorage(), {
       courierToken: parsed.token,
       stopId: parsed.stopId,
       receivedBy: parsed.receivedBy ?? null,
       position: parsed.position ?? null,
+      photo: { data: new Uint8Array(await photo.arrayBuffer()), contentType: photo.type },
     });
     revalidatePath(`/entrega/${parsed.token}`);
+    const who = result.receivedBy ? ` para ${result.receivedBy}` : "";
     return {
       ok: true,
-      message: result.awaitingCash
-        ? `Pedido #${result.orderNumber} entregue. O dinheiro você acerta com a loja na volta.`
-        : `Pedido #${result.orderNumber} entregue${result.receivedBy ? ` para ${result.receivedBy}` : ""}.`,
+      message: result.idempotent
+        ? `Pedido #${result.orderNumber} já estava marcado como entregue${who}${result.withPhoto ? "" : " (sem foto)"}.`
+        : result.awaitingCash
+          ? `Pedido #${result.orderNumber} entregue, foto registrada. O dinheiro você acerta com a loja na volta.`
+          : `Pedido #${result.orderNumber} entregue${who} — a foto já foi para a loja.`,
     };
   } catch (error) {
     return friendly(error);

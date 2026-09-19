@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { getFileStorage } from "@/adapters/storage";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { CopyField } from "@/components/ui/copy-field";
@@ -11,6 +12,7 @@ import { FAILURE_REASON_LABELS, RUN_STATUS_LABELS, STOP_STATUS_LABELS, isRunOpen
 import { getDb } from "@/db/client";
 import { waMeUrl } from "@/lib/phone";
 import { requireUser } from "@/services/auth";
+import { deliveryPhotoUrl } from "@/services/delivery";
 import { getDeliveryRun } from "@/services/delivery-runs";
 
 import { formatDateTimeSP } from "../../format";
@@ -146,6 +148,17 @@ export default async function SaidaPage({ params }: { params: Promise<{ id: stri
                       <span className="text-xs text-zinc-500"> · sem ponto do GPS</span>
                     )}
                   </p>
+                ) : null}
+                {stop.status === "delivered" && stop.deliveredPhoto ? (
+                  <a href={deliveryPhotoUrl(getFileStorage(), stop.deliveredPhoto.path, stop.deliveredPhoto.at)} target="_blank" rel="noopener noreferrer" className="block w-fit">
+                    <img
+                      src={deliveryPhotoUrl(getFileStorage(), stop.deliveredPhoto.path, stop.deliveredPhoto.at)}
+                      alt={`Foto da entrega do pedido #${stop.orderNumber}`}
+                      className="h-24 w-24 rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
+                    />
+                  </a>
+                ) : stop.status === "delivered" ? (
+                  <p className="text-xs text-zinc-500">Sem foto da entrega (parada fechada antes da foto ser obrigatória).</p>
                 ) : null}
                 {stop.status === "failed" ? (
                   <p className="text-sm text-red-700 dark:text-red-300">

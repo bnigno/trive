@@ -2,7 +2,9 @@
 // um link só, a última posição), cada parada (o pedido, a prova da entrega)
 // e a trilha de posições (apagada depois de 30 dias — a última posição fica
 // na saída). Nada aqui muda o status do pedido: isso continua passando pela
-// máquina de estados; a parada guarda só a prova (hora, quem recebeu, GPS).
+// máquina de estados; a parada guarda a prova (hora, quem recebeu, GPS) e a
+// foto da entrega fica no pedido (orders.delivered_photo_path — a mesma que
+// a dona tira pela ficha).
 import { sql } from "drizzle-orm";
 import {
   bigserial,

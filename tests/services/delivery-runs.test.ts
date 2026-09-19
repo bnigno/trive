@@ -3,6 +3,7 @@
 // o motoboy na rua (posições, entregue com prova, não consegui, encerrar),
 // a leitura da cliente sem PII, o painel, o cancelamento e a retenção.
 import { asc, eq } from "drizzle-orm";
+import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { FakeGeocoder } from "@/adapters/geocoding/fake";
@@ -33,6 +34,7 @@ import {
   resendCourierLink,
   startDeliveryRun,
 } from "@/services/delivery-runs";
+import { PHOTO_REQUIRED_CODE } from "@/services/delivery-runs";
 import { transitionOrder } from "@/services/orders";
 import { createStoreOrder, type CreateStoreOrderInput } from "@/services/store-orders";
 import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
@@ -40,11 +42,27 @@ import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../
 let db: TestDb;
 let close: () => Promise<void>;
 let sdb: DbOrTx;
+let storage: FakeFileStorage;
 
 beforeEach(async () => {
   ({ db, close } = await createTestDb());
   sdb = db as unknown as DbOrTx;
+  storage = new FakeFileStorage();
 });
+
+/** A foto que o celular do motoboy manda: grande, com EXIF (endereço na descrição) — o serviço reduz e limpa. */
+async function cameraPhoto(): Promise<{ data: Uint8Array; contentType: string }> {
+  const data = await sharp({ create: { width: 2400, height: 1600, channels: 3, background: "#c0a050" } })
+    .jpeg({ quality: 90 })
+    .withMetadata({ exif: { IFD0: { ImageDescription: "rua tal, 100" } } })
+    .toBuffer();
+  return { data: new Uint8Array(data), contentType: "image/jpeg" };
+}
+
+/** "Entregue" pelo motoboy com a foto obrigatória (o caso normal). */
+async function deliver(input: Omit<Parameters<typeof completeStop>[2], "photo"> & { photo?: { data: Uint8Array; contentType: string } | null }) {
+  return completeStop(sdb, storage, { photo: await cameraPhoto(), ...input });
+}
 
 afterEach(async () => {
   await close();
@@ -231,7 +249,7 @@ describe("listRunEligibleOrders", () => {
     expect((await listRunEligibleOrders(sdb, { now: AFTERNOON })).some((o) => o.id === old.orderId)).toBe(false);
 
     const { cash, stops, token } = await runOnTheRoad();
-    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
+    await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
     expect((await listRunEligibleOrders(sdb, { now: AFTERNOON })).some((o) => o.id === cash.orderId)).toBe(false);
     const c2 = await courier("Outro", "(91) 98111-2222");
     await expect(createDeliveryRun(sdb, { courierId: c2.id, orderIds: [cash.orderId], userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toThrow(/já foi entregue/);
@@ -408,7 +426,7 @@ describe("o motoboy na rua", () => {
     const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
     const at = new Date(AFTERNOON.getTime() + 20 * 60_000);
 
-    const result = await completeStop(sdb, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria Aparecida", position: { lat: -1.4559, lng: -48.4901, accuracyM: 9 }, now: at });
+    const result = await deliver({ courierToken: token, stopId: paidStop.id, receivedBy: "Maria Aparecida", position: { lat: -1.4559, lng: -48.4901, accuracyM: 9 }, now: at });
     expect(result).toMatchObject({ orderId: paid.orderId, orderDelivered: true, awaitingCash: false, receivedBy: "Maria", idempotent: false });
 
     const [stop] = await db.select().from(schema.deliveryStops).where(eq(schema.deliveryStops.id, paidStop.id));
@@ -420,28 +438,38 @@ describe("o motoboy na rua", () => {
     const history = await db.select().from(schema.orderStatusHistory).where(eq(schema.orderStatusHistory.orderId, paid.orderId));
     expect(history.some((h) => h.toStatus === "delivered" && h.reason?.includes(c.name))).toBe(true);
 
-    // O aviso à cliente sai sem foto, com a hora e quem recebeu.
+    // A foto da entrega: reduzida, sem EXIF, no path do pedido — e o aviso à cliente sai COM a foto, hora e quem recebeu.
+    expect(result.withPhoto).toBe(true);
+    expect(order.deliveredPhotoPath).toBe(`deliveries/${paid.orderId}/entrega-motoboy.jpg`);
+    const stored = storage.get(`deliveries/${paid.orderId}/entrega-motoboy.jpg`)!;
+    const meta = await sharp(Buffer.from(stored.data)).metadata();
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(1200);
+    expect(meta.exif).toBeUndefined();
     await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
     const template = initialWaTemplates.find((row) => row.key === "order_delivered")!;
     await db.insert(schema.waTemplates).values({ key: template.key, label: template.label, bodyTemplate: template.bodyTemplate, variables: template.variables });
     const provider = new FakeMessagingProvider();
-    const sent = await sendDeliveredWa(sdb, provider, new FakeFileStorage(), { orderId: paid.orderId, now: at });
-    expect(sent).toMatchObject({ withPhoto: false });
-    // A hora é a da transição (relógio real); o nome vem da parada.
-    expect(provider.sentMessages[0].body).toMatch(/às \d{2}:\d{2}, recebido por Maria/);
+    const sent = await sendDeliveredWa(sdb, provider, storage, { orderId: paid.orderId, now: at });
+    expect(sent).toMatchObject({ withPhoto: true });
+    // A imagem vai com a legenda; a hora é a da transição (relógio real) e o nome vem da parada.
+    expect(provider.sentImages).toHaveLength(1);
+    expect(provider.sentImages[0].imageUrl).toContain(`deliveries/${paid.orderId}/entrega-motoboy.jpg`);
+    expect(provider.sentImages[0].caption).toMatch(/às \d{2}:\d{2}, recebido por Maria/);
 
-    // Segundo toque: nada muda.
-    expect(await completeStop(sdb, { courierToken: token, stopId: paidStop.id, receivedBy: "Outra", now: at })).toMatchObject({ idempotent: true, receivedBy: "Maria" });
-    expect(await getStopForOrder(sdb, paid.orderId)).toMatchObject({ stopStatus: "delivered", receivedBy: "Maria", courierName: c.name, deliveredPoint: { lat: -1.4559, lng: -48.4901, accuracyM: 9 } });
+    // Segundo toque (até sem foto): nada muda e nada sobe de novo.
+    const uploads = storage.list().length;
+    expect(await completeStop(sdb, storage, { courierToken: token, stopId: paidStop.id, receivedBy: "Outra", now: at })).toMatchObject({ idempotent: true, receivedBy: "Maria", withPhoto: true });
+    expect(storage.list().length).toBe(uploads);
+    expect(await getStopForOrder(sdb, paid.orderId)).toMatchObject({ stopStatus: "delivered", receivedBy: "Maria", courierName: c.name, deliveredPoint: { lat: -1.4559, lng: -48.4901, accuracyM: 9 }, withPhoto: true });
   });
 
   it("'Entregue' no pedido em dinheiro: a prova fica, o pedido espera a dona registrar o pagamento", async () => {
     const { cash, stops, token } = await runOnTheRoad();
     const cashStop = stops.find((s) => s.orderId === cash.orderId)!;
-    const result = await completeStop(sdb, { courierToken: token, stopId: cashStop.id, receivedBy: "a própria", now: AFTERNOON });
-    expect(result).toMatchObject({ awaitingCash: true, orderDelivered: false, receivedBy: null });
+    const result = await deliver({ courierToken: token, stopId: cashStop.id, receivedBy: "a própria", now: AFTERNOON });
+    expect(result).toMatchObject({ awaitingCash: true, orderDelivered: false, receivedBy: null, withPhoto: true });
     const order = await orderRow(cash.orderId);
-    expect(order).toMatchObject({ status: "pending_payment", deliveryConfirmedBy: "courier", receivedBy: null });
+    expect(order).toMatchObject({ status: "pending_payment", deliveryConfirmedBy: "courier", receivedBy: null, deliveredPhotoPath: `deliveries/${cash.orderId}/entrega-motoboy.jpg` });
     expect((await outboxEvents()).some((e) => e.eventType === "order.delivered")).toBe(false);
 
     // A dona baixa o dinheiro e fecha pelo caminho de sempre — horas depois.
@@ -454,25 +482,84 @@ describe("o motoboy na rua", () => {
     const template = initialWaTemplates.find((row) => row.key === "order_delivered")!;
     await db.insert(schema.waTemplates).values({ key: template.key, label: template.label, bodyTemplate: template.bodyTemplate, variables: template.variables });
     const provider = new FakeMessagingProvider();
-    await sendDeliveredWa(sdb, provider, new FakeFileStorage(), { orderId: cash.orderId, now: new Date(AFTERNOON.getTime() + 5 * 3_600_000) });
-    expect(provider.sentMessages[0].body).toMatch(/hoje às 16:00/);
+    const sent = await sendDeliveredWa(sdb, provider, storage, { orderId: cash.orderId, now: new Date(AFTERNOON.getTime() + 5 * 3_600_000) });
+    expect(sent).toMatchObject({ withPhoto: true });
+    expect(provider.sentImages[0].caption).toMatch(/hoje às 16:00/);
   });
 
-  it("a cliente tocou 'Chegou!' antes: a parada fecha, sem sobrescrever quem confirmou", async () => {
+  it("a cliente tocou 'Chegou!' antes: a parada fecha com a foto guardada, sem sobrescrever quem confirmou e sem segunda mensagem", async () => {
     const { paid, stops, token } = await runOnTheRoad();
     await confirmDeliveryByToken(sdb, { publicToken: paid.publicToken });
     expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer" });
+    // O aviso em texto já saiu quando ela confirmou.
+    await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
+    const template = initialWaTemplates.find((row) => row.key === "order_delivered")!;
+    await db.insert(schema.waTemplates).values({ key: template.key, label: template.label, bodyTemplate: template.bodyTemplate, variables: template.variables });
+    const provider = new FakeMessagingProvider();
+    expect(await sendDeliveredWa(sdb, provider, storage, { orderId: paid.orderId, now: AFTERNOON })).toMatchObject({ withPhoto: false });
+    expect(provider.sentMessages).toHaveLength(1);
+
     const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
-    const result = await completeStop(sdb, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON });
-    expect(result).toMatchObject({ orderDelivered: true, idempotent: false, receivedBy: "Maria" });
-    expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer", receivedBy: "Maria" });
+    const result = await deliver({ courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON });
+    expect(result).toMatchObject({ orderDelivered: true, idempotent: false, receivedBy: "Maria", withPhoto: true });
+    expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer", receivedBy: "Maria", deliveredPhotoPath: `deliveries/${paid.orderId}/entrega-motoboy.jpg` });
+    expect(storage.has(`deliveries/${paid.orderId}/entrega-motoboy.jpg`)).toBe(true);
+    // Um só order.delivered (o da cliente) e nenhuma segunda mensagem: a foto fica na página do pedido.
+    expect((await outboxEvents()).filter((e) => e.eventType === "order.delivered" && e.aggregateId === paid.orderId)).toHaveLength(1);
+    expect(await sendDeliveredWa(sdb, provider, storage, { orderId: paid.orderId, now: AFTERNOON })).toHaveProperty("skipped");
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(provider.sentImages).toHaveLength(0);
+  });
+
+  it("sem a foto a parada não fecha: nada gravado, nada enviado", async () => {
+    const { paid, stops, token } = await runOnTheRoad();
+    const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
+    await expect(completeStop(sdb, storage, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria", photo: null, now: AFTERNOON })).rejects.toMatchObject({ code: PHOTO_REQUIRED_CODE });
+    await expect(completeStop(sdb, storage, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON })).rejects.toMatchObject({ code: PHOTO_REQUIRED_CODE });
+    await expect(
+      completeStop(sdb, storage, { courierToken: token, stopId: paidStop.id, photo: { data: new Uint8Array([1, 2, 3]), contentType: "application/pdf" }, now: AFTERNOON }),
+    ).rejects.toMatchObject({ code: "imagem_invalida" });
+    const [stop] = await db.select().from(schema.deliveryStops).where(eq(schema.deliveryStops.id, paidStop.id));
+    expect(stop.status).toBe("pending");
+    expect((await orderRow(paid.orderId)).status).toBe("shipped");
+    expect(storage.list()).toHaveLength(0);
+    expect((await outboxEvents()).some((e) => e.eventType === "order.delivered")).toBe(false);
+  });
+
+  it("foto que a dona já tinha tirado não é sobrescrita pela do motoboy", async () => {
+    const { paid, stops, token } = await runOnTheRoad();
+    const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
+    const ownerPhoto = new Uint8Array([9, 9, 9]);
+    await storage.upload({ path: `deliveries/${paid.orderId}/entrega.jpg`, data: ownerPhoto, contentType: "image/jpeg" });
+    await db.update(schema.orders).set({ deliveredPhotoPath: `deliveries/${paid.orderId}/entrega.jpg` }).where(eq(schema.orders.id, paid.orderId));
+
+    const result = await deliver({ courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON });
+    expect(result).toMatchObject({ orderDelivered: true, withPhoto: true });
+    expect(Array.from(storage.get(`deliveries/${paid.orderId}/entrega.jpg`)!.data)).toEqual([9, 9, 9]);
+    expect((await orderRow(paid.orderId)).deliveredPhotoPath).toBe(`deliveries/${paid.orderId}/entrega.jpg`);
+    expect(storage.list()).toHaveLength(1);
+  });
+
+  it("recusa antes de subir a foto: saída que não começou ou pedido cancelado não deixam arquivo órfão", async () => {
+    const { variantId, rateId } = await setup();
+    const paid = await paidMotoboyOrder(variantId, rateId);
+    const c = await courier("Outro Motoboy", "(91) 98111-2222");
+    const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
+    const [stop] = await stopsOf(created.runId);
+    await expect(deliver({ courierToken: created.courierToken, stopId: stop.id })).rejects.toThrow(/Comecei a rota/);
+    expect(storage.list()).toHaveLength(0);
+
+    const road = await runOnTheRoad();
+    await transitionOrder(sdb, { orderId: road.paid.orderId, to: "refunded", userId: FIXED_USER_ID, reason: "Cliente desistiu." });
+    await expect(deliver({ courierToken: road.token, stopId: road.stops.find((s) => s.orderId === road.paid.orderId)!.id })).rejects.toThrow(/cancelado pela loja/);
+    expect(storage.list()).toHaveLength(0);
   });
 
   it("pedido cancelado pela loja com parada aberta: 'Entregue' recusa com mensagem clara; 'Não consegui' fecha", async () => {
     const { paid, stops, token } = await runOnTheRoad();
     await transitionOrder(sdb, { orderId: paid.orderId, to: "refunded", userId: FIXED_USER_ID, reason: "Cliente desistiu." });
     const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
-    await expect(completeStop(sdb, { courierToken: token, stopId: paidStop.id, receivedBy: "Maria" })).rejects.toThrow(/cancelado pela loja/);
+    await expect(deliver({ courierToken: token, stopId: paidStop.id, receivedBy: "Maria" })).rejects.toThrow(/cancelado pela loja/);
     expect(await failStop(sdb, { courierToken: token, stopId: paidStop.id, reason: "outro", note: "Loja cancelou" })).toMatchObject({ idempotent: false });
   });
 
@@ -481,7 +568,7 @@ describe("o motoboy na rua", () => {
     await cancelDeliveryRun(sdb, { runId: run.runId, userId: FIXED_USER_ID });
     const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
     await expect(startDeliveryRun(sdb, { courierToken: token })).rejects.toThrow(/cancelada pela loja/);
-    await expect(completeStop(sdb, { courierToken: token, stopId: paidStop.id })).rejects.toThrow(/cancelada pela loja/);
+    await expect(deliver({ courierToken: token, stopId: paidStop.id })).rejects.toThrow(/cancelada pela loja/);
     await expect(failStop(sdb, { courierToken: token, stopId: paidStop.id, reason: "outro" })).rejects.toThrow(/cancelada pela loja/);
     expect(await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, recordedAt: AFTERNOON })).toEqual({ accepted: false, reason: "not_en_route" });
   });
@@ -492,9 +579,9 @@ describe("o motoboy na rua", () => {
     const c = await courier("Outro Motoboy", "(91) 98111-2222");
     const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
     const [stop] = await stopsOf(created.runId);
-    await expect(completeStop(sdb, { courierToken: created.courierToken, stopId: stop.id })).rejects.toThrow(/Comecei a rota/);
+    await expect(deliver({ courierToken: created.courierToken, stopId: stop.id })).rejects.toThrow(/Comecei a rota/);
     const other = await runOnTheRoad();
-    await expect(completeStop(sdb, { courierToken: other.token, stopId: stop.id })).rejects.toThrow(/não encontrada/);
+    await expect(deliver({ courierToken: other.token, stopId: stop.id })).rejects.toThrow(/não encontrada/);
   });
 
   it("'Não consegui': a parada falha, a dona é avisada com o motivo e o pedido fica como está", async () => {
@@ -519,7 +606,7 @@ describe("o motoboy na rua", () => {
   it("encerrar exige todas as paradas fechadas; depois a página do motoboy fica vazia", async () => {
     const { paid, cash, stops, token, run } = await runOnTheRoad();
     await expect(finishDeliveryRun(sdb, { courierToken: token })).rejects.toThrow(/parada por entregar/);
-    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
+    await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
     expect((await getRunForCourier(sdb, token))?.canFinish).toBe(false);
     await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "cliente_pediu_outro_dia" });
     expect((await getRunForCourier(sdb, token))?.canFinish).toBe(true);
@@ -533,7 +620,7 @@ describe("o motoboy na rua", () => {
 
   it("cancelar pelo painel fecha as paradas por entregar, mata o rastreio e NÃO desfaz o 'Saiu'", async () => {
     const { paid, cash, stops, token, run } = await runOnTheRoad();
-    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, now: AFTERNOON });
+    await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, now: AFTERNOON });
     expect(await cancelDeliveryRun(sdb, { runId: run.runId, userId: FIXED_USER_ID, now: AFTERNOON })).toEqual({ runId: run.runId, idempotent: false });
     const after = await stopsOf(run.runId);
     expect(after.map((s) => [s.orderId, s.status])).toEqual(
@@ -657,7 +744,7 @@ describe("leituras", () => {
     expect(seenByA.approximate).toBe(true); // B ainda por entregar
 
     const stops = await stopsOf(created.runId);
-    await completeStop(sdb, { courierToken: created.courierToken, stopId: stops.find((s) => s.orderId === a.orderId)!.id, receivedBy: "Ana", position: { ...atA, accuracyM: 6 }, now: t(60) });
+    await deliver({ courierToken: created.courierToken, stopId: stops.find((s) => s.orderId === a.orderId)!.id, receivedBy: "Ana", position: { ...atA, accuracyM: 6 }, now: t(60) });
     // A acabou de fechar e o motoboy ainda está na porta dela: para B continua arredondada por 10 min.
     await recordRunPosition(sdb, { courierToken: created.courierToken, ...atA, accuracyM: 6, recordedAt: t(90), now: t(90) });
     const grace = (await getTrackingForOrder(sdb, b.publicToken, t(95)))!;
@@ -729,7 +816,7 @@ describe("leituras", () => {
     const t = (s: number) => new Date(AFTERNOON.getTime() + s * 1000);
     await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, accuracyM: 10, recordedAt: t(1), now: t(1) });
     await recordRunPosition(sdb, { courierToken: token, lat: -1.452, lng: -48.49, accuracyM: 10, recordedAt: t(30), now: t(30) });
-    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, receivedBy: "Maria", position: { lat: -1.452, lng: -48.49, accuracyM: 10 }, now: t(40) });
+    await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, receivedBy: "Maria", position: { lat: -1.452, lng: -48.49, accuracyM: 10 }, now: t(40) });
 
     const list = await listDeliveryRuns(sdb);
     expect(list).toHaveLength(1);
@@ -774,7 +861,7 @@ describe("leituras", () => {
   it("saída esquecida aberta há mais de 24 h fecha sozinha e avisa a dona", async () => {
     const { paid, cash, stops, token, run } = await runOnTheRoad();
     expect(await closeStaleDeliveryRuns(sdb, { now: new Date(AFTERNOON.getTime() + 2 * 3_600_000) })).toEqual({ closed: 0 });
-    await completeStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, now: AFTERNOON });
+    await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, now: AFTERNOON });
     const later = new Date(AFTERNOON.getTime() + 25 * 3_600_000);
     // Velha mas em uso (posição há 1 h): fica.
     await recordRunPosition(sdb, { courierToken: token, lat: -1.45, lng: -48.49, recordedAt: new Date(later.getTime() - 3_600_000), now: new Date(later.getTime() - 3_600_000) });
@@ -795,7 +882,7 @@ describe("leituras", () => {
       const r = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [p.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
       await startDeliveryRun(sdb, { courierToken: r.courierToken, now: AFTERNOON });
       const [stop] = await stopsOf(r.runId);
-      await completeStop(sdb, { courierToken: r.courierToken, stopId: stop.id, now: AFTERNOON });
+      await deliver({ courierToken: r.courierToken, stopId: stop.id, now: AFTERNOON });
       return r;
     })();
     expect(await closeStaleDeliveryRuns(sdb, { now: muchLater })).toEqual({ closed: 1 });
