@@ -170,6 +170,21 @@ describe("sendTemplateMessage", () => {
     expect(conversation.phoneE164).toBe(LID);
   });
 
+  it("resposta manual entregue pela fila fica com a hora do clique da dona (createdAt informado), não a da entrega", async () => {
+    await enableWa();
+    const clickedAt = new Date(Date.now() - 5_000);
+    const result = await sendTemplateMessage(sdb, provider, {
+      phoneE164: "+5511999990000",
+      bodyOverride: "Tenho sim! Qual tamanho?",
+      dedupeKey: "wa.send:evt-1",
+      requireOptIn: false,
+      createdAt: clickedAt,
+    });
+    expect(result).toMatchObject({ sent: true });
+    const [row] = await db.select({ createdAt: schema.waMessages.createdAt }).from(schema.waMessages);
+    expect(row.createdAt.getTime()).toBe(clickedAt.getTime());
+  });
+
   it("wa desligado → { skipped: 'desabilitado' } e NADA gravado", async () => {
     await seedTemplates();
     const customerId = await createCustomer(true);

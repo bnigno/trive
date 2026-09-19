@@ -10,6 +10,7 @@ import {
   deriveWaMessageOrigin,
   type WaMessageOrigin,
   isProactiveBotReply,
+  pendingInboundRows,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
 import {
@@ -735,6 +736,9 @@ export async function takeOverWaConversation(
  * conversa estava com a equipe), enfileira o turno para a Lia responder
  * agora — não só quando ela escrever de novo.
  */
+/** Quantas mensagens olhar para decidir se há algo dela sem resposta ao devolver à Lia. */
+const RETURN_TO_BOT_LOOKBACK = 20;
+
 export async function returnWaConversationToBot(
   db: DbOrTx,
   input: z.input<typeof actorSchema>,
@@ -758,14 +762,19 @@ export async function returnWaConversationToBot(
     before: { status: conversation.status },
     after: { status: "open", botDisabledUntil: null },
   });
-  const [lastMessage] = await db
-    .select({ id: waMessages.id, direction: waMessages.direction, body: waMessages.body })
-    .from(waMessages)
-    .where(eq(waMessages.conversationId, conversation.id))
-    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
-    .limit(1);
+  // O mesmo critério do turno: há mensagem dela sem resposta (da Lia ou da
+  // equipe)? Aviso automático depois dela não conta como resposta.
+  const recent = (
+    await db
+      .select({ id: waMessages.id, direction: waMessages.direction, body: waMessages.body, dedupeKey: waMessages.dedupeKey, templateKey: waMessages.templateKey, createdAt: waMessages.createdAt })
+      .from(waMessages)
+      .where(eq(waMessages.conversationId, conversation.id))
+      .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+      .limit(RETURN_TO_BOT_LOOKBACK)
+  ).reverse();
+  const lastMessage = pendingInboundRows(recent).at(-1) ?? null;
   // SAIR/PARAR é comando (o aviso de saída responde a ele), não pergunta.
-  const pending = lastMessage?.direction === "inbound" && !isOptOutCommand(lastMessage.body ?? "");
+  const pending = lastMessage !== null && !isOptOutCommand(lastMessage.body ?? "");
   if (!pending || !(await isBotEnabled(db))) return { status: "open", botTurnQueued: false };
   const queued = await enqueueOutboxEvent(db, {
     eventType: "wa.bot_turn",
@@ -909,6 +918,9 @@ export async function sendManualWaReply(
     payload: {
       phoneE164: conversation.phoneE164,
       body: parsed.body,
+      // A hora do clique: a linha da mensagem nasce quando a fila entrega, e
+      // é esta hora que diz a que mensagens da cliente a dona respondeu.
+      repliedAt: new Date().toISOString(),
       ...(conversation.customerId ? { customerId: conversation.customerId } : {}),
     },
   });

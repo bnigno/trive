@@ -176,6 +176,14 @@ describe("orderHistoryRows", () => {
     expect(answeredInboundOf(suggestion[2])).toBe(A);
     expect(answeredInboundOf({ direction: "inbound", dedupeKey: null })).toBeNull();
     expect(answeredInboundOf({ direction: "outbound", dedupeKey: `wa.bot_reply:${B}` })).toBe(B);
+    // Empate de milissegundo com a última inbound: a saída sem âncora também vai para antes dela.
+    const tie = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(2) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(3) },
+      { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f1", createdAt: t(3) },
+    ];
+    expect(orderHistoryRows(tie).map((row) => row.id)).toEqual([A, "r", "pro", B]);
     // Sem nenhuma inbound, nada muda.
     expect(orderHistoryRows([{ id: "x", direction: "outbound", dedupeKey: "order.paid:1", createdAt: t(1) }]).map((row) => row.id)).toEqual(["x"]);
     // Dois balões da mesma resposta mantêm a ordem entre si.
@@ -200,6 +208,9 @@ describe("pendingInboundRows", () => {
     expect(pendingInboundRows(rows).map((row) => row.id)).toEqual([B, C]);
     const manual = [...rows, { id: "m", direction: "outbound", dedupeKey: "wa.send:1", createdAt: t(6) }];
     expect(pendingInboundRows(manual)).toEqual([]);
+    // A resposta manual cobre o que estava na tela quando a dona CLICOU (repliedAt), não o que chegou enquanto a fila entregava.
+    const clicked = [...rows, { id: "m", direction: "outbound", dedupeKey: "wa.send:1", createdAt: t(6), repliedAt: t(3) }];
+    expect(pendingInboundRows(clicked).map((row) => row.id)).toEqual([C]);
     const auto = [...rows, { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", templateKey: "order_paid", createdAt: t(6) }];
     expect(pendingInboundRows(auto).map((row) => row.id)).toEqual([B, C]);
     const late = [...rows, { id: "card", direction: "outbound", dedupeKey: "wa.bot_media:99999999-9999-4999-8999-999999999999:card", createdAt: t(6) }, { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f", createdAt: t(7) }];

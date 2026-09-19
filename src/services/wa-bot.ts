@@ -435,7 +435,7 @@ export async function loadTurnHistory(
     .limit(HISTORY_LIMIT);
   // Sugestão aprovada no copiloto sai com dedupe `wa.bot_reply:suggestion:<id>`:
   // a inbound que ela respondeu está na tabela de sugestões.
-  const suggestionIdOf = (dedupeKey: string | null) => /^wa\.bot_reply:suggestion:([0-9a-f-]{36})/i.exec(dedupeKey ?? "")?.[1] ?? null;
+  const suggestionIdOf = (dedupeKey: string | null) => /^wa\.bot_(?:reply|media|handoff_notice):suggestion:([0-9a-f-]{36})/i.exec(dedupeKey ?? "")?.[1] ?? null;
   const suggestionIds = recent.map((row) => suggestionIdOf(row.dedupeKey)).filter((id): id is string => id !== null);
   const suggestionAnchors = new Map<string, string | null>();
   if (suggestionIds.length > 0) {

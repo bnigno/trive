@@ -147,6 +147,8 @@ const sendTemplateMessageSchema = z
     orderId: z.uuid().optional(),
     dedupeKey: z.string().min(1).optional(),
     requireOptIn: z.boolean(),
+    /** Resposta manual da dona: a linha fica com a hora do clique, não a da entrega pela fila. */
+    createdAt: z.date().optional(),
     /**
      * Consultar se o número tem WhatsApp antes de enviar (uma ida à Z-API).
      * false para respostas a quem acabou de escrever — o número obviamente existe.
@@ -465,6 +467,7 @@ export async function sendTemplateMessage(
       dedupeKey: parsed.dedupeKey ?? null,
       status: "queued",
       orderId: parsed.orderId ?? null,
+      ...(parsed.createdAt ? { createdAt: parsed.createdAt } : {}),
     },
     { body },
   );

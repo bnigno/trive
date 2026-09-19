@@ -271,6 +271,8 @@ describe("wa-conversations (painel do admin)", () => {
         phoneE164: "+5511999990000",
         body: "Oi! Aqui é o dono da loja, posso ajudar?",
         customerId: customer.id,
+        // A hora do clique viaja no evento: é ela que diz a que mensagens a dona respondeu.
+        repliedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       },
     });
 

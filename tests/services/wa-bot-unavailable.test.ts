@@ -225,6 +225,24 @@ describe("rajada de mensagens: um turno por mensagem, mas o modelo roda uma vez"
     expect(history.map((m) => `${m.role}:${m.text}`)).toEqual(["user:Quero ver vestidos", "assistant:Temos o Longo Dunas", "user:Quero o M"]);
   });
 
+  it("resposta manual da dona cobre só o que ela viu ao clicar: mensagem que chegou enquanto a fila entregava fica pendente", async () => {
+    const conversationId = await createConversation();
+    const base = Date.now() - 60_000;
+    await addMessage(conversationId, "inbound", "Oi, tem o vestido azul?", new Date(base));
+    // A cliente escreve 300 ms depois do clique; a linha manual nasce 2 s depois (entrega pela fila), com created_at = hora do clique.
+    await addMessage(conversationId, "inbound", "M, e quanto custa?", new Date(base + 1_300));
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Tenho sim! Qual tamanho?", dedupeKey: "wa.send:evt-1", status: "sent", createdAt: new Date(base + 1_000) });
+    assistant.enqueueScript({ replyTemplate: "M por R$ 159 🤎" });
+
+    expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ replied: true, handedOff: false });
+    const history = assistant.inputs[0].history.slice(-3);
+    expect(history.map((m) => `${m.role}:${m.text}`)).toEqual([
+      "user:Oi, tem o vestido azul?",
+      "user:[mensagem enviada pela equipe da loja, não por você] Tenho sim! Qual tamanho?",
+      "user:M, e quanto custa?",
+    ]);
+  });
+
   it("mensagem nova depois da resposta volta a rodar o modelo", async () => {
     const conversationId = await createConversation();
     await addMessage(conversationId, "inbound", "Oi");
@@ -386,6 +404,16 @@ describe("Devolver à Lia", () => {
     expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.bot_turn"))).toHaveLength(1);
   });
 
+  it("aviso automático depois da mensagem dela não conta como resposta: Devolver à Lia enfileira o turno mesmo assim", async () => {
+    const conversationId = await createConversation("human");
+    await addMessage(conversationId, "outbound", BOT_UNAVAILABLE_REPLY);
+    const inboundId = await addMessage(conversationId, "inbound", "Mostre as cores");
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Pagamento confirmado! 🤎", templateKey: "order_paid", dedupeKey: "order.paid:xyz", status: "sent", createdAt: new Date(Date.now() + 500) });
+    expect(await returnWaConversationToBot(sdb, { conversationId, userId: OWNER })).toEqual({ status: "open", botTurnQueued: true });
+    const events = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.bot_turn"));
+    expect(events.map((e) => e.dedupeKey)).toEqual([`wa.bot_turn:return:${inboundId}`]);
+  });
+
   it("SAIR esperando é comando, não pergunta: só reabre", async () => {
     const conversationId = await createConversation("human");
     await addMessage(conversationId, "inbound", " sair ");
@@ -393,10 +421,10 @@ describe("Devolver à Lia", () => {
     expect(result).toEqual({ status: "open", botTurnQueued: false });
   });
 
-  it("sem nada esperando (a última mensagem foi da loja), só reabre", async () => {
+  it("sem nada esperando (a equipe respondeu por último), só reabre", async () => {
     const conversationId = await createConversation("human");
     await addMessage(conversationId, "inbound", "Oi");
-    await addMessage(conversationId, "outbound", "Oi, tudo bem?");
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Oi, tudo bem?", dedupeKey: "wa.send:manual-1", status: "sent", createdAt: new Date() });
     const result = await returnWaConversationToBot(sdb, { conversationId, userId: OWNER });
     expect(result).toEqual({ status: "open", botTurnQueued: false });
     expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.bot_turn"))).toHaveLength(0);

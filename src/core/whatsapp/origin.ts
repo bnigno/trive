@@ -54,6 +54,8 @@ export interface HistoryRowOrder {
   createdAt: Date;
   /** A inbound respondida quando o dedupe não a carrega (sugestão aprovada no copiloto: vem da tabela de sugestões). */
   answers?: string | null;
+  /** Resposta manual: a hora em que a dona clicou Enviar (a linha nasce quando a fila entrega, segundos depois). */
+  repliedAt?: Date | null;
 }
 
 /** A inbound que esta saída respondeu: a informada, senão a do dedupe. */
@@ -86,7 +88,7 @@ export function orderHistoryRows<T extends HistoryRowOrder>(rows: readonly T[]):
     // aviso automático, mensagem da equipe) que saiu DEPOIS da última mensagem
     // da cliente não respondeu a ela — ela pode ter chegado enquanto o modelo
     // pensava: fica logo antes, e a conversa termina com a cliente.
-    if (row.direction !== "inbound" && row.createdAt.getTime() > lastInboundAt) return { row, index, at: lastInboundAt, after: -1 };
+    if (row.direction !== "inbound" && row.createdAt.getTime() >= lastInboundAt) return { row, index, at: lastInboundAt, after: -1 };
     return { row, index, at: row.createdAt.getTime(), after: 0 };
   });
   keyed.sort((a, b) => a.at - b.at || a.after - b.after || a.index - b.index);
@@ -113,7 +115,9 @@ export function pendingInboundRows<T extends HistoryRowOrder>(rows: readonly T[]
       continue;
     }
     if (deriveWaMessageOrigin({ direction: row.direction, dedupeKey: row.dedupeKey, templateKey: row.templateKey ?? null }) === "manual") {
-      coveredUntil = Math.max(coveredUntil, row.createdAt.getTime() - 1);
+      // A dona respondeu ao que estava na tela quando clicou — não ao que
+      // chegou enquanto a fila entregava a mensagem dela.
+      coveredUntil = Math.max(coveredUntil, (row.repliedAt ?? row.createdAt).getTime() - 1);
     }
   }
   return rows.filter((row) => row.direction === "inbound" && row.createdAt.getTime() > coveredUntil);
