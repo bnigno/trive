@@ -486,9 +486,11 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
     if (order.status === "canceled" || order.status === "refunded") {
       throw new ServiceError("ORDER_CANCELED", 'Este pedido foi cancelado pela loja: não entregue — toque em "Não consegui" e traga a peça de volta.');
     }
-    // A olhada de cima viu a parada aberta e subiu a foto (ou a dona já tinha uma).
+    // A olhada de cima viu a parada aberta e subiu a foto (ou a dona já tinha
+    // uma). Sem nenhuma das duas, a saída mudou de estado entre a olhada e a
+    // trava (ex.: "Comecei a rota" em outra aba): é só tentar de novo.
     const photoPath = order.deliveredPhotoPath ?? uploadedPath;
-    if (!photoPath) throw new ServiceError(PHOTO_REQUIRED_CODE, "Tire a foto da entrega no endereço para confirmar.");
+    if (!photoPath) throw new ServiceError("RUN_JUST_CHANGED", "A saída acabou de mudar — toque em Confirmar entrega de novo.");
     const [courier] = await tx.select({ name: couriers.name }).from(couriers).where(eq(couriers.id, run.courierId)).limit(1);
     const receivedBy = normalizeReceivedBy(parsed.receivedBy);
     const point = parsed.position && isValidPoint(parsed.position) ? parsed.position : null;

@@ -12,6 +12,7 @@ import { listOrdersAwaitingDelivery, listStaleShipments } from "@/services/deliv
 import { STALE_SHIPMENT_DAYS } from "@/core/orders/delivery";
 import { formatDateTimeSP } from "../format";
 import { DeliverForm } from "../[id]/deliver-form";
+import { DeliveredForm } from "../rota/forms";
 
 export const dynamic = "force-dynamic";
 
@@ -94,12 +95,18 @@ export default async function EntregarPage() {
               <div className="mt-3">
                 {row.awaitingPayment ? (
                   <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                    {row.hasPhoto ? "O motoboy entregou e a foto está registrada. " : ""}
                     Receba o dinheiro e{" "}
                     <Link href={`/admin/pedidos/${row.id}`} className="underline">
                       marque como pago na ficha
                     </Link>
-                    ; a câmera aparece em seguida.
+                    {row.hasPhoto ? "; depois é só fechar aqui." : "; a câmera aparece em seguida."}
                   </p>
+                ) : row.hasPhoto && row.dispatchedAt ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">Foto da entrega registrada pelo motoboy — a cliente recebe quando você fechar.</p>
+                    <DeliveredForm orderId={row.id} />
+                  </div>
                 ) : (
                   <DeliverForm orderId={row.id} photoUrl={null} receivedBy={null} deliveredAtLabel={null} compact />
                 )}

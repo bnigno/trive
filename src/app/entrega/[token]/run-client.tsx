@@ -433,18 +433,25 @@ function StopCard({
 }) {
   const [mode, setMode] = useState<"idle" | "deliver" | "fail">("idle");
   const [receivedBy, setReceivedBy] = useState("");
-  const [photoName, setPhotoName] = useState<string | null>(null);
+  // O arquivo escolhido vive no estado (não no input): o formulário desmonta
+  // no "Voltar" e a tela nunca pode dizer "foto pronta" sem foto.
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const photoInputRef = useRef<HTMLInputElement>(null);
   const [reason, setReason] = useState<FailureReason>("ninguem_em_casa");
   const [note, setNote] = useState("");
   const wa = waMeUrl(stop.phoneE164);
 
+  const switchMode = (next: "idle" | "deliver" | "fail") => {
+    setPhotoFile(null);
+    setPhotoError(null);
+    setMode(next);
+  };
+
   // A foto da entrega é obrigatória: reduzida no celular antes de subir
   // (teto por requisição da Vercel) e mandada junto com o resto num FormData.
   async function submitDelivery() {
-    const original = photoInputRef.current?.files?.[0];
+    const original = photoFile;
     if (!original || original.size === 0) {
       setPhotoError("Tire a foto da entrega no endereço para confirmar.");
       return;
@@ -454,6 +461,9 @@ function StopCard({
     let reduced: Awaited<ReturnType<typeof shrinkImage>>;
     try {
       reduced = await shrinkImage(original);
+    } catch {
+      setPhotoError("Não consegui preparar a foto aqui. Tire a foto de novo.");
+      return;
     } finally {
       setPreparing(false);
     }
@@ -480,7 +490,7 @@ function StopCard({
         // A chamada nem chegou ao servidor (sem sinal no meio do envio).
         return { ok: false, error: "Sem internet — a foto precisa subir agora. Tente de novo quando o sinal voltar." };
       }
-      if (result.ok) setMode("idle");
+      if (result.ok) switchMode("idle");
       return result;
     });
   }
@@ -536,10 +546,10 @@ function StopCard({
 
       {mode === "idle" ? (
         <div className="flex flex-col gap-2">
-          <button type="button" disabled={!running || pending} onClick={() => setMode("deliver")} className={`${BIG_BUTTON} bg-ink-950 text-ivory-50 active:bg-ink-800`}>
+          <button type="button" disabled={!running || pending} onClick={() => switchMode("deliver")} className={`${BIG_BUTTON} bg-ink-950 text-ivory-50 active:bg-ink-800`}>
             ✓ Entregue
           </button>
-          <button type="button" disabled={!running || pending} onClick={() => setMode("fail")} className={`${BIG_BUTTON} border border-ink-900/30 bg-transparent text-ink-800 active:bg-ivory-200`}>
+          <button type="button" disabled={!running || pending} onClick={() => switchMode("fail")} className={`${BIG_BUTTON} border border-ink-900/30 bg-transparent text-ink-800 active:bg-ivory-200`}>
             Não consegui entregar
           </button>
           {!running ? <p className="text-center text-xs text-ink-500">Toque em “Comecei a rota” para liberar.</p> : null}
@@ -549,6 +559,8 @@ function StopCard({
       {mode === "deliver" ? (
         <form
           className="flex flex-col gap-3 rounded-(--radius-soft) bg-ivory-200 p-3"
+          // Sem a validação nativa: a mensagem em português é a nossa.
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
             void submitDelivery();
@@ -558,19 +570,17 @@ function StopCard({
             <span className="font-medium">Foto da entrega</span>
             <span className="text-xs text-ink-700">Do pacote na mão da cliente ou na portaria — vai para a loja e para a cliente.</span>
             <input
-              ref={photoInputRef}
               type="file"
               name="photo"
               accept="image/*"
               capture="environment"
-              required
               onChange={(event) => {
-                setPhotoName(event.target.files?.[0]?.name ?? null);
+                setPhotoFile(event.target.files?.[0] ?? null);
                 setPhotoError(null);
               }}
               className="min-h-12 rounded-(--radius-hair) border border-ivory-400 bg-ivory-50 px-3 py-2 text-base text-ink-900 file:mr-3 file:rounded-(--radius-hair) file:border-0 file:bg-ink-950 file:px-3 file:py-2 file:text-sm file:text-ivory-50"
             />
-            {photoName ? <span className="text-xs text-ink-700">Foto pronta: {photoName}</span> : null}
+            {photoFile ? <span className="text-xs text-ink-700">Foto pronta: {photoFile.name}</span> : null}
             {photoError ? <span className="text-xs text-red-700">{photoError}</span> : null}
           </label>
           <label className="flex flex-col gap-1 text-sm">
@@ -586,11 +596,11 @@ function StopCard({
             />
           </label>
           {!position ? <p className="text-xs text-ink-700">Sem posição recente do GPS — a entrega vai ser registrada sem o ponto no mapa.</p> : null}
-          <button type="submit" disabled={pending || preparing || !photoName} className={`${BIG_BUTTON} bg-laurel-700 text-ivory-50 active:bg-laurel-600`}>
+          <button type="submit" disabled={pending || preparing || !photoFile} className={`${BIG_BUTTON} bg-laurel-700 text-ivory-50 active:bg-laurel-600`}>
             {preparing ? "Preparando a foto…" : pending ? "Enviando…" : "Confirmar entrega"}
           </button>
           <p className="text-center text-xs text-ink-500">A foto precisa de internet para subir — sem sinal, tente de novo quando voltar.</p>
-          <button type="button" disabled={pending || preparing} onClick={() => setMode("idle")} className="min-h-11 text-sm text-ink-700 underline">
+          <button type="button" disabled={pending || preparing} onClick={() => switchMode("idle")} className="min-h-11 text-sm text-ink-700 underline">
             Voltar
           </button>
         </form>
@@ -603,7 +613,7 @@ function StopCard({
             event.preventDefault();
             onRun(async () => {
               const result = await failStopAction({ token, stopId: stop.id, reason, note: note.trim() || null });
-              if (result.ok) setMode("idle");
+              if (result.ok) switchMode("idle");
               return result;
             });
           }}

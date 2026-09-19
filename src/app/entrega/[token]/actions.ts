@@ -66,11 +66,14 @@ export async function completeStopAction(formData: FormData): Promise<CourierAct
       photo: { data: new Uint8Array(await photo.arrayBuffer()), contentType: photo.type },
     });
     revalidatePath(`/entrega/${parsed.token}`);
+    const who = result.receivedBy ? ` para ${result.receivedBy}` : "";
     return {
       ok: true,
-      message: result.awaitingCash
-        ? `Pedido #${result.orderNumber} entregue, foto registrada. O dinheiro você acerta com a loja na volta.`
-        : `Pedido #${result.orderNumber} entregue${result.receivedBy ? ` para ${result.receivedBy}` : ""} — a foto já foi para a loja.`,
+      message: result.idempotent
+        ? `Pedido #${result.orderNumber} já estava marcado como entregue${who}${result.withPhoto ? "" : " (sem foto)"}.`
+        : result.awaitingCash
+          ? `Pedido #${result.orderNumber} entregue, foto registrada. O dinheiro você acerta com a loja na volta.`
+          : `Pedido #${result.orderNumber} entregue${who} — a foto já foi para a loja.`,
     };
   } catch (error) {
     return friendly(error);

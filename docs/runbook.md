@@ -402,7 +402,10 @@ do pedido que já recebe e você acompanha em **/admin/pedidos/saidas**.
    registra o pagamento no pedido e clica **Entregue — o motoboy voltou**,
    como antes — a cliente recebe a foto nessa hora. Se você já tinha tirado
    a foto pela ficha, a do motoboy não a substitui; "Refazer a foto" na
-   ficha continua valendo. **Não consegui** avisa você no WhatsApp; o
+   ficha continua valendo. Se a cliente tocou **Chegou!** na página dela
+   antes de o motoboy fechar a parada, ela já recebeu o aviso em texto — a
+   foto do motoboy fica na página do pedido e na ficha, sem segunda
+   mensagem. **Não consegui** avisa você no WhatsApp; o
    pedido continua como saído — combine com a cliente e reagende.
 
 **Cancelar** uma saída fecha as paradas por entregar e mata o link; o "Saiu"

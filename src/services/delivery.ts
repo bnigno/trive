@@ -349,6 +349,8 @@ export interface OrderAwaitingDelivery {
   dispatchedAt: Date | null;
   paymentMethod: string | null;
   trackingCode: string | null;
+  /** O motoboy já tirou a foto na parada: falta só a dona receber o dinheiro/fechar — não outra câmera. */
+  hasPhoto: boolean;
 }
 
 /**
@@ -370,24 +372,24 @@ export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwait
       deliveryWindow: orders.deliveryWindow,
       paymentMethod: orders.paymentMethod,
       trackingCode: orders.shippingTrackingCode,
+      deliveredPhotoPath: orders.deliveredPhotoPath,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
+    // Pela situação, não pela foto: o motoboy fotografa na parada e o pedido em
+    // dinheiro segue aqui até a dona receber e fechar (entregue já sai pela situação).
     .where(
-      and(
-        isNull(orders.deliveredPhotoPath),
-        or(
-          eq(orders.status, "shipped"),
-          // Pago em dinheiro ainda na loja: só sem janela (em mãos) ou já embalado — motoboy sem foto não sai.
-          and(
-            eq(orders.status, "paid"),
-            or(
-              and(eq(orders.paymentMethod, "cash"), or(isNull(orders.deliveryWindow), isNotNull(orders.packagePhotoPath))),
-              sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`,
-            ),
+      or(
+        eq(orders.status, "shipped"),
+        // Pago em dinheiro ainda na loja: só sem janela (em mãos) ou já embalado — motoboy sem foto não sai.
+        and(
+          eq(orders.status, "paid"),
+          or(
+            and(eq(orders.paymentMethod, "cash"), or(isNull(orders.deliveryWindow), isNotNull(orders.packagePhotoPath))),
+            sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`,
           ),
-          and(inArray(orders.status, ["preparing", "pending_payment"]), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`),
         ),
+        and(inArray(orders.status, ["preparing", "pending_payment"]), sql`${orders.deliveryWindow}->>'dispatchedAt' IS NOT NULL`),
       ),
     )
     .orderBy(sql`coalesce(${orders.shippedAt}, ${orders.paidAt}) asc`);
@@ -403,6 +405,7 @@ export async function listOrdersAwaitingDelivery(db: DbOrTx): Promise<OrderAwait
     isMotoboy: row.deliveryWindow !== null,
     dispatchedAt: row.deliveryWindow?.dispatchedAt ? new Date(row.deliveryWindow.dispatchedAt) : null,
     paymentMethod: row.paymentMethod,
+    hasPhoto: row.deliveredPhotoPath !== null,
     trackingCode: row.trackingCode,
   }));
 }
