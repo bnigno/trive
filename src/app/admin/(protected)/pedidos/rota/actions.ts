@@ -31,6 +31,8 @@ function revalidateRoute(orderId: string): void {
   revalidatePath("/admin/pedidos");
   revalidatePath(`/admin/pedidos/${orderId}`);
   revalidatePath("/admin/pedidos/embalar");
+  // "Entregue — o motoboy voltou" também fecha a linha na Mesa de entrega.
+  revalidatePath("/admin/pedidos/entregar");
   revalidatePath("/admin");
 }
 
