@@ -7,6 +7,8 @@ import {
   isProactiveBotReply,
   type DeriveWaMessageOriginInput,
   type WaMessageOrigin,
+  answeredInboundId,
+  orderHistoryRows,
 } from "@/core/whatsapp/origin";
 
 describe("deriveWaMessageOrigin", () => {
@@ -106,5 +108,54 @@ describe("isProactiveBotReply", () => {
     expect(isProactiveBotReply("wa.bot_media:followup:x:0")).toBe(false);
     expect(isProactiveBotReply(null)).toBe(false);
     expect(deriveWaMessageOrigin({ direction: "outbound", templateKey: null, dedupeKey: "wa.bot_reply:followup:x" })).toBe("bot");
+  });
+});
+
+const A = "11111111-1111-4111-8111-111111111111";
+const B = "22222222-2222-4222-8222-222222222222";
+const C = "33333333-3333-4333-8333-333333333333";
+const t = (seconds: number) => new Date(Date.UTC(2026, 8, 19, 8, 48, seconds));
+
+describe("answeredInboundId", () => {
+  it("lê a inbound respondida do dedupe da resposta e da mídia; retorno combinado e envios da loja não respondem a nada", () => {
+    expect(answeredInboundId(`wa.bot_reply:${A}`)).toBe(A);
+    expect(answeredInboundId(`wa.bot_reply:${A}:1`)).toBe(A);
+    expect(answeredInboundId(`wa.bot_media:${A}:0`)).toBe(A);
+    expect(answeredInboundId(`wa.bot_media:${A}:card`)).toBeNull();
+    expect(answeredInboundId("wa.bot_reply:followup:abc")).toBeNull();
+    expect(answeredInboundId("wa.send:manual-1")).toBeNull();
+    expect(answeredInboundId("order.paid:xyz")).toBeNull();
+    expect(answeredInboundId(null)).toBeNull();
+  });
+});
+
+describe("orderHistoryRows", () => {
+  it("a resposta cola na inbound que respondeu; a mensagem que chegou enquanto o modelo pensava fica por último (caso real de 19/09)", () => {
+    const rows = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(20), body: "Mercadinho camarada" },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(23), body: "9" },
+      { id: C, direction: "inbound", dedupeKey: null, createdAt: t(33), body: "Não precisa de nota" },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${B}`, createdAt: t(34), body: "Combinado, motoboy amanhã 9h–12h…" },
+    ];
+    expect(orderHistoryRows(rows).map((row) => row.id)).toEqual([A, B, "r", C]);
+  });
+
+  it("resposta sem inbound conhecida (cartão atrasado, retorno combinado, equipe, aviso) fica na hora em que saiu; ordem estável", () => {
+    const rows = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "card", direction: "outbound", dedupeKey: "wa.bot_media:99999999-9999-4999-8999-999999999999:0", createdAt: t(2) },
+      { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", createdAt: t(3) },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(4) },
+      { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f1", createdAt: t(5) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(6) },
+    ];
+    expect(orderHistoryRows(rows).map((row) => row.id)).toEqual([A, "r", "card", "auto", "pro", B]);
+    // Dois balões da mesma resposta mantêm a ordem entre si.
+    const bubbles = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "b1", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(9) },
+      { id: "b2", direction: "outbound", dedupeKey: `wa.bot_reply:${A}:1`, createdAt: t(9) },
+    ];
+    expect(orderHistoryRows(bubbles).map((row) => row.id)).toEqual([A, "b1", "b2"]);
   });
 });

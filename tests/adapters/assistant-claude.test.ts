@@ -198,7 +198,8 @@ describe("ClaudeSalesAssistant", () => {
     [401, "authentication_error", "invalid x-api-key", "chave da API inválida (401)", false],
     [404, "not_found_error", "model: nope", "modelo não encontrado (404): claude-sonnet-5", false],
     [400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API.", "sem crédito na API da Anthropic", false],
-    [400, "invalid_request_error", "messages: bad", "erro 400 da API (invalid_request_error)", false],
+    // Pedido malformado é bug nosso: a frase da API vai junto (foi assim que se achou o "prefill" de 19/09).
+    [400, "invalid_request_error", "messages: bad", "erro 400 da API (invalid_request_error): messages: bad", false],
     [400, "invalid_request_error", "You have reached your specified API usage limits.", "limite de gasto configurado na conta da Anthropic atingido", false],
     [402, "billing_error", "billing issue", "problema de cobrança na API da Anthropic (402)", false],
   ])("status %s (%s) → causa \"%s\" e retryable=%s", async (status, type, message, reason, retryable) => {

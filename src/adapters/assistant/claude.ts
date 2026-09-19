@@ -71,6 +71,11 @@ export function unavailableFromApiError(error: APIError, context: { model: strin
   } else if (status === 400 && text.includes("usage limit")) {
     reason = "limite de gasto configurado na conta da Anthropic atingido";
     retryable = false;
+  } else if (status === 400) {
+    // Pedido malformado é bug nosso: a frase da API é o que permite achar a causa.
+    const detail = typeof error.error === "object" && error.error !== null ? ((error.error as { error?: { message?: unknown } }).error?.message ?? null) : null;
+    reason = `erro 400 da API${code ? ` (${code})` : ""}${typeof detail === "string" && detail ? `: ${detail.slice(0, 160)}` : ""}`;
+    retryable = false;
   } else {
     reason = `erro ${status} da API${code ? ` (${code})` : ""}`;
     retryable = false;

@@ -32,7 +32,7 @@ import {
   isAudioAwaitingTranscription,
   parseWaMediaMeta,
 } from "@/core/whatsapp/media";
-import { deriveWaMessageOrigin, isProactiveBotReply } from "@/core/whatsapp/origin";
+import { answeredInboundId, deriveWaMessageOrigin, isProactiveBotReply, orderHistoryRows } from "@/core/whatsapp/origin";
 import { auditLog, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -403,6 +403,8 @@ export type LoadedTurnHistory = {
   /** Só contagens para a trilha: a foto nunca é guardada. */
   media: { images: number; audios: number };
   lastInboundAt: Date | null;
+  /** Mensagens da cliente depois da última resposta da Lia: zero = nada a responder. */
+  pendingInbound: number;
 };
 
 export async function loadTurnHistory(
@@ -431,15 +433,20 @@ export async function loadTurnHistory(
     .where(eq(waMessages.conversationId, conversationId))
     .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
     .limit(HISTORY_LIMIT);
-  const rows = recent.reverse();
+  // Resposta colada à inbound que respondeu: mensagem que chegou enquanto o
+  // modelo pensava fica por último, ainda por responder.
+  const rows = orderHistoryRows(recent.reverse());
 
-  // "Pendentes" = o que a cliente mandou depois da última resposta: só
+  // "Pendentes" = o que a cliente mandou depois da última resposta DA LIA a
+  // uma mensagem desta conversa (aviso automático, mensagem da equipe, cartão
+  // atrasado de outro turno e retorno combinado não respondem por ela): só
   // essas fotos vão anexadas ao modelo; as antigas viram marcador.
-  const lastOutboundIndex = rows.reduce(
-    (found, row, index) => (row.direction === "outbound" ? index : found),
-    -1,
-  );
-  const pending = rows.slice(lastOutboundIndex + 1).filter((row) => row.direction === "inbound");
+  const inboundIds = new Set(rows.filter((row) => row.direction === "inbound").map((row) => row.id));
+  const lastBotReplyIndex = rows.reduce((found, row, index) => {
+    const answered = row.direction === "outbound" ? answeredInboundId(row.dedupeKey) : null;
+    return answered !== null && inboundIds.has(answered) ? index : found;
+  }, -1);
+  const pending = rows.slice(lastBotReplyIndex + 1).filter((row) => row.direction === "inbound");
   const mediaEnabled = await isBotMediaEnabled(tx);
   if (
     mediaEnabled &&
@@ -470,7 +477,12 @@ export async function loadTurnHistory(
 
   const messages: BotChatMessage[] = rows.map((message) => {
     if (message.direction !== "inbound") {
-      return { role: "assistant" as const, text: historyTextForOutbound(message) };
+      // Só o que a Lia disse é fala da assistente. Aviso automático e mensagem
+      // da equipe entram como contexto (papel de usuário, com o marcador que já
+      // diz "não por você"): a API exige que a conversa termine com a cliente,
+      // e um template que saiu depois da pergunta dela não pode "encerrar" o turno.
+      const origin = deriveWaMessageOrigin({ direction: message.direction, dedupeKey: message.dedupeKey, templateKey: message.templateKey });
+      return { role: origin === "bot" ? ("assistant" as const) : ("user" as const), text: historyTextForOutbound(message) };
     }
     const attached = message.mediaUrl ? images.get(message.mediaUrl) : undefined;
     const isPending = pending.some((row) => row.id === message.id);
@@ -515,7 +527,7 @@ export async function loadTurnHistory(
   });
 
   const lastInboundAt = rows.filter((row) => row.direction === "inbound").at(-1)?.createdAt ?? null;
-  return { history, recentImages, media: { images: images.size, audios: pending.filter((row) => row.kind === "audio").length }, lastInboundAt };
+  return { history, recentImages, media: { images: images.size, audios: pending.filter((row) => row.kind === "audio").length }, lastInboundAt, pendingInbound: pending.length };
 }
 
 /**
@@ -789,6 +801,10 @@ export async function runBotTurn(
     const loaded = await loadTurnHistory(tx, provider, { conversation, now });
     if ("skipped" in loaded) return loaded;
     const { history, recentImages, media } = loaded;
+    // Nada da cliente depois da última resposta da Lia (o evento de uma
+    // mensagem que outro turno já cobriu): não há o que responder — e a API
+    // recusa histórico que termina com a assistente.
+    if (loaded.pendingInbound === 0) return { skipped: "ja_respondida" };
 
     // ✓✓ azul na mensagem dela enquanto o modelo pensa — só quando é a Lia
     // que vai responder AGORA (conversa com a equipe/copiloto/silenciada e
