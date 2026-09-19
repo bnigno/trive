@@ -33,12 +33,13 @@ import {
   parseWaMediaMeta,
 } from "@/core/whatsapp/media";
 import { deriveWaMessageOrigin, isProactiveBotReply, orderHistoryRows, pendingInboundRows } from "@/core/whatsapp/origin";
-import { auditLog, waConversations, waMessages, waSuggestions } from "@/db/schema";
+import { auditLog, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { bridgeStockLine } from "@/services/site-carts";
 import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN } from "@/services/wa-media";
 import { getStoreMap } from "@/services/store-catalog";
+import { withSuggestionAnchors } from "@/services/wa-history";
 import {
   isWaEnabled,
   sendMediaMessage,
@@ -433,23 +434,10 @@ export async function loadTurnHistory(
     .where(eq(waMessages.conversationId, conversationId))
     .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
     .limit(HISTORY_LIMIT);
-  // Sugestão aprovada no copiloto sai com dedupe `wa.bot_reply:suggestion:<id>`:
-  // a inbound que ela respondeu está na tabela de sugestões.
-  const suggestionIdOf = (dedupeKey: string | null) => /^wa\.bot_(?:reply|media|handoff_notice):suggestion:([0-9a-f-]{36})/i.exec(dedupeKey ?? "")?.[1] ?? null;
-  const suggestionIds = recent.map((row) => suggestionIdOf(row.dedupeKey)).filter((id): id is string => id !== null);
-  const suggestionAnchors = new Map<string, string | null>();
-  if (suggestionIds.length > 0) {
-    const found = await tx.select({ id: waSuggestions.id, inboundMessageId: waSuggestions.inboundMessageId }).from(waSuggestions).where(inArray(waSuggestions.id, suggestionIds));
-    for (const row of found) suggestionAnchors.set(row.id, row.inboundMessageId);
-  }
-  // Resposta colada à inbound que respondeu: mensagem que chegou enquanto o
-  // modelo pensava fica por último, ainda por responder.
-  const rows = orderHistoryRows(
-    recent.reverse().map((row) => {
-      const suggestionId = suggestionIdOf(row.dedupeKey);
-      return suggestionId ? { ...row, answers: suggestionAnchors.get(suggestionId) ?? null } : row;
-    }),
-  );
+  // Resposta colada à inbound que respondeu (sugestão aprovada: âncora na
+  // tabela de sugestões): mensagem que chegou enquanto o modelo pensava fica
+  // por último, ainda por responder.
+  const rows = orderHistoryRows(await withSuggestionAnchors(tx, recent.reverse()));
 
   // "Pendentes" = mensagens dela sem resposta (da Lia, ancorada; ou manual
   // da equipe). Aviso automático, cartão de turno antigo e retorno combinado

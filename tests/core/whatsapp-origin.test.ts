@@ -191,6 +191,13 @@ describe("orderHistoryRows", () => {
       { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", templateKey: "order_paid", createdAt: t(5) },
     ];
     expect(orderHistoryRows(staff).map((row) => row.id)).toEqual([A, "r", B, "m", "auto"]);
+    // Última mensagem dela JÁ respondida: a saída proativa fica na ordem em que saiu (dois retornos seguidos, sem resposta dela).
+    const answered = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(2) },
+      { id: "p1", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f1", createdAt: t(3) },
+    ];
+    expect(orderHistoryRows(answered).map((row) => row.id)).toEqual([A, "r", "p1"]);
     // Empate de milissegundo com a última inbound: a saída da Lia sem âncora também vai para antes dela.
     const tie = [
       { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },

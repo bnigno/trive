@@ -404,6 +404,16 @@ describe("Devolver à Lia", () => {
     expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.bot_turn"))).toHaveLength(1);
   });
 
+  it("copiloto: sugestão aprovada respondeu à mensagem dela — Devolver à Lia não enfileira turno à toa", async () => {
+    const conversationId = await createConversation("human");
+    const base = Date.now() - 60_000;
+    const a = await addMessage(conversationId, "inbound", "Tem em azul?", new Date(base));
+    const [suggestion] = await db.insert(schema.waSuggestions).values({ conversationId, inboundMessageId: a, bubbles: ["Tem sim!"], status: "sent" }).returning({ id: schema.waSuggestions.id });
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Tem sim!", dedupeKey: `wa.bot_reply:suggestion:${suggestion.id}`, status: "sent", createdAt: new Date(base + 2_000) });
+    expect(await returnWaConversationToBot(sdb, { conversationId, userId: OWNER })).toEqual({ status: "open", botTurnQueued: false });
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.bot_turn"))).toHaveLength(0);
+  });
+
   it("aviso automático depois da mensagem dela não conta como resposta: Devolver à Lia enfileira o turno mesmo assim", async () => {
     const conversationId = await createConversation("human");
     await addMessage(conversationId, "outbound", BOT_UNAVAILABLE_REPLY);

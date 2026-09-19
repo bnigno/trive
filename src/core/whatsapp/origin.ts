@@ -83,11 +83,18 @@ export function answeredInboundOf(row: Pick<HistoryRowOrder, "direction" | "dedu
 export function orderHistoryRows<T extends HistoryRowOrder>(rows: readonly T[]): T[] {
   const inboundAt = new Map<string, number>();
   let lastInboundAt = -Infinity;
+  let lastInboundId: string | null = null;
   for (const row of rows) {
     if (row.direction !== "inbound") continue;
     inboundAt.set(row.id, row.createdAt.getTime());
-    lastInboundAt = Math.max(lastInboundAt, row.createdAt.getTime());
+    if (row.createdAt.getTime() >= lastInboundAt) {
+      lastInboundAt = row.createdAt.getTime();
+      lastInboundId = row.id;
+    }
   }
+  // A última mensagem dela já tem resposta ancorada? Então nada precisa ser
+  // puxado para antes dela: a conversa não termina "pendente".
+  const lastInboundAnswered = lastInboundId !== null && rows.some((row) => answeredInboundOf(row) === lastInboundId);
   const keyed = rows.map((row, index) => {
     const answered = answeredInboundOf(row);
     const anchor = answered !== null ? inboundAt.get(answered) : undefined;
@@ -99,7 +106,7 @@ export function orderHistoryRows<T extends HistoryRowOrder>(rows: readonly T[]):
     // a conversa termina com a cliente. Aviso e mensagem da equipe viram fala
     // de usuário e ficam na ordem em que saíram.
     const origin = row.direction === "inbound" ? "customer" : deriveWaMessageOrigin({ direction: row.direction, dedupeKey: row.dedupeKey, templateKey: row.templateKey ?? null });
-    if (origin === "bot" && row.createdAt.getTime() >= lastInboundAt) return { row, index, at: lastInboundAt, after: -1 };
+    if (origin === "bot" && !lastInboundAnswered && row.createdAt.getTime() >= lastInboundAt) return { row, index, at: lastInboundAt, after: -1 };
     return { row, index, at: row.createdAt.getTime(), after: 0 };
   });
   keyed.sort((a, b) => a.at - b.at || a.after - b.after || a.index - b.index);

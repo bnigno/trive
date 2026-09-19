@@ -33,6 +33,7 @@ import { FOLLOWUP_CANCEL_LABELS, listFollowupHistory, type FollowupCancelReason 
 import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, loadStoreBotMode, resolveConversationBotMode, supersedePendingSuggestions } from "@/services/wa-suggestions";
 import { resolveBotMode } from "@/core/bot/copilot";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
+import { withSuggestionAnchors } from "@/services/wa-history";
 import { originLabel } from "@/core/bot/site-bridge";
 
 // "Não vista" = inbound criada depois da última leitura do dono; conversa
@@ -775,7 +776,7 @@ export async function returnWaConversationToBot(
       .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
       .limit(RETURN_TO_BOT_LOOKBACK)
   ).reverse();
-  const lastMessage = pendingInboundRows(recent).at(-1) ?? null;
+  const lastMessage = pendingInboundRows(await withSuggestionAnchors(db, recent)).at(-1) ?? null;
   // SAIR/PARAR é comando (o aviso de saída responde a ele), não pergunta.
   const pending = lastMessage !== null && !isOptOutCommand(lastMessage.body ?? "");
   if (!pending || !(await isBotEnabled(db))) return { status: "open", botTurnQueued: false };
