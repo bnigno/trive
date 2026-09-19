@@ -175,6 +175,8 @@ const waSendPayloadSchema = z.object({
   customerId: z.uuid().optional(),
   orderId: z.uuid().optional(),
   dedupeKey: z.string().min(1).optional(),
+  /** Resposta manual: a hora do clique da dona (vira o created_at da linha). */
+  repliedAt: z.iso.datetime().optional(),
 });
 
 // Turno do bot de vendas: um por mensagem inbound (dedupe no enqueue).
@@ -488,6 +490,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       orderId: parsed.orderId,
       dedupeKey: parsed.dedupeKey ?? `wa.send:${event.id}`,
       requireOptIn: false,
+      ...(parsed.repliedAt ? { createdAt: new Date(parsed.repliedAt) } : {}),
     });
   },
   // Resposta do dono pela caixa de entrada de e-mail. Idempotente pelo

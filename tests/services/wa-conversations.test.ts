@@ -271,6 +271,9 @@ describe("wa-conversations (painel do admin)", () => {
         phoneE164: "+5511999990000",
         body: "Oi! Aqui é o dono da loja, posso ajudar?",
         customerId: customer.id,
+        // A hora do clique viaja no evento (vira o created_at da linha); sem mensagem vista, o dedupe não tem âncora.
+        repliedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        dedupeKey: expect.stringMatching(/^wa\.send:[0-9a-f-]{36}$/),
       },
     });
 
@@ -291,6 +294,24 @@ describe("wa-conversations (painel do admin)", () => {
 
     expect(await db.select().from(schema.auditLog)).toHaveLength(0);
     expect(await db.select().from(schema.outboxEvents)).toHaveLength(1);
+  });
+
+  it("resposta manual com a última mensagem vista: o dedupe leva a âncora; mensagem de outra conversa ou de saída é ignorada", async () => {
+    const conversationId = await createConversation();
+    const [seen] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId, direction: "inbound", body: "Tem em azul?", status: "delivered", zapiMessageId: "Z-SEEN" })
+      .returning({ id: schema.waMessages.id });
+    await sendManualWaReply(sdb, { conversationId, userId: USER_ID, body: "Tem sim!", lastSeenInboundId: seen.id });
+    const other = await createConversation({ phoneE164: "+5511988887777" });
+    const [foreign] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: other, direction: "inbound", body: "oi", status: "delivered", zapiMessageId: "Z-OTHER" })
+      .returning({ id: schema.waMessages.id });
+    await sendManualWaReply(sdb, { conversationId, userId: USER_ID, body: "Oi!", lastSeenInboundId: foreign.id });
+    const keys = (await db.select({ payload: schema.outboxEvents.payload }).from(schema.outboxEvents)).map((e) => (e.payload as { dedupeKey: string }).dedupeKey);
+    expect(keys[0]).toMatch(new RegExp(`^wa\\.send:[0-9a-f-]{36}:re:${seen.id}$`));
+    expect(keys[1]).toMatch(/^wa\.send:[0-9a-f-]{36}$/);
   });
 
   it("conversa encerrada rejeita ações; corpo vazio rejeita resposta", async () => {

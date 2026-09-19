@@ -6,10 +6,14 @@
 import { and, asc, count, desc, eq, exists, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { randomUUID } from "node:crypto";
+
 import {
   deriveWaMessageOrigin,
   type WaMessageOrigin,
   isProactiveBotReply,
+  manualReplyDedupeKey,
+  pendingInboundRows,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
 import {
@@ -29,6 +33,7 @@ import { FOLLOWUP_CANCEL_LABELS, listFollowupHistory, type FollowupCancelReason 
 import { conversationIdsWithPendingSuggestion, getInboundPreview, getPendingSuggestion, loadStoreBotMode, resolveConversationBotMode, supersedePendingSuggestions } from "@/services/wa-suggestions";
 import { resolveBotMode } from "@/core/bot/copilot";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
+import { withSuggestionAnchors } from "@/services/wa-history";
 import { originLabel } from "@/core/bot/site-bridge";
 
 // "Não vista" = inbound criada depois da última leitura do dono; conversa
@@ -735,6 +740,9 @@ export async function takeOverWaConversation(
  * conversa estava com a equipe), enfileira o turno para a Lia responder
  * agora — não só quando ela escrever de novo.
  */
+/** Quantas mensagens olhar para decidir se há algo dela sem resposta ao devolver à Lia. */
+const RETURN_TO_BOT_LOOKBACK = 20;
+
 export async function returnWaConversationToBot(
   db: DbOrTx,
   input: z.input<typeof actorSchema>,
@@ -758,14 +766,19 @@ export async function returnWaConversationToBot(
     before: { status: conversation.status },
     after: { status: "open", botDisabledUntil: null },
   });
-  const [lastMessage] = await db
-    .select({ id: waMessages.id, direction: waMessages.direction, body: waMessages.body })
-    .from(waMessages)
-    .where(eq(waMessages.conversationId, conversation.id))
-    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
-    .limit(1);
+  // O mesmo critério do turno: há mensagem dela sem resposta (da Lia ou da
+  // equipe)? Aviso automático depois dela não conta como resposta.
+  const recent = (
+    await db
+      .select({ id: waMessages.id, direction: waMessages.direction, body: waMessages.body, dedupeKey: waMessages.dedupeKey, templateKey: waMessages.templateKey, createdAt: waMessages.createdAt })
+      .from(waMessages)
+      .where(eq(waMessages.conversationId, conversation.id))
+      .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+      .limit(RETURN_TO_BOT_LOOKBACK)
+  ).reverse();
+  const lastMessage = pendingInboundRows(await withSuggestionAnchors(db, recent)).at(-1) ?? null;
   // SAIR/PARAR é comando (o aviso de saída responde a ele), não pergunta.
-  const pending = lastMessage?.direction === "inbound" && !isOptOutCommand(lastMessage.body ?? "");
+  const pending = lastMessage !== null && !isOptOutCommand(lastMessage.body ?? "");
   if (!pending || !(await isBotEnabled(db))) return { status: "open", botTurnQueued: false };
   const queued = await enqueueOutboxEvent(db, {
     eventType: "wa.bot_turn",
@@ -873,6 +886,8 @@ const manualReplySchema = actorSchema.extend({
     .trim()
     .min(1, "Escreva a mensagem antes de enviar.")
     .max(4000, "A mensagem deve ter no máximo 4000 caracteres."),
+  /** A última mensagem da cliente que estava na tela ao clicar Enviar: é a que esta resposta responde. */
+  lastSeenInboundId: z.uuid().nullable().optional(),
 });
 
 /**
@@ -902,6 +917,16 @@ export async function sendManualWaReply(
     }
   }
 
+  // A âncora só vale se for mesmo uma mensagem da cliente nesta conversa.
+  let lastSeenInboundId: string | null = null;
+  if (parsed.lastSeenInboundId) {
+    const [seen] = await db
+      .select({ id: waMessages.id })
+      .from(waMessages)
+      .where(and(eq(waMessages.id, parsed.lastSeenInboundId), eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
+      .limit(1);
+    lastSeenInboundId = seen?.id ?? null;
+  }
   await enqueueOutboxEvent(db, {
     eventType: "wa.send",
     aggregateType: "wa_conversation",
@@ -909,6 +934,10 @@ export async function sendManualWaReply(
     payload: {
       phoneE164: conversation.phoneE164,
       body: parsed.body,
+      // O dedupe leva a mensagem dela que a dona estava respondendo (`:re:`);
+      // a hora do clique vira o created_at da linha (a fila entrega depois).
+      dedupeKey: manualReplyDedupeKey(randomUUID(), lastSeenInboundId),
+      repliedAt: new Date().toISOString(),
       ...(conversation.customerId ? { customerId: conversation.customerId } : {}),
     },
   });
