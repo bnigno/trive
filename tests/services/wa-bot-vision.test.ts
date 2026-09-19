@@ -84,14 +84,15 @@ async function addInbound(
   return message.id;
 }
 
-async function addOutbound(conversationId: string, body: string): Promise<void> {
+/** `answering` = a inbound que esta resposta respondeu (o dedupe real da Lia); sem ela, um envio sem âncora. */
+async function addOutbound(conversationId: string, body: string, answering?: string): Promise<void> {
   sequence += 1;
   await db.insert(schema.waMessages).values({
     conversationId,
     direction: "outbound",
     body,
     status: "sent",
-    dedupeKey: `wa.bot:${conversationId}:${sequence}`,
+    dedupeKey: answering ? `wa.bot_reply:${answering}` : `wa.bot:${conversationId}:${sequence}`,
     createdAt: nextMessageStamp(),
   });
 }
@@ -135,8 +136,8 @@ describe("runBotTurn com fotos e áudios", () => {
 
   it("foto antiga (antes da última resposta) não é baixada e vira marcador", async () => {
     const conversationId = await createConversation();
-    await addInbound(conversationId, INBOUND_MEDIA_MARKERS.image, { kind: "image", mediaUrl: OLD_PHOTO_URL });
-    await addOutbound(conversationId, "Que linda! Vi aqui…");
+    const photo = await addInbound(conversationId, INBOUND_MEDIA_MARKERS.image, { kind: "image", mediaUrl: OLD_PHOTO_URL });
+    await addOutbound(conversationId, "Que linda! Vi aqui…", photo);
     await addInbound(conversationId, "e em outra cor?");
 
     await runBotTurn(sdb, assistant, provider, { conversationId });
