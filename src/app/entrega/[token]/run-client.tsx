@@ -462,6 +462,8 @@ function StopCard({
     try {
       reduced = await shrinkImage(original);
     } catch {
+      // Desarma o botão: a mensagem pede outra foto, e a mesma repetiria o erro.
+      setPhotoFile(null);
       setPhotoError("Não consegui preparar a foto aqui. Tire a foto de novo.");
       return;
     } finally {

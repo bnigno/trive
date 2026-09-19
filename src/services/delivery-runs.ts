@@ -454,6 +454,35 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
     }
   }
 
+  // A foto que subiu e a transação não usou (saída fechada nesse meio-tempo,
+  // dona que registrou a entrega pela ficha) não fica órfã no bucket público.
+  const discardUnused = async (kept: string | null) => {
+    if (!uploadedPath || kept === uploadedPath) return;
+    try {
+      await storage.remove(uploadedPath);
+    } catch (error) {
+      console.warn(`[delivery-runs] não apagou ${uploadedPath}:`, error instanceof Error ? error.message : error);
+    }
+  };
+
+  let outcome: CompleteStopResult & { photoPath: string | null };
+  try {
+    outcome = await completeStopTx(db, parsed, now, uploadedPath);
+  } catch (error) {
+    await discardUnused(null);
+    throw error;
+  }
+  await discardUnused(outcome.photoPath);
+  const { photoPath: _photoPath, ...result } = outcome;
+  return result;
+}
+
+async function completeStopTx(
+  db: DbOrTx,
+  parsed: z.output<typeof completeStopSchema>,
+  now: Date,
+  uploadedPath: string | null,
+): Promise<CompleteStopResult & { photoPath: string | null }> {
   return db.transaction(async (tx) => {
     const run = await lockRunByToken(tx, parsed.courierToken, { requireOpen: true });
     const [stop] = await tx
@@ -478,7 +507,7 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     const base = { stopId: stop.id, orderId: order.id, orderNumber: order.orderNumber };
     if (stop.status === "delivered") {
-      return { ...base, orderDelivered: order.status === "delivered", awaitingCash: order.status === "pending_payment", receivedBy: stop.receivedBy, withPhoto: order.deliveredPhotoPath !== null, idempotent: true };
+      return { ...base, orderDelivered: order.status === "delivered", awaitingCash: order.status === "pending_payment", receivedBy: stop.receivedBy, withPhoto: order.deliveredPhotoPath !== null, idempotent: true, photoPath: order.deliveredPhotoPath };
     }
     if (!canCloseStop(run.status as RunStatus, stop.status as StopStatus)) {
       throw new ServiceError("STOP_NOT_OPEN", run.status !== "en_route" ? 'Toque em "Comecei a rota" antes de entregar.' : "Esta parada já foi fechada.");
@@ -539,7 +568,7 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
       entityId: order.id,
       after: { runId: run.id, stopId: stop.id, receivedBy, point, awaitingCash, photo: uploadedPath !== null, photoPath },
     });
-    return { ...base, orderDelivered, awaitingCash, receivedBy, withPhoto: true, idempotent: false };
+    return { ...base, orderDelivered, awaitingCash, receivedBy, withPhoto: true, idempotent: false, photoPath };
   });
 }
 

@@ -487,14 +487,28 @@ describe("o motoboy na rua", () => {
     expect(provider.sentImages[0].caption).toMatch(/hoje às 16:00/);
   });
 
-  it("a cliente tocou 'Chegou!' antes: a parada fecha, sem sobrescrever quem confirmou", async () => {
+  it("a cliente tocou 'Chegou!' antes: a parada fecha com a foto guardada, sem sobrescrever quem confirmou e sem segunda mensagem", async () => {
     const { paid, stops, token } = await runOnTheRoad();
     await confirmDeliveryByToken(sdb, { publicToken: paid.publicToken });
     expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer" });
+    // O aviso em texto já saiu quando ela confirmou.
+    await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
+    const template = initialWaTemplates.find((row) => row.key === "order_delivered")!;
+    await db.insert(schema.waTemplates).values({ key: template.key, label: template.label, bodyTemplate: template.bodyTemplate, variables: template.variables });
+    const provider = new FakeMessagingProvider();
+    expect(await sendDeliveredWa(sdb, provider, storage, { orderId: paid.orderId, now: AFTERNOON })).toMatchObject({ withPhoto: false });
+    expect(provider.sentMessages).toHaveLength(1);
+
     const paidStop = stops.find((s) => s.orderId === paid.orderId)!;
     const result = await deliver({ courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON });
-    expect(result).toMatchObject({ orderDelivered: true, idempotent: false, receivedBy: "Maria" });
-    expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer", receivedBy: "Maria" });
+    expect(result).toMatchObject({ orderDelivered: true, idempotent: false, receivedBy: "Maria", withPhoto: true });
+    expect(await orderRow(paid.orderId)).toMatchObject({ status: "delivered", deliveryConfirmedBy: "customer", receivedBy: "Maria", deliveredPhotoPath: `deliveries/${paid.orderId}/entrega-motoboy.jpg` });
+    expect(storage.has(`deliveries/${paid.orderId}/entrega-motoboy.jpg`)).toBe(true);
+    // Um só order.delivered (o da cliente) e nenhuma segunda mensagem: a foto fica na página do pedido.
+    expect((await outboxEvents()).filter((e) => e.eventType === "order.delivered" && e.aggregateId === paid.orderId)).toHaveLength(1);
+    expect(await sendDeliveredWa(sdb, provider, storage, { orderId: paid.orderId, now: AFTERNOON })).toHaveProperty("skipped");
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(provider.sentImages).toHaveLength(0);
   });
 
   it("sem a foto a parada não fecha: nada gravado, nada enviado", async () => {
