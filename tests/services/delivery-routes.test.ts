@@ -40,6 +40,7 @@ const WINDOWS = [
   { start: "19:00", end: "21:00", cutoff: "17:00" },
 ];
 const MORNING = new Date("2026-09-18T13:30:00Z"); // 10:30 SP, sexta 18/09
+const AFTERNOON = new Date("2026-09-18T19:00:00Z"); // 16:00 SP — o "Saiu" do mesmo dia (o relógio real já passou de 18/09)
 
 async function activatePrice(variantId: string, priceCents: number): Promise<void> {
   await db.insert(schema.priceVersions).values({
@@ -92,6 +93,8 @@ async function packed(orderId: string): Promise<void> {
 async function paidMotoboyOrder(variantId: string, rateId: string, dayKey: string, w = WINDOWS[1], now = MORNING, opts: { packed?: boolean } = {}) {
   const created = await createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey, ...w } }), { now });
   await transitionOrder(sdb, { orderId: created.orderId, to: "paid", userId: FIXED_USER_ID });
+  // O relógio do teste é o de 18/09: a hora do pagamento não pode vir do relógio real (o "pagou depois do limite" olha para ela).
+  await db.update(schema.orders).set({ paidAt: now }).where(eq(schema.orders.id, created.orderId));
   if (opts.packed !== false) await packed(created.orderId);
   return created;
 }
@@ -174,7 +177,7 @@ describe("dispatchOrder ('Saiu')", () => {
     const { variantId, rateId } = await setup();
     const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
 
-    const result = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID });
+    const result = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
     expect(result).toMatchObject({ from: "paid", to: "shipped", idempotent: false });
 
     const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, created.orderId));
@@ -194,7 +197,7 @@ describe("dispatchOrder ('Saiu')", () => {
     expect(types.filter((t) => t === "order.shipped")).toHaveLength(1);
     expect(types).toContain("order.preparing");
 
-    const again = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID });
+    const again = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
     expect(again.idempotent).toBe(true);
     expect((await outboxTypes(created.orderId)).filter((t) => t === "order.shipped")).toHaveLength(1);
 
@@ -234,10 +237,10 @@ describe("dispatchOrder ('Saiu')", () => {
     expect(after.todayCount).toBe(0);
 
     // Segundo clique: nada de novo (nem aviso).
-    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).idempotent).toBe(true);
+    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: AFTERNOON })).idempotent).toBe(true);
     // O motoboy voltou com o dinheiro: pago → ainda 'na rua' até marcar entregue; "Saiu" continua idempotente (sem order.shipped duplicando o aviso).
     await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
-    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID })).idempotent).toBe(true);
+    expect((await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: AFTERNOON })).idempotent).toBe(true);
     expect((await outboxTypes(cash.orderId)).filter((t) => t === "order.out_for_delivery" || t === "order.shipped")).toEqual(["order.out_for_delivery"]);
     expect((await listRouteOfDay(sdb, { now: new Date("2026-09-18T21:00:00Z") })).out.map((o) => o.status)).toEqual(["paid"]);
     await transitionOrder(sdb, { orderId: cash.orderId, to: "delivered", userId: FIXED_USER_ID });
@@ -350,16 +353,16 @@ describe("dispatchOrder ('Saiu')", () => {
     const { variantId, rateId } = await setup();
     const created = await paidMotoboyOrder(variantId, rateId, "2026-09-18");
     await transitionOrder(sdb, { orderId: created.orderId, to: "preparing", userId: FIXED_USER_ID });
-    const result = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID });
+    const result = await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
     expect(result).toMatchObject({ from: "preparing", to: "shipped" });
 
     const pac = await setup({ kind: "correios" });
     const pacOrder = await createStoreOrder(sdb, input(pac.variantId, pac.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }));
     await transitionOrder(sdb, { orderId: pacOrder.orderId, to: "paid", userId: FIXED_USER_ID });
-    await expect(dispatchOrder(sdb, { orderId: pacOrder.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "NOT_MOTOBOY" });
+    await expect(dispatchOrder(sdb, { orderId: pacOrder.orderId, userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toMatchObject({ code: "NOT_MOTOBOY" });
 
     const unpaid = await createStoreOrder(sdb, input(variantId, rateId, { deliveryWindow: { dayKey: "2026-09-18", ...WINDOWS[1] } }), { now: MORNING });
-    await expect(dispatchOrder(sdb, { orderId: unpaid.orderId, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+    await expect(dispatchOrder(sdb, { orderId: unpaid.orderId, userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
     expect(await outboxTypes(unpaid.orderId)).not.toContain("order.out_for_delivery");
     const [still] = await db.select({ status: schema.orders.status }).from(schema.orders).where(eq(schema.orders.id, unpaid.orderId));
     expect(still.status).toBe("pending_payment");
@@ -414,7 +417,7 @@ describe("rescheduleOrderWindow", () => {
       rescheduleOrderWindow(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-20", window: { start: "08:00", end: "10:00", cutoff: "07:00" }, now }),
     ).rejects.toMatchObject({ code: "WINDOW_UNKNOWN" });
 
-    await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID });
+    await dispatchOrder(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
     await expect(
       rescheduleOrderWindow(sdb, { orderId: created.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-20", window: WINDOWS[0], now }),
     ).rejects.toMatchObject({ code: "INVALID_TRANSITION" });

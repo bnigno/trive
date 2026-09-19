@@ -135,10 +135,16 @@ describe("agendar e visibilidade", () => {
     expect(row.visibleFrom?.toISOString()).toBe(PUBLISH_AT.toISOString());
 
     // Vitrine pública: escondida. Convidada (por cliente ou token): vê a partir da janela VIP.
-    expect((await listPublicProducts(sdb, { limit: 10 })).map((p) => p.slug)).toEqual([]);
-    expect(await getPublicProductBySlug(sdb, "vestido-aurora")).toBeNull();
-    expect((await getStoreMap(sdb)).totalProducts).toBe(0);
-    expect((await listPublicProducts(sdb, { limit: 10, viewer: { customerId: ana } })).map((p) => p.slug)).toEqual([]);
+    // A vitrine olha o relógio real: fixamos em NOW (antes da janela) e depois em VIP_AT.
+    vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+    try {
+      expect((await listPublicProducts(sdb, { limit: 10 })).map((p) => p.slug)).toEqual([]);
+      expect(await getPublicProductBySlug(sdb, "vestido-aurora")).toBeNull();
+      expect((await getStoreMap(sdb)).totalProducts).toBe(0);
+      expect((await listPublicProducts(sdb, { limit: 10, viewer: { customerId: ana } })).map((p) => p.slug)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
     const [invite] = await db.select().from(schema.dropInvites);
     vi.useFakeTimers({ now: VIP_AT, toFake: ["Date"] });
     try {
