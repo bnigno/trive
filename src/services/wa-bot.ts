@@ -32,8 +32,8 @@ import {
   isAudioAwaitingTranscription,
   parseWaMediaMeta,
 } from "@/core/whatsapp/media";
-import { answeredInboundId, deriveWaMessageOrigin, isProactiveBotReply, orderHistoryRows } from "@/core/whatsapp/origin";
-import { auditLog, waConversations, waMessages } from "@/db/schema";
+import { deriveWaMessageOrigin, isProactiveBotReply, orderHistoryRows, pendingInboundRows } from "@/core/whatsapp/origin";
+import { auditLog, waConversations, waMessages, waSuggestions } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { bridgeStockLine } from "@/services/site-carts";
@@ -433,20 +433,29 @@ export async function loadTurnHistory(
     .where(eq(waMessages.conversationId, conversationId))
     .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
     .limit(HISTORY_LIMIT);
+  // Sugestão aprovada no copiloto sai com dedupe `wa.bot_reply:suggestion:<id>`:
+  // a inbound que ela respondeu está na tabela de sugestões.
+  const suggestionIdOf = (dedupeKey: string | null) => /^wa\.bot_reply:suggestion:([0-9a-f-]{36})/i.exec(dedupeKey ?? "")?.[1] ?? null;
+  const suggestionIds = recent.map((row) => suggestionIdOf(row.dedupeKey)).filter((id): id is string => id !== null);
+  const suggestionAnchors = new Map<string, string | null>();
+  if (suggestionIds.length > 0) {
+    const found = await tx.select({ id: waSuggestions.id, inboundMessageId: waSuggestions.inboundMessageId }).from(waSuggestions).where(inArray(waSuggestions.id, suggestionIds));
+    for (const row of found) suggestionAnchors.set(row.id, row.inboundMessageId);
+  }
   // Resposta colada à inbound que respondeu: mensagem que chegou enquanto o
   // modelo pensava fica por último, ainda por responder.
-  const rows = orderHistoryRows(recent.reverse());
+  const rows = orderHistoryRows(
+    recent.reverse().map((row) => {
+      const suggestionId = suggestionIdOf(row.dedupeKey);
+      return suggestionId ? { ...row, answers: suggestionAnchors.get(suggestionId) ?? null } : row;
+    }),
+  );
 
-  // "Pendentes" = o que a cliente mandou depois da última resposta DA LIA a
-  // uma mensagem desta conversa (aviso automático, mensagem da equipe, cartão
-  // atrasado de outro turno e retorno combinado não respondem por ela): só
-  // essas fotos vão anexadas ao modelo; as antigas viram marcador.
-  const inboundIds = new Set(rows.filter((row) => row.direction === "inbound").map((row) => row.id));
-  const lastBotReplyIndex = rows.reduce((found, row, index) => {
-    const answered = row.direction === "outbound" ? answeredInboundId(row.dedupeKey) : null;
-    return answered !== null && inboundIds.has(answered) ? index : found;
-  }, -1);
-  const pending = rows.slice(lastBotReplyIndex + 1).filter((row) => row.direction === "inbound");
+  // "Pendentes" = mensagens dela sem resposta (da Lia, ancorada; ou manual
+  // da equipe). Aviso automático, cartão de turno antigo e retorno combinado
+  // não respondem a nada. Só as fotos pendentes vão anexadas ao modelo; as
+  // antigas viram marcador.
+  const pending = pendingInboundRows(rows);
   const mediaEnabled = await isBotMediaEnabled(tx);
   if (
     mediaEnabled &&

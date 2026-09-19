@@ -186,6 +186,45 @@ describe("rajada de mensagens: um turno por mensagem, mas o modelo roda uma vez"
     expect(history[4].text).toBe("Quero o M");
   });
 
+  it.each([
+    ["cartão de um turno antigo (wa.bot_media:<A>:card)", (a: string) => `wa.bot_media:${a}:card`, "image"],
+    ["cortesia pós-transferência da 1ª mensagem (wa.bot_handoff_notice:<A>)", (a: string) => `wa.bot_handoff_notice:${a}`, "text"],
+    ["retorno combinado que saiu enquanto ela escrevia (wa.bot_reply:followup:<id>)", () => "wa.bot_reply:followup:11111111-1111-4111-8111-111111111111", "text"],
+  ])("saída da Lia sem responder à mensagem nova — %s: a conversa termina com a cliente e ela é respondida", async (_label, key, kind) => {
+    const conversationId = await createConversation();
+    const base = Date.now() - 60_000;
+    const a = await addMessage(conversationId, "inbound", "Quero ver vestidos", new Date(base));
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Mandei um cartão com as três 🤎", dedupeKey: `wa.bot_reply:${a}`, status: "sent", createdAt: new Date(base + 2_000) });
+    await addMessage(conversationId, "inbound", "Quero o M", new Date(base + 3_000));
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", kind, body: "[saída tardia]", dedupeKey: key(a), status: "sent", createdAt: new Date(base + 5_000) });
+    assistant.enqueueScript({ replyTemplate: "M separado 🤎" });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    const history = assistant.inputs[0]?.history ?? [];
+    expect(result).toEqual({ replied: true, handedOff: false });
+    expect(history.at(-1)).toMatchObject({ role: "user", text: "Quero o M" });
+    expect(history.at(-2)?.role).toBe("assistant");
+  });
+
+  it("copiloto: a sugestão aprovada responde à mensagem dela (âncora pela tabela de sugestões) — evento atrasado não roda o modelo; mensagem nova, sim", async () => {
+    const conversationId = await createConversation();
+    const base = Date.now() - 60_000;
+    const a = await addMessage(conversationId, "inbound", "Quero ver vestidos", new Date(base));
+    const [suggestion] = await db
+      .insert(schema.waSuggestions)
+      .values({ conversationId, inboundMessageId: a, bubbles: ["Temos o Longo Dunas"], status: "sent" })
+      .returning({ id: schema.waSuggestions.id });
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Temos o Longo Dunas", dedupeKey: `wa.bot_reply:suggestion:${suggestion.id}`, status: "sent", createdAt: new Date(base + 2_000) });
+    expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ skipped: "ja_respondida" });
+    expect(assistant.inputs).toHaveLength(0);
+
+    await addMessage(conversationId, "inbound", "Quero o M", new Date(base + 4_000));
+    assistant.enqueueScript({ replyTemplate: "M separado 🤎" });
+    expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ replied: true, handedOff: false });
+    const history = assistant.inputs[0].history.slice(-3);
+    expect(history.map((m) => `${m.role}:${m.text}`)).toEqual(["user:Quero ver vestidos", "assistant:Temos o Longo Dunas", "user:Quero o M"]);
+  });
+
   it("mensagem nova depois da resposta volta a rodar o modelo", async () => {
     const conversationId = await createConversation();
     await addMessage(conversationId, "inbound", "Oi");

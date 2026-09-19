@@ -8,7 +8,9 @@ import {
   type DeriveWaMessageOriginInput,
   type WaMessageOrigin,
   answeredInboundId,
+  answeredInboundOf,
   orderHistoryRows,
+  pendingInboundRows,
 } from "@/core/whatsapp/origin";
 
 describe("deriveWaMessageOrigin", () => {
@@ -121,7 +123,9 @@ describe("answeredInboundId", () => {
     expect(answeredInboundId(`wa.bot_reply:${A}`)).toBe(A);
     expect(answeredInboundId(`wa.bot_reply:${A}:1`)).toBe(A);
     expect(answeredInboundId(`wa.bot_media:${A}:0`)).toBe(A);
-    expect(answeredInboundId(`wa.bot_media:${A}:card`)).toBeNull();
+    expect(answeredInboundId(`wa.bot_media:${A}:card`)).toBe(A);
+    expect(answeredInboundId(`wa.bot_handoff_notice:${A}`)).toBe(A);
+    expect(answeredInboundId("wa.bot_reply:suggestion:22222222-2222-4222-8222-222222222222")).toBeNull();
     expect(answeredInboundId("wa.bot_reply:followup:abc")).toBeNull();
     expect(answeredInboundId("wa.send:manual-1")).toBeNull();
     expect(answeredInboundId("order.paid:xyz")).toBeNull();
@@ -150,6 +154,30 @@ describe("orderHistoryRows", () => {
       { id: B, direction: "inbound", dedupeKey: null, createdAt: t(6) },
     ];
     expect(orderHistoryRows(rows).map((row) => row.id)).toEqual([A, "r", "card", "auto", "pro", B]);
+    // Saída sem inbound conhecida DEPOIS da última mensagem da cliente (cartão de
+    // turno antigo, retorno combinado, aviso, equipe) vai para logo antes dela: a
+    // conversa termina com a cliente — que pode ter escrito enquanto o modelo pensava.
+    const tail = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(2) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(3) },
+      { id: "card", direction: "outbound", dedupeKey: "wa.bot_media:99999999-9999-4999-8999-999999999999:card", createdAt: t(5) },
+      { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f1", createdAt: t(6) },
+      { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", createdAt: t(7) },
+    ];
+    expect(orderHistoryRows(tail).map((row) => row.id)).toEqual([A, "r", "card", "pro", "auto", B]);
+    // Sugestão aprovada: a inbound respondida vem de fora (tabela de sugestões) e ancora como uma resposta.
+    const suggestion = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(3) },
+      { id: "s", direction: "outbound", dedupeKey: "wa.bot_reply:suggestion:22222222-2222-4222-8222-222222222222", createdAt: t(5), answers: A },
+    ];
+    expect(orderHistoryRows(suggestion).map((row) => row.id)).toEqual([A, "s", B]);
+    expect(answeredInboundOf(suggestion[2])).toBe(A);
+    expect(answeredInboundOf({ direction: "inbound", dedupeKey: null })).toBeNull();
+    expect(answeredInboundOf({ direction: "outbound", dedupeKey: `wa.bot_reply:${B}` })).toBe(B);
+    // Sem nenhuma inbound, nada muda.
+    expect(orderHistoryRows([{ id: "x", direction: "outbound", dedupeKey: "order.paid:1", createdAt: t(1) }]).map((row) => row.id)).toEqual(["x"]);
     // Dois balões da mesma resposta mantêm a ordem entre si.
     const bubbles = [
       { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
@@ -157,5 +185,27 @@ describe("orderHistoryRows", () => {
       { id: "b2", direction: "outbound", dedupeKey: `wa.bot_reply:${A}:1`, createdAt: t(9) },
     ];
     expect(orderHistoryRows(bubbles).map((row) => row.id)).toEqual([A, "b1", "b2"]);
+  });
+});
+
+describe("pendingInboundRows", () => {
+  it("resposta ancorada cobre até a inbound dela; manual da equipe cobre o que veio antes; aviso, cartão antigo e retorno não cobrem", () => {
+    const rows = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(4) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(2) },
+      { id: C, direction: "inbound", dedupeKey: null, createdAt: t(5) },
+    ];
+    // B chegou entre A e a resposta de A: ainda pendente, como C.
+    expect(pendingInboundRows(rows).map((row) => row.id)).toEqual([B, C]);
+    const manual = [...rows, { id: "m", direction: "outbound", dedupeKey: "wa.send:1", createdAt: t(6) }];
+    expect(pendingInboundRows(manual)).toEqual([]);
+    const auto = [...rows, { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", templateKey: "order_paid", createdAt: t(6) }];
+    expect(pendingInboundRows(auto).map((row) => row.id)).toEqual([B, C]);
+    const late = [...rows, { id: "card", direction: "outbound", dedupeKey: "wa.bot_media:99999999-9999-4999-8999-999999999999:card", createdAt: t(6) }, { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f", createdAt: t(7) }];
+    expect(pendingInboundRows(late).map((row) => row.id)).toEqual([B, C]);
+    const suggestion = [...rows, { id: "s", direction: "outbound", dedupeKey: "wa.bot_reply:suggestion:22222222-2222-4222-8222-222222222222", createdAt: t(6), answers: C }];
+    expect(pendingInboundRows(suggestion)).toEqual([]);
+    expect(pendingInboundRows([])).toEqual([]);
   });
 });

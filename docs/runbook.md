@@ -726,8 +726,9 @@ código, tentativa) fica no audit `wa.bot_turn_failed` e nos logs da Vercel
   histórico cola cada resposta à mensagem que ela respondeu (a nova fica por
   último) e um turno sem mensagem nova da cliente não roda o modelo. Depois
   de qualquer transferência por erro, **Devolver à Lia** religa a vendedora
-  naquela conversa (o silêncio de 24 h é só dela) e ela responde o que ficou
-  pendente.
+  naquela conversa (o silêncio de 24 h é só dela) e, se a cliente mandou
+  mensagem depois do "indisponível", a Lia responde na hora; se não mandou,
+  responda você — a Lia volta a falar na próxima mensagem dela.
 
 ## A Lia não respondeu uma cliente (a mensagem nem aparece no painel)
 
