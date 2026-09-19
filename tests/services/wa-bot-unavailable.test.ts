@@ -225,13 +225,13 @@ describe("rajada de mensagens: um turno por mensagem, mas o modelo roda uma vez"
     expect(history.map((m) => `${m.role}:${m.text}`)).toEqual(["user:Quero ver vestidos", "assistant:Temos o Longo Dunas", "user:Quero o M"]);
   });
 
-  it("resposta manual da dona cobre só o que ela viu ao clicar: mensagem que chegou enquanto a fila entregava fica pendente", async () => {
+  it("resposta manual da dona cobre só a mensagem que ela viu na tela: a que ficou presa na trava do turno (hora anterior ao clique) continua pendente", async () => {
     const conversationId = await createConversation();
     const base = Date.now() - 60_000;
-    await addMessage(conversationId, "inbound", "Oi, tem o vestido azul?", new Date(base));
-    // A cliente escreve 300 ms depois do clique; a linha manual nasce 2 s depois (entrega pela fila), com created_at = hora do clique.
-    await addMessage(conversationId, "inbound", "M, e quanto custa?", new Date(base + 1_300));
-    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Tenho sim! Qual tamanho?", dedupeKey: "wa.send:evt-1", status: "sent", createdAt: new Date(base + 1_000) });
+    const a = await addMessage(conversationId, "inbound", "Oi, tem o vestido azul?", new Date(base));
+    // B nasceu 5 s depois de A mas só ficou visível quando o turno de A soltou a trava; a dona respondeu A às +8 s sem ver B.
+    await addMessage(conversationId, "inbound", "M, e quanto custa?", new Date(base + 5_000));
+    await db.insert(schema.waMessages).values({ conversationId, direction: "outbound", body: "Tenho sim! Qual tamanho?", dedupeKey: `wa.send:evt-1:re:${a}`, status: "sent", createdAt: new Date(base + 8_000) });
     assistant.enqueueScript({ replyTemplate: "M por R$ 159 🤎" });
 
     expect(await runBotTurn(sdb, assistant, provider, { conversationId })).toEqual({ replied: true, handedOff: false });

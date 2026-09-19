@@ -385,9 +385,25 @@ export function ChatShell({
     [failOptimistic],
   );
 
+  /**
+   * A última mensagem da cliente que está na tela: é a ela que a dona
+   * responde (a Lia trata o que chegar depois). O mapa é só da conversa
+   * aberta — ao trocar de conversa ele é zerado —, então a resposta vale
+   * apenas para a conversa selecionada.
+   */
+  const lastSeenInboundId = useCallback((conversationId: string): string | null => {
+    if (conversationId !== selectedIdRef.current) return null;
+    let latest: ChatMessage | null = null;
+    for (const message of messagesMapRef.current.values()) {
+      if (message.direction !== "inbound") continue;
+      if (!latest || message.createdAt > latest.createdAt || (message.createdAt === latest.createdAt && message.id > latest.id)) latest = message;
+    }
+    return latest?.id ?? null;
+  }, []);
+
   const submitSend = useCallback(
     (tempId: string, conversationId: string, body: string) => {
-      void sendManualReplyAction(conversationId, body)
+      void sendManualReplyAction(conversationId, body, lastSeenInboundId(conversationId))
         .then((result) => {
           if ("error" in result) {
             failOptimistic(tempId, result.error);
@@ -399,7 +415,7 @@ export function ChatShell({
         })
         .catch(() => failOptimistic(tempId, "Falha ao enviar. Tente de novo."));
     },
-    [failOptimistic, pollNow],
+    [failOptimistic, lastSeenInboundId, pollNow],
   );
 
   const handleSend = useCallback(

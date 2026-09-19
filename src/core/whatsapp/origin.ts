@@ -42,8 +42,17 @@ export function deriveWaMessageOrigin(
  */
 export function answeredInboundId(dedupeKey: string | null | undefined): string | null {
   if (typeof dedupeKey !== "string") return null;
-  const match = /^wa\.bot_(?:reply|media|handoff_notice):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?::.+)?$/i.exec(dedupeKey);
-  return match ? match[1] : null;
+  const bot = /^wa\.bot_(?:reply|media|handoff_notice):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?::.+)?$/i.exec(dedupeKey);
+  if (bot) return bot[1];
+  // Resposta da equipe pelo painel: `:re:<inbound>` é a última mensagem da
+  // cliente que estava na tela quando a dona clicou Enviar.
+  const manual = /^wa\.send:.+:re:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(dedupeKey);
+  return manual ? manual[1] : null;
+}
+
+/** Dedupe de uma resposta manual ancorada na última mensagem da cliente vista na tela. */
+export function manualReplyDedupeKey(sendId: string, lastSeenInboundId: string | null): string {
+  return lastSeenInboundId ? `wa.send:${sendId}:re:${lastSeenInboundId}` : `wa.send:${sendId}`;
 }
 
 export interface HistoryRowOrder {
@@ -84,11 +93,13 @@ export function orderHistoryRows<T extends HistoryRowOrder>(rows: readonly T[]):
     const anchor = answered !== null ? inboundAt.get(answered) : undefined;
     // A resposta cola na inbound (mesmo instante, desempate depois dela).
     if (anchor !== undefined) return { row, index, at: anchor, after: 1 };
-    // Saída sem inbound conhecida (cartão de turno antigo, retorno combinado,
-    // aviso automático, mensagem da equipe) que saiu DEPOIS da última mensagem
-    // da cliente não respondeu a ela — ela pode ter chegado enquanto o modelo
-    // pensava: fica logo antes, e a conversa termina com a cliente.
-    if (row.direction !== "inbound" && row.createdAt.getTime() >= lastInboundAt) return { row, index, at: lastInboundAt, after: -1 };
+    // Saída DA LIA sem inbound conhecida (cartão de turno antigo, retorno
+    // combinado) que saiu DEPOIS da última mensagem da cliente não respondeu a
+    // ela — ela pode ter chegado enquanto o modelo pensava: fica logo antes, e
+    // a conversa termina com a cliente. Aviso e mensagem da equipe viram fala
+    // de usuário e ficam na ordem em que saíram.
+    const origin = row.direction === "inbound" ? "customer" : deriveWaMessageOrigin({ direction: row.direction, dedupeKey: row.dedupeKey, templateKey: row.templateKey ?? null });
+    if (origin === "bot" && row.createdAt.getTime() >= lastInboundAt) return { row, index, at: lastInboundAt, after: -1 };
     return { row, index, at: row.createdAt.getTime(), after: 0 };
   });
   keyed.sort((a, b) => a.at - b.at || a.after - b.after || a.index - b.index);
@@ -115,8 +126,8 @@ export function pendingInboundRows<T extends HistoryRowOrder>(rows: readonly T[]
       continue;
     }
     if (deriveWaMessageOrigin({ direction: row.direction, dedupeKey: row.dedupeKey, templateKey: row.templateKey ?? null }) === "manual") {
-      // A dona respondeu ao que estava na tela quando clicou — não ao que
-      // chegou enquanto a fila entregava a mensagem dela.
+      // Resposta manual sem âncora (painel antigo, envio pelo celular da loja):
+      // vale para o que chegou antes do clique — não o que a fila entregou depois.
       coveredUntil = Math.max(coveredUntil, (row.repliedAt ?? row.createdAt).getTime() - 1);
     }
   }

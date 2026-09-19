@@ -6,10 +6,13 @@
 import { and, asc, count, desc, eq, exists, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { randomUUID } from "node:crypto";
+
 import {
   deriveWaMessageOrigin,
   type WaMessageOrigin,
   isProactiveBotReply,
+  manualReplyDedupeKey,
   pendingInboundRows,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
@@ -882,6 +885,8 @@ const manualReplySchema = actorSchema.extend({
     .trim()
     .min(1, "Escreva a mensagem antes de enviar.")
     .max(4000, "A mensagem deve ter no máximo 4000 caracteres."),
+  /** A última mensagem da cliente que estava na tela ao clicar Enviar: é a que esta resposta responde. */
+  lastSeenInboundId: z.uuid().nullable().optional(),
 });
 
 /**
@@ -911,6 +916,16 @@ export async function sendManualWaReply(
     }
   }
 
+  // A âncora só vale se for mesmo uma mensagem da cliente nesta conversa.
+  let lastSeenInboundId: string | null = null;
+  if (parsed.lastSeenInboundId) {
+    const [seen] = await db
+      .select({ id: waMessages.id })
+      .from(waMessages)
+      .where(and(eq(waMessages.id, parsed.lastSeenInboundId), eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
+      .limit(1);
+    lastSeenInboundId = seen?.id ?? null;
+  }
   await enqueueOutboxEvent(db, {
     eventType: "wa.send",
     aggregateType: "wa_conversation",
@@ -918,8 +933,9 @@ export async function sendManualWaReply(
     payload: {
       phoneE164: conversation.phoneE164,
       body: parsed.body,
-      // A hora do clique: a linha da mensagem nasce quando a fila entrega, e
-      // é esta hora que diz a que mensagens da cliente a dona respondeu.
+      // O dedupe leva a mensagem dela que a dona estava respondendo (`:re:`);
+      // a hora do clique vira o created_at da linha (a fila entrega depois).
+      dedupeKey: manualReplyDedupeKey(randomUUID(), lastSeenInboundId),
       repliedAt: new Date().toISOString(),
       ...(conversation.customerId ? { customerId: conversation.customerId } : {}),
     },

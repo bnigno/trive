@@ -70,10 +70,12 @@ export async function closeConversationAction(
 export async function sendManualReplyAction(
   conversationId: string,
   body: string,
+  /** A última mensagem da cliente na tela ao clicar Enviar (o que esta resposta responde). */
+  lastSeenInboundId: string | null = null,
 ): Promise<ActionResult> {
   const user = await requireUser();
   try {
-    await sendManualWaReply(getDb(), { conversationId, userId: user.id, body });
+    await sendManualWaReply(getDb(), { conversationId, userId: user.id, body, lastSeenInboundId });
     return { ok: true };
   } catch (error) {
     return { error: toErrorMessage(error) };

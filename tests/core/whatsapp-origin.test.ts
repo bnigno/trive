@@ -9,6 +9,7 @@ import {
   type WaMessageOrigin,
   answeredInboundId,
   answeredInboundOf,
+  manualReplyDedupeKey,
   orderHistoryRows,
   pendingInboundRows,
 } from "@/core/whatsapp/origin";
@@ -128,6 +129,11 @@ describe("answeredInboundId", () => {
     expect(answeredInboundId("wa.bot_reply:suggestion:22222222-2222-4222-8222-222222222222")).toBeNull();
     expect(answeredInboundId("wa.bot_reply:followup:abc")).toBeNull();
     expect(answeredInboundId("wa.send:manual-1")).toBeNull();
+    // Resposta da equipe pelo painel leva a mensagem dela que estava na tela.
+    expect(answeredInboundId(manualReplyDedupeKey("e1", A))).toBe(A);
+    expect(manualReplyDedupeKey("e1", A)).toBe(`wa.send:e1:re:${A}`);
+    expect(manualReplyDedupeKey("e1", null)).toBe("wa.send:e1");
+    expect(deriveWaMessageOrigin({ direction: "outbound", dedupeKey: manualReplyDedupeKey("e1", A), templateKey: null })).toBe("manual");
     expect(answeredInboundId("order.paid:xyz")).toBeNull();
     expect(answeredInboundId(null)).toBeNull();
   });
@@ -165,7 +171,7 @@ describe("orderHistoryRows", () => {
       { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f1", createdAt: t(6) },
       { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", createdAt: t(7) },
     ];
-    expect(orderHistoryRows(tail).map((row) => row.id)).toEqual([A, "r", "card", "pro", "auto", B]);
+    expect(orderHistoryRows(tail).map((row) => row.id)).toEqual([A, "r", "card", "pro", B, "auto"]);
     // Sugestão aprovada: a inbound respondida vem de fora (tabela de sugestões) e ancora como uma resposta.
     const suggestion = [
       { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
@@ -176,7 +182,16 @@ describe("orderHistoryRows", () => {
     expect(answeredInboundOf(suggestion[2])).toBe(A);
     expect(answeredInboundOf({ direction: "inbound", dedupeKey: null })).toBeNull();
     expect(answeredInboundOf({ direction: "outbound", dedupeKey: `wa.bot_reply:${B}` })).toBe(B);
-    // Empate de milissegundo com a última inbound: a saída sem âncora também vai para antes dela.
+    // Aviso automático e resposta da equipe (viram fala de usuário) ficam na ordem em que saíram, mesmo depois da última mensagem dela.
+    const staff = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
+      { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(2) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(3) },
+      { id: "m", direction: "outbound", dedupeKey: "wa.send:e9", createdAt: t(4) },
+      { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", templateKey: "order_paid", createdAt: t(5) },
+    ];
+    expect(orderHistoryRows(staff).map((row) => row.id)).toEqual([A, "r", B, "m", "auto"]);
+    // Empate de milissegundo com a última inbound: a saída da Lia sem âncora também vai para antes dela.
     const tie = [
       { id: A, direction: "inbound", dedupeKey: null, createdAt: t(1) },
       { id: "r", direction: "outbound", dedupeKey: `wa.bot_reply:${A}`, createdAt: t(2) },
@@ -208,9 +223,17 @@ describe("pendingInboundRows", () => {
     expect(pendingInboundRows(rows).map((row) => row.id)).toEqual([B, C]);
     const manual = [...rows, { id: "m", direction: "outbound", dedupeKey: "wa.send:1", createdAt: t(6) }];
     expect(pendingInboundRows(manual)).toEqual([]);
-    // A resposta manual cobre o que estava na tela quando a dona CLICOU (repliedAt), não o que chegou enquanto a fila entregava.
+    // A resposta manual sem âncora cobre o que chegou antes do CLIQUE (repliedAt), não o que a fila entregou depois.
     const clicked = [...rows, { id: "m", direction: "outbound", dedupeKey: "wa.send:1", createdAt: t(6), repliedAt: t(3) }];
     expect(pendingInboundRows(clicked).map((row) => row.id)).toEqual([C]);
+    // Ancorada na mensagem vista (`:re:`): cobre até ela — mesmo uma mensagem com hora anterior que a dona não viu (presa na trava do turno) fica pendente.
+    const seen = [
+      { id: A, direction: "inbound", dedupeKey: null, createdAt: t(0) },
+      { id: B, direction: "inbound", dedupeKey: null, createdAt: t(5) },
+      { id: "m", direction: "outbound", dedupeKey: manualReplyDedupeKey("e2", A), createdAt: t(8) },
+    ];
+    expect(pendingInboundRows(seen).map((row) => row.id)).toEqual([B]);
+    expect(orderHistoryRows(seen).map((row) => row.id)).toEqual([A, "m", B]);
     const auto = [...rows, { id: "auto", direction: "outbound", dedupeKey: "order.paid:1", templateKey: "order_paid", createdAt: t(6) }];
     expect(pendingInboundRows(auto).map((row) => row.id)).toEqual([B, C]);
     const late = [...rows, { id: "card", direction: "outbound", dedupeKey: "wa.bot_media:99999999-9999-4999-8999-999999999999:card", createdAt: t(6) }, { id: "pro", direction: "outbound", dedupeKey: "wa.bot_reply:followup:f", createdAt: t(7) }];

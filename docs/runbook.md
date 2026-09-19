@@ -726,12 +726,13 @@ código, tentativa) fica no audit `wa.bot_turn_failed` e nos logs da Vercel
   histórico cola cada resposta à mensagem que ela respondeu (a nova fica por
   último) e um turno sem mensagem nova da cliente não roda o modelo. Depois
   de qualquer transferência por erro, **Devolver à Lia** religa a vendedora
-  naquela conversa (o silêncio de 24 h é só dela) e, se houver mensagem da
-  cliente ainda sem resposta (sua ou da Lia — aviso automático no meio não
-  conta), a Lia responde na hora; se não houver, ela volta a falar na
-  próxima mensagem dela. Sua resposta pelo painel vale para o que estava na
-  tela quando você clicou Enviar: o que a cliente mandar depois disso a Lia
-  ainda trata (ou sugere, no copiloto).
+  naquela conversa (o silêncio de 24 h é só dela). A pergunta que recebeu o
+  "indisponível" é **sua** para responder (é para isso que a conversa veio
+  para você); se a cliente escreveu de novo depois disso, a Lia responde na
+  hora ao devolver; se não, ela volta a falar na próxima mensagem dela. Sua
+  resposta pelo painel vale para a última mensagem dela que estava na tela
+  quando você clicou Enviar: o que chegar depois a Lia ainda trata (ou
+  sugere, no copiloto).
 
 ## A Lia não respondeu uma cliente (a mensagem nem aparece no painel)
 
