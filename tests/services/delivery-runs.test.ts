@@ -440,8 +440,8 @@ describe("o motoboy na rua", () => {
 
     // A foto da entrega: reduzida, sem EXIF, no path do pedido — e o aviso à cliente sai COM a foto, hora e quem recebeu.
     expect(result.withPhoto).toBe(true);
-    expect(order.deliveredPhotoPath).toBe(`deliveries/${paid.orderId}/entrega.jpg`);
-    const stored = storage.get(`deliveries/${paid.orderId}/entrega.jpg`)!;
+    expect(order.deliveredPhotoPath).toBe(`deliveries/${paid.orderId}/entrega-motoboy.jpg`);
+    const stored = storage.get(`deliveries/${paid.orderId}/entrega-motoboy.jpg`)!;
     const meta = await sharp(Buffer.from(stored.data)).metadata();
     expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(1200);
     expect(meta.exif).toBeUndefined();
@@ -453,7 +453,7 @@ describe("o motoboy na rua", () => {
     expect(sent).toMatchObject({ withPhoto: true });
     // A imagem vai com a legenda; a hora é a da transição (relógio real) e o nome vem da parada.
     expect(provider.sentImages).toHaveLength(1);
-    expect(provider.sentImages[0].imageUrl).toContain(`deliveries/${paid.orderId}/entrega.jpg`);
+    expect(provider.sentImages[0].imageUrl).toContain(`deliveries/${paid.orderId}/entrega-motoboy.jpg`);
     expect(provider.sentImages[0].caption).toMatch(/às \d{2}:\d{2}, recebido por Maria/);
 
     // Segundo toque (até sem foto): nada muda e nada sobe de novo.
@@ -469,7 +469,7 @@ describe("o motoboy na rua", () => {
     const result = await deliver({ courierToken: token, stopId: cashStop.id, receivedBy: "a própria", now: AFTERNOON });
     expect(result).toMatchObject({ awaitingCash: true, orderDelivered: false, receivedBy: null, withPhoto: true });
     const order = await orderRow(cash.orderId);
-    expect(order).toMatchObject({ status: "pending_payment", deliveryConfirmedBy: "courier", receivedBy: null, deliveredPhotoPath: `deliveries/${cash.orderId}/entrega.jpg` });
+    expect(order).toMatchObject({ status: "pending_payment", deliveryConfirmedBy: "courier", receivedBy: null, deliveredPhotoPath: `deliveries/${cash.orderId}/entrega-motoboy.jpg` });
     expect((await outboxEvents()).some((e) => e.eventType === "order.delivered")).toBe(false);
 
     // A dona baixa o dinheiro e fecha pelo caminho de sempre — horas depois.
@@ -522,6 +522,23 @@ describe("o motoboy na rua", () => {
     const result = await deliver({ courierToken: token, stopId: paidStop.id, receivedBy: "Maria", now: AFTERNOON });
     expect(result).toMatchObject({ orderDelivered: true, withPhoto: true });
     expect(Array.from(storage.get(`deliveries/${paid.orderId}/entrega.jpg`)!.data)).toEqual([9, 9, 9]);
+    expect((await orderRow(paid.orderId)).deliveredPhotoPath).toBe(`deliveries/${paid.orderId}/entrega.jpg`);
+    expect(storage.list()).toHaveLength(1);
+  });
+
+  it("recusa antes de subir a foto: saída que não começou ou pedido cancelado não deixam arquivo órfão", async () => {
+    const { variantId, rateId } = await setup();
+    const paid = await paidMotoboyOrder(variantId, rateId);
+    const c = await courier("Outro Motoboy", "(91) 98111-2222");
+    const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
+    const [stop] = await stopsOf(created.runId);
+    await expect(deliver({ courierToken: created.courierToken, stopId: stop.id })).rejects.toThrow(/Comecei a rota/);
+    expect(storage.list()).toHaveLength(0);
+
+    const road = await runOnTheRoad();
+    await transitionOrder(sdb, { orderId: road.paid.orderId, to: "refunded", userId: FIXED_USER_ID, reason: "Cliente desistiu." });
+    await expect(deliver({ courierToken: road.token, stopId: road.stops.find((s) => s.orderId === road.paid.orderId)!.id })).rejects.toThrow(/cancelado pela loja/);
+    expect(storage.list()).toHaveLength(0);
   });
 
   it("pedido cancelado pela loja com parada aberta: 'Entregue' recusa com mensagem clara; 'Não consegui' fecha", async () => {

@@ -40,7 +40,7 @@ import { auditLog, couriers, customers, deliveryPositions, deliveryRuns, deliver
 import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { findActiveCourierByPhone } from "@/services/couriers";
-import { assertDeliveryPhotoAcceptable, deliveryPhotoSchema, deliveryPhotoStoragePath, processDeliveryPhoto } from "@/services/delivery";
+import { assertDeliveryPhotoAcceptable, courierDeliveryPhotoStoragePath, deliveryPhotoSchema, processDeliveryPhoto } from "@/services/delivery";
 import { addressLineOf, completeDispatchedOrder, dispatchOrder, listRouteOrders, summarizeOrderItems, type RouteOrder } from "@/services/delivery-routes";
 import { ServiceError } from "@/services/orders";
 import { getStoreName } from "@/services/settings";
@@ -431,8 +431,11 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
 
   // Olhada sem trava: repetição de uma parada já entregue dispensa a foto;
   // senão ela é obrigatória e é processada/enviada antes de trancar as linhas.
+  // As mesmas recusas da transação valem aqui, ANTES do upload: uma saída
+  // que ainda não começou, uma parada fechada ou um pedido cancelado não
+  // deixam arquivo órfão no bucket.
   const [preview] = await db
-    .select({ stopStatus: deliveryStops.status, orderId: deliveryStops.orderId, deliveredPhotoPath: orders.deliveredPhotoPath })
+    .select({ runStatus: deliveryRuns.status, stopStatus: deliveryStops.status, orderId: deliveryStops.orderId, orderStatus: orders.status, deliveredPhotoPath: orders.deliveredPhotoPath })
     .from(deliveryStops)
     .innerJoin(deliveryRuns, eq(deliveryRuns.id, deliveryStops.runId))
     .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
@@ -442,9 +445,11 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
   if (preview && preview.stopStatus !== "delivered") {
     if (!parsed.photo) throw new ServiceError(PHOTO_REQUIRED_CODE, "Tire a foto da entrega no endereço para confirmar.");
     assertDeliveryPhotoAcceptable(parsed.photo);
-    if (!preview.deliveredPhotoPath) {
+    const canUpload =
+      canCloseStop(preview.runStatus as RunStatus, preview.stopStatus as StopStatus) && preview.orderStatus !== "canceled" && preview.orderStatus !== "refunded";
+    if (canUpload && !preview.deliveredPhotoPath) {
       const jpeg = await processDeliveryPhoto(parsed.photo);
-      uploadedPath = deliveryPhotoStoragePath(preview.orderId);
+      uploadedPath = courierDeliveryPhotoStoragePath(preview.orderId);
       await storage.upload({ path: uploadedPath, data: jpeg, contentType: "image/jpeg" });
     }
   }
@@ -475,15 +480,15 @@ export async function completeStop(db: DbOrTx, storage: FileStorage, input: Comp
     if (stop.status === "delivered") {
       return { ...base, orderDelivered: order.status === "delivered", awaitingCash: order.status === "pending_payment", receivedBy: stop.receivedBy, withPhoto: order.deliveredPhotoPath !== null, idempotent: true };
     }
-    // A olhada de cima viu a parada aberta; se ela fechou nesse meio-tempo, o retorno acima já tratou.
-    const photoPath = order.deliveredPhotoPath ?? uploadedPath;
-    if (!photoPath) throw new ServiceError(PHOTO_REQUIRED_CODE, "Tire a foto da entrega no endereço para confirmar.");
     if (!canCloseStop(run.status as RunStatus, stop.status as StopStatus)) {
       throw new ServiceError("STOP_NOT_OPEN", run.status !== "en_route" ? 'Toque em "Comecei a rota" antes de entregar.' : "Esta parada já foi fechada.");
     }
     if (order.status === "canceled" || order.status === "refunded") {
       throw new ServiceError("ORDER_CANCELED", 'Este pedido foi cancelado pela loja: não entregue — toque em "Não consegui" e traga a peça de volta.');
     }
+    // A olhada de cima viu a parada aberta e subiu a foto (ou a dona já tinha uma).
+    const photoPath = order.deliveredPhotoPath ?? uploadedPath;
+    if (!photoPath) throw new ServiceError(PHOTO_REQUIRED_CODE, "Tire a foto da entrega no endereço para confirmar.");
     const [courier] = await tx.select({ name: couriers.name }).from(couriers).where(eq(couriers.id, run.courierId)).limit(1);
     const receivedBy = normalizeReceivedBy(parsed.receivedBy);
     const point = parsed.position && isValidPoint(parsed.position) ? parsed.position : null;

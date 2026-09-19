@@ -33,6 +33,11 @@ export function deliveryPhotoStoragePath(orderId: string): string {
   return `deliveries/${orderId}/entrega.jpg`;
 }
 
+/** A foto que o motoboy tira na parada: caminho próprio, para nunca sobrescrever a que a dona tirou pela ficha. */
+export function courierDeliveryPhotoStoragePath(orderId: string): string {
+  return `deliveries/${orderId}/entrega-motoboy.jpg`;
+}
+
 export function deliveredDedupeKey(orderId: string): string {
   return `wa.delivered:${orderId}`;
 }
