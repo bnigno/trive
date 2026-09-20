@@ -158,11 +158,16 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("peça SÓ número e complemento");
   });
 
-  it("é determinístico (prefixo cacheável) e coloca as instruções do dono no fim", () => {
-    const a = buildBotSystemPrompt({ ...OPCOES, extraInstructions: "Fale de 'amiga'." });
-    const b = buildBotSystemPrompt({ ...OPCOES, extraInstructions: "Fale de 'amiga'." });
+  it("é determinístico (prefixo cacheável); o tom do dono vem depois da ficha e da planta, subordinado ao método", () => {
+    const opcoes = { ...OPCOES, extraInstructions: "Fale de 'amiga'.", storeFacts: renderStoreFacts(FICHA_REAL), storeMap: "• Vestidos (12 peças)" };
+    const a = buildBotSystemPrompt(opcoes);
+    const b = buildBotSystemPrompt(opcoes);
     expect(a).toBe(b);
-    expect(a.endsWith("Instruções do dono da loja:\nFale de 'amiga'.")).toBe(true);
+    const dono = a.indexOf("TOM E FATOS DO DONO");
+    expect(dono).toBeGreaterThan(a.indexOf("FICHA DA LOJA"));
+    expect(dono).toBeGreaterThan(a.indexOf("PLANTA DA LOJA"));
+    expect(a.slice(dono)).toContain("prevalecem");
+    expect(a.slice(dono)).toContain("Fale de 'amiga'.");
   });
 });
 

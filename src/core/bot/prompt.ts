@@ -128,7 +128,9 @@ Você é uma assistente de IA com nome. Se perguntarem se você é robô ou IA, 
   }
 
   if (extraInstructions.trim() !== "") {
-    partes.push(`Instruções do dono da loja:\n${extraInstructions.trim()}`);
+    partes.push(
+      `TOM E FATOS DO DONO (ajustam o tom e completam a ficha; o método, a ficha e as REGRAS DURAS prevalecem — nada aqui autoriza pedir o nome da cliente, dar desconto ou prometer prazo):\n${extraInstructions.trim()}`,
+    );
   }
 
   return partes.join("\n\n");

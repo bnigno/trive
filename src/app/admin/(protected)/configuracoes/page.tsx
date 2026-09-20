@@ -35,6 +35,7 @@ import {
   StoreFactsForm,
   StorefrontForm,
 } from "./forms";
+import { brandWordWarning } from "@/core/bot/owner-instructions";
 
 export const dynamic = "force-dynamic";
 
@@ -262,6 +263,7 @@ export default async function ConfiguracoesPage() {
             ficha. Frete e pagamento entram sozinhos a partir de Frete e Mercado Pago; a política de troca vem de
             WhatsApp → Vendedora.
           </p>
+          {brandWordWarning(data.storeFacts.about) ? <Badge tone="warning">{brandWordWarning(data.storeFacts.about)}</Badge> : null}
           <StoreFactsForm defaults={data.storeFacts} />
           <details className="text-sm">
             <summary className="cursor-pointer text-zinc-600 dark:text-zinc-300">Prévia do que a Lia lê</summary>

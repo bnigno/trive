@@ -114,22 +114,21 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("explicitamente");
   });
 
-  it("inclui extraInstructions rotulado quando não-vazio", () => {
+  it("inclui extraInstructions como TOM E FATOS DO DONO, subordinado ao método e às regras", () => {
     const prompt = buildBotSystemPrompt({
       ...promptOptions,
       extraInstructions: "Frete grátis acima de R$ 200.",
     });
-    expect(prompt).toContain("Instruções do dono da loja:");
+    expect(prompt).toContain("TOM E FATOS DO DONO");
+    expect(prompt).toContain("prevalecem");
     expect(prompt).toContain("Frete grátis acima de R$ 200.");
   });
 
-  it("omite o rótulo quando extraInstructions é vazio ou só espaços", () => {
-    expect(buildBotSystemPrompt(promptOptions)).not.toContain(
-      "Instruções do dono da loja:",
-    );
+  it("omite o bloco quando extraInstructions é vazio ou só espaços", () => {
+    expect(buildBotSystemPrompt(promptOptions)).not.toContain("TOM E FATOS DO DONO");
     expect(
       buildBotSystemPrompt({ ...promptOptions, extraInstructions: "  \n " }),
-    ).not.toContain("Instruções do dono da loja:");
+    ).not.toContain("TOM E FATOS DO DONO");
   });
 });
 
