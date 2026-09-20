@@ -67,6 +67,10 @@ export const products = pgTable(
     categoryId: uuid("category_id").references(() => categories.id, {
       onDelete: "restrict",
     }),
+    // Tipo de peça (vestido, corset, bolsa…): lista fixa em
+    // core/catalog/piece-types.ts, garantida por Zod no service. É por ele
+    // que a Lia acha "um corset" numa categoria larga como Vestuário.
+    pieceType: text("piece_type"),
     brand: text("brand"),
     // 1 fornecedor por produto (espelha categoryId; multi-fornecedor = YAGNI).
     supplierId: uuid("supplier_id").references(() => suppliers.id, {

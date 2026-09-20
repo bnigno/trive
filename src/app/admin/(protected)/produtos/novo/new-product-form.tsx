@@ -1,6 +1,7 @@
 "use client";
 
 import { CARE_SYMBOL_KEYS, formatCareNotes } from "@/core/catalog/care";
+import { PIECE_TYPES } from "@/core/catalog/piece-types";
 import { CareFields } from "../care-fields";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
@@ -329,6 +330,7 @@ export function NewProductForm({
         fitNotes: text("fitNotes"),
         brand: text("brand"),
         categoryId: text("categoryId"),
+        pieceType: text("pieceType"),
         careText: text("careText"),
         price: text("price"),
         weightGrams: text("weightGrams"),
@@ -419,6 +421,7 @@ export function NewProductForm({
       fitNotes: String(formData.get("fitNotes") ?? ""),
       brand: String(formData.get("brand") ?? ""),
       categoryId: String(formData.get("categoryId") ?? ""),
+      pieceType: String(formData.get("pieceType") ?? ""),
       price: String(formData.get("price") ?? ""),
       weightGrams: String(formData.get("weightGrams") ?? ""),
       colors,
@@ -530,6 +533,16 @@ export function NewProductForm({
                 {categoryOptions.map((category) => (
                   <option key={category.id} value={category.id}>
                     {category.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Tipo de peça" hint='A Lia acha a peça por ele quando a cliente pede "um corset" ou "vestidos".'>
+              <Select name="pieceType" defaultValue={kept.pieceType ?? ""}>
+                <option value="">Sem tipo</option>
+                {PIECE_TYPES.map((type) => (
+                  <option key={type.slug} value={type.slug}>
+                    {type.label}
                   </option>
                 ))}
               </Select>

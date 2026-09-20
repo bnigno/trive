@@ -330,6 +330,13 @@
       "when": 1789928849823,
       "tag": "0046_phash_das_fotos",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1789935650770,
+      "tag": "0047_piece_type",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,7 @@ import {
   lookCardTitle,
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
+import { parsePieceType, pieceTypeLabel, type PieceType } from "@/core/catalog/piece-types";
 import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
@@ -74,6 +75,29 @@ export async function resolveCategorySlug(
   return byName?.slug ?? null;
 }
 
+export type CatalogScope = { kind: "category"; slug: string } | { kind: "piece_type"; pieceType: PieceType };
+
+/**
+ * O que a Lia passou em `categoria`: categoria pelo slug exato primeiro (a
+ * loja pode ter uma categoria "Vestidos"), depois tipo de peça (vestido,
+ * corset, bolsa… — inclusive plural e sinônimo), depois categoria pelo nome.
+ * Null quando não é nada disso.
+ */
+export async function resolveCatalogScope(db: DbOrTx, term: string): Promise<CatalogScope | null> {
+  const trimmed = term.trim();
+  if (trimmed === "") return null;
+  const [bySlug] = await db
+    .select({ slug: categories.slug })
+    .from(categories)
+    .where(eq(categories.slug, trimmed.toLowerCase()))
+    .limit(1);
+  if (bySlug) return { kind: "category", slug: bySlug.slug };
+  const pieceType = parsePieceType(trimmed);
+  if (pieceType) return { kind: "piece_type", pieceType };
+  const slug = await resolveCategorySlug(db, trimmed);
+  return slug ? { kind: "category", slug } : null;
+}
+
 type CatalogList = { message: string; options: { title: string; description?: string }[] };
 
 /** O corpo que sendMediaMessage persiste para uma lista: a mensagem + uma linha por opção. */
@@ -125,16 +149,22 @@ export async function execListarProdutos(
   const filtros: string[] = [];
 
   let categorySlug: string | undefined;
+  let pieceType: PieceType | undefined;
   if (input.categoria?.trim()) {
-    const slug = await resolveCategorySlug(db, input.categoria);
-    if (!slug) {
+    const scope = await resolveCatalogScope(db, input.categoria);
+    if (!scope) {
       return {
         ok: false,
-        text: `Não existe a categoria "${input.categoria}". Use uma das categorias da PLANTA DA LOJA ou busque por palavra (busca).`,
+        text: `Não existe a categoria nem o tipo "${input.categoria}". Use uma categoria ou um tipo da PLANTA DA LOJA, ou busque por palavra (busca).`,
       };
     }
-    categorySlug = slug;
-    filtros.push(`categoria ${input.categoria.trim()}`);
+    if (scope.kind === "category") {
+      categorySlug = scope.slug;
+      filtros.push(`categoria ${input.categoria.trim()}`);
+    } else {
+      pieceType = scope.pieceType;
+      filtros.push(`tipo ${pieceTypeLabel(scope.pieceType)}`);
+    }
   }
   let editionSlug: string | undefined;
   if (input.edicao?.trim()) {
@@ -154,6 +184,7 @@ export async function execListarProdutos(
   let items: PublicProductListItem[] = await listPublicProducts(db, {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
+    ...(pieceType ? { pieceType } : {}),
     ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
     limit: 200,

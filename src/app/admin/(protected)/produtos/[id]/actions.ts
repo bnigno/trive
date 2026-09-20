@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z, ZodError } from "zod";
+import { PIECE_TYPE_SLUGS, type PieceType } from "@/core/catalog/piece-types";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
 import { getTranscriber } from "@/adapters/transcription";
@@ -75,6 +76,8 @@ export async function updateProductAction(
   const description = String(formData.get("description") ?? "").trim();
   const brand = String(formData.get("brand") ?? "").trim();
   const categoryId = String(formData.get("categoryId") ?? "").trim();
+  const pieceTypeRaw = String(formData.get("pieceType") ?? "").trim();
+  const pieceType = (PIECE_TYPE_SLUGS as readonly string[]).includes(pieceTypeRaw) ? (pieceTypeRaw as PieceType) : null;
   const supplierId = String(formData.get("supplierId") ?? "").trim();
   const axes = String(formData.get("axes") ?? "")
     .split(",")
@@ -99,6 +102,7 @@ export async function updateProductAction(
       fitNotes: fitNotes || null,
       brand: brand || null,
       categoryId: categoryId || null,
+      pieceType,
       supplierId: supplierId || null,
       attributesSchema: axes,
     });

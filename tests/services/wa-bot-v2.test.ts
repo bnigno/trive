@@ -1164,11 +1164,20 @@ describe("listar_produtos 2.0", () => {
       vestidos,
     );
     await createSimpleProduct("BLUSA-1", "Blusa Linho", 9900, { categoryId: blusas });
+    const corset = await createSimpleProduct("CORSET-1", "Corset Rosalie", 22900, { categoryId: blusas });
+    await db.update(schema.products).set({ pieceType: "corset" }).where(eq(schema.products.id, corset.productId));
     const executor = executorFor(await createConversation());
 
+    // "Vestidos" é o slug exato de uma categoria: continua categoria, não o tipo "vestido".
     const porCategoria = await executor("listar_produtos", { categoria: "Vestidos" });
     expect(porCategoria.text).toContain("2 peças encontradas (categoria Vestidos)");
     expect(porCategoria.text).not.toContain("Blusa Linho");
+
+    // Tipo de peça (plural, sem acento) vale no mesmo campo: só a peça marcada com ele.
+    const porTipo = await executor("listar_produtos", { categoria: "corsets" });
+    expect(porTipo.text).toContain("1 peça encontrada (tipo Corset)");
+    expect(porTipo.text).toContain("Corset Rosalie");
+    expect(porTipo.text).not.toContain("Blusa Linho");
 
     const preto = await executor("listar_produtos", { cor: "preto" });
     expect(preto.text).toContain("1 peça encontrada (cor preto)");
@@ -1189,6 +1198,7 @@ describe("listar_produtos 2.0", () => {
 
     const semCategoria = await executor("listar_produtos", { categoria: "Sapatos" });
     expect(semCategoria.ok).toBe(false);
+    expect(semCategoria.text).toContain('Não existe a categoria nem o tipo "Sapatos"');
   });
 
   it("busca também na descrição", async () => {

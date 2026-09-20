@@ -13,6 +13,9 @@ export type StoreMapInput = {
     productCount: number;
     priceFromCents: number;
     priceToCents: number;
+    /** Tipos de peça dentro da categoria (vestido, corset…) e quantas ainda estão sem tipo. */
+    types?: { type: string; label: string; productCount: number; priceFromCents: number; priceToCents: number }[];
+    untyped?: number;
   }[];
   colors: string[];
   sizes: string[];
@@ -37,13 +40,24 @@ function limited(values: readonly string[]): string {
 export function renderStoreMap(input: StoreMapInput): string | null {
   if (input.totalProducts === 0 || input.categories.length === 0) return null;
 
-  const linhas = [
-    `${input.totalProducts} ${input.totalProducts === 1 ? "peça ativa" : "peças ativas"} no catálogo.`,
-    ...input.categories.map(
-      (categoria) =>
-        `• ${categoria.name}${categoria.slug ? ` (categoria: ${categoria.slug})` : ""} — ${categoria.productCount} ${categoria.productCount === 1 ? "peça" : "peças"}, ${priceRange(categoria.priceFromCents, categoria.priceToCents)}`,
-    ),
-  ];
+  const pecas = (n: number) => `${n} ${n === 1 ? "peça" : "peças"}`;
+  const linhas = [`${input.totalProducts} ${input.totalProducts === 1 ? "peça ativa" : "peças ativas"} no catálogo.`];
+  let comTipos = false;
+  for (const categoria of input.categories) {
+    linhas.push(
+      `• ${categoria.name}${categoria.slug ? ` (categoria: ${categoria.slug})` : ""} — ${pecas(categoria.productCount)}, ${priceRange(categoria.priceFromCents, categoria.priceToCents)}`,
+    );
+    for (const tipo of categoria.types ?? []) {
+      comTipos = true;
+      linhas.push(`  – ${tipo.label} (tipo: ${tipo.type}) — ${pecas(tipo.productCount)}, ${priceRange(tipo.priceFromCents, tipo.priceToCents)}`);
+    }
+    if ((categoria.types?.length ?? 0) > 0 && (categoria.untyped ?? 0) > 0) {
+      linhas.push(`  – sem tipo — ${pecas(categoria.untyped ?? 0)}`);
+    }
+  }
+  if (comTipos) {
+    linhas.push('Em listar_produtos.categoria vale a categoria OU o tipo (ex.: "corset").');
+  }
   if (input.colors.length > 0) {
     linhas.push(`Cores com estoque: ${limited(input.colors)}.`);
   }

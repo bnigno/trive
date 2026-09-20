@@ -36,6 +36,7 @@ import {
   measurementsSchema,
   parseMeasurements,
 } from "@/core/catalog/measurements";
+import { PIECE_TYPE_SLUGS } from "@/core/catalog/piece-types";
 import { suggestMarginForPrice } from "@/core/pricing";
 import { applyMovement } from "@/core/stock/ledger";
 import type { FileStorage } from "@/adapters/storage";
@@ -294,6 +295,7 @@ const createProductSchema = z.object({
   fitNotes: fichaSchema.fitNotes.optional(),
   brand: z.string().trim().min(1).optional(),
   categoryId: z.uuid().optional(),
+  pieceType: z.enum(PIECE_TYPE_SLUGS).nullable().optional(),
   // Eixos de variação, ex.: ["cor", "tamanho"].
   attributesSchema: z.array(z.string().trim().min(1)).default([]),
   // Produto sem variação = 1 variante com attributes {}.
@@ -347,6 +349,7 @@ export async function createProduct(db: ServiceDb, input: CreateProductInput) {
           fitNotes: parsed.fitNotes || null,
           brand: parsed.brand ?? null,
           categoryId: parsed.categoryId ?? null,
+          pieceType: parsed.pieceType ?? null,
           attributesSchema: parsed.attributesSchema,
         })
         .returning();
@@ -491,6 +494,7 @@ const updateProductSchema = z.object({
   // áudio e carimbo andam juntos e com uma regra só.
   brand: z.string().trim().min(1).nullable().optional(),
   categoryId: z.uuid().nullable().optional(),
+  pieceType: z.enum(PIECE_TYPE_SLUGS).nullable().optional(),
   supplierId: z.uuid().nullable().optional(),
   // 'archived' apenas oculta do catálogo; pedidos antigos preservam snapshots.
   status: z.enum(["draft", "active", "archived"]).optional(),
@@ -513,6 +517,7 @@ export async function updateProduct(db: ServiceDb, input: UpdateProductInput) {
     if (parsed.fitNotes !== undefined) patch.fitNotes = parsed.fitNotes || null;
     if (parsed.brand !== undefined) patch.brand = parsed.brand;
     if (parsed.categoryId !== undefined) patch.categoryId = parsed.categoryId;
+    if (parsed.pieceType !== undefined) patch.pieceType = parsed.pieceType;
     if (parsed.supplierId !== undefined) patch.supplierId = parsed.supplierId;
     if (parsed.status !== undefined) patch.status = parsed.status;
     if (parsed.attributesSchema !== undefined) {

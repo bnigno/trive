@@ -365,6 +365,7 @@ export default async function ProdutoDetalhePage({
               description: detail.description,
               brand: detail.brand,
               categoryId: detail.categoryId,
+              pieceType: detail.pieceType,
               supplierId: detail.supplierId,
               attributesSchema: axes,
               composition: detail.composition,

@@ -9,6 +9,7 @@ import {
   parseMeasurements,
   type Measurements,
 } from "@/core/catalog/measurements";
+import { PIECE_TYPE_SLUGS, pieceTypePlural, type PieceType } from "@/core/catalog/piece-types";
 import { z } from "zod";
 
 import * as schema from "@/db/schema";
@@ -114,6 +115,8 @@ export function publiclyVisible(viewer?: CatalogViewer, now: Date = new Date()) 
 
 const listPublicProductsSchema = z.object({
   categorySlug: z.string().trim().min(1).optional(),
+  /** Só peças deste tipo (vestido, corset…): a Lia filtra por ele quando a cliente pede "um corset". */
+  pieceType: z.enum(PIECE_TYPE_SLUGS).optional(),
   /** Só estes produtos (página do lançamento). */
   productIds: z.array(z.uuid()).max(50).optional(),
   /** Ignora visible_from (só para quem já provou o convite). */
@@ -137,6 +140,8 @@ export interface PublicProductListItem {
   slug: string;
   brand: string | null;
   categoryName: string | null;
+  /** Tipo de peça (slug de core/catalog/piece-types.ts) ou null quando a dona ainda não marcou. */
+  pieceType: string | null;
   /** Menor preço ativo entre as variantes vendáveis. */
   priceFromCents: number;
   /** Maior preço ativo entre as variantes vendáveis. */
@@ -165,6 +170,7 @@ export async function listPublicProducts(
   if (!parsed.includeHidden) filters.push(publiclyVisible(parsed.viewer));
   if (parsed.productIds) filters.push(inArray(products.id, parsed.productIds));
   if (parsed.categorySlug) filters.push(eq(categories.slug, parsed.categorySlug));
+  if (parsed.pieceType) filters.push(eq(products.pieceType, parsed.pieceType));
   if (parsed.excludeProductId) filters.push(ne(products.id, parsed.excludeProductId));
   if (parsed.editionSlug) {
     filters.push(
@@ -193,6 +199,7 @@ export async function listPublicProducts(
       updatedAt: products.updatedAt,
       brand: products.brand,
       categoryName: categories.name,
+      pieceType: products.pieceType,
       priceFromCents: sql<string>`min(${priceVersions.priceCents})`,
       priceToCents: sql<string>`max(${priceVersions.priceCents})`,
       availableSum: sql<string>`coalesce(sum(greatest(coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0), 0)), 0)`,
@@ -238,6 +245,7 @@ export async function listPublicProducts(
     updatedAt: row.updatedAt ?? null,
     brand: row.brand,
     categoryName: row.categoryName,
+    pieceType: row.pieceType,
     priceFromCents: Number(row.priceFromCents),
     priceToCents: Number(row.priceToCents),
     imagePath: row.imagePath,
@@ -829,7 +837,18 @@ export function publicMdUrl(path: string): string {
 // WhatsApp para saber o que existe antes de buscar e para curar por atributo.
 // ---------------------------------------------------------------------------
 
+export interface StoreMapTypeLine {
+  type: string;
+  label: string;
+  productCount: number;
+  priceFromCents: number;
+  priceToCents: number;
+}
+
 export interface StoreMapCategory {
+  /** Tipos de peça dentro da categoria (mais peças primeiro) e quantas ainda estão sem tipo. */
+  types: StoreMapTypeLine[];
+  untyped: number;
   name: string;
   slug: string;
   productCount: number;
@@ -852,6 +871,7 @@ export interface StoreMap {
 export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
   const categoryRows = await db
     .select({
+      id: sql<string | null>`${categories.id}`,
       name: sql<string | null>`${categories.name}`,
       slug: sql<string | null>`${categories.slug}`,
       productCount: sql<string>`count(distinct ${products.id})`,
@@ -865,6 +885,42 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
     .where(and(eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible()))
     .groupBy(categories.id, categories.name, categories.slug)
     .orderBy(asc(categories.name));
+
+  // Tipos de peça dentro de cada categoria (a planta diz "Vestuário: 12
+  // vestidos, 8 blusas, 4 corsets — 2 sem tipo" antes de a Lia buscar).
+  const typeRows = await db
+    .select({
+      categoryId: sql<string | null>`${categories.id}`,
+      pieceType: products.pieceType,
+      productCount: sql<string>`count(distinct ${products.id})`,
+      priceFromCents: sql<string>`min(${priceVersions.priceCents})`,
+      priceToCents: sql<string>`max(${priceVersions.priceCents})`,
+    })
+    .from(products)
+    .innerJoin(productVariants, sellableVariantJoin())
+    .innerJoin(priceVersions, activePriceJoin())
+    .leftJoin(categories, eq(categories.id, products.categoryId))
+    .where(and(eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible()))
+    .groupBy(categories.id, products.pieceType);
+  const typesByCategory = new Map<string, StoreMapTypeLine[]>();
+  const untypedByCategory = new Map<string, number>();
+  for (const row of typeRows) {
+    const key = row.categoryId ?? "";
+    if (!row.pieceType) {
+      untypedByCategory.set(key, Number(row.productCount));
+      continue;
+    }
+    const known = PIECE_TYPE_SLUGS.includes(row.pieceType as PieceType);
+    const list = typesByCategory.get(key) ?? [];
+    list.push({
+      type: row.pieceType,
+      label: known ? pieceTypePlural(row.pieceType as PieceType) : row.pieceType,
+      productCount: Number(row.productCount),
+      priceFromCents: Number(row.priceFromCents),
+      priceToCents: Number(row.priceToCents),
+    });
+    typesByCategory.set(key, list);
+  }
 
   const axisRows = await db
     .select({
@@ -893,6 +949,8 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
     productCount: Number(row.productCount),
     priceFromCents: Number(row.priceFromCents),
     priceToCents: Number(row.priceToCents),
+    types: (typesByCategory.get(row.id ?? "") ?? []).sort((a, b) => b.productCount - a.productCount || a.label.localeCompare(b.label, "pt-BR")),
+    untyped: untypedByCategory.get(row.id ?? "") ?? 0,
   }));
 
   // PGlite (testes) e postgres (produção) divergem só no tipo de execute(); a API drizzle é a mesma.
