@@ -51,8 +51,9 @@ export function renderStoreMap(input: StoreMapInput): string | null {
       comTipos = true;
       linhas.push(`  – ${tipo.label} (tipo: ${tipo.type}) — ${pecas(tipo.productCount)}, ${priceRange(tipo.priceFromCents, tipo.priceToCents)}`);
     }
-    if ((categoria.types?.length ?? 0) > 0 && (categoria.untyped ?? 0) > 0) {
-      linhas.push(`  – sem tipo — ${pecas(categoria.untyped ?? 0)}`);
+    if ((categoria.untyped ?? 0) > 0 && categoria.types !== undefined) {
+      comTipos = true;
+      linhas.push(`  – sem tipo marcado — ${pecas(categoria.untyped ?? 0)} (o filtro por tipo não as vê; busque pelo nome)`);
     }
   }
   if (comTipos) {

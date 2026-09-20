@@ -2,7 +2,8 @@
 // motoboy, Correios automático e Mercado Pago — e entrega o bloco pronto
 // (core/bot/store-facts.ts) para o prompt da Lia e para a prévia do painel.
 import { renderStoreFacts, type StoreFactsInput } from "@/core/bot/store-facts";
-import { motoboyAreaLabel, type DeliveryWindow } from "@/core/shipping/delivery-windows";
+import { motoboyAreaLabel } from "@/core/shipping/delivery-windows";
+import { isCorreiosQuotesConfigured } from "@/adapters/superfrete";
 import { STORE_HERO_LINE_DEFAULT, STORE_INSTAGRAM_DEFAULT, STORE_NAME_DEFAULT } from "@/lib/brand";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getCorreiosAutoSettings } from "@/services/correios-quotes";
@@ -34,8 +35,13 @@ export async function getStoreFactsInput(db: DbOrTx, opts: { siteUrl: string }):
   const text = (key: (typeof STORE_FACTS_SETTING_KEYS)[number]): string => (typeof map[key] === "string" ? (map[key] as string).trim() : "");
 
   const motoboyRates = rates.filter((rate) => rate.kind === "motoboy" && rate.isActive);
-  const windows: DeliveryWindow[] = motoboyRates.flatMap((rate) => rate.deliveryWindows);
+  // Janelas por cidade (cada faixa tem as suas): a ficha diz as de cada uma quando diferem.
+  const cities = motoboyRates.map((rate) => ({ city: motoboyAreaLabel([rate]) || rate.name, windows: rate.deliveryWindows }));
   const area = motoboyAreaLabel(motoboyRates);
+  // Correios "cotado na hora" = SuperFrete ligada E com CEP E com token, OU
+  // uma faixa fixa de Correios ativa (cotar_frete devolve valor e prazo dela).
+  const correiosFixo = rates.some((rate) => rate.kind === "correios" && rate.isActive);
+  const correiosNaHora = correios.enabled && Boolean(correios.storeCep) && isCorreiosQuotesConfigured();
 
   return {
     storeName: text("store_name") || STORE_NAME_DEFAULT,
@@ -46,8 +52,8 @@ export async function getStoreFactsInput(db: DbOrTx, opts: { siteUrl: string }):
     siteUrl: opts.siteUrl,
     hours: text("store_hours"),
     pickup: text("store_pickup"),
-    motoboy: motoboyRates.length > 0 && area !== "" ? { area, windows } : null,
-    correios: correios.enabled && correios.storeCep ? "cotado_na_hora" : "pela_equipe",
+    motoboy: motoboyRates.length > 0 ? { area, cities } : null,
+    correios: correiosNaHora || correiosFixo ? "cotado_na_hora" : "pela_equipe",
     payment: { onlineLink, manualPix: text("store_pix_key") !== "" },
     exchangePolicy: text("store_exchange_policy"),
   };

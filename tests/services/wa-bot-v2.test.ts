@@ -1197,6 +1197,17 @@ describe("listar_produtos 2.0", () => {
     expect(porTipo.text).toContain("1 peça encontrada (tipo Corset)");
     expect(porTipo.text).toContain(`• Corset Rosalie · Corset — ${formatCentsBRL(22900)}`);
     expect(porTipo.text).not.toContain("Blusa Linho");
+    // Tipo que NENHUMA peça tem marcado ainda ("vestido": os vestidos existem, sem tipo): não nega o que existe — procura pelo nome e avisa.
+    const semTipoMarcado = await executor("listar_produtos", { categoria: "vestido" });
+    expect(semTipoMarcado.ok).toBe(true);
+    expect(semTipoMarcado.text).toContain('2 peças encontradas ("vestido" no nome — nenhuma peça tem o tipo marcado ainda)');
+    expect(semTipoMarcado.text).toContain("Vestido Dunas");
+    expect(semTipoMarcado.text).toContain("Vestido Brisa");
+    // Tipo marcado em outras peças, mas nenhuma com esse nome: aí a resposta é honesta, com a dica.
+    const bolsas = await executor("listar_produtos", { categoria: "bolsas" });
+    expect(bolsas.ok).toBe(true);
+    expect(bolsas.text).toContain("Nenhuma peça encontrada (tipo Bolsa)");
+    expect(bolsas.text).toContain('o filtro por tipo só vê peças com o tipo marcado; tente busca: "bolsas"');
 
     const preto = await executor("listar_produtos", { cor: "preto" });
     expect(preto.text).toContain("1 peça encontrada (cor preto)");

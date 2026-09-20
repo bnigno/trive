@@ -320,11 +320,11 @@ describe("renderContextNote", () => {
 });
 
 describe("renderContextNote — teto das linhas extras", () => {
-  it("entram no máximo EXTRA_LINES_MAX linhas extras (as últimas caem); vazias continuam ignoradas", () => {
+  it("entram no máximo EXTRA_LINES_MAX linhas extras (as últimas caem); vazias não ocupam vaga", () => {
     const lines = Array.from({ length: EXTRA_LINES_MAX + 3 }, (_, i) => `Linha ${i + 1}`);
-    const note = renderContextNote({}, { lines: ["", ...lines], now: new Date("2026-09-20T15:00:00Z") })!;
-    expect(note).toContain(`• Linha ${EXTRA_LINES_MAX - 1}`);
-    expect(note).not.toContain(`• Linha ${EXTRA_LINES_MAX}`);
+    const note = renderContextNote({}, { lines: ["", ...lines, ""], now: new Date("2026-09-20T15:00:00Z") })!;
+    expect(note).toContain(`• Linha ${EXTRA_LINES_MAX}`);
+    expect(note).not.toContain(`• Linha ${EXTRA_LINES_MAX + 1}`);
     expect(note).not.toMatch(/^• $/m);
   });
 });

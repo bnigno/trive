@@ -20,8 +20,8 @@ export type StoreFactsInput = {
   hours: string;
   /** Retirada (setting store_pickup); vazio = sem linha. */
   pickup: string;
-  /** Faixas de motoboy ativas: área (cidades) e janelas; null = não há motoboy. */
-  motoboy: { area: string; windows: readonly DeliveryWindow[] } | null;
+  /** Faixas de motoboy ativas: área (cidades) e as janelas de cada cidade; null = não há motoboy. `area` vazia = faixa sem nome de cidade. */
+  motoboy: { area: string; cities: readonly { city: string; windows: readonly DeliveryWindow[] }[] } | null;
   /** Correios: cotado na hora (SuperFrete ligado com CEP de origem) ou calculado pela equipe. */
   correios: "cotado_na_hora" | "pela_equipe";
   payment: { onlineLink: boolean; manualPix: boolean };
@@ -64,17 +64,28 @@ export function renderStoreFacts(input: StoreFactsInput): string {
   lines.push(`• ${contact.join(" · ")}`);
 
   if (clean(input.hours) !== "") lines.push(`• Atendimento: ${clean(input.hours)}`);
-  if (clean(input.pickup) !== "") lines.push(`• Retirada: ${clean(input.pickup)}`);
+  // Retirada não existe nas ferramentas (cotar_frete só devolve motoboy e Correios; criar_pedido exige um frete):
+  // quem quiser retirar, combina com a equipe.
+  if (clean(input.pickup) !== "") {
+    lines.push(`• Retirada: ${clean(input.pickup)} Quem quiser retirar combina com a equipe: monte a sacola e chame transferir_para_atendente — criar_pedido só fecha com entrega.`);
+  }
 
   const correios =
     input.correios === "cotado_na_hora"
       ? "Correios (PAC ou SEDEX) cotados na hora por cotar_frete; prazo em dias úteis a partir da postagem."
       : "Correios com o frete calculado pela equipe — cotar_frete diz quando é o caso; não há valor nem prazo para prometer.";
-  if (input.motoboy && clean(input.motoboy.area) !== "") {
-    const windows = uniqueWindows(input.motoboy.windows);
-    const janelas = windows.length > 0 ? `, nas janelas ${windows.map(windowLabel).join(" · ")}` : "";
+  if (input.motoboy) {
+    const onde = clean(input.motoboy.area) !== "" ? `em ${clean(input.motoboy.area)}` : "na área atendida (cotar_frete diz se o CEP dela entra)";
+    const perCity = input.motoboy.cities.map((c) => ({ city: c.city, windows: uniqueWindows(c.windows) })).filter((c) => c.windows.length > 0);
+    const allSame = perCity.length > 0 && perCity.every((c) => c.windows.map(windowLabel).join("|") === perCity[0].windows.map(windowLabel).join("|"));
+    const janelas =
+      perCity.length === 0
+        ? ""
+        : allSame
+          ? `, nas janelas ${perCity[0].windows.map(windowLabel).join(" · ")}`
+          : ` — janelas por cidade: ${perCity.map((c) => `${c.city} ${c.windows.map(windowLabel).join(" · ")}`).join("; ")}`;
     lines.push(
-      `• Entrega por motoboy em ${clean(input.motoboy.area)}${janelas}. Pagou antes da hora-limite, sai na janela do dia; depois, na do dia seguinte. Onde o motoboy chega não há Correios. Valor e janela do dia: só cotar_frete.`,
+      `• Entrega por motoboy ${onde}${janelas}. Pagou antes da hora-limite, sai na janela do dia; depois, na do dia seguinte. Onde o motoboy chega não há Correios. Valor e janela do dia: só cotar_frete.`,
     );
     lines.push(`• Fora dessa área: ${correios}`);
   } else {
@@ -96,6 +107,7 @@ export function renderStoreFacts(input: StoreFactsInput): string {
   lines.push(
     `• Troca e devolução: arrependimento em até ${EXCHANGE_FACTS.regretDays} dias corridos após receber (frete de volta por conta da loja, reembolso integral em até ${EXCHANGE_FACTS.refundBusinessDays} dias úteis); defeito em até ${EXCHANGE_FACTS.defectDaysDurable} dias (troca, devolução ou abatimento). Quem conduz é a equipe: acolha e transfira.`,
   );
-  lines.push(`• Política de troca: ${clean(input.exchangePolicy) !== "" ? clean(input.exchangePolicy) : EXCHANGE_POLICY_MISSING}.`);
+  const policy = clean(input.exchangePolicy) !== "" ? clean(input.exchangePolicy).replace(/[.!?…]+$/u, "") : EXCHANGE_POLICY_MISSING;
+  lines.push(`• Política de troca: ${policy}.`);
   return lines.join("\n");
 }

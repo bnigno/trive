@@ -286,7 +286,8 @@ export async function updateStoreFactsAction(
     const entries: Array<[string, string]> = [
       ["store_hours", String(formData.get("storeHours") ?? "").trim()],
       ["store_pickup", String(formData.get("storePickup") ?? "").trim()],
-      ["store_about", String(formData.get("storeAbout") ?? "").trim()],
+      // O textarea manda \r\n: normaliza antes de contar e gravar (como a carta de estreia).
+      ["store_about", String(formData.get("storeAbout") ?? "").replace(/\r\n?/g, "\n").trim()],
     ];
     for (const [key, value] of entries) {
       await updateSetting(db, { key, value, userId: user.id });

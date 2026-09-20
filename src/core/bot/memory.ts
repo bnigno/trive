@@ -351,8 +351,13 @@ function todayLine(now: Date): string {
   return `${spWeekdayName(key)}, ${d}/${m}/${y} (${key})`;
 }
 
-/** Teto de linhas extras no caderninho: quem monta põe as menos importantes (destaques do catálogo) por último — são as primeiras a cair. */
-export const EXTRA_LINES_MAX = 12;
+/**
+ * Teto de linhas extras no caderninho — acima da soma dos máximos de cada
+ * fonte (cartela 1 + reserva 1 + avisos 1 + feedback 3 + fotos 3 + compra 1 +
+ * envio 1 + ponte 1 + retorno 2 + destaques 2 = 16): nada legítimo cai; é
+ * guarda contra uma fonte nova sem teto. Linhas vazias não contam.
+ */
+export const EXTRA_LINES_MAX = 16;
 
 export function renderContextNote(
   state: BotState,
@@ -422,8 +427,8 @@ export function renderContextNote(
   }
   // Linhas vindas de outras fontes de verdade (reserva ativa, avisos pedidos,
   // cartela) — o caderninho não duplica o que já mora em tabela própria.
-  for (const line of (extras.lines ?? []).slice(0, EXTRA_LINES_MAX)) {
-    if (line.trim() !== "") linhas.push(`• ${line.trim()}`);
+  for (const line of (extras.lines ?? []).map((l) => l.trim()).filter((l) => l !== "").slice(0, EXTRA_LINES_MAX)) {
+    linhas.push(`• ${line}`);
   }
 
   if (linhas.length === 0) return null;

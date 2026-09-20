@@ -186,7 +186,7 @@ export default async function ProdutosPage({
     }
   }
 
-  const hasFilters = Boolean(q || status || readinessFilter);
+  const hasFilters = Boolean(q || status || readinessFilter || liaFilter);
 
   return (
     <div className="flex flex-col gap-6">
@@ -218,6 +218,8 @@ export default async function ProdutosPage({
         }
       />
 
+      {/* A ficha da Lia (composição, como veste, nota, tipo) mora em cards só do dono: staff não vê o card nem os links. */}
+      <OwnerOnly>
       {liaSummary.complete < liaSummary.total ? (
         <section
           className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30"
@@ -244,6 +246,7 @@ export default async function ProdutosPage({
           </div>
         </section>
       ) : null}
+      </OwnerOnly>
 
       <div className="flex flex-wrap items-center gap-3">
         <form
@@ -276,7 +279,7 @@ export default async function ProdutosPage({
             return (
               <Link
                 key={filter.value || "todos"}
-                href={listUrl(q, filter.value, readinessFilter)}
+                href={listUrl(q, filter.value, readinessFilter, liaFilter ?? "")}
                 className={cx(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   isCurrent
@@ -294,7 +297,7 @@ export default async function ProdutosPage({
             return (
               <Link
                 key={filter.value}
-                href={listUrl(q, statusParam, isCurrent ? "" : filter.value)}
+                href={listUrl(q, statusParam, isCurrent ? "" : filter.value, liaFilter ?? "")}
                 className={cx(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   isCurrent
@@ -387,7 +390,9 @@ export default async function ProdutosPage({
                   {/* O selo mora embaixo do nome: no celular, a última coluna fica fora da tela. */}
                   <div className="mt-1">
                     <ReadinessBadge productId={item.id} readiness={readiness.get(item.id)} />
-                    <LiaIssueLinks productId={item.id} issues={readiness.get(item.id)?.lia ?? []} />
+                    <OwnerOnly>
+                      <LiaIssueLinks productId={item.id} issues={readiness.get(item.id)?.lia ?? []} />
+                    </OwnerOnly>
                   </div>
                 </Td>
                 <Td>{item.variantCount}</Td>

@@ -204,6 +204,7 @@ export function BotSettingsForm({
   botModel,
   botMode,
   exchangePolicy,
+  exchangePolicyWarning,
   botExtraInstructions,
   quickReplies,
   handoffSilenceHours,
@@ -214,6 +215,8 @@ export function BotSettingsForm({
   botModel: string;
   botMode: string;
   exchangePolicy: string;
+  /** Aviso quando a política de troca chama a loja de "maison" (a ficha da Lia a repete). */
+  exchangePolicyWarning?: string | null;
   botExtraInstructions: string;
   quickReplies: string;
   handoffSilenceHours: number;
@@ -267,6 +270,7 @@ export function BotSettingsForm({
           defaultValue={exchangePolicy}
           placeholder="Ex.: Troca em até 7 dias após a entrega, com etiqueta e sem uso; o frete da troca é por nossa conta na primeira vez."
         />
+        {exchangePolicyWarning ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">⚠️ {exchangePolicyWarning}</p> : null}
       </Field>
 
       <Field

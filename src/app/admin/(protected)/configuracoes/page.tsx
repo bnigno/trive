@@ -263,7 +263,11 @@ export default async function ConfiguracoesPage() {
             ficha. Frete e pagamento entram sozinhos a partir de Frete e Mercado Pago; a política de troca vem de
             WhatsApp → Vendedora.
           </p>
-          {brandWordWarning(data.storeFacts.about) ? <Badge tone="warning">{brandWordWarning(data.storeFacts.about)}</Badge> : null}
+          {(() => {
+            // Qualquer texto livre que entra na ficha da Lia (sobre, horário, retirada, frase da loja).
+            const warning = [data.storeFacts.about, data.storeFacts.hours, data.storeFacts.pickup, data.storefront.tagline].map(brandWordWarning).find(Boolean);
+            return warning ? <Badge tone="warning">{warning}</Badge> : null;
+          })()}
           <StoreFactsForm defaults={data.storeFacts} />
           <details className="text-sm">
             <summary className="cursor-pointer text-zinc-600 dark:text-zinc-300">Prévia do que a Lia lê</summary>

@@ -1,32 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { renderStoreFacts, type StoreFactsInput } from "@/core/bot/store-facts";
+import { renderStoreFacts } from "@/core/bot/store-facts";
+import { FICHA_REAL } from "../../helpers/store-facts-fixture";
 import { EXCHANGE_FACTS } from "@/core/store/exchange-facts";
 
-/** Os dados reais da loja em 2026-09-20 (7 cidades do motoboy, 3 janelas). */
-export const FICHA_REAL: StoreFactsInput = {
-  storeName: "TRIVÉ",
-  heroLine: "Para a mulher que se veste de si.",
-  about: "Peças escolhidas com calma, em edições pequenas, para o calor de Belém.",
-  address: "Belém — PA",
-  instagram: "@trive_mfeminine",
-  siteUrl: "https://www.trivemaison.com.br",
-  hours: "segunda a sábado, 9h às 19h",
-  pickup: "",
-  motoboy: {
-    area: "Belém, Ananindeua, Marituba, Castanhal, Santa Izabel, Benevides e Santa Bárbara",
-    windows: [
-      { start: "19:00", end: "21:00", cutoff: "17:00" },
-      { start: "09:00", end: "12:00", cutoff: "08:00" },
-      { start: "16:00", end: "19:00", cutoff: "13:00" },
-      // Repetida por outra faixa: entra uma vez só.
-      { start: "09:00", end: "12:00", cutoff: "08:00" },
-    ],
-  },
-  correios: "cotado_na_hora",
-  payment: { onlineLink: true, manualPix: true },
-  exchangePolicy: "Troca ou devolução em até 7 dias após receber, peça sem uso e com etiqueta.",
-};
 
 describe("renderStoreFacts", () => {
   it("com os dados reais: cidades na ordem, janelas únicas e ordenadas com hora-limite, Correios na hora, pagamento e troca — sem hoje/amanhã e sem maison", () => {
@@ -63,6 +40,21 @@ describe("renderStoreFacts", () => {
     expect(texto).not.toContain("Sobre:");
     expect(texto).not.toContain("Atendimento:");
     expect(texto).toContain("• Instagram: @trive_mfeminine · Site: https://www.trivemaison.com.br");
+  });
+
+  it("janelas diferentes por cidade saem por cidade; faixa de motoboy sem nome de cidade não vira 'só Correios'; política sem ponto duplo", () => {
+    const porCidade = renderStoreFacts({
+      ...FICHA_REAL,
+      motoboy: { area: "Belém e Castanhal", cities: [{ city: "Belém", windows: [{ start: "19:00", end: "21:00", cutoff: "17:00" }] }, { city: "Castanhal", windows: [{ start: "16:00", end: "19:00", cutoff: "13:00" }] }] },
+    });
+    expect(porCidade).toContain("• Entrega por motoboy em Belém e Castanhal — janelas por cidade: Belém 19h–21h (pague até 17h); Castanhal 16h–19h (pague até 13h).");
+    const semNome = renderStoreFacts({ ...FICHA_REAL, motoboy: { area: "", cities: [{ city: "Motoboy", windows: [] }] } });
+    expect(semNome).toContain("• Entrega por motoboy na área atendida (cotar_frete diz se o CEP dela entra).");
+    expect(semNome).not.toContain("• Entrega: Correios");
+    // A política é a última linha: termina com um ponto só, mesmo quando a dona já pôs o dela.
+    expect(renderStoreFacts({ ...FICHA_REAL, exchangePolicy: "Troca em 7 dias." }).endsWith("• Política de troca: Troca em 7 dias.")).toBe(true);
+    expect(renderStoreFacts({ ...FICHA_REAL, exchangePolicy: "Troca em 7 dias." })).not.toContain("dias..");
+    expect(renderStoreFacts({ ...FICHA_REAL, pickup: "Sem loja aberta." })).toContain("• Retirada: Sem loja aberta. Quem quiser retirar combina com a equipe: monte a sacola e chame transferir_para_atendente — criar_pedido só fecha com entrega.");
   });
 
   it("é determinístico (prefixo cacheável do prompt)", () => {

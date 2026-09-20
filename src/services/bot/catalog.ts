@@ -192,6 +192,20 @@ export async function execListarProdutos(
     viewer: { customerId: ctx.customerId },
     limit: 200,
   });
+  // Tipo sem nenhuma peça marcada (a dona ainda não tipou o catálogo, ou a
+  // peça é um "Longo Aurora" que ninguém marcou): não negar o que existe —
+  // procura pelo nome com o termo que a Lia passou e avisa.
+  let tipoPeloNome = false;
+  if (pieceType && items.length === 0 && !busca) {
+    items = await listPublicProducts(db, {
+      q: input.categoria!.trim(),
+      ...(categorySlug ? { categorySlug } : {}),
+      ...(editionSlug ? { editionSlug } : {}),
+      viewer: { customerId: ctx.customerId },
+      limit: 200,
+    });
+    tipoPeloNome = items.length > 0;
+  }
 
   const byAttribute = await listProductIdsWithVariant(db, {
     ...(input.cor ? { cor: input.cor } : {}),
@@ -208,12 +222,15 @@ export async function execListarProdutos(
     filtros.push(`até ${formatCentsBRL(tetoCents)}`);
   }
 
+  if (tipoPeloNome) {
+    filtros.splice(filtros.findIndex((f) => f.startsWith("tipo ")), 1, `"${input.categoria!.trim()}" no nome — nenhuma peça tem o tipo marcado ainda`);
+  }
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
     return {
       ok: true,
       text: filtros.length > 0
-        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra — e diga isso à cliente com honestidade.`
+        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${pieceType ? ` — o filtro por tipo só vê peças com o tipo marcado; tente busca: "${input.categoria!.trim()}"` : ""} — e diga isso à cliente com honestidade.`
         : "O catálogo está vazio no momento — em breve teremos novidades!",
     };
   }

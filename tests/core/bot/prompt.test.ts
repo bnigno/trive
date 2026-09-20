@@ -5,7 +5,7 @@ import { buildBotSystemPrompt, DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
 import { renderStoreFacts } from "@/core/bot/store-facts";
 import { BOT_TOOLS } from "@/core/bot/tools";
 import { VARIANT_MENU_BUTTON_LABEL } from "@/core/bot/variants";
-import { FICHA_REAL } from "./store-facts.test";
+import { FICHA_REAL } from "../../helpers/store-facts-fixture";
 
 // O vocabulário de restaurante entrava no modelo pela nossa própria boca:
 // "menu" aparecia no prompt, nas descrições das ferramentas e nos marcadores.
