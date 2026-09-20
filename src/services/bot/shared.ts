@@ -1,5 +1,6 @@
 // Peças comuns dos executores da vendedora: tipos, constantes, caderninho (bot_state) e emissor de cartões.
 import { eq } from "drizzle-orm";
+import type { BotImageInput, SalesAssistant } from "@/adapters/assistant";
 import type { CepLookup } from "@/adapters/cep";
 import type { CorreiosQuoter } from "@/adapters/superfrete";
 import type { FileStorage } from "@/adapters/storage";
@@ -61,6 +62,27 @@ export type BotAttachment =
 export type BotCardDeps = { storage: FileStorage; render: CardRenderer };
 
 /**
+ * Uma foto recente da cliente, como as ferramentas a enxergam. `image` (os
+ * bytes preparados) só existe para as fotos DESTE turno; a de um turno
+ * anterior vem só com a impressão digital gravada em media_meta.
+ */
+export type RecentImage = {
+  waMessageId: string;
+  mediaUrl: string;
+  /** Impressão digital (16 hex); ausente/null = a foto não foi hasheada. */
+  phash?: string | null;
+  image?: BotImageInput;
+};
+
+/** O que identificar_peca_na_foto precisa para a comparação visual (camada 2); ausente = só a camada por hash. */
+export type PhotoMatchDeps = {
+  assistant: SalesAssistant;
+  storage: FileStorage;
+  /** O prazo do modelo neste turno: a comparação só roda se sobrar tempo. */
+  deadlineAt: Date;
+};
+
+/**
  * Teto para desenhar um cartão DENTRO do turno — só no ensaio (dryRun), onde
  * ninguém está no WhatsApp esperando. Na conversa real, cartão fora do cache
  * vai para a fila e chega logo depois do texto.
@@ -109,7 +131,9 @@ export type BotExecutorContext = {
    * responde"). registrar_foto_com_a_peca escolhe por `foto` (padrão: a
    * última). Vazio quando a Lia não enxerga fotos (mídia desligada).
    */
-  recentImages?: Array<{ waMessageId: string; mediaUrl: string }>;
+  recentImages?: RecentImage[];
+  /** Comparação visual da foto com as peças do catálogo (identificar_peca_na_foto); ausente = só a camada por hash. */
+  photoMatch?: PhotoMatchDeps;
   /** Turno iniciado pela Lia (retorno combinado): sem inbound novo, nada de agendar outro retorno. */
   proactive?: boolean;
   /** Copiloto: ferramentas com efeito não rodam (a dona decide) e nenhum cartão sai pela fila. */

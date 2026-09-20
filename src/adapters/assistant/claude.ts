@@ -34,6 +34,11 @@ const MIN_MODEL_CALL_MS = 5_000;
 export function unavailableFromApiError(error: APIError, context: { model: string }): AssistantUnavailableError {
   const status = error.status;
   const code = error.type ?? undefined;
+  // Quem chamou desistiu (orçamento da comparação visual): caminho esperado,
+  // não é falha da API — nem retry nem log de erro.
+  if (error instanceof Anthropic.APIUserAbortError) {
+    return new AssistantUnavailableError("chamada cancelada por quem chamou", { status, code, retryable: false, reason: "chamada cancelada por quem chamou" });
+  }
   const text = `${error.message} ${JSON.stringify(error.error ?? "")}`.toLowerCase();
   let reason: string;
   let retryable: boolean;

@@ -129,7 +129,7 @@ A Lia transcreve os áudios que as clientes mandam no WhatsApp com a API da Open
 
 1. Crie uma conta em <https://platform.openai.com>, coloque um crédito pequeno (US$ 5 duram meses) e gere uma chave em **API keys**.
 2. Cadastre `OPENAI_API_KEY` na Vercel (Production e Preview) — a chave nunca vai para o navegador (o CI bloqueia).
-3. Na Central "Vendedora & WhatsApp", o interruptor **"A Lia vê fotos e ouve áudios"** liga e desliga o recurso. Sem a chave, o áudio vira "[a cliente enviou um áudio]" e a vendedora pede para escrever.
+3. Na Central "Vendedora & WhatsApp", o interruptor **"A Lia vê fotos e ouve áudios"** liga e desliga o recurso. Sem a chave, o áudio vira "[a cliente enviou um áudio]" e a vendedora pede para escrever. Ao lado, **"A Lia reconhece a peça na foto"**: foto da própria loja repassada pela cliente é comparada com as fotos do catálogo (impressão digital, sem custo) e, se não bater, com até 8 peças parecidas pela Anthropic — nada de chave extra; a foto continua não sendo guardada (ver "A Lia reconhece a peça na foto" no runbook).
 
 Privacidade: o arquivo de áudio e a foto são processados na hora e não ficam guardados por nós; o texto transcrito fica na conversa como qualquer mensagem.
 

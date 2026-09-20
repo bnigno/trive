@@ -87,6 +87,7 @@ interface PageData {
   awaitingOwner: number;
   digestEnabled: boolean;
   mediaEnabled: boolean;
+  photoMatchEnabled: boolean;
   cardsEnabled: boolean;
   lastDigest: { date: string; url: string; at: Date } | null;
   /** Resumo dos links de story (a lista completa fica em /whatsapp/links). */
@@ -120,6 +121,7 @@ async function loadPageData(): Promise<PageData | null> {
         "wa_quick_replies",
         "owner_digest_enabled",
         "bot_media_enabled",
+        "bot_photo_match_enabled",
         "bot_cards_enabled",
         "handoff_silence_hours",
         "handoff_auto_return_hours",
@@ -187,6 +189,7 @@ async function loadPageData(): Promise<PageData | null> {
     awaitingOwner,
     digestEnabled: settingsMap["owner_digest_enabled"] !== false,
     mediaEnabled: settingsMap["bot_media_enabled"] !== false,
+    photoMatchEnabled: settingsMap["bot_photo_match_enabled"] !== false,
     cardsEnabled: settingsMap["bot_cards_enabled"] !== false,
     campaignLinks: {
       total: campaignLinks.length,
@@ -366,9 +369,15 @@ export default async function WhatsappPage() {
             label={`A ${sellerName} vê fotos e ouve áudios`}
             hint={
               isTranscriptionConfigured()
-                ? "Foto da cliente (print, peça do armário, convite) vai para a inteligência; áudio é transcrito. Centavos por uso; nada é guardado."
+                ? "Foto da cliente (print, peça do armário, convite) vai para a inteligência; áudio é transcrito. Centavos por uso; nada da foto é guardado além de uma impressão digital de 16 caracteres, para reconhecer a peça."
                 : "Fotos vão para a inteligência (centavos por uso). Áudio exige a chave da OpenAI na hospedagem — sem ela, a vendedora pede para escrever."
             }
+          />
+          <ToggleSwitch
+            settingKey="bot_photo_match_enabled"
+            checked={data.photoMatchEnabled}
+            label={`A ${sellerName} reconhece a peça na foto`}
+            hint="Foto da própria loja repassada pela cliente (post, site, etiqueta): compara com as fotos do catálogo pela impressão digital (grátis) e, se não bater, com até 8 peças parecidas pela inteligência (centavos). Desligado, ela volta a descrever a foto e buscar parecidas. A impressão digital (16 caracteres, irreversível) é calculada com ou sem este interruptor; a foto em si nunca é guardada."
           />
           <ToggleSwitch
             settingKey="catalog_draft_enabled"

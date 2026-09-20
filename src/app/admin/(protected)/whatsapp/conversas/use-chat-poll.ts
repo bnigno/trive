@@ -20,6 +20,9 @@ const chatMessageSchema = z.object({
   kind: z.string(),
   body: z.string(),
   mediaUrl: z.string().nullable(),
+  /** Nomes das peças que a Lia reconheceu na foto (null = nada reconhecido) e com que certeza. */
+  recognized: z.array(z.string()).nullable().optional(),
+  recognizedLevel: z.enum(["exato", "provavel", "talvez"]).nullable().optional(),
   status: z.string(),
   errorDetail: z.string().nullable(),
   createdAt: z.string(),

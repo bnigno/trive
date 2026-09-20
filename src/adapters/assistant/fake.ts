@@ -88,9 +88,10 @@ export class FakeSalesAssistant implements SalesAssistant {
     const scripted = this.extractionScripts.shift();
     if (scripted instanceof Error) throw scripted;
     // Sem roteiro, responde no formato que o schema pediu: a chegada do
-    // Ateliê (costBasis) ou a ficha pela foto.
+    // Ateliê (costBasis), a comparação de fotos (matches: nenhuma bate) ou a
+    // ficha pela foto.
     const properties = (input.jsonSchema as { properties?: Record<string, unknown> }).properties ?? {};
-    const fallback = "costBasis" in properties ? FAKE_ARRIVAL_JSON : FAKE_PRODUCT_DRAFT_JSON;
+    const fallback = "costBasis" in properties ? FAKE_ARRIVAL_JSON : "matches" in properties ? { matches: [] } : FAKE_PRODUCT_DRAFT_JSON;
     return {
       json: scripted === undefined ? fallback : scripted,
       usage: { inputTokens: 4200, outputTokens: 800, cacheReadTokens: 0, cacheWriteTokens: 0 },

@@ -43,6 +43,7 @@ export function ToggleSwitch({
     | "bot_enabled"
     | "owner_digest_enabled"
     | "bot_media_enabled"
+    | "bot_photo_match_enabled"
     | "bot_cards_enabled"
     | "catalog_draft_enabled"
     | "atelier_enabled"

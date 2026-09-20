@@ -558,6 +558,12 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
    * transcrição). Ausente = ligado; o áudio ainda exige OPENAI_API_KEY.
    */
   bot_media_enabled: z.boolean(),
+  /**
+   * A vendedora reconhece a peça do catálogo na foto que a cliente manda
+   * (impressão digital das fotos + comparação visual). Ausente = ligado; só
+   * age quando bot_media_enabled também está ligado.
+   */
+  bot_photo_match_enabled: z.boolean(),
   bot_cards_enabled: z.boolean(),
   /** Janela de envio em lote (avisos de "voltou", convites VIP), horas de São Paulo. */
   wa_send_window_start: z.number().int().min(0).max(23),

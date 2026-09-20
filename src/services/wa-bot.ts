@@ -8,7 +8,7 @@
 // Memória: o "caderninho" (src/core/bot/memory.ts) vive em
 // wa_conversations.bot_state e entra no turno como primeira mensagem, fora do
 // prompt de sistema — que se mantém idêntico entre turnos para o cache valer.
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ZodError } from "zod";
 import { getAdapterMode } from "@/adapters/adapter-mode";
 import { isWaLid } from "@/lib/phone";
@@ -19,6 +19,7 @@ import {
   type SalesAssistant,
 } from "@/adapters/assistant";
 import { getCepLookup } from "@/adapters/cep";
+import { getFileStorage } from "@/adapters/storage";
 import { getCorreiosQuoter } from "@/adapters/superfrete";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memory";
@@ -38,7 +39,7 @@ import { auditLog, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { bridgeStockLine } from "@/services/site-carts";
-import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN } from "@/services/wa-media";
+import { isBotMediaEnabled, loadTurnImages, MAX_IMAGES_PER_TURN, type PreparedTurnImage } from "@/services/wa-media";
 import { getStoreMap } from "@/services/store-catalog";
 import { withSuggestionAnchors } from "@/services/wa-history";
 import {
@@ -81,11 +82,13 @@ import type {
   BotCardDeps,
   BotExecutorContext,
   ExecutorCtx,
+  RecentImage,
   RunBotTurnResult,
 } from "./bot/shared";
 import { execCotarFrete } from "./bot/shipping";
 import { execAgendarRetorno } from "./bot/followups";
 import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
+import { execIdentificarPecaNaFoto } from "./bot/photo-match";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { followupMemoryLines } from "./wa-followups";
 import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, isFollowupTooLate, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
@@ -316,6 +319,8 @@ export function buildToolExecutor(
         return execEnviarNotaDaCuradora(db, ctx, parsed.data as BotToolInputs["enviar_nota_da_curadora"]);
       case "registrar_foto_com_a_peca":
         return execRegistrarFotoComAPeca(db, ctx, parsed.data as BotToolInputs["registrar_foto_com_a_peca"]);
+      case "identificar_peca_na_foto":
+        return execIdentificarPecaNaFoto(db, ctx, parsed.data as BotToolInputs["identificar_peca_na_foto"]);
       case "retirar_minha_foto":
         return execRetirarMinhaFoto(db, ctx);
       case "agendar_retorno":
@@ -401,7 +406,7 @@ type TurnConversation = typeof waConversations.$inferSelect;
 
 export type LoadedTurnHistory = {
   history: BotChatMessage[];
-  recentImages: Array<{ waMessageId: string; mediaUrl: string }>;
+  recentImages: RecentImage[];
   /** Só contagens para a trilha: a foto nunca é guardada. */
   media: { images: number; audios: number };
   lastInboundAt: Date | null;
@@ -461,16 +466,34 @@ export async function loadTurnHistory(
     .filter((row) => row.kind === "image" && row.mediaUrl)
     .slice(-MAX_IMAGES_PER_TURN)
     .map((row) => row.mediaUrl as string);
-  const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map();
-  // Fotos recentes para registrar_foto_com_a_peca: as deste turno só se a
-  // Lia as viu de fato; as de antes (dentro da janela) valem mesmo sem
-  // anexo — "foto → qual peça? → ela responde".
-  const recentImages = mediaEnabled
+  const images = mediaEnabled ? await loadTurnImages(provider, imageUrls) : new Map<string, PreparedTurnImage>();
+  // A impressão digital da foto deste turno fica em media_meta (16 hex; a
+  // foto não): no próximo turno ("foto → qual peça? → ela responde") a Lia
+  // ainda reconhece a peça sem baixar de novo.
+  for (const row of pending) {
+    const loaded = row.kind === "image" && row.mediaUrl ? images.get(row.mediaUrl) : undefined;
+    if (loaded?.phash && parseWaMediaMeta(row.mediaMeta).phash === undefined) {
+      await tx
+        .update(waMessages)
+        .set({ mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || ${JSON.stringify({ phash: loaded.phash })}::jsonb` })
+        .where(eq(waMessages.id, row.id));
+    }
+  }
+  // Fotos recentes para registrar_foto_com_a_peca e identificar_peca_na_foto:
+  // as deste turno só se a Lia as viu de fato (com bytes e hash); as de antes
+  // (dentro da janela) valem mesmo sem anexo — "foto → qual peça? → ela
+  // responde" — só com a impressão digital gravada.
+  const recentImages: RecentImage[] = mediaEnabled
     ? rows
         .filter((row) => row.direction === "inbound" && row.kind === "image" && row.mediaUrl && now.getTime() - row.createdAt.getTime() <= LOOK_PHOTO_WINDOW_MS)
         .filter((row) => !pending.some((p) => p.id === row.id) || images.has(row.mediaUrl as string))
         .slice(-MAX_IMAGES_PER_TURN)
-        .map((row) => ({ waMessageId: row.id, mediaUrl: row.mediaUrl as string }))
+        .map((row) => {
+          const loaded = images.get(row.mediaUrl as string);
+          return loaded
+            ? { waMessageId: row.id, mediaUrl: row.mediaUrl as string, phash: loaded.phash, image: { mediaType: loaded.mediaType, base64: loaded.base64 } }
+            : { waMessageId: row.id, mediaUrl: row.mediaUrl as string, phash: parseWaMediaMeta(row.mediaMeta).phash ?? null };
+        })
     : [];
 
   const messages: BotChatMessage[] = rows.map((message) => {
@@ -492,7 +515,7 @@ export async function loadTurnHistory(
         mediaMeta: parseWaMediaMeta(message.mediaMeta),
         image: attached ? "attached" : isPending ? "unavailable" : "old",
       }),
-      ...(attached ? { images: [attached] } : {}),
+      ...(attached ? { images: [{ mediaType: attached.mediaType, base64: attached.base64 }] } : {}),
     };
   });
   const state = parseBotState(conversation.botState);
@@ -829,6 +852,7 @@ export async function runBotTurn(
       cepLookup: getCepLookup(),
       correiosQuoter: getCorreiosQuoter(),
       recentImages,
+      photoMatch: { assistant, storage: deps.cards?.storage ?? getFileStorage(), deadlineAt: modelDeadline },
       copilot,
       ...(deps.cards ? { cards: deps.cards } : {}),
     });
@@ -1115,6 +1139,7 @@ export async function runScheduledBotTurn(
       cepLookup: getCepLookup(),
       correiosQuoter: getCorreiosQuoter(),
       recentImages: loaded.recentImages,
+      photoMatch: { assistant, storage: deps.cards?.storage ?? getFileStorage(), deadlineAt: modelDeadlineFor(turnStartedAt, input.deadlineAt ?? undefined) },
       now,
       proactive: true,
       copilot,

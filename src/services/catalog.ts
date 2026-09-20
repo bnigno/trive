@@ -3,6 +3,8 @@
 // registra o custo inicial informado na criação do produto.
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
+
+import { imagePhash } from "@/services/image-fingerprint";
 import { and, eq, ilike, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
@@ -1241,6 +1243,10 @@ export async function addProductImage(
   const mdPath = `${basePath}${MD_SUFFIX}`;
   const thumbPath = `${basePath}${THUMB_SUFFIX}`;
 
+  // A impressão digital sai do -full.webp (não do original): é esse arquivo
+  // que o backfill relê do Storage, então os dois caminhos dão o mesmo hash.
+  const phash = await imagePhash(fullBuffer);
+
   // Upload antes do INSERT: a linha só existe se os arquivos existirem.
   await storage.upload({ path: fullPath, data: fullBuffer, contentType: "image/webp" });
   await storage.upload({ path: mdPath, data: mdBuffer, contentType: "image/webp" });
@@ -1263,6 +1269,7 @@ export async function addProductImage(
         altText: parsed.altText ?? null,
         color,
         sortOrder: Number(nextSortOrder),
+        phash,
       })
       .returning();
 
