@@ -452,6 +452,39 @@ async function recordIgnoredInbound(
   });
 }
 
+/** Quanto a fila espera para repetir um recibo que chegou antes de a mensagem existir (o turno da Lia já commitou até lá). */
+export const STATUS_REPLAY_DELAY_MS = 20_000;
+export type MessageStatusTarget = "delivered" | "read";
+
+/**
+ * Aplica um recibo da Z-API à mensagem pelo zapi_message_id, de forma
+ * MONOTÔNICA (nunca regride). Devolve quantas linhas mudaram: 0 = a mensagem
+ * não existe (ainda) ou já estava adiante.
+ */
+export async function applyMessageStatus(db: DbOrTx, input: { zapiMessageId: string; target: MessageStatusTarget }): Promise<number> {
+  const res = await db
+    .update(waMessages)
+    .set(
+      input.target === "read"
+        ? // Lida implica entregue: READ que chegou antes do DELIVERED (ou DELIVERED perdido) não deixa delivered_at vazio.
+          { status: "read", readAt: new Date(), deliveredAt: sql`coalesce(${waMessages.deliveredAt}, now())` }
+        : { status: "delivered", deliveredAt: new Date() },
+    )
+    .where(
+      and(
+        eq(waMessages.zapiMessageId, input.zapiMessageId),
+        input.target === "read" ? inArray(waMessages.status, ["sent", "delivered"]) : eq(waMessages.status, "sent"),
+      ),
+    )
+    .returning({ id: waMessages.id });
+  return res.length;
+}
+
+async function messageExists(db: DbOrTx, zapiMessageId: string): Promise<boolean> {
+  const [row] = await db.select({ id: waMessages.id }).from(waMessages).where(eq(waMessages.zapiMessageId, zapiMessageId)).limit(1);
+  return row !== undefined;
+}
+
 export async function processZapiInbound(
   db: DbOrTx,
   input: ProcessZapiInboundInput,
@@ -496,23 +529,26 @@ export async function processZapiInbound(
   if (statusTarget && statusIds.length > 0 && !text) {
     let updated = 0;
     for (const id of statusIds) {
-      const res = await db
-        .update(waMessages)
-        .set(
-          statusTarget === "read"
-            ? { status: "read", readAt: new Date() }
-            : { status: "delivered", deliveredAt: new Date() },
-        )
-        .where(
-          and(
-            eq(waMessages.zapiMessageId, id),
-            statusTarget === "read"
-              ? inArray(waMessages.status, ["sent", "delivered"])
-              : eq(waMessages.status, "sent"),
-          ),
-        )
-        .returning({ id: waMessages.id });
-      updated += res.length;
+      const changed = await applyMessageStatus(db, { zapiMessageId: id, target: statusTarget });
+      updated += changed;
+      // Recibo que chegou antes de a linha existir (o turno da Lia ainda não
+      // commitou o balão que acabou de enviar) não pode se perder: repete
+      // daqui a pouco pela fila — é ele que alimenta o ✓✓ e "entregue no
+      // celular". Linha que existe e já está adiante (DELIVERED depois do
+      // READ) não precisa de nada; mensagem que nunca foi nossa só faz a
+      // fila olhar de novo e concluir.
+      if (changed === 0 && !(await messageExists(db, id))) {
+        await enqueueOutboxEvent(
+          db,
+          {
+            eventType: "wa.status_replay",
+            dedupeKey: `wa.status:${id}:${statusTarget}`,
+            payload: { zapiMessageId: id, status: statusTarget },
+            nextAttemptAt: new Date(Date.now() + STATUS_REPLAY_DELAY_MS),
+          },
+          { kick: false },
+        );
+      }
     }
     return { action: "status", updated };
   }

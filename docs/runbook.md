@@ -95,8 +95,10 @@ em autenticação.
 Mensagens e e-mails passam por uma fila com **retry automático** (tentativas
 repetidas com espera crescente). A resposta da Lia a uma mensagem sai na
 **mesma chamada do webhook** (o servidor responde 200 à Z-API e continua
-trabalhando — `after()` do Next); o aviso ao Inngest (kick, com teto de 3 s
-e aviso no log quando falha) e o cron de 1 minuto são **redes de segurança**
+trabalhando — `after()` do Next); uma mensagem que chega enquanto a Lia
+ainda responde é gravada na hora (o turno não segura a conversa) e ganha o
+próprio turno logo depois. O aviso ao Inngest (kick, com teto de 3 s e
+aviso no log quando falha) e o cron de 1 minuto são **redes de segurança**
 para quando essa chamada morre no meio (deploy, estouro dos 60 s). No plano
 grátis do Inngest uma função leva ~30 s (p50; p90 ~70 s) só para COMEÇAR:
 o que depende só dele — pedidos do site, cartões, e-mail — leva meio minuto,
@@ -111,7 +113,7 @@ lista tocável, foto e cartão vêm logo atrás, e a voz da curadora por último
 A Z-API não tem um "digitando" avulso: o status só aparece nos segundos
 antes de a mensagem ser entregue. Os segundos ficam em `src/core/bot/reply.ts`.
 Detalhe de medição: "enviado" no painel é o momento em que a Z-API aceitou a
-mensagem na fila dela — a entrega real vem 1–3 s depois (o "digitando" + 1 s).
+mensagem na fila dela — a entrega real vem 2–3 s depois (o "digitando" + 1 s).
 
 Quanto a Lia demora: **Vendedora & WhatsApp → "Tempo de resposta"** mostra a
 mediana e o p90 de mensagem → primeiro balão nos últimos 7 dias, o mesmo
@@ -853,8 +855,9 @@ O motivo entre parênteses diz o que a API da Anthropic respondeu:
 
 - **limite de uso da API (429)** ou **API da Anthropic instável (5xx)**: passageiro.
   A Lia já tentou o modelo 5 vezes (5 s, 10 s, 20 s, 40 s) antes de transferir
-  (banco ou provedor fora do ar seguem a política padrão da fila, 8 tentativas
-  em até 1 h, sem transferir ninguém). Se vira
+  (banco ou provedor fora do ar seguem a política padrão da fila: 8 tentativas
+  com espera dobrando a partir de 5 s — tudo esgota em ~11 min —, sem
+  transferir ninguém). Se vira
   rotina, a conta está no nível de uso mais baixo da Anthropic: em
   platform.claude.com → Limites de taxa, o nível sobe com o gasto acumulado
   (ou pedindo à Anthropic).

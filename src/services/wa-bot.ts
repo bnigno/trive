@@ -611,9 +611,11 @@ export async function deliverBotTurn(
   // Texto PRIMEIRO: é o que a cliente sente como "ela respondeu" e sai ~1 s
   // depois do "digitando"; lista, foto e cartão vêm logo atrás (o convite e
   // depois a vitrine), e a voz da curadora por último ("segue a voz dela" e
-  // aí o áudio) — assim um texto que falha e aborta o turno nunca deixa mídia
-  // já entregue para o retry repetir. Cada mídia tem dedupe determinístico
-  // por índice; falha é melhor esforço.
+  // aí o áudio). Mídia que falha é melhor esforço (não derruba o turno); um
+  // BALÃO que falha depois de outro já aceito derruba a transação e o retry
+  // repete o primeiro — falha da Z-API entre dois balões é rara, e é o preço
+  // de a entrega inteira ser uma transação só. Cada mídia tem dedupe
+  // determinístico por índice.
   // Primeira coisa que chegou à cliente (balão ou mídia): mede "mensagem → 1º balão".
   let firstSentAt: number | null = null;
   const sendAttachment = async (attachment: BotAttachment, index: number): Promise<void> => {
@@ -725,6 +727,15 @@ export async function deliverBotTurn(
  * tentando por mais tempo, sem transferir ninguém).
  */
 export const BOT_TURN_MODEL_ATTEMPTS = 5;
+/** Sem isto pela frente depois de pegar a vez da conversa, o turno nem começa (o adapter recusaria a chamada). */
+export const BOT_TURN_MIN_MODEL_MS = 5_000;
+/** Lançado antes de qualquer efeito (nem ✓✓ azul): a fila reagenda e o kick inline pede outra invocação. */
+export class BotTurnOutOfTimeError extends Error {
+  constructor(readonly remainingMs: number) {
+    super(`Sem tempo para o modelo neste turno: sobravam ${remainingMs} ms do prazo da fila.`);
+    this.name = "BotTurnOutOfTimeError";
+  }
+}
 /**
  * Orçamento do turno dentro dos 60 s da rota do Inngest: ~0,5 s de partida,
  * ≤ 2 s de preparo, o modelo (com ferramentas) até este teto e a entrega
@@ -773,19 +784,26 @@ export async function runBotTurn(
   const { conversationId } = input;
   // `attempt` = tentativas ANTERIORES da fila (0 na primeira).
   const lastModelAttempt = (input.attempt ?? 0) + 1 >= BOT_TURN_MODEL_ATTEMPTS;
-  const turnStartedAt = Date.now();
-  // O modelo tem até 35 s — ou o que sobra do prazo da fila menos a reserva
-  // da entrega, se for menos. Prazo curto demais para uma chamada vira
-  // "tempo esgotado" (passageiro) no adapter, sem começar: a fila reagenda
-  // (o worker já evita reclamar um turno sem ~32 s pela frente).
-  const modelDeadline = modelDeadlineFor(turnStartedAt, input.deadlineAt);
-
   const result = await db.transaction(async (tx): Promise<RunBotTurnResult> => {
+    // Um turno por conversa de cada vez, por advisory lock da transação: o
+    // webhook que grava a PRÓXIMA mensagem não espera por ele (o FOR UPDATE
+    // na linha da conversa segurava o upsert da inbound o turno inteiro e a
+    // Z-API só recebia o 200 no fim).
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${conversationId}::text))`);
+    // O relógio do turno começa DEPOIS do lock: quem esperou o turno anterior
+    // mede o que sobra de verdade. O modelo tem até 35 s — ou o que sobra do
+    // prazo da fila menos a reserva da entrega, se for menos; sem o mínimo
+    // para UMA chamada, o turno nem começa (nem marca a mensagem como lida):
+    // a fila reagenda e o kick inline pede outra invocação.
+    const turnStartedAt = Date.now();
+    const modelDeadline = modelDeadlineFor(turnStartedAt, input.deadlineAt);
+    if (modelDeadline.getTime() - turnStartedAt < BOT_TURN_MIN_MODEL_MS) {
+      throw new BotTurnOutOfTimeError(modelDeadline.getTime() - turnStartedAt);
+    }
     const [conversation] = await tx
       .select()
       .from(waConversations)
-      .where(eq(waConversations.id, conversationId))
-      .for("update");
+      .where(eq(waConversations.id, conversationId));
 
     if (!conversation) return { skipped: "conversa_inexistente" };
     if (conversation.status === "human") return { skipped: "atendimento_humano" };
@@ -1052,14 +1070,15 @@ export async function runScheduledBotTurn(
   // `attempt` = tentativas ANTERIORES (0 na primeira), como no wa.transcribe.
   const lastAttempt = (input.attempt ?? 0) + 1 >= getRetryPolicy(BOT_FOLLOWUP_EVENT).maxAttempts;
 
-  const turnStartedAt = Date.now();
   const result = await db.transaction(async (tx): Promise<RunScheduledBotTurnResult> => {
-    // Ordem dos locks igual à do turno reativo — a CONVERSA primeiro (o
-    // reativo trava a conversa e depois mexe em wa_followups); só então o
-    // retorno. Senão os dois turnos se travam em cruz e um deles cai.
+    // Ordem dos locks igual à do turno reativo — a CONVERSA primeiro (o mesmo
+    // advisory lock do reativo); só então o retorno (FOR UPDATE na linha).
+    // Senão os dois turnos se travam em cruz e um deles cai.
     const [pointer] = await tx.select({ conversationId: waFollowups.conversationId }).from(waFollowups).where(eq(waFollowups.id, followupId)).limit(1);
     if (!pointer) return { skipped: "inexistente", followupId };
-    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, pointer.conversationId)).for("update");
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${pointer.conversationId}::text))`);
+    const turnStartedAt = Date.now();
+    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, pointer.conversationId));
     const [followup] = await tx.select().from(waFollowups).where(eq(waFollowups.id, followupId)).for("update");
     if (!followup) return { skipped: "inexistente", followupId };
     if (followup.status !== "scheduled") return { skipped: `status_${followup.status}`, followupId };

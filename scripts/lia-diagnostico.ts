@@ -96,11 +96,11 @@ async function main(): Promise<void> {
       from t group by origem order by turnos desc`,
   );
 
-  secao("CLIENTE → 1º BALÃO: aceito pela Z-API e ENTREGUE no celular (segundos; junção pelo dedupe da resposta)");
+  secao("CLIENTE → 1º BALÃO: aceito pela Z-API (sent_at) e ENTREGUE no celular (segundos; junção pelo dedupe da resposta)");
   tabela(
     await sql`
       with r as (
-        select extract(epoch from (o.created_at - i.created_at)) as ate_aceito,
+        select extract(epoch from (coalesce(o.sent_at, o.created_at) - i.created_at)) as ate_aceito,
                extract(epoch from (o.delivered_at - i.created_at)) as ate_entregue
         from wa_messages o
         join wa_messages i on o.dedupe_key = 'wa.bot_reply:' || i.id::text

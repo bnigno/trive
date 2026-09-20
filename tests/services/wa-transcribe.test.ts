@@ -95,8 +95,10 @@ describe("transcribeInboundAudio", () => {
       { waMessageId: messageId, attempt: 0 },
       {
         runInline: async (outboxEventId) => {
+          // Fora da transação (o PGlite travaria se a tx ainda estivesse aberta) e DEPOIS do kick.
           const [row] = await db.select({ status: schema.outboxEvents.status }).from(schema.outboxEvents).where(eq(schema.outboxEvents.id, outboxEventId));
           seen.push({ id: outboxEventId, status: row.status });
+          expect(kicks).toHaveLength(1);
           throw new Error("inline caiu");
         },
       },

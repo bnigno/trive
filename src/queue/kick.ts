@@ -18,6 +18,12 @@ import { drainOutbox, type DrainOutboxResult } from "./worker";
 export const KICK_BUDGET_MS = 50_000;
 /** Orçamento do turno inline (a rota do webhook tem 60 s; a resposta 200 já saiu). */
 export const INLINE_KICK_BUDGET_MS = 45_000;
+/**
+ * Quanto da vida da lambda do webhook o inline pode usar, contado do INÍCIO da
+ * requisição — o webhook pode ter esperado o lock da conversa; o que já passou
+ * não está mais disponível para o turno.
+ */
+export const WEBHOOK_INLINE_MAX_MS = 55_000;
 /** Quanto tempo espera a linha aparecer (transação de quem enfileirou). */
 export const KICK_POLL_BUDGET_MS = 10_000;
 const KICK_POLL_MS = 500;
@@ -42,9 +48,10 @@ export type OutboxKickOptions = {
   /**
    * kick = o Inngest recebeu o aviso (padrão); inline = a própria invocação
    * que enfileirou (webhook, transcrição) — cuida SÓ do alvo e não aproveita
-   * para drenar o resto: a lambda do webhook não é lugar de lote.
+   * para drenar o resto: a lambda do webhook não é lugar de lote; cron =
+   * turno aninhado numa transcrição que a varredura processou.
    */
-  source?: Extract<OutboxSource, "kick" | "inline">;
+  source?: OutboxSource;
 };
 
 export type OutboxKickResult = DrainOutboxResult & {
@@ -175,6 +182,13 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
       return totals;
     }
     totals.target = "processada";
+    // Inline que falhou (turno sem tempo depois de esperar o lock da conversa,
+    // provedor fora): o kick com id já passou enquanto a linha estava
+    // "processing" e não voltaria — pede outro, para não sobrar só o cron.
+    if (inline && targetDrain.failed > 0 && !options.rekick) {
+      await requestKick(options.outboxEventId);
+      totals.rekicked.push(options.outboxEventId);
+    }
     // Com o alvo entregue, aproveita a invocação para o resto da fila — só se
     // sobra tempo de verdade (e nunca inline); senão o cron termina.
     if (!inline && remaining() >= GENERAL_DRAIN_MIN_MS) await rekickReleased(await drain());

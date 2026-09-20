@@ -17,7 +17,7 @@ vi.mock("next/server", async (importOriginal) => {
 const processZapiInbound = vi.fn();
 vi.mock("@/services/wa-inbound", () => ({ processZapiInbound: (...args: unknown[]) => processZapiInbound(...args) }));
 const runOutboxKick = vi.fn();
-vi.mock("@/queue/kick", () => ({ INLINE_KICK_BUDGET_MS: 45_000, runOutboxKick: (...args: unknown[]) => runOutboxKick(...args) }));
+vi.mock("@/queue/kick", () => ({ INLINE_KICK_BUDGET_MS: 45_000, WEBHOOK_INLINE_MAX_MS: 55_000, runOutboxKick: (...args: unknown[]) => runOutboxKick(...args) }));
 const fakeDb = { fake: true };
 vi.mock("@/db/client", () => ({ getDb: () => fakeDb }));
 
@@ -64,6 +64,22 @@ describe("POST /api/webhooks/zapi/[secret]", () => {
     // …e roda quando o after dispara.
     await afterTasks[0]();
     expect(runOutboxKick).toHaveBeenCalledWith(fakeDb, { outboxEventId: "e1", source: "inline", budgetMs: 45_000 });
+  });
+
+  it("o orçamento do inline é o que sobra da lambda: registro que esperou 20 s ganha 35 s, não 45", async () => {
+    vi.useFakeTimers();
+    try {
+      processZapiInbound.mockImplementation(async () => {
+        vi.advanceTimersByTime(20_000);
+        return { action: "bot_queued", conversationId: "c1", waMessageId: "m1", outboxEventId: "e3" };
+      });
+      runOutboxKick.mockResolvedValue({ target: "processada" });
+      await post({ messageId: "MSG-6" });
+      await afterTasks[0]();
+      expect(runOutboxKick).toHaveBeenCalledWith(fakeDb, { outboxEventId: "e3", source: "inline", budgetMs: 35_000 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("erro dentro do turno inline não sobe (o kick e o cron cobrem)", async () => {

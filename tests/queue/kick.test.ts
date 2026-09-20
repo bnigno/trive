@@ -115,6 +115,26 @@ describe("runOutboxKick", () => {
     expect(await statusOf(other)).toBe("pending");
   });
 
+  it("inline cujo alvo falhou (turno sem tempo depois de esperar o lock, provedor fora) pede outra invocação — o kick com id já tinha passado", async () => {
+    handlers["wa.bot_turn"] = async () => {
+      throw new Error("sem tempo");
+    };
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const requested: string[] = [];
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), {
+      outboxEventId: id,
+      source: "inline",
+      requestKick: async (target) => {
+        requested.push(target);
+      },
+      ...time,
+    });
+    expect(result).toMatchObject({ target: "processada", failed: 1, rekicked: [id] });
+    expect(requested).toEqual([id]);
+    expect(await statusOf(id)).toBe("failed");
+  });
+
   it("linha que ainda não commitou: espera em pequenos passos até aparecer, depois roda", async () => {
     const runs = recorder();
     const id = "00000000-0000-4000-8000-00000000c1c1";

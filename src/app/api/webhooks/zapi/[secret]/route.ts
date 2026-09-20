@@ -1,7 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
 import { getDb } from "@/db/client";
-import { INLINE_KICK_BUDGET_MS, runOutboxKick } from "@/queue/kick";
+import { INLINE_KICK_BUDGET_MS, runOutboxKick, WEBHOOK_INLINE_MAX_MS } from "@/queue/kick";
 import { processZapiInbound } from "@/services/wa-inbound";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,7 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ secret: string }> },
 ): Promise<NextResponse> {
+  const startedAt = Date.now();
   const { secret } = await context.params;
 
   let body: unknown = {};
@@ -39,9 +40,13 @@ export async function POST(
     }
     if ("outboxEventId" in result && typeof result.outboxEventId === "string") {
       const { outboxEventId } = result;
+      // O que sobra da vida desta lambda (o registro pode ter esperado o lock
+      // da conversa): sem ~32 s pela frente o kick não começa o turno e pede
+      // outra invocação ao Inngest em vez de morrer no meio aos 60 s.
+      const budgetMs = Math.max(0, Math.min(INLINE_KICK_BUDGET_MS, WEBHOOK_INLINE_MAX_MS - (Date.now() - startedAt)));
       after(async () => {
         try {
-          const kick = await runOutboxKick(getDb(), { outboxEventId, source: "inline", budgetMs: INLINE_KICK_BUDGET_MS });
+          const kick = await runOutboxKick(getDb(), { outboxEventId, source: "inline", budgetMs });
           console.info(`[webhook zapi] inline ${outboxEventId} → ${kick.target}`);
         } catch (error) {
           // Nunca vira 500 (a resposta já saiu): o kick e o cron entregam.

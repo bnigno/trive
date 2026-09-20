@@ -17,7 +17,7 @@ import { FakeMessagingProvider } from "@/adapters/zapi/fake";
 import * as schema from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
-import { buildToolExecutor, runBotTurn } from "@/services/wa-bot";
+import { BotTurnOutOfTimeError, buildToolExecutor, runBotTurn } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 import { nextMessageStamp } from "../helpers/clock";
 
@@ -1112,6 +1112,9 @@ describe("balões", () => {
       replyTemplate: "Sacola vazia por enquanto!",
     });
     const enqueuedAt = new Date(Date.now() - 1_500);
+    // Prazo da fila curto demais (esperou o lock da conversa): o turno nem começa — erro próprio, sem chamar o modelo.
+    await expect(runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, deadlineAt: new Date(Date.now() + 12_000) })).rejects.toBeInstanceOf(BotTurnOutOfTimeError);
+    expect(assistant.turns).toHaveLength(0);
     await runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, source: "inline" });
 
     const [trail] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.bot_turn"));

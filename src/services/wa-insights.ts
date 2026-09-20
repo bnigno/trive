@@ -2,11 +2,12 @@
 // "Bom dia da maison": conversas, turnos, transferências, pedidos que ela
 // fechou e o custo estimado — tudo derivado da trilha que runBotTurn grava
 // em audit_log ('wa.bot_turn' / 'wa.bot_handoff') e dos pedidos do canal.
-import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
 import { OUTBOX_SOURCES, type OutboxSource } from "@/core/queue/outbox-source";
+import { BOT_UNAVAILABLE_REPLY } from "@/services/bot/shared";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
@@ -243,7 +244,8 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
 
   // O que a cliente sentiu: da mensagem dela ao primeiro balão ENTREGUE (o
   // callback de status da Z-API grava delivered_at). A resposta da Lia tem
-  // dedupe 'wa.bot_reply:<id da inbound>' — é essa a junção.
+  // dedupe 'wa.bot_reply:<id da inbound>' — é essa a junção. O aviso do plano
+  // B usa o mesmo dedupe e fica de fora: não é resposta da Lia.
   const deliveredMs = sql`extract(epoch from (${waMessages.deliveredAt} - ${inboundOf.createdAt})) * 1000`;
   const [deliveredRow] = await db
     .select({
@@ -253,7 +255,14 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
     })
     .from(waMessages)
     .innerJoin(inboundOf, sql`${waMessages.dedupeKey} = 'wa.bot_reply:' || ${inboundOf.id}::text`)
-    .where(and(eq(waMessages.direction, "outbound"), sql`${waMessages.deliveredAt} is not null`, gte(waMessages.createdAt, since)));
+    .where(
+      and(
+        eq(waMessages.direction, "outbound"),
+        sql`${waMessages.deliveredAt} is not null`,
+        ne(waMessages.body, BOT_UNAVAILABLE_REPLY),
+        gte(waMessages.createdAt, since),
+      ),
+    );
   const ms = (value: string | null | undefined) => (value === null || value === undefined ? null : Math.round(Number(value)));
 
   return {
