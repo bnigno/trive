@@ -16,6 +16,7 @@ import {
   pendingInboundRows,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
+import { parseWaMediaMeta } from "@/core/whatsapp/media";
 import {
   DEFAULT_HANDOFF_AUTO_RETURN_HOURS,
   hoursSetting,
@@ -526,6 +527,7 @@ export async function getWaThreadTail(
       kind: waMessages.kind,
       body: waMessages.body,
       mediaUrl: waMessages.mediaUrl,
+      mediaMeta: waMessages.mediaMeta,
       templateKey: waMessages.templateKey,
       dedupeKey: waMessages.dedupeKey,
       status: waMessages.status,
@@ -580,6 +582,8 @@ export async function getWaThreadTail(
       kind: row.kind,
       body: row.body,
       mediaUrl: row.mediaUrl,
+      // O que a Lia reconheceu na foto (só nomes; a foto nunca é guardada).
+      recognized: parseWaMediaMeta(row.mediaMeta).reconhecido?.nomes ?? null,
       status: row.status,
       errorDetail: row.errorDetail,
       createdAt: row.createdAt,

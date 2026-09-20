@@ -323,6 +323,13 @@
       "when": 1789864943570,
       "tag": "0045_correios_superfrete",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1789928849823,
+      "tag": "0046_phash_das_fotos",
+      "breakpoints": true
     }
   ]
 }

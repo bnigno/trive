@@ -1,7 +1,9 @@
 // Mídia da cliente a caminho do modelo: a foto é baixada da Z-API, reduzida
 // (≤ 1024 px, JPEG) e vai como bloco de imagem só no turno em que chegou;
-// nada é guardado no nosso Storage nem no audit. Tudo é melhor esforço com
-// orçamento de tempo: uma foto que não abre vira marcador e o turno segue.
+// nada da foto é guardado no nosso Storage nem no audit — só a impressão
+// digital (16 hex, irreversível), para a Lia reconhecer a peça do catálogo.
+// Tudo é melhor esforço com orçamento de tempo: uma foto que não abre vira
+// marcador e o turno segue.
 import { eq } from "drizzle-orm";
 import sharp from "sharp";
 
@@ -9,6 +11,7 @@ import type { BotImageInput } from "@/adapters/assistant";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { settings } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
+import { imagePhash } from "@/services/image-fingerprint";
 
 export const MODEL_IMAGE_MAX_EDGE = 1024;
 export const INBOUND_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
@@ -66,6 +69,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/** A foto do turno pronta para o modelo, mais a impressão digital dela (null quando o sharp não a hasheou). */
+export type PreparedTurnImage = BotImageInput & { phash: string | null };
+
 /**
  * Baixa e prepara as fotos do turno, em paralelo e dentro do orçamento.
  * Falha individual (URL expirada, arquivo grande, tempo) = a foto fica de
@@ -74,8 +80,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 export async function loadTurnImages(
   provider: MessagingProvider,
   urls: readonly string[],
-): Promise<Map<string, BotImageInput>> {
-  const result = new Map<string, BotImageInput>();
+): Promise<Map<string, PreparedTurnImage>> {
+  const result = new Map<string, PreparedTurnImage>();
   const unique = [...new Set(urls)].slice(-MAX_IMAGES_PER_TURN);
   if (unique.length === 0) return result;
 
@@ -84,8 +90,8 @@ export async function loadTurnImages(
       withTimeout(
         (async () => {
           const media = await provider.downloadMedia({ url, maxBytes: INBOUND_IMAGE_MAX_BYTES });
-          const prepared = await prepareImageForModel(media.data);
-          return { url, image: { mediaType: prepared.mediaType, base64: prepared.base64 } };
+          const [prepared, phash] = await Promise.all([prepareImageForModel(media.data), imagePhash(media.data)]);
+          return { url, image: { mediaType: prepared.mediaType, base64: prepared.base64, phash } };
         })(),
         IMAGE_FETCH_BUDGET_MS,
       ),

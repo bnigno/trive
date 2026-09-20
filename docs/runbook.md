@@ -750,6 +750,63 @@ do designer em mãos, a troca é um PR de quem programa:
 O nome escrito no logo é fixo (TRIVÉ). Se a loja for renomeada no painel, o
 letreiro some sozinho e volta o nome em texto.
 
+## A Lia reconhece a peça na foto
+
+Desde 2026-09-20 (caso real: a cliente mandou a foto oficial da Blusa Maelle
+tirada do Instagram e perguntou "tem no M?"; a Lia descreveu a foto e mandou
+o catálogo). Quando a foto que a cliente manda **é uma foto da loja** (post,
+site, etiqueta, cartão repassado), a Lia identifica a peça e responde com
+`detalhar_produto` — sem reenviar o catálogo. Foto "parecida" (armário,
+outra loja) segue o fluxo de sempre: descreve e busca parecidas.
+
+Como funciona, em duas camadas (ferramenta `identificar_peca_na_foto`):
+
+- **Impressão digital (grátis, exata).** Cada foto de produto tem um dHash
+  de 64 bits em `product_images.phash` (calculado no upload, em
+  `addProductImage`, a partir do `-full.webp`). A foto da cliente ganha o
+  mesmo hash ao ser carregada no turno (`loadTurnImages`) e ele fica em
+  `media_meta.phash` da mensagem — **a foto em si nunca é guardada**; o hash
+  é um resumo irreversível de 16 caracteres. Distância ≤ **8** bits = a
+  mesma foto (reencodada, menor, com texto por cima); **9–10** = "talvez",
+  a Lia confirma em 1 pergunta; acima disso não é a mesma. Calibrado com as
+  fotos reais em 20/09: a mesma foto fica a ≤ 6; fotos de produtos públicos
+  diferentes nunca ficaram abaixo de 11. Só peças **públicas** (ativas, não
+  apagadas) entram; se duas peças públicas usam a mesma foto, a Lia lista as
+  duas e pergunta (aí é catálogo para arrumar).
+- **Comparação visual (centavos).** Sem acerto exato, e só para a foto
+  **deste turno**, a inteligência (o mesmo `bot_model` da Lia) recebe a foto
+  dela ao lado de até 8 miniaturas de candidatas (pelos filtros categoria/
+  cor/busca que a Lia informa; sem resultado, as primeiras do catálogo) e diz
+  quais **aparecem** na foto: ≥ 0,75 vira "provavelmente" (a Lia confirma em
+  meia frase), 0,5–0,75 "talvez" (confirma antes), abaixo nada. Teto de 12 s
+  dentro do turno e só roda se sobrarem ≥ 5 s do prazo do modelo; sem tempo,
+  provedor fora ou resposta torta ⇒ "não reconheci", e o turno segue. ~3–4
+  mil tokens de entrada por comparação (≈ US$ 0,01–0,02 no Sonnet); o audit
+  `wa.bot_turn` registra o `usage`.
+- **Cartões (`bot_cards`) ficam fora do índice de propósito**: a moldura do
+  cartão domina o hash e posts de peças diferentes saem quase iguais (510
+  pares a ≤ 3 bits nos dados reais). Cartão repassado tem o nome da peça
+  escrito — o prompt manda a Lia ler e chamar `detalhar_produto` pelo nome.
+- **O que fica gravado**: `media_meta.phash` e `media_meta.reconhecido`
+  (slugs, nomes, camada e distância/confiança) na mensagem da foto; a Central
+  mostra "🔎 Lia reconheceu: …" sob a foto. Interruptor **"A Lia reconhece a
+  peça na foto"** em Vendedora & WhatsApp (`bot_photo_match_enabled`,
+  ausente = ligado; exige o de mídia ligado).
+
+Quando ela reconhece errado: veja a distância em `media_meta.reconhecido`
+e rode `scripts/backfill-image-hashes.ts --relatorio` — o relatório mostra
+os pares de produtos públicos diferentes mais parecidos; o limiar mora num
+lugar só, `PHOTO_MATCH_MAX_DISTANCE` em `src/core/bot/photo-match.ts`
+(e `PHOTO_MATCH_MAYBE_DISTANCE`). Se dois produtos ativos têm a mesma foto,
+o problema é o catálogo (arquive o duplicado).
+
+Produção: migração 0046 (`product_images.phash`), `scripts/sync-seed.ts
+--settings bot_photo_match_enabled` e o backfill das fotos antigas:
+`ADAPTER_MODE=real npx tsx --env-file=.env.prod.local scripts/backfill-image-hashes.ts --relatorio`
+(idempotente — só quem está sem hash; `--force` recalcula tudo). Entre o
+deploy e o backfill a camada por hash não acha nada e a visual responde
+sozinha. O ensaio do painel ainda não aceita foto (PR seguinte).
+
 ## A Lia passou a conversa com "Assistente de IA indisponível"
 
 O motivo entre parênteses diz o que a API da Anthropic respondeu:

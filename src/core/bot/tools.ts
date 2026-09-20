@@ -30,6 +30,7 @@ export const BOT_TOOL_NAMES = [
   "montar_look",
   "anotar",
   "registrar_foto_com_a_peca",
+  "identificar_peca_na_foto",
   "retirar_minha_foto",
   "agendar_retorno",
   "transferir_para_atendente",
@@ -124,6 +125,8 @@ export type BotToolInputs = {
   /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
   /** `foto` = qual das fotos recentes dela (1 = a primeira, 2 = a segunda…); omitida = a última. */
   registrar_foto_com_a_peca: { produto: string; foto?: number };
+  /** Qual peça do catálogo aparece na foto que ela mandou (foto da loja repassada); categoria/cor/busca afunilam a comparação visual. */
+  identificar_peca_na_foto: { foto?: number; categoria?: string; cor?: string; busca?: string };
   retirar_minha_foto: Record<string, never>;
   /** Só depois do SIM dela à pergunta "posso te chamar …?". Data/hora no relógio de São Paulo. */
   agendar_retorno: { data: string; hora: string; motivo: string; cliente_autorizou: true };
@@ -688,6 +691,35 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "identificar_peca_na_foto",
+    description:
+      "A cliente mandou há pouco uma foto que parece ser da própria loja — print do site ou do Instagram, foto de um cartão que você enviou, foto com a etiqueta da loja. Confere contra as fotos do catálogo e diz QUAL peça aparece (pode ser mais de uma). Passe categoria e cor do que você vê para ajudar na comparação; foto = qual das fotos recentes (1 = a primeira; omita para a última). Depois responda à pergunta dela com detalhar_produto pelo slug devolvido. Não serve para foto DELA vestindo (use registrar_foto_com_a_peca) nem para peça de outra loja.",
+    input_schema: {
+      type: "object",
+      properties: {
+        foto: {
+          type: "integer",
+          minimum: 1,
+          description: "Qual das fotos recentes dela: 1 = a primeira, 2 = a segunda… Omita para a última.",
+        },
+        categoria: {
+          type: "string",
+          description: "A categoria que você vê na foto (blusa, vestido, saia…), como na PLANTA DA LOJA.",
+        },
+        cor: {
+          type: "string",
+          description: "A cor principal da peça na foto.",
+        },
+        busca: {
+          type: "string",
+          description: "Palavra que ajude a achar candidatas (detalhe, estampa, nome que apareça escrito na foto).",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "retirar_minha_foto",
     description:
       "A cliente pediu para tirar a foto dela da página da peça ('tira minha foto', 'não quero mais aparecer'): retira todas as fotos dela da vitrine na hora. Confirme em 1 frase.",
@@ -941,6 +973,12 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   registrar_foto_com_a_peca: z.strictObject({
     produto: z.string().trim().min(1).max(120),
     foto: z.number().int().min(1).max(10).optional(),
+  }),
+  identificar_peca_na_foto: z.strictObject({
+    foto: z.number().int().min(1).max(10).optional(),
+    categoria: z.string().trim().max(60).optional(),
+    cor: z.string().trim().max(40).optional(),
+    busca: z.string().trim().max(80).optional(),
   }),
   retirar_minha_foto: z.strictObject({}),
   agendar_retorno: z.strictObject({

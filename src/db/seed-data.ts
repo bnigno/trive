@@ -44,6 +44,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "store_pix_key", value: "" },
   { key: "owner_digest_enabled", value: true },
   { key: "bot_media_enabled", value: true },
+  // A Lia reconhece a peça do catálogo na foto da cliente (hash + visão).
+  { key: "bot_photo_match_enabled", value: true },
   { key: "bot_cards_enabled", value: true },
   { key: "wa_send_window_start", value: 9 },
   { key: "wa_send_window_end", value: 21 },

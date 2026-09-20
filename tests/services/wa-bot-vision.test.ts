@@ -134,6 +134,28 @@ describe("runBotTurn com fotos e áudios", () => {
     expect(JSON.stringify(audit.after)).not.toContain("base64");
   });
 
+  it("a impressão digital da foto do turno fica em media_meta (16 hex) — a foto não; o bloco de imagem vai só com mediaType e base64", async () => {
+    const conversationId = await createConversation();
+    const photo = await addInbound(conversationId, INBOUND_MEDIA_MARKERS.image, {
+      kind: "image",
+      mediaUrl: PHOTO_URL,
+      mediaMeta: { mimeType: "image/jpeg", width: 2400, height: 1600 },
+    });
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+
+    const [row] = await db.select({ mediaMeta: schema.waMessages.mediaMeta }).from(schema.waMessages).where(eq(schema.waMessages.id, photo));
+    expect(row.mediaMeta).toMatchObject({ mimeType: "image/jpeg", width: 2400, height: 1600, phash: expect.stringMatching(/^[0-9a-f]{16}$/) });
+    expect(JSON.stringify(row.mediaMeta)).not.toContain("base64");
+    expect(Object.keys(lastUserMessage()?.images?.[0] ?? {}).sort()).toEqual(["base64", "mediaType"]);
+
+    // Segundo turno com a mesma foto (agora antiga): o hash gravado não é reescrito.
+    const [before] = await db.select({ mediaMeta: schema.waMessages.mediaMeta }).from(schema.waMessages).where(eq(schema.waMessages.id, photo));
+    await addInbound(conversationId, "é essa aí, tem no M?");
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    const [after] = await db.select({ mediaMeta: schema.waMessages.mediaMeta }).from(schema.waMessages).where(eq(schema.waMessages.id, photo));
+    expect(after.mediaMeta).toEqual(before.mediaMeta);
+  });
+
   it("foto antiga (antes da última resposta) não é baixada e vira marcador", async () => {
     const conversationId = await createConversation();
     const photo = await addInbound(conversationId, INBOUND_MEDIA_MARKERS.image, { kind: "image", mediaUrl: OLD_PHOTO_URL });

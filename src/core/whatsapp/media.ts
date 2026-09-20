@@ -31,6 +31,18 @@ export const waMediaMetaSchema = z
         reason: z.string().optional(),
       })
       .optional(),
+    /** Impressão digital da foto (16 hex, core/images/phash.ts) — a foto em si nunca é guardada. */
+    phash: z.string().optional(),
+    /** O que a Lia reconheceu nesta foto (identificar_peca_na_foto). */
+    reconhecido: z
+      .object({
+        slugs: z.array(z.string()),
+        nomes: z.array(z.string()),
+        camada: z.enum(["hash", "visao"]),
+        distancia: z.number().optional(),
+        confianca: z.number().optional(),
+      })
+      .optional(),
   })
   .loose();
 

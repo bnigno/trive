@@ -53,6 +53,19 @@ describe("buildBotSystemPrompt", () => {
     expect(section).toContain("nunca o repita");
   });
 
+  it("fotos: primeiro identificar_peca_na_foto (foto da loja), Quem já vestiu para foto dela, parecidas só quando não reconhece; marcadores na regra 23", () => {
+    const prompt = buildBotSystemPrompt(OPCOES);
+    const section = prompt.slice(prompt.indexOf("FOTOS E ÁUDIOS DA CLIENTE:"), prompt.indexOf("REGRAS DURAS"));
+    expect(section).toContain("identificar_peca_na_foto");
+    expect(section).toContain("QUEM JÁ VESTIU");
+    expect(section).toContain("sem reenviar o catálogo");
+    expect(section).toContain("nunca o corpo, o rosto, a idade");
+    expect(section).not.toContain("Em seguida busque com listar_produtos (categoria + cor + busca) as 2 ou 3 peças");
+    expect(prompt).toContain("[reconhecimento exato]");
+    expect(prompt).toContain("[reconhecimento provável]");
+    expect(prompt).toContain("é identificar_peca_na_foto (ou o fluxo normal de fotos)");
+  });
+
   it("a loja é chamada pelo nome dela: o prompt nunca a chama de 'maison' (só proíbe a palavra)", () => {
     const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
     expect(prompt).toContain("A TRIVÉ é uma marca de moda brasileira");

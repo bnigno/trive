@@ -160,6 +160,12 @@ export const productImages = pgTable(
     // em qualquer escolha. Pareia com o primeiro eixo de attributes_schema.
     color: text("color"),
     sortOrder: integer("sort_order").notNull().default(0),
+    // Impressão digital da foto (dHash de 64 bits, core/images/phash.ts) em 16
+    // hexadecimais: a Lia compara com a foto que a cliente manda para saber
+    // QUAL peça é. Texto, não inteiro: Postgres não tem 64 bits sem sinal e a
+    // busca é varredura em memória (centenas de fotos). NULL = ainda não
+    // calculada (scripts/backfill-image-hashes.ts preenche).
+    phash: text("phash"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -171,5 +177,6 @@ export const productImages = pgTable(
       table.productId,
       table.color,
     ),
+    index("product_images_phash_idx").on(table.phash),
   ],
 );
