@@ -158,6 +158,10 @@ export interface PublicProductListItem {
   hoverImagePath: string | null;
   /** true se a soma de disponível (on_hand - reserved) das variantes > 0. */
   available: boolean;
+  /** Descrição, "como veste" ou composição (o primeiro que houver, até 200 chars): a frase da peça para a Lia. Só a listagem principal preenche. */
+  blurbSource?: string | null;
+  /** Quando a peça entrou no catálogo (novidades no caderninho da Lia). Só a listagem principal preenche. */
+  createdAt?: Date;
 }
 
 export async function listPublicProducts(
@@ -200,6 +204,8 @@ export async function listPublicProducts(
       brand: products.brand,
       categoryName: categories.name,
       pieceType: products.pieceType,
+      createdAt: products.createdAt,
+      blurbSource: sql<string | null>`left(coalesce(nullif(trim(${products.description}), ''), nullif(trim(${products.fitNotes}), ''), nullif(trim(${products.composition}), '')), 200)`,
       priceFromCents: sql<string>`min(${priceVersions.priceCents})`,
       priceToCents: sql<string>`max(${priceVersions.priceCents})`,
       availableSum: sql<string>`coalesce(sum(greatest(coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0), 0)), 0)`,
@@ -251,6 +257,8 @@ export async function listPublicProducts(
     imagePath: row.imagePath,
     hoverImagePath: row.hoverImagePath,
     available: Number(row.availableSum) > 0,
+    blurbSource: row.blurbSource,
+    createdAt: row.createdAt,
   }));
 }
 
@@ -672,7 +680,11 @@ export async function listPublicVariantFacts(
   db: ServiceDb,
   opts: { viewer?: CatalogViewer } = {},
 ): Promise<PublicVariantFacts[]> {
-  const items = await listPublicProducts(db, { limit: 200, ...(opts.viewer ? { viewer: opts.viewer } : {}) });
+  return listVariantFactsFor(db, await listPublicProducts(db, { limit: 200, ...(opts.viewer ? { viewer: opts.viewer } : {}) }));
+}
+
+/** Cores e tamanhos COM estoque das peças já escolhidas (a Lia só pede para as ≤ 30 linhas que vai mandar). */
+export async function listVariantFactsFor(db: ServiceDb, items: readonly PublicProductListItem[]): Promise<PublicVariantFacts[]> {
   if (items.length === 0) return [];
   const rows = await db
     .select({

@@ -19,7 +19,8 @@ import {
   lookCardTitle,
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
-import { parsePieceType, pieceTypeLabel, type PieceType } from "@/core/catalog/piece-types";
+import { formatCatalogLine } from "@/core/bot/catalog-line";
+import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, type PieceType } from "@/core/catalog/piece-types";
 import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
@@ -45,9 +46,11 @@ import {
   listProductIdsWithVariant,
   listPublicProducts,
   listPublicVariantFacts,
+  listVariantFactsFor,
   publicImageUrl,
   type PublicProductDetail,
   type PublicProductListItem,
+  type PublicVariantFacts,
 } from "@/services/store-catalog";
 import { siteBaseUrl } from "@/services/wa-messaging";
 
@@ -217,10 +220,24 @@ export async function execListarProdutos(
 
   const totalPaginas = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
   const pagina = Math.min(input.pagina ?? 1, totalPaginas);
-  const linhaDaPeca = (item: PublicProductListItem) => {
-    const preco = formatPriceRange(item.priceFromCents, item.priceToCents);
-    const categoria = item.categoryName ? ` · ${item.categoryName}` : "";
-    return `• ${item.name}${categoria} — ${preco}${item.available ? "" : " (esgotado)"}`;
+  // A linha leva tipo, cores e tamanhos COM estoque e a frase da peça: é o
+  // que a Lia tem para comentar com motivo real sem outra ida a detalhar_produto.
+  // Cores/tamanhos vêm numa consulta só, para as ≤ 30 linhas que vão sair.
+  const factsFor = async (list: readonly PublicProductListItem[]) =>
+    new Map((await listVariantFactsFor(db, list)).map((fact) => [fact.product.id, fact]));
+  const linhaDaPeca = (item: PublicProductListItem, facts: ReadonlyMap<string, PublicVariantFacts>) => {
+    const fact = facts.get(item.id);
+    const typed = item.pieceType !== null && (PIECE_TYPE_SLUGS as readonly string[]).includes(item.pieceType);
+    return formatCatalogLine({
+      name: item.name,
+      typeLabel: typed ? pieceTypeLabel(item.pieceType as PieceType) : null,
+      categoryName: item.categoryName,
+      price: formatPriceRange(item.priceFromCents, item.priceToCents),
+      available: item.available,
+      colors: fact?.colorsAvailable ?? [],
+      sizes: fact?.sizesAvailable ?? [],
+      blurbSource: item.blurbSource ?? null,
+    });
   };
   const listaTocavel = (fatia: PublicProductListItem[], inicio: number, title: string) => ({
     kind: "option_list" as const,
@@ -245,7 +262,8 @@ export async function execListarProdutos(
     }
     const inicio = (pagina - 1) * PAGE_SIZE;
     const page = items.slice(inicio, inicio + PAGE_SIZE);
-    const lines = page.map(linhaDaPeca);
+    const facts = await factsFor(page);
+    const lines = page.map((item) => linhaDaPeca(item, facts));
     lines.unshift(
       `${contagem} — mostrando ${inicio + 1} a ${inicio + page.length} (página ${pagina} de ${totalPaginas}${pagina < totalPaginas ? `; passe pagina: ${pagina + 1} para as próximas` : "; é a última"}).`,
     );
@@ -281,7 +299,9 @@ export async function execListarProdutos(
   const paraEnviar = recente ? listas.slice(0, 1) : listas.slice(0, orcamento);
   const cortadasPeloTurno = !recente && paraEnviar.length < listas.length;
 
-  const lines = (recente ? fatias[0] : fatias.slice(0, paraEnviar.length).flat()).map(linhaDaPeca);
+  const linhasDe = recente ? fatias[0] : fatias.slice(0, paraEnviar.length).flat();
+  const facts = await factsFor(linhasDe);
+  const lines = linhasDe.map((item) => linhaDaPeca(item, facts));
   if (recente) {
     const outras = listas.length === 2 ? "a lista 2 já está" : `as listas 2 a ${listas.length} já estão`;
     lines.unshift(`${contagem} — a 1ª lista reenviada; ${outras} na conversa (enviadas há pouco).`);

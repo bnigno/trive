@@ -1188,11 +1188,14 @@ describe("listar_produtos 2.0", () => {
     const porCategoria = await executor("listar_produtos", { categoria: "Vestidos" });
     expect(porCategoria.text).toContain("2 peças encontradas (categoria Vestidos)");
     expect(porCategoria.text).not.toContain("Blusa Linho");
+    // A linha traz só cores e tamanhos COM estoque (Verde G do Dunas está zerado) e a categoria quando não há tipo.
+    expect(porCategoria.text).toContain(`• Vestido Dunas · Vestidos — ${formatCentsBRL(28900)} · cores: Preto · tamanhos: M`);
+    expect(porCategoria.text).toContain(`• Vestido Brisa · Vestidos — ${formatCentsBRL(19900)} · cores: Verde · tamanhos: G`);
 
     // Tipo de peça (plural, sem acento) vale no mesmo campo: só a peça marcada com ele.
     const porTipo = await executor("listar_produtos", { categoria: "corsets" });
     expect(porTipo.text).toContain("1 peça encontrada (tipo Corset)");
-    expect(porTipo.text).toContain("Corset Rosalie");
+    expect(porTipo.text).toContain(`• Corset Rosalie · Corset — ${formatCentsBRL(22900)}`);
     expect(porTipo.text).not.toContain("Blusa Linho");
 
     const preto = await executor("listar_produtos", { cor: "preto" });
@@ -1226,6 +1229,8 @@ describe("listar_produtos 2.0", () => {
     const executor = executorFor(await createConversation());
     const result = await executor("listar_produtos", { busca: "linho" });
     expect(result.text).toContain("Vestido Areia");
+    // A frase da peça vai na linha: motivo real sem detalhar_produto.
+    expect(result.text).toContain('— "Linho puro, caimento fluido."');
   });
 
   it("pagina de 10 em 10 e a lista tocável acompanha a página", async () => {
