@@ -54,6 +54,7 @@ export const outboxSweep = inngest.createFunction(
       const result = await drainOutbox(db, {
         limit: SWEEP_BATCH_LIMIT,
         budgetMs: SWEEP_BUDGET_MS - elapsed,
+        source: "cron",
       });
       totals.recovered += result.recovered;
       totals.claimed += result.claimed;
@@ -78,7 +79,7 @@ export const outboxKick = inngest.createFunction(
   async ({ event }) => {
     const data = (event.data ?? {}) as { outboxEventId?: unknown; rekick?: unknown };
     const outboxEventId = typeof data.outboxEventId === "string" ? data.outboxEventId : undefined;
-    return runOutboxKick(getDb(), { outboxEventId, rekick: data.rekick === true });
+    return runOutboxKick(getDb(), { outboxEventId, rekick: data.rekick === true, source: "kick" });
   },
 );
 

@@ -12,7 +12,7 @@ import * as schema from "@/db/schema";
 import { KICK_POLL_BUDGET_MS, runOutboxKick } from "@/queue/kick";
 import { createTestDb, type TestDb } from "../helpers/db";
 
-const handlers: Record<string, (event: { id: string; deadlineAt?: Date }) => Promise<void>> = {};
+const handlers: Record<string, (event: { id: string; deadlineAt?: Date; source?: string }) => Promise<void>> = {};
 vi.mock("@/queue/handlers", () => ({
   resolveOutboxHandler: (eventType: string) => {
     const handler = handlers[eventType];
@@ -95,6 +95,24 @@ describe("runOutboxKick", () => {
     expect(new Set(runs)).toEqual(new Set([id, ...older]));
     expect(result).toMatchObject({ claimed: 11, done: 11, target: "processada", polls: 0, rekicked: [] });
     expect(await statusOf(id)).toBe("done");
+  });
+
+  it("inline (a própria invocação que enfileirou): reclama só o alvo, não drena o resto e a origem chega ao handler", async () => {
+    const sources: string[] = [];
+    handlers["wa.bot_turn"] = async (event) => {
+      sources.push(event.source ?? "?");
+    };
+    handlers["order.receipt"] = async (event) => {
+      sources.push(event.source ?? "?");
+    };
+    const other = await insertEvent({ nextAttemptInMs: -60_000 });
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), { outboxEventId: id, source: "inline", ...time });
+    expect(result).toMatchObject({ source: "inline", target: "processada", claimed: 1, done: 1, rekicked: [] });
+    expect(sources).toEqual(["inline"]);
+    expect(await statusOf(id)).toBe("done");
+    expect(await statusOf(other)).toBe("pending");
   });
 
   it("linha que ainda não commitou: espera em pequenos passos até aparecer, depois roda", async () => {

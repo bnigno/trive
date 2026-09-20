@@ -104,9 +104,10 @@ describe("processZapiInbound → roteamento para o bot de vendas", () => {
     });
     expect(outbox.some((e) => e.eventType === "wa.owner_forward")).toBe(false);
 
-    // Um kick só, depois do commit, sem o id do turno (o kick com id sairia
-    // de dentro da transação e não acharia a linha).
-    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: {} }]);
+    // Um kick só, depois do commit, COM o id do turno: é a rede de segurança
+    // do turno inline que a rota do webhook roda depois do 200.
+    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: { outboxEventId: outbox[0].id } }]);
+    expect(result.outboxEventId).toBe(outbox[0].id);
 
     // Mensagem inbound registrada e inbound_event fechado como sempre.
     const messages = await db.select().from(schema.waMessages);
@@ -114,6 +115,14 @@ describe("processZapiInbound → roteamento para o bot de vendas", () => {
     expect(result.waMessageId).toBe(messages[0].id);
     const [inbound] = await db.select().from(schema.inboundEvents);
     expect(inbound.status).toBe("done");
+  });
+
+  it("texto só de espaços é ignorado como o vazio: nada gravado, nenhum turno, nenhum kick", async () => {
+    await setSettings(true, true);
+    const result = await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-BLANK", "   ") });
+    expect(result).toEqual({ action: "ignored", ignored: true });
+    expect(await db.select().from(schema.waMessages)).toHaveLength(0);
+    expect(kicks).toEqual([]);
   });
 
   it("bot_disabled_until no PASSADO não silencia: bot volta a responder", async () => {

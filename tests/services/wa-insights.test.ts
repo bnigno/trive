@@ -212,5 +212,37 @@ describe("getBotResponseTimes", () => {
     expect(times.p50.deliveryMs).toBe(500);
     expect(times.p90.totalMs).toBe(90_000);
     expect(times.p90.modelMs).toBe(88_000);
+    // Turnos anteriores à medição de origem: todos "sem origem"; sem recibo de entrega: nada.
+    expect(times.bySource).toEqual({ inline: 0, kick: 0, cron: 0, unknown: 11 });
+    expect(times.delivered).toEqual({ turns: 0, p50Ms: null, p90Ms: null });
+  });
+
+  it("conta a origem de cada resposta medida e mede 'entregue no celular' pelo recibo da Z-API (dedupe da resposta → inbound)", async () => {
+    await db.insert(schema.auditLog).values([
+      turn({ mode: "autonomous", timings: { ...timings(10_000), source: "inline" } }),
+      turn({ mode: "autonomous", timings: { ...timings(10_000), source: "inline" } }),
+      turn({ mode: "autonomous", timings: { ...timings(10_000), source: "kick" } }),
+      turn({ mode: "autonomous", timings: timings(10_000) }),
+      // Sem balão (transferência sem texto): não é resposta em origem nenhuma.
+      turn({ mode: "autonomous", timings: { ...timings(10_000, { inboundToFirstBubbleMs: null }), source: "inline" } }),
+    ]);
+    const [conversation] = await db.insert(schema.waConversations).values({ phoneE164: "+5511999990000", status: "open" }).returning({ id: schema.waConversations.id });
+    const inboundAt = new Date(Date.now() - 60_000);
+    const [inbound] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: conversation.id, direction: "inbound", kind: "text", body: "oi", status: "delivered", zapiMessageId: "IN-ENTREGUE-1", createdAt: inboundAt })
+      .returning({ id: schema.waMessages.id });
+    await db.insert(schema.waMessages).values([
+      // Primeiro balão: aceito 6 s e ENTREGUE 8 s depois da mensagem dela.
+      { conversationId: conversation.id, direction: "outbound", kind: "text", body: "Oi!", status: "delivered", dedupeKey: `wa.bot_reply:${inbound.id}`, createdAt: new Date(inboundAt.getTime() + 6_000), deliveredAt: new Date(inboundAt.getTime() + 8_000) },
+      // Segundo balão e um envio sem recibo: fora da conta.
+      { conversationId: conversation.id, direction: "outbound", kind: "text", body: "…", status: "delivered", dedupeKey: `wa.bot_reply:${inbound.id}:1`, createdAt: new Date(inboundAt.getTime() + 9_000), deliveredAt: new Date(inboundAt.getTime() + 11_000) },
+      { conversationId: conversation.id, direction: "outbound", kind: "text", body: "x", status: "sent", dedupeKey: `wa.bot_reply:${crypto.randomUUID()}`, createdAt: new Date() },
+    ]);
+
+    const times = await getBotResponseTimes(sdb);
+    expect(times.turns).toBe(4);
+    expect(times.bySource).toEqual({ inline: 2, kick: 1, cron: 0, unknown: 1 });
+    expect(times.delivered).toEqual({ turns: 1, p50Ms: 8_000, p90Ms: 8_000 });
   });
 });

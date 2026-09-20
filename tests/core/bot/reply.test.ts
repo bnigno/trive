@@ -106,10 +106,10 @@ describe("typingSecondsFor (\"digitando…\" antes do balão)", () => {
 
   it("o primeiro balão fica curto (ela já pensou); os seguintes um pouco mais", () => {
     const longo = "x".repeat(400);
-    expect(typingSecondsFor(longo, "first")).toBe(2);
-    expect(typingSecondsFor(longo, "next")).toBe(3);
-    expect(typingSecondsFor("x".repeat(160), "first")).toBe(2);
-    expect(typingSecondsFor("x".repeat(100), "next")).toBe(3);
+    expect(typingSecondsFor(longo, "first")).toBe(1);
+    expect(typingSecondsFor(longo, "next")).toBe(2);
+    expect(typingSecondsFor("x".repeat(160), "first")).toBe(1);
+    expect(typingSecondsFor("x".repeat(100), "next")).toBe(2);
   });
 
   it("a nota da curadora mostra 'gravando áudio…' por alguns segundos", () => {

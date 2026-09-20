@@ -1,13 +1,19 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { getDb } from "@/db/client";
+import { INLINE_KICK_BUDGET_MS, runOutboxKick } from "@/queue/kick";
 import { processZapiInbound } from "@/services/wa-inbound";
 
 export const dynamic = "force-dynamic";
+// A resposta da Lia sai nesta mesma invocação, depois do 200 (after): a
+// função precisa viver até o turno terminar — mesmo teto de /api/inngest.
+export const maxDuration = 60;
 
 // Webhook da Z-API. O [secret] do path é a autenticação: mismatch devolve 404
 // para não revelar que o endpoint existe. Fora isso SEMPRE 200 rápido — a
-// verdade fica em inbound_events e o processamento real é assíncrono (outbox).
+// verdade fica em inbound_events; o evento do outbox que a mensagem gerou
+// roda logo depois de responder (after), com o kick do Inngest e o cron de
+// varredura como redes de segurança (lambda morta no meio, deploy).
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ secret: string }> },
@@ -30,6 +36,18 @@ export async function POST(
 
     if (result.action === "rejected" && result.rejected === "secret") {
       return new NextResponse("Not Found", { status: 404 });
+    }
+    if ("outboxEventId" in result && typeof result.outboxEventId === "string") {
+      const { outboxEventId } = result;
+      after(async () => {
+        try {
+          const kick = await runOutboxKick(getDb(), { outboxEventId, source: "inline", budgetMs: INLINE_KICK_BUDGET_MS });
+          console.info(`[webhook zapi] inline ${outboxEventId} → ${kick.target}`);
+        } catch (error) {
+          // Nunca vira 500 (a resposta já saiu): o kick e o cron entregam.
+          console.error(`[webhook zapi] turno inline ${outboxEventId} falhou; o kick e o cron cobrem`, error);
+        }
+      });
     }
   } catch (error) {
     // Nunca propaga: 200 mesmo assim para a Z-API não desativar o webhook.

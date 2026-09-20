@@ -1112,11 +1112,12 @@ describe("balões", () => {
       replyTemplate: "Sacola vazia por enquanto!",
     });
     const enqueuedAt = new Date(Date.now() - 1_500);
-    await runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt });
+    await runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, source: "inline" });
 
     const [trail] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.bot_turn"));
     const timings = (trail.after as { timings: Record<string, number | string | null> }).timings;
     expect(timings.enqueuedAt).toBe(enqueuedAt.toISOString());
+    expect(timings.source).toBe("inline");
     expect(timings.queueWaitMs).toBeGreaterThanOrEqual(1_500);
     expect(timings.queueWaitMs).toBeLessThan(60_000);
     for (const key of ["prepMs", "modelMs", "toolsMs", "deliveryMs", "totalMs", "inboundToFirstBubbleMs"]) {
@@ -1210,7 +1211,7 @@ describe("listar_produtos 2.0", () => {
     expect(provider.sentOptionLists[0].message).toContain("(11–12 de 12)");
   });
 
-  it("sem pagina, o catálogo inteiro vai em até 3 listas de uma vez, na ordem, antes do texto; a mesma pergunta em 30 min manda só a primeira", async () => {
+  it("sem pagina, o catálogo inteiro vai em até 3 listas de uma vez, na ordem, depois do texto; a mesma pergunta em 30 min manda só a primeira", async () => {
     for (let i = 1; i <= 25; i++) {
       await createSimpleProduct(`PECA-${String(i).padStart(2, "0")}`, `Peça ${i}`, 1000 * i);
     }
@@ -1236,14 +1237,14 @@ describe("listar_produtos 2.0", () => {
     ]);
     // Mais nova primeiro: a última linha da última lista é a peça mais antiga.
     expect(provider.sentOptionLists[2].options[4].title).toBe("Peça 1");
-    // As três listas saem antes do balão de texto, na ordem.
+    // O balão de texto sai antes das três listas, que seguem na ordem.
     const seq = (id: string) => Number(id.split("-").at(-1));
     const listas = provider.sentOptionLists.map((list) => seq(list.providerMessageId));
     expect(listas[0]).toBeLessThan(listas[1]);
     expect(listas[1]).toBeLessThan(listas[2]);
     const balao = provider.sentMessages.find((m) => m.body.includes("25 peças encontradas"));
     expect(balao).toBeDefined();
-    expect(listas[2]).toBeLessThan(seq(balao!.providerMessageId));
+    expect(seq(balao!.providerMessageId)).toBeLessThan(listas[0]);
     // As mensagens do turno têm created_at crescente: a thread e o histórico saem na ordem de envio.
     const rows = await db
       .select({ kind: schema.waMessages.kind, body: schema.waMessages.body, createdAt: schema.waMessages.createdAt })
@@ -1251,7 +1252,7 @@ describe("listar_produtos 2.0", () => {
       .where(eq(schema.waMessages.conversationId, conversationId))
       .orderBy(schema.waMessages.createdAt, schema.waMessages.id);
     const ordem = rows.filter((row) => row.kind === "option_list" || row.body.includes("25 peças encontradas")).map((row) => (row.kind === "option_list" ? row.body.match(/\((\d+–\d+)/)?.[1] : "texto"));
-    expect(ordem).toEqual(["1–10", "11–20", "21–25", "texto"]);
+    expect(ordem).toEqual(["texto", "1–10", "11–20", "21–25"]);
 
     // "Quero ver outra" logo depois: só a primeira lista de novo, e o modelo sabe que o resto já está na conversa.
     provider.sentOptionLists.length = 0;

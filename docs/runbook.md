@@ -93,27 +93,57 @@ em autenticação.
 ## Mensagem ou e-mail não chegou
 
 Mensagens e e-mails passam por uma fila com **retry automático** (tentativas
-repetidas com espera crescente). O normal é sair em segundos (quem enfileira
-avisa o executor na hora); o cron de 1 minuto é a rede de segurança, então
-um atraso de até um minuto ainda é normal — minutos seguidos, não. Se não
-chegar: **/admin/fila** → **Reprocessar** os itens em falha definitiva e ler
-o motivo mostrado no item.
+repetidas com espera crescente). A resposta da Lia a uma mensagem sai na
+**mesma chamada do webhook** (o servidor responde 200 à Z-API e continua
+trabalhando — `after()` do Next); o aviso ao Inngest (kick, com teto de 3 s
+e aviso no log quando falha) e o cron de 1 minuto são **redes de segurança**
+para quando essa chamada morre no meio (deploy, estouro dos 60 s). No plano
+grátis do Inngest uma função leva ~30 s (p50; p90 ~70 s) só para COMEÇAR:
+o que depende só dele — pedidos do site, cartões, e-mail — leva meio minuto,
+e isso é normal; minutos seguidos, não. Se não chegar: **/admin/fila** →
+**Reprocessar** os itens em falha definitiva e ler o motivo mostrado no item.
 
 Sinais que a cliente vê enquanto a Lia pensa: ✓✓ azul na mensagem dela assim
 que o turno começa (só quando é a Lia que vai responder — nunca em conversa
-"com você" nem em copiloto) e "digitando…" por 1–3 s antes de cada balão
-("gravando áudio…" antes da nota da curadora). A Z-API não tem um
-"digitando" avulso: o status só aparece nos segundos antes de a mensagem
-ser entregue. Os segundos ficam em `src/core/bot/reply.ts`. Detalhe de
-medição: "enviado" no painel é o momento em que a Z-API aceitou a mensagem
-na fila dela — a entrega real vem 2–4 s depois (o "digitando" + 1 s).
+"com você" nem em copiloto) e "digitando…" por 1–2 s antes de cada balão
+("gravando áudio…" antes da nota da curadora). O **texto sai primeiro**;
+lista tocável, foto e cartão vêm logo atrás, e a voz da curadora por último.
+A Z-API não tem um "digitando" avulso: o status só aparece nos segundos
+antes de a mensagem ser entregue. Os segundos ficam em `src/core/bot/reply.ts`.
+Detalhe de medição: "enviado" no painel é o momento em que a Z-API aceitou a
+mensagem na fila dela — a entrega real vem 1–3 s depois (o "digitando" + 1 s).
 
 Quanto a Lia demora: **Vendedora & WhatsApp → "Tempo de resposta"** mostra a
-mediana e o p90 de mensagem → primeiro balão nos últimos 7 dias, e onde o
-tempo foi (fila · preparo · modelo · entrega). Fila alta = o executor
-(Inngest) não está recebendo o aviso ou a função está caindo; modelo alto =
-a API da Anthropic lenta (vale testar o Haiku no Ensaio); entrega alta =
-Z-API lenta.
+mediana e o p90 de mensagem → primeiro balão nos últimos 7 dias, o mesmo
+número medido pelo **recibo de entrega** da Z-API ("Entregue no celular" —
+o que a cliente sentiu), a **origem** de cada resposta (na hora · pelo aviso
+ao Inngest · pelo cron) e onde o tempo foi (fila · preparo · modelo ·
+entrega). Fila alta com origem "pelo aviso"/"pelo cron" = o turno inline não
+rodou (ver a seção abaixo); modelo alto = a API da Anthropic lenta (vale
+testar o Haiku no Ensaio); entrega alta = Z-API lenta.
+
+## A Lia está lenta: como ler o card e o diagnóstico
+
+1. **Origem.** No card, quase tudo deve ser "na hora". Se "pelo aviso" ou
+   "pelo cron" cresce, a chamada do webhook não está terminando o turno:
+   procure no log da Vercel `[webhook zapi] inline … →` (o alvo diz
+   `processada`, `sem_tempo`, `nao_reclamada`) e `[outbox] kick ao Inngest
+   falhou`. Estouro dos 60 s da rota derruba o turno no meio — o lease de
+   2 min devolve a linha e o cron termina.
+2. **Fila.** É o tempo entre a mensagem gravada e o turno começar. Inline,
+   fica abaixo de 1 s. Alta só nos turnos "pelo aviso" = é o Inngest
+   demorando para começar a função (normal no plano grátis), não um erro.
+3. **Modelo.** 3–8 s é o normal; inclui as ferramentas. Acima disso por
+   dias: testar outro `bot_model` no Ensaio; ver `usage` no audit
+   (`wa.bot_turn`) — cache lido baixo = prompt mudando a cada turno.
+4. **Entrega.** Balões × (digitando + 1 s) + mídia. "Entregue no celular"
+   maior que "primeiro balão" por mais de ~3 s = a Z-API está segurando.
+5. **Diagnóstico completo, para o antes/depois de cada mudança:**
+   `npx tsx --env-file=.env.prod.local scripts/lia-diagnostico.ts --dias 30`
+   (só leitura). Sai: tempos por trecho e por origem, cliente → 1º balão
+   aceito e entregue, tokens/cache por modelo, ferramentas por turno, falhas
+   com código, 10 turnos mais lentos, cartões, e o que o catálogo dá para a
+   Lia dizer. Guarde a saída; rode de novo 3 dias depois e compare.
 
 E-mail de **recuperação de senha** não passa pela outbox (o payload é uma
 credencial e o feedback precisa ser imediato): reprocessar não se aplica — ver
@@ -822,7 +852,9 @@ sozinha. O ensaio do painel ainda não aceita foto (PR seguinte).
 O motivo entre parênteses diz o que a API da Anthropic respondeu:
 
 - **limite de uso da API (429)** ou **API da Anthropic instável (5xx)**: passageiro.
-  A Lia já tentou 5 vezes (5 s, 10 s, 20 s, 40 s) antes de transferir. Se vira
+  A Lia já tentou o modelo 5 vezes (5 s, 10 s, 20 s, 40 s) antes de transferir
+  (banco ou provedor fora do ar seguem a política padrão da fila, 8 tentativas
+  em até 1 h, sem transferir ninguém). Se vira
   rotina, a conta está no nível de uso mais baixo da Anthropic: em
   platform.claude.com → Limites de taxa, o nível sobe com o gasto acumulado
   (ou pedindo à Anthropic).

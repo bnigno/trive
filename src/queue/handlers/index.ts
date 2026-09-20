@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+import type { OutboxSource } from "@/core/queue/outbox-source";
 import { isWaLid } from "@/lib/phone";
 
 import { getSalesAssistant } from "@/adapters/assistant";
@@ -226,6 +227,8 @@ export type OutboxEvent = {
   createdAt: Date;
   /** Até quando o worker deixa este evento rodar (orçamento da varredura), quando há um. */
   deadlineAt?: Date;
+  /** Quem está processando: a invocação que enfileirou (inline), o kick do Inngest ou o cron. */
+  source: OutboxSource;
 };
 
 export type OutboxHandler = (event: OutboxEvent) => Promise<void>;
@@ -394,11 +397,22 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // última tentativa o serviço grava o marcador e a conversa segue.
   "wa.transcribe": async (event) => {
     const { waMessageId } = waTranscribePayloadSchema.parse(event.payload);
+    // O turno da Lia que a transcrição enfileira roda nesta MESMA invocação,
+    // se couber no que sobra do orçamento; senão fica para o kick/cron (o
+    // import é tardio porque kick → worker → handlers é um ciclo).
+    const { INLINE_KICK_BUDGET_MS, runOutboxKick } = await import("@/queue/kick");
     const result = await transcribeInboundAudio(
       getDb(),
       getMessagingProvider(),
       getTranscriber(),
       { waMessageId, attempt: event.attempts },
+      {
+        runInline: async (outboxEventId) => {
+          const budgetMs = event.deadlineAt ? event.deadlineAt.getTime() - Date.now() : INLINE_KICK_BUDGET_MS;
+          const kick = await runOutboxKick(getDb(), { outboxEventId, source: "inline", budgetMs });
+          console.info(`[wa.transcribe] turno inline ${outboxEventId} → ${kick.target}`);
+        },
+      },
     );
     console.info(`[wa.transcribe] ${waMessageId} → ${JSON.stringify(result)}`);
   },
@@ -520,7 +534,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       getDb(),
       getSalesAssistant(),
       getMessagingProvider(),
-      { followupId, attempt: event.attempts, deadlineAt: event.deadlineAt ?? null },
+      { followupId, attempt: event.attempts, deadlineAt: event.deadlineAt ?? null, source: event.source },
       {
         cards: {
           storage: getFileStorage(),
@@ -547,6 +561,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
         conversationId: payload.conversationId,
         attempt: event.attempts,
         enqueuedAt: event.createdAt,
+        source: event.source,
         ...(event.deadlineAt ? { deadlineAt: event.deadlineAt } : {}),
       },
       {

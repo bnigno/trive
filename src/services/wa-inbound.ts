@@ -156,21 +156,26 @@ export type ProcessZapiInboundResult =
   | { action: "ignored"; ignored: true; reason?: string }
   | { action: "duplicate"; duplicate: true }
   | { action: "status"; updated: number }
+  // `outboxEventId`: o evento que esta mensagem enfileirou (turno da Lia,
+  // aviso ao dono, transcrição, confirmação do SAIR) — quem chamou pode
+  // rodá-lo na mesma invocação, depois de responder à Z-API. Null quando o
+  // dedupe já tinha a linha.
   | {
       action: "opt_out";
       conversationId: string;
       waMessageId: string;
       /** true quando havia cliente cadastrado com esse telefone para desligar. */
       optedOut: boolean;
+      outboxEventId: string | null;
     }
-  | { action: "forwarded"; conversationId: string; waMessageId: string }
-  | { action: "bot_queued"; conversationId: string; waMessageId: string }
-  | { action: "transcribe_queued"; conversationId: string; waMessageId: string }
+  | { action: "forwarded"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "bot_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "transcribe_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   // Ateliê (mensagem do dono): chegada aberta, foto guardada no lote ou
   // orientação de como mandar.
-  | { action: "atelier_queued"; conversationId: string; waMessageId: string }
-  | { action: "atelier_photo"; conversationId: string; waMessageId: string }
-  | { action: "atelier_help"; conversationId: string; waMessageId: string }
+  | { action: "atelier_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "atelier_photo"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "atelier_help"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   // Resposta ao "Chegou bem?" que vai direto para a equipe (defeito / falar).
   | { action: "feedback_handoff"; conversationId: string; waMessageId: string }
   | { action: "look_consent"; conversationId: string; waMessageId: string };
@@ -301,7 +306,7 @@ export async function routeInboundMessage(
     waMessageId?: string;
     kind?: "audio";
   },
-): Promise<InboundRoute> {
+): Promise<{ route: InboundRoute; outboxEventId: string | null }> {
   const { conversation } = input;
 
   // Áudio do dono transcrito: recado com fotos recentes vira chegada; sem
@@ -330,7 +335,7 @@ export async function routeInboundMessage(
         body: input.text,
         now: input.now,
       });
-      return "atelier_queued";
+      return { route: "atelier_queued", outboxEventId: null };
     }
     if (decision.kind === "help") {
       await enqueueAtelierHelp(tx, {
@@ -338,7 +343,7 @@ export async function routeInboundMessage(
         zapiMessageId: input.zapiMessageId,
         reason: decision.reason,
       });
-      return "atelier_help";
+      return { route: "atelier_help", outboxEventId: null };
     }
   }
 
@@ -346,7 +351,7 @@ export async function routeInboundMessage(
   // recado para a dona — a Lia não vende para o motoboy.
   const courier = await findActiveCourierByPhone(tx, input.identityPhone);
   if (courier) {
-    await enqueueOutboxEvent(tx, {
+    const outboxEventId = await enqueueOutboxEvent(tx, {
       eventType: "wa.owner_forward",
       dedupeKey: `wa.fwd:${input.zapiMessageId}`,
       aggregateType: "wa_conversation",
@@ -357,7 +362,7 @@ export async function routeInboundMessage(
         customerName: `Motoboy ${firstNameOf(courier.name)}`,
       },
     });
-    return "forwarded";
+    return { route: "forwarded", outboxEventId };
   }
 
   const botEligible =
@@ -368,8 +373,9 @@ export async function routeInboundMessage(
 
   if (botEligible) {
     // Sem kick aqui: a transação de quem chama ainda está aberta e o kick
-    // chegaria antes do commit. Quem chama dá o kick depois de commitar.
-    await enqueueOutboxEvent(
+    // chegaria antes do commit. Quem chama dá o kick depois de commitar (e
+    // roda o turno na mesma invocação quando tem tempo).
+    const outboxEventId = await enqueueOutboxEvent(
       tx,
       {
         eventType: "wa.bot_turn",
@@ -380,10 +386,10 @@ export async function routeInboundMessage(
       },
       { kick: false },
     );
-    return "bot_queued";
+    return { route: "bot_queued", outboxEventId };
   }
 
-  await enqueueOutboxEvent(tx, {
+  const outboxEventId = await enqueueOutboxEvent(tx, {
     eventType: "wa.owner_forward",
     dedupeKey: `wa.fwd:${input.zapiMessageId}`,
     aggregateType: "wa_conversation",
@@ -394,7 +400,7 @@ export async function routeInboundMessage(
       ...(input.customerName ? { customerName: input.customerName } : {}),
     },
   });
-  return "forwarded";
+  return { route: "forwarded", outboxEventId };
 }
 
 /** Z-API manda '5511999998888' (sem '+'): normaliza BR; aceita E.164 estrangeiro. */
@@ -514,7 +520,8 @@ export async function processZapiInbound(
   // Sem texto nem mídia = status/ack — ignorados (não registram inbound,
   // senão o DELIVERED consumiria o dedupe do messageId). Ecos das nossas
   // próprias mensagens (fromMe) e grupos também não entram no fluxo.
-  if (!text || parsed.fromMe === true || parsed.isGroup === true) {
+  // Texto só de espaços também: viraria um bloco vazio para o modelo (400).
+  if (!text || text.trim() === "" || parsed.fromMe === true || parsed.isGroup === true) {
     return { action: "ignored", ignored: true };
   }
 
@@ -717,14 +724,14 @@ export async function processZapiInbound(
         .set({ status: "done", processedAt: new Date() })
         .where(eq(inboundEvents.id, inboundId));
 
-    const queueTranscription = async () => {
+    const queueTranscription = async (): Promise<string | null> => {
       await tx
         .update(waMessages)
         .set({
           mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || '{"transcript":{"status":"pending"}}'::jsonb`,
         })
         .where(eq(waMessages.id, message.id));
-      await enqueueOutboxEvent(
+      return enqueueOutboxEvent(
         tx,
         {
           eventType: "wa.transcribe",
@@ -754,9 +761,9 @@ export async function processZapiInbound(
         now,
         waMessageId: message.id,
       });
-      const done = async (action: "atelier_queued" | "atelier_photo" | "atelier_help" | "transcribe_queued") => {
+      const done = async (action: "atelier_queued" | "atelier_photo" | "atelier_help" | "transcribe_queued", outboxEventId: string | null = null) => {
         await markDone();
-        return { action, conversationId: conversation.id, waMessageId: message.id } as const;
+        return { action, conversationId: conversation.id, waMessageId: message.id, outboxEventId } as const;
       };
       if (decision.kind === "intake") {
         await openAtelierIntake(tx, {
@@ -778,8 +785,7 @@ export async function processZapiInbound(
         return done("atelier_photo");
       }
       if (decision.kind === "transcribe") {
-        await queueTranscription();
-        return done("transcribe_queued");
+        return done("transcribe_queued", await queueTranscription());
       }
       if (decision.kind === "help") {
         await enqueueAtelierHelp(tx, { conversationId: conversation.id, zapiMessageId: messageId, reason: decision.reason });
@@ -813,7 +819,7 @@ export async function processZapiInbound(
 
       // Confirmação educada — resposta transacional a um pedido do próprio
       // cliente, portanto NÃO exige opt-in. Sai pela fila como tudo.
-      await enqueueOutboxEvent(tx, {
+      const ackEventId = await enqueueOutboxEvent(tx, {
         eventType: "wa.send",
         dedupeKey: `wa.optout_ack:${messageId}`,
         aggregateType: "wa_conversation",
@@ -832,6 +838,7 @@ export async function processZapiInbound(
         conversationId: conversation.id,
         waMessageId: message.id,
         optedOut: customer !== undefined,
+        outboxEventId: ackEventId,
       } as const;
     }
 
@@ -861,7 +868,7 @@ export async function processZapiInbound(
           await markDone();
           return { action: "feedback_handoff", conversationId: conversation.id, waMessageId: message.id } as const;
         }
-        const route = await routeInboundMessage(tx, {
+        const { route, outboxEventId } = await routeInboundMessage(tx, {
           conversation,
           phoneE164,
           identityPhone,
@@ -872,7 +879,7 @@ export async function processZapiInbound(
           now,
         });
         await markDone();
-        return { action: route, conversationId: conversation.id, waMessageId: message.id } as const;
+        return { action: route, conversationId: conversation.id, waMessageId: message.id, outboxEventId } as const;
       }
     }
 
@@ -931,18 +938,20 @@ export async function processZapiInbound(
       isTranscriptionConfigured() &&
       !(await findActiveCourierByPhone(tx, identityPhone))
     ) {
-      await queueTranscription();
+      const outboxEventId = await queueTranscription();
       await markDone();
       return {
         action: "transcribe_queued",
         conversationId: conversation.id,
         waMessageId: message.id,
+        outboxEventId,
       } as const;
     }
 
     // Texto comum (ou mídia sem transcrição): a rota decide entre o turno da
-    // vendedora (fila) e o encaminhamento ao dono — nunca inline no webhook.
-    const route = await routeInboundMessage(tx, {
+    // vendedora e o encaminhamento ao dono — ambos vão para o outbox dentro
+    // desta transação; quem roda é a rota do webhook (depois do 200) ou a fila.
+    const { route, outboxEventId } = await routeInboundMessage(tx, {
       conversation,
       phoneE164,
       identityPhone,
@@ -957,10 +966,14 @@ export async function processZapiInbound(
       action: route,
       conversationId: conversation.id,
       waMessageId: message.id,
+      outboxEventId,
     } as const;
   });
-  // O kick só depois do commit: a linha do outbox já está visível para o
-  // outbox-kick e a resposta da Lia sai em segundos, não no cron seguinte.
-  if (result.action !== "duplicate") await kickOutbox();
+  // O kick só depois do commit — e com o id do evento que a mensagem gerou:
+  // é a rede de segurança do turno inline (a linha já está visível; se a
+  // invocação do webhook morrer no meio, o Inngest a acha pendente).
+  if (result.action !== "duplicate") {
+    await kickOutbox("outboxEventId" in result && result.outboxEventId ? result.outboxEventId : undefined);
+  }
   return result;
 }

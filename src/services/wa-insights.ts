@@ -3,8 +3,10 @@
 // fechou e o custo estimado — tudo derivado da trilha que runBotTurn grava
 // em audit_log ('wa.bot_turn' / 'wa.bot_handoff') e dos pedidos do canal.
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
+import { OUTBOX_SOURCES, type OutboxSource } from "@/core/queue/outbox-source";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
@@ -174,6 +176,10 @@ export interface BotResponseTimes {
   p90: BotTimingSplit;
   /** Médias — são elas que somam (a barra "onde o tempo foi"); medianas não somam. */
   mean: BotTimingSplit;
+  /** Quantas dessas respostas saíram na hora (inline), pelo aviso ao Inngest (kick) ou pelo cron. */
+  bySource: Record<OutboxSource | "unknown", number>;
+  /** Mensagem dela → primeiro balão ENTREGUE no celular (recibo da Z-API), pela junção do dedupe da resposta com a inbound. */
+  delivered: { turns: number; p50Ms: number | null; p90Ms: number | null };
 }
 
 const TIMING_FIELDS = [
@@ -199,9 +205,15 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
     sql`(${auditLog.after} -> 'timings' ->> ${field})::numeric`;
   const percentile = (q: number, field: (typeof TIMING_FIELDS)[number]) =>
     sql<string | null>`percentile_cont(${q}) within group (order by ${timing(field)})`;
+  const measured = sql`${timing("inboundToFirstBubbleMs")} is not null`;
+  const sourceOf = sql`${auditLog.after} -> 'timings' ->> 'source'`;
   const selection: Record<string, ReturnType<typeof percentile> | ReturnType<typeof sql<string>>> = {
-    turns: sql<string>`count(*) filter (where ${timing("inboundToFirstBubbleMs")} is not null)`,
+    turns: sql<string>`count(*) filter (where ${measured})`,
+    src_unknown: sql<string>`count(*) filter (where ${measured} and ${sourceOf} is null)`,
   };
+  for (const source of OUTBOX_SOURCES) {
+    selection[`src_${source}`] = sql<string>`count(*) filter (where ${measured} and ${sourceOf} = ${source})`;
+  }
   for (const field of TIMING_FIELDS) {
     selection[`p50_${field}`] = percentile(0.5, field);
     selection[`p90_${field}`] = percentile(0.9, field);
@@ -226,8 +238,37 @@ export async function getBotResponseTimes(db: DbOrTx): Promise<BotResponseTimes>
     }
     return split;
   };
-  return { windowDays: WINDOW_DAYS, turns: Number(row?.turns ?? 0), p50: pick("p50"), p90: pick("p90"), mean: pick("mean") };
+  const bySource: Record<OutboxSource | "unknown", number> = { inline: 0, kick: 0, cron: 0, unknown: 0 };
+  for (const source of [...OUTBOX_SOURCES, "unknown"] as const) bySource[source] = Number(row?.[`src_${source}`] ?? 0);
+
+  // O que a cliente sentiu: da mensagem dela ao primeiro balão ENTREGUE (o
+  // callback de status da Z-API grava delivered_at). A resposta da Lia tem
+  // dedupe 'wa.bot_reply:<id da inbound>' — é essa a junção.
+  const deliveredMs = sql`extract(epoch from (${waMessages.deliveredAt} - ${inboundOf.createdAt})) * 1000`;
+  const [deliveredRow] = await db
+    .select({
+      turns: sql<string>`count(*)`,
+      p50: sql<string | null>`percentile_cont(0.5) within group (order by ${deliveredMs})`,
+      p90: sql<string | null>`percentile_cont(0.9) within group (order by ${deliveredMs})`,
+    })
+    .from(waMessages)
+    .innerJoin(inboundOf, sql`${waMessages.dedupeKey} = 'wa.bot_reply:' || ${inboundOf.id}::text`)
+    .where(and(eq(waMessages.direction, "outbound"), sql`${waMessages.deliveredAt} is not null`, gte(waMessages.createdAt, since)));
+  const ms = (value: string | null | undefined) => (value === null || value === undefined ? null : Math.round(Number(value)));
+
+  return {
+    windowDays: WINDOW_DAYS,
+    turns: Number(row?.turns ?? 0),
+    p50: pick("p50"),
+    p90: pick("p90"),
+    mean: pick("mean"),
+    bySource,
+    delivered: { turns: Number(deliveredRow?.turns ?? 0), p50Ms: ms(deliveredRow?.p50), p90Ms: ms(deliveredRow?.p90) },
+  };
 }
+
+/** A inbound que uma resposta da Lia respondeu (alias para a autojunção de wa_messages). */
+const inboundOf = alias(waMessages, "inbound_of");
 
 export interface BotActivityEvent {
   kind: "handoff" | "order";

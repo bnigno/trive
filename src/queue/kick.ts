@@ -7,6 +7,7 @@
 // invocação, pede outra invocação inteira em vez de começar e morrer.
 import { sql } from "drizzle-orm";
 
+import type { OutboxSource } from "@/core/queue/outbox-source";
 import { handlerReserveMs } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
 
@@ -15,6 +16,8 @@ import { drainOutbox, type DrainOutboxResult } from "./worker";
 
 /** Orçamento de uma invocação do kick (a rota /api/inngest tem 60 s). */
 export const KICK_BUDGET_MS = 50_000;
+/** Orçamento do turno inline (a rota do webhook tem 60 s; a resposta 200 já saiu). */
+export const INLINE_KICK_BUDGET_MS = 45_000;
 /** Quanto tempo espera a linha aparecer (transação de quem enfileirou). */
 export const KICK_POLL_BUDGET_MS = 10_000;
 const KICK_POLL_MS = 500;
@@ -36,9 +39,16 @@ export type OutboxKickOptions = {
   sleep?: (ms: number) => Promise<void>;
   /** Pede outra invocação (best-effort). Injetável nos testes. */
   requestKick?: (outboxEventId: string) => Promise<void>;
+  /**
+   * kick = o Inngest recebeu o aviso (padrão); inline = a própria invocação
+   * que enfileirou (webhook, transcrição) — cuida SÓ do alvo e não aproveita
+   * para drenar o resto: a lambda do webhook não é lugar de lote.
+   */
+  source?: Extract<OutboxSource, "kick" | "inline">;
 };
 
 export type OutboxKickResult = DrainOutboxResult & {
+  source: OutboxSource;
   /** O que o kick viu da linha alvo ao terminar. */
   target: "sem_id" | "processada" | "nao_apareceu" | "nao_reclamada" | "agendada" | "sem_tempo";
   polls: number;
@@ -62,8 +72,11 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
   const clock = options.clock ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
   const requestKick = options.requestKick ?? ((id: string) => kickOutbox(id, { rekick: true }));
+  const source: OutboxSource = options.source ?? "kick";
+  const inline = source === "inline";
   const startedAt = clock();
   const totals: OutboxKickResult = {
+    source,
     recovered: 0,
     claimed: 0,
     done: 0,
@@ -82,6 +95,7 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
       limit: 10,
       budgetMs: Math.max(1_000, remaining()),
       clock,
+      source,
       ...(onlyId ? { onlyId } : {}),
     });
     for (const key of ["recovered", "claimed", "done", "failed", "dead", "released"] as const) totals[key] += result[key];
@@ -162,8 +176,8 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
     }
     totals.target = "processada";
     // Com o alvo entregue, aproveita a invocação para o resto da fila — só se
-    // sobra tempo de verdade; senão o cron termina.
-    if (remaining() >= GENERAL_DRAIN_MIN_MS) await rekickReleased(await drain());
+    // sobra tempo de verdade (e nunca inline); senão o cron termina.
+    if (!inline && remaining() >= GENERAL_DRAIN_MIN_MS) await rekickReleased(await drain());
     return totals;
   }
 }

@@ -290,14 +290,14 @@ describe("runBotTurn", () => {
     await addInbound(conversationId, "Oi!");
     provider.setPhoneExists(PHONE, false);
     assistant.enqueueScript({
-      // 1º balão com > 80 caracteres: teto de 2 s (first); o 2º, longo, 3 s (next).
+      // 1º balão com > 80 caracteres: teto de 1 s (first); o 2º, longo, 2 s (next).
       replyTemplate: "Oi! Que bom te ver por aqui — me conta o que você procura, a ocasião e o seu tamanho que eu separo as opções certas.\n---\n" + "Temos vestidos, blusas e saias — me conta o que você procura, a ocasião e o seu tamanho, que eu separo as opções certas para você. ".repeat(2),
     });
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
     expect(result).toEqual({ replied: true, handedOff: false });
     expect(provider.sentMessages).toHaveLength(2);
-    expect(provider.sentMessages[0].typingSeconds).toBe(2);
-    expect(provider.sentMessages[1].typingSeconds).toBe(3);
+    expect(provider.sentMessages[0].typingSeconds).toBe(1);
+    expect(provider.sentMessages[1].typingSeconds).toBe(2);
   });
 
   it("roteiro completo: listar → detalhar → criar_pedido cria pedido 'whatsapp' com reserva e link", async () => {
@@ -558,7 +558,7 @@ class OptionListFailingProvider extends FakeMessagingProvider {
 }
 
 describe("runBotTurn — mídia", () => {
-  it("listar_produtos envia menu interativo ANTES do texto e persiste kind option_list", async () => {
+  it("listar_produtos envia menu interativo DEPOIS do texto (a cliente sente a resposta primeiro) e persiste kind option_list", async () => {
     await setupStore();
     const conversationId = await createConversation();
     const inboundId = await addInbound(conversationId, "O que vocês vendem?");
@@ -592,9 +592,9 @@ describe("runBotTurn — mídia", () => {
       },
     ]);
 
-    // Menu saiu antes do texto da IA.
+    // O texto da IA saiu antes do menu.
     expect(provider.sentMessages).toHaveLength(1);
-    expect(providerSequence(list.providerMessageId)).toBeLessThan(
+    expect(providerSequence(list.providerMessageId)).toBeGreaterThan(
       providerSequence(provider.sentMessages[0].providerMessageId),
     );
 

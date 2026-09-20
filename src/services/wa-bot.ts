@@ -92,6 +92,7 @@ import { execIdentificarPecaNaFoto } from "./bot/photo-match";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { followupMemoryLines } from "./wa-followups";
 import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, isFollowupTooLate, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
+import type { OutboxSource } from "@/core/queue/outbox-source";
 import { getRetryPolicy } from "@/core/queue/retry-policy";
 import { BOT_FOLLOWUP_EVENT, idleCartStillValid } from "./wa-followups";
 import { waFollowups } from "@/db/schema";
@@ -584,7 +585,7 @@ async function hasBotReplyFor(tx: DbOrTx, conversationId: string, inboundId: str
 }
 
 // ---------------------------------------------------------------------------
-// deliverBotTurn — a entrega do turno: mídia antes do texto, até 3 balões,
+// deliverBotTurn — a entrega do turno: até 3 balões, depois a mídia,
 // cortesia pós-transferência; cada envio com dedupe determinístico derivado
 // de `dedupeBase` (id da inbound no turno reativo, id do retorno no
 // proativo) — o retry da fila nunca duplica nada.
@@ -607,12 +608,13 @@ export async function deliverBotTurn(
   const verifyPhone = input.verifyPhone ?? true;
   const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
   const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
-  // Lista e foto ANTES do texto (o cliente vê e depois o convite); a voz da
-  // curadora DEPOIS ("segue a voz dela" e aí o áudio) — assim um texto que
-  // falha e aborta o turno nunca deixa uma mensagem de voz já entregue para o
-  // retry repetir. Cada mídia tem dedupe determinístico por índice; falha é
-  // melhor esforço.
-  // Primeira coisa que chegou à cliente (mídia ou balão): mede "mensagem → 1º balão".
+  // Texto PRIMEIRO: é o que a cliente sente como "ela respondeu" e sai ~1 s
+  // depois do "digitando"; lista, foto e cartão vêm logo atrás (o convite e
+  // depois a vitrine), e a voz da curadora por último ("segue a voz dela" e
+  // aí o áudio) — assim um texto que falha e aborta o turno nunca deixa mídia
+  // já entregue para o retry repetir. Cada mídia tem dedupe determinístico
+  // por índice; falha é melhor esforço.
+  // Primeira coisa que chegou à cliente (balão ou mídia): mede "mensagem → 1º balão".
   let firstSentAt: number | null = null;
   const sendAttachment = async (attachment: BotAttachment, index: number): Promise<void> => {
     const mediaDedupeKey = `wa.bot_media:${dedupeBase}:${index}`;
@@ -666,10 +668,6 @@ export async function deliverBotTurn(
       );
     }
   };
-  for (const [index, attachment] of attachments.entries()) {
-    if (attachment.kind !== "audio") await sendAttachment(attachment, index);
-  }
-
   let replied = false;
   let firstWaMessageId: string | null = null;
   for (const [index, bubble] of bubbles.entries()) {
@@ -681,7 +679,7 @@ export async function deliverBotTurn(
       dedupeKey: index === 0 ? replyDedupeKey : `${replyDedupeKey}:${index}`,
       requireOptIn: false,
       verifyPhone,
-      // "Digitando…" por 1–3 s antes de cada balão.
+      // "Digitando…" por 1–2 s antes de cada balão.
       typingSeconds: typingSecondsFor(body, index === 0 ? "first" : "next"),
     });
     if ("sent" in sent) {
@@ -691,6 +689,9 @@ export async function deliverBotTurn(
     }
   }
 
+  for (const [index, attachment] of attachments.entries()) {
+    if (attachment.kind !== "audio") await sendAttachment(attachment, index);
+  }
   for (const [index, attachment] of attachments.entries()) {
     if (attachment.kind === "audio") await sendAttachment(attachment, index);
   }
@@ -749,6 +750,8 @@ export type BotTurnTimings = {
   totalMs: number;
   /** Mensagem dela → primeiro balão enviado; null quando nada saiu. */
   inboundToFirstBubbleMs: number | null;
+  /** Quem rodou o turno: inline (mesma invocação do webhook), kick do Inngest ou cron; null = anterior à medição. */
+  source: OutboxSource | null;
 };
 
 function modelDeadlineFor(turnStartedAt: number, queueDeadlineAt: Date | undefined): Date {
@@ -764,7 +767,7 @@ export async function runBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { conversationId: string; attempt?: number; enqueuedAt?: Date; deadlineAt?: Date },
+  input: { conversationId: string; attempt?: number; enqueuedAt?: Date; deadlineAt?: Date; source?: OutboxSource },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunBotTurnResult> {
   const { conversationId } = input;
@@ -884,6 +887,7 @@ export async function runBotTurn(
         deliveryMs: extra.deliveryMs,
         totalMs: finishedAt - turnStartedAt,
         inboundToFirstBubbleMs: extra.firstSentAt === null ? null : Math.max(0, extra.firstSentAt - lastInbound.createdAt.getTime()),
+        source: input.source ?? null,
       };
     };
     let modelMs = 0;
@@ -1040,7 +1044,7 @@ export async function runScheduledBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { followupId: string; now?: Date; attempt?: number; deadlineAt?: Date | null },
+  input: { followupId: string; now?: Date; attempt?: number; deadlineAt?: Date | null; source?: OutboxSource },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunScheduledBotTurnResult> {
   const { followupId } = input;
@@ -1204,6 +1208,7 @@ export async function runScheduledBotTurn(
           deliveryMs: null,
           totalMs: Date.now() - turnStartedAt,
           inboundToFirstBubbleMs: null,
+          source: input.source ?? null,
         } satisfies BotTurnTimings,
       },
     });

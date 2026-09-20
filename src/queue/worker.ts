@@ -7,6 +7,7 @@ import {
   nextAttemptDelayMs,
 } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
+import type { OutboxSource } from "@/core/queue/outbox-source";
 import { resolveOutboxHandler, type OutboxEvent } from "@/queue/handlers";
 
 const MAX_ERROR_LENGTH = 2000;
@@ -36,6 +37,8 @@ export type DrainOutboxOptions = {
   clock?: () => number;
   /** Só esta linha (o kick com id reclama o alvo antes de qualquer outra). */
   onlyId?: string;
+  /** Quem está drenando — vai no evento para o handler registrar a origem. Padrão: o cron. */
+  source?: OutboxSource;
 };
 
 export type DrainOutboxResult = {
@@ -187,6 +190,7 @@ export async function drainOutbox(
       payload: row.payload,
       attempts: row.attempts,
       createdAt: new Date(row.created_at),
+      source: options.source ?? "cron",
       // O handler pode se encolher para caber no que sobra da varredura.
       ...(options.budgetMs !== undefined ? { deadlineAt: new Date(startedAt + options.budgetMs) } : {}),
     };
