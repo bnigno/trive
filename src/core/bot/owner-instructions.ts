@@ -7,7 +7,8 @@ const BRAND_WORD = /\bmaison\b/iu;
 
 /** "maison" no texto da dona: a loja se chama TRIVÉ (só a tagline e o domínio guardam a palavra). */
 export function brandWordWarning(text: string): string | null {
-  return BRAND_WORD.test(text) ? 'A Lia nunca chama a loja de "maison" — escreva TRIVÉ.' : null;
+  // A frase repete a proibição do prompt — o teste de guarda da voz da marca isenta exatamente este trecho.
+  return BRAND_WORD.test(text) ? 'A loja se chama TRIVÉ: a Lia nunca a chame de "maison" — escreva TRIVÉ no seu texto.' : null;
 }
 
 /** Avisos em pt-BR para o painel quando o texto contradiz o método da Lia. Vazio = ok. */
