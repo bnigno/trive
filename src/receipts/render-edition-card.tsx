@@ -12,7 +12,7 @@
 import { ImageResponse } from "next/og";
 
 import { postEyebrow } from "@/core/cards/post";
-import { EDITION_GEOMETRY as G } from "@/core/edition/layout";
+import { EDITION_GEOMETRY as G, EDITION_PAPER } from "@/core/edition/layout";
 import { editionInvite } from "@/core/edition/text";
 import type { EditionCardData } from "@/core/edition/types";
 import { normalizeReceiptText, type ReceiptAssets } from "@/core/receipts/types";
@@ -42,7 +42,7 @@ export const EDITION_TYPE = {
 } as const;
 
 const C = {
-  ivory50: "#fdfbf6",
+  ivory50: EDITION_PAPER,
   ivory300: "#e7dfcc",
   ink900: "#201d18",
   ink700: "#453f35",

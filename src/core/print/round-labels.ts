@@ -18,6 +18,18 @@ export const SEAL = { diameterMm: 50, gapMm: 6, bleedMm: 1 } as const;
 /** O adesivo da sacola: 15 × 10 cm (paisagem), cantos arredondados no corte da plotter; 2 por A4 é o máximo físico. */
 export const BAG_STICKER = { widthMm: 150, heightMm: 100, gapMm: 6, bleedMm: 1, cornerRadiusMm: 6 } as const;
 
+/**
+ * O cartão da edição: 9 × 12 cm (retrato) em papel fotográfico A4 — 4 por
+ * folha na tesoura (calha 6); na Silhouette só cabe UMA coluna na área útil
+ * (165 mm) e a calha cai para 4, senão as duas linhas (246 mm) estouram a
+ * área útil por meio milímetro. A imagem já traz a linha de corte; a plotter
+ * corta com cantos r 5 e a base marfim sangra 1 mm.
+ */
+export const EDITION_CARD = { widthMm: 90, heightMm: 120, gapMm: 6, silhouetteGapMm: 4, bleedMm: 1, cornerRadiusMm: 5 } as const;
+
+/** A carta de estreia (15 × 10) usa exatamente o corte do adesivo da sacola: o mesmo DXF e o mesmo arquivo do Studio. */
+export const EDITION_LETTER = BAG_STICKER;
+
 /** Margem do papel comum: dá folga para a tesoura e fica dentro da área imprimível (3 mm) de qualquer jato de tinta. */
 export const PLAIN_SHEET_MARGIN_MM = 8.5;
 
