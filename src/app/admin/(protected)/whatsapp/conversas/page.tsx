@@ -107,6 +107,8 @@ export default async function WaConversationsPage({
             kind: message.kind,
             body: message.body,
             mediaUrl: message.mediaUrl,
+            recognized: message.recognized,
+            recognizedLevel: message.recognizedLevel,
             status: message.status,
             errorDetail: message.errorDetail,
             createdAt: message.createdAt.toISOString(),

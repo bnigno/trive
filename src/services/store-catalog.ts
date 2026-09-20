@@ -84,7 +84,7 @@ export interface CatalogViewer {
  * Peça visível: sem visible_from, ou já passou, ou a viewer é convidada de
  * um lançamento (agendado/VIP) com a peça e a janela VIP já abriu.
  */
-function publiclyVisible(viewer?: CatalogViewer, now: Date = new Date()) {
+export function publiclyVisible(viewer?: CatalogViewer, now: Date = new Date()) {
   const base = or(isNull(products.visibleFrom), lte(products.visibleFrom, now));
   const customerId = viewer?.customerId ?? null;
   const token = viewer?.inviteToken ?? null;

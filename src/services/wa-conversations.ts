@@ -16,7 +16,7 @@ import {
   pendingInboundRows,
 } from "@/core/whatsapp/origin";
 import { parseBotState, type BotCartItem } from "@/core/bot/memory";
-import { recognitionLevel } from "@/core/bot/photo-match";
+import { recognitionLevel, type RecognitionLevel } from "@/core/bot/photo-match";
 import { parseWaMediaMeta } from "@/core/whatsapp/media";
 import {
   DEFAULT_HANDOFF_AUTO_RETURN_HOURS,
@@ -279,6 +279,9 @@ export interface WaThreadTailMessage {
   kind: string;
   body: string;
   mediaUrl: string | null;
+  /** O que a Lia reconheceu na foto (só nomes) e com que certeza; null quando não houve. */
+  recognized: string[] | null;
+  recognizedLevel: RecognitionLevel | null;
   status: string;
   errorDetail: string | null;
   createdAt: Date;
@@ -950,7 +953,7 @@ export async function sendManualWaReply(
 }
 
 /** Nomes e nível do reconhecimento gravado na foto (null quando não houve). */
-function recognitionColumns(mediaMeta: unknown): { recognized: string[] | null; recognizedLevel: "exato" | "provavel" | "talvez" | null } {
+function recognitionColumns(mediaMeta: unknown): { recognized: string[] | null; recognizedLevel: RecognitionLevel | null } {
   const recognized = parseWaMediaMeta(mediaMeta).reconhecido;
   return { recognized: recognized?.nomes ?? null, recognizedLevel: recognitionLevel(recognized) };
 }

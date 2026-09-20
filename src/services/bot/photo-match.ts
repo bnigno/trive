@@ -36,23 +36,23 @@ export async function execIdentificarPecaNaFoto(
     return { ok: false, text: `Ela mandou ${photos.length === 1 ? "1 foto" : `${photos.length} fotos`} recentes: passe foto entre 1 e ${photos.length}.` };
   }
   const photo = input.foto !== undefined ? photos[input.foto - 1] : photos[photos.length - 1];
-  // Relógio real, não ctx.now: o prazo do modelo é absoluto e o turno já pode
-  // ter gastado segundos até aqui (no proativo, ctx.now é o início do turno).
-  const now = new Date();
 
   const outcome: PhotoMatchOutcome = { exact: [], maybe: [], provaveis: [], talvez: [], visionSkipped: null };
 
-  // Camada 1: a mesma foto do catálogo (ou quase).
+  // Camada 1: a mesma foto do catálogo (ou quase) — só o que esta cliente pode ver.
   if (photo.phash) {
-    const ranked = await findProductsByPhotoHash(db, photo.phash);
+    const ranked = await findProductsByPhotoHash(db, photo.phash, { customerId: ctx.customerId });
     outcome.exact = ranked.filter((match) => match.tier === "exact");
     outcome.maybe = ranked.filter((match) => match.tier === "maybe");
   }
 
   // Camada 2: só sem acerto exato, com os bytes da foto (turno atual), com as
   // dependências do turno e com tempo sobrando para o modelo ainda responder
-  // — descontada a reserva para a Lia escrever a resposta final.
+  // — descontada a reserva para o resto do turno.
   if (outcome.exact.length === 0) {
+    // Relógio real, lido AGORA (depois da camada 1), não ctx.now: o prazo do
+    // modelo é absoluto e o turno já gastou segundos até aqui.
+    const now = new Date();
     const skip = visionSkipReason(ctx, photo, now);
     if (skip) {
       outcome.visionSkipped = skip;

@@ -97,7 +97,7 @@ export const TOOL_LABELS: Record<BotToolName, string> = {
   sugerir_tamanho: "sugeriu o tamanho",
   enviar_nota_da_curadora: "enviou o áudio da curadora",
   registrar_foto_com_a_peca: "guardou a foto dela com a peça",
-  identificar_peca_na_foto: "reconheceu a peça na foto",
+  identificar_peca_na_foto: "conferiu a foto contra o catálogo",
   retirar_minha_foto: "retirou a foto dela da página",
   agendar_retorno: "combinou de chamar depois",
   transferir_para_atendente: "passou para você",

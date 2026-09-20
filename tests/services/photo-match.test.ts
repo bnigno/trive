@@ -3,11 +3,12 @@
 // com candidatas (fake do assistente) responde "provavelmente"; interruptor,
 // falta de foto, foto de turno anterior, prazo estourado, ensaio e o que
 // fica gravado em media_meta.
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FakeSalesAssistant } from "@/adapters/assistant/fake";
+import { PHOTO_MATCH_MIN_BUDGET_MS } from "@/core/bot/photo-match";
 import { FakeFileStorage } from "@/adapters/storage/fake";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -131,7 +132,13 @@ describe("índice de impressões digitais", () => {
     await seedProduct({ name: "Vestido Alba", slug: "vestido-alba", seed: 2 });
     await seedProduct({ name: "Blusa Belle (antiga)", slug: "blusa-belle", seed: 1, status: "archived" });
     await seedProduct({ name: "Sem hash", slug: "sem-hash", seed: 3, phash: null });
+    // Estreia marcada para amanhã: pública para a vitrine só depois — e para o índice também.
+    const agendada = await seedProduct({ name: "Vestido Estreia", slug: "vestido-estreia", seed: 6 });
+    await db.update(schema.products).set({ visibleFrom: new Date(Date.now() + 86_400_000) }).where(eq(schema.products.id, agendada.productId));
     expect((await listIndexedPhotos(sdb)).map((p) => p.slug).sort()).toEqual(["blusa-maelle", "vestido-alba"]);
+    expect(await findProductsByPhotoHash(sdb, (await customerPhoto(6)).phash)).toEqual([]);
+    await db.update(schema.products).set({ visibleFrom: new Date(Date.now() - 1_000) }).where(eq(schema.products.id, agendada.productId));
+    expect((await findProductsByPhotoHash(sdb, (await customerPhoto(6)).phash)).map((m) => m.slug)).toEqual(["vestido-estreia"]);
 
     const { phash } = await customerPhoto(1);
     const ranked = await findProductsByPhotoHash(sdb, phash);
@@ -257,7 +264,7 @@ describe("identificar_peca_na_foto", () => {
     await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1 });
     const { conversationId, waMessageId } = await seedConversationWithPhoto();
     const photo = await customerPhoto(4);
-    const late = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }], deadlineAt: new Date(Date.now() + 3_000) })("identificar_peca_na_foto", {});
+    const late = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }], deadlineAt: new Date(Date.now() + 20_000) })("identificar_peca_na_foto", {});
     expect(late.ok).toBe(false);
     expect(late.text).toContain("[sem tempo para a comparação visual neste turno]");
     const noDeps = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }], withVision: false })("identificar_peca_na_foto", {});
@@ -314,14 +321,25 @@ describe("candidatas, filtros e orçamento da comparação visual", () => {
   });
 
   it("a cor ordena as candidatas (quem existe nessa cor vem primeiro, mesmo esgotada) em vez de filtrar", async () => {
+    // Aurélie (vermelha) é a mais ANTIGA e está esgotada: sem a cor, a ordem
+    // padrão (mais nova primeiro) põe a Maelle na frente; com cor "vermelho",
+    // a Aurélie passa à frente mesmo sem estoque.
+    const aurelie = await seedProduct({ name: "Blusa Aurélie", slug: "blusa-aurelie", seed: 2, color: "Vermelho" });
+    await db.update(schema.products).set({ createdAt: new Date(Date.now() - 60_000) }).where(eq(schema.products.id, aurelie.productId));
+    await db
+      .update(schema.stockLevels)
+      .set({ onHand: 0 })
+      .where(inArray(schema.stockLevels.productVariantId, db.select({ id: schema.productVariants.id }).from(schema.productVariants).where(eq(schema.productVariants.productId, aurelie.productId))));
     await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1, color: "Preto" });
-    await seedProduct({ name: "Blusa Aurélie", slug: "blusa-aurelie", seed: 2, color: "Vermelho" });
-    await db.update(schema.stockLevels).set({ onHand: 0 });
     const { conversationId, waMessageId } = await seedConversationWithPhoto();
     const photo = await customerPhoto(4);
-    await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }] })("identificar_peca_na_foto", { cor: "vermelho" });
-    expect(assistant.extractions).toHaveLength(1);
-    expect(assistant.extractions[0].userText).toBe(["Imagem 1: a foto da cliente.", "Imagem 2: blusa-aurelie — Blusa Aurélie", "Imagem 3: blusa-maelle — Blusa Maelle", "Quais desses rótulos aparecem na imagem 1?"].join("\n"));
+    const executor = executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }] });
+    const rotulos = (index: number) => assistant.extractions[index].userText.split("\n").slice(1, 3);
+
+    await executor("identificar_peca_na_foto", {});
+    expect(rotulos(0)).toEqual(["Imagem 2: blusa-maelle — Blusa Maelle", "Imagem 3: blusa-aurelie — Blusa Aurélie"]);
+    await executor("identificar_peca_na_foto", { cor: "vermelho" });
+    expect(rotulos(1)).toEqual(["Imagem 2: blusa-aurelie — Blusa Aurélie", "Imagem 3: blusa-maelle — Blusa Maelle"]);
   });
 
   it("busca sem resultado derruba só a busca: a categoria continua valendo (um filtro de cada vez)", async () => {
@@ -337,16 +355,25 @@ describe("candidatas, filtros e orçamento da comparação visual", () => {
     expect(assistant.extractions[0].userText).not.toContain("vestido-alba");
   });
 
-  it("o orçamento conta as miniaturas: download lento come o tempo e o modelo nem é chamado (sem_tempo)", async () => {
+  it("as miniaturas nunca invadem o mínimo do modelo: download que não cabe na folga é cortado e vira 'sem_tempo'; rápido, o modelo roda", async () => {
     await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1 });
     const photo = await customerPhoto(4);
+    // Folga de 3 s acima do mínimo do modelo: o teto por miniatura fica em
+    // ≤ 3 s, então um download de 3,5 s é cortado (a foto some e o motivo é
+    // tempo, não falta de candidata); um instantâneo deixa o modelo rodar.
+    const budgetMs = PHOTO_MATCH_MIN_BUDGET_MS + 3_000;
     const download = storage.download.bind(storage);
-    vi.spyOn(storage, "download").mockImplementation(async (path: string) => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
+    const spy = vi.spyOn(storage, "download").mockImplementation(async (path: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 3_500));
       return download(path);
     });
-    const result = await matchPhotoWithVision(sdb, { assistant, storage }, { image: photo.image, filters: {}, customerId: null, budgetMs: 60 });
-    expect(result).toMatchObject({ failed: "sem_tempo", candidates: 1, provaveis: [], talvez: [] });
+    const lento = await matchPhotoWithVision(sdb, { assistant, storage }, { image: photo.image, filters: {}, customerId: null, budgetMs });
+    expect(lento).toMatchObject({ failed: "sem_tempo", candidates: 1, provaveis: [], talvez: [] });
     expect(assistant.extractions).toHaveLength(0);
+
+    spy.mockRestore();
+    const rapido = await matchPhotoWithVision(sdb, { assistant, storage }, { image: photo.image, filters: {}, customerId: null, budgetMs });
+    expect(rapido).toMatchObject({ failed: null, candidates: 1 });
+    expect(assistant.extractions).toHaveLength(1);
   });
 });

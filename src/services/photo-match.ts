@@ -28,7 +28,7 @@ import { resolveCategorySlug } from "@/services/bot/catalog";
 import { DEFAULT_BOT_MODEL } from "@/services/bot/shared";
 import { thumbPathFor } from "@/services/catalog";
 import { getSettingsMap, type ServiceDb } from "@/services/settings";
-import { listProductIdsWithVariant, listPublicProducts } from "@/services/store-catalog";
+import { listProductIdsWithVariant, listPublicProducts, publiclyVisible, type CatalogViewer } from "@/services/store-catalog";
 
 /** Setting bot_photo_match_enabled: ausente = ligado (só age quando a Lia vê fotos). */
 export async function isBotPhotoMatchEnabled(db: DbOrTx): Promise<boolean> {
@@ -41,25 +41,27 @@ export async function isBotPhotoMatchEnabled(db: DbOrTx): Promise<boolean> {
 }
 
 /**
- * As fotos com impressão digital das peças PÚBLICAS (ativas, não apagadas).
- * Varredura em memória: são centenas de fotos hoje e vale até alguns
- * milhares; o índice do banco em phash serve só para igualdade exata.
+ * As fotos com impressão digital das peças PÚBLICAS — o mesmo "pública" da
+ * vitrine: ativa, não apagada e já visível (visible_from passou, ou a
+ * cliente é convidada do lançamento). Varredura em memória: são centenas de
+ * fotos hoje e vale até alguns milhares; o índice do banco em phash serve só
+ * para igualdade exata.
  */
-export async function listIndexedPhotos(db: DbOrTx): Promise<IndexedPhoto[]> {
+export async function listIndexedPhotos(db: DbOrTx, viewer?: CatalogViewer): Promise<IndexedPhoto[]> {
   const rows = await db
     .select({ phash: productImages.phash, slug: products.slug, name: products.name, color: productImages.color })
     .from(productImages)
     .innerJoin(products, eq(products.id, productImages.productId))
-    .where(and(isNotNull(productImages.phash), eq(products.status, "active"), isNull(products.deletedAt)))
+    .where(and(isNotNull(productImages.phash), eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible(viewer)))
     .orderBy(products.slug, productImages.sortOrder);
   return rows.flatMap((row) => (row.phash ? [{ phash: row.phash, slug: row.slug, name: row.name, color: row.color }] : []));
 }
 
 /** Camada 1: as peças cuja foto é (quase) a mesma da cliente. */
-export async function findProductsByPhotoHash(db: DbOrTx, phashHex: string): Promise<PhotoMatch[]> {
+export async function findProductsByPhotoHash(db: DbOrTx, phashHex: string, viewer?: CatalogViewer): Promise<PhotoMatch[]> {
   const hash = hexToPhash(phashHex);
   if (hash === null) return [];
-  return rankPhotoMatches(hash, await listIndexedPhotos(db));
+  return rankPhotoMatches(hash, await listIndexedPhotos(db, viewer));
 }
 
 export interface VisionMatchInput {
@@ -97,15 +99,25 @@ export async function matchPhotoWithVision(
   const candidates = await pickCandidates(db, input);
   if (candidates.length === 0) return { ...empty, failed: "sem_candidatas", candidates: 0 };
 
-  // Miniaturas (400 px, webp) em paralelo, cada uma com o próprio teto; a que
-  // não abrir só sai da lista. O modelo configurado é lido no mesmo passo.
+  // Miniaturas (400 px, webp) em paralelo, cada uma com o próprio teto — nunca
+  // além do que sobra sem invadir o mínimo do modelo (as consultas já podem
+  // ter comido a folga: aí nem baixa). A que não abrir só sai da lista; a que
+  // foi cortada pelo tempo conta como falta de tempo, não de candidata. O
+  // modelo configurado é lido no mesmo passo.
+  const thumbTimeoutMs = Math.min(PHOTO_MATCH_THUMB_TIMEOUT_MS, remainingMs() - PHOTO_MATCH_MIN_BUDGET_MS);
+  if (thumbTimeoutMs < 500) {
+    console.warn(`[photo-match] sem tempo para o modelo: sobraram ${remainingMs()} ms de ${input.budgetMs} depois das consultas.`);
+    return { ...empty, failed: "sem_tempo", candidates: candidates.length };
+  }
+  let thumbsTimedOut = 0;
   const [thumbs, settingsMap] = await Promise.all([
     Promise.all(
       candidates.map(async (candidate) => {
         try {
-          const file = await withTimeout(deps.storage.download(thumbPathFor(candidate.imagePath)), PHOTO_MATCH_THUMB_TIMEOUT_MS, () => {});
+          const file = await withTimeout(deps.storage.download(thumbPathFor(candidate.imagePath)), thumbTimeoutMs, () => {});
           return { candidate, image: { mediaType: "image/webp" as const, base64: Buffer.from(file.data).toString("base64") } };
         } catch (error) {
+          if (error instanceof Error && error.message === "tempo esgotado") thumbsTimedOut += 1;
           console.warn(`[photo-match] miniatura indisponível (${candidate.slug}):`, error instanceof Error ? error.message : error);
           return null;
         }
@@ -114,7 +126,7 @@ export async function matchPhotoWithVision(
     getSettingsMap(db as unknown as ServiceDb, ["bot_model"]),
   ]);
   const withThumb = thumbs.flatMap((entry) => (entry ? [entry] : []));
-  if (withThumb.length === 0) return { ...empty, failed: "sem_candidatas", candidates: 0 };
+  if (withThumb.length === 0) return { ...empty, failed: thumbsTimedOut > 0 ? "sem_tempo" : "sem_candidatas", candidates: candidates.length };
   const labels: VisionCandidate[] = withThumb.map(({ candidate }) => ({ slug: candidate.slug, name: candidate.name }));
 
   const model = typeof settingsMap.bot_model === "string" && settingsMap.bot_model.trim() !== "" ? settingsMap.bot_model.trim() : DEFAULT_BOT_MODEL;
@@ -156,11 +168,15 @@ export async function matchPhotoWithVision(
 type Candidate = { slug: string; name: string; imagePath: string };
 type Scope = { busca?: string; categoria?: string };
 
+/** listPublicProducts aceita até 50 ids por chamada; para 8 candidatas sobra. */
+const COLOR_IDS_MAX = 50;
+
 /**
  * Do filtro mais estreito ao mais largo, UM filtro de cada vez (busca +
  * categoria → categoria → tudo), sem repetir consulta igual; só peças públicas
  * com foto. A cor não filtra — ordena: quem existe nessa cor (mesmo esgotada)
- * vem primeiro, porque reconhecer uma foto não depende de estoque.
+ * vem primeiro, porque reconhecer uma foto não depende de estoque; essas são
+ * buscadas por id, para não dependerem de estar entre as 200 mais novas.
  */
 async function pickCandidates(db: DbOrTx, input: VisionMatchInput): Promise<Candidate[]> {
   const sdb = db as unknown as ServiceDb;
@@ -174,29 +190,31 @@ async function pickCandidates(db: DbOrTx, input: VisionMatchInput): Promise<Cand
   else if (busca) scopes.push({ busca });
   scopes.push({});
 
+  const withColor = cor ? await listProductIdsWithVariant(sdb, { cor }, { requireStock: false }) : null;
   let items: Awaited<ReturnType<typeof listPublicProducts>> = [];
   for (const scope of scopes) {
-    items = await listPublicItems(sdb, input.customerId, scope);
+    items = await listPublicItems(sdb, input.customerId, scope, withColor);
     if (items.length > 0) break;
-  }
-  if (cor && items.length > 1) {
-    const withColor = await listProductIdsWithVariant(sdb, { cor }, { requireStock: false });
-    if (withColor) items = [...items.filter((item) => withColor.has(item.id)), ...items.filter((item) => !withColor.has(item.id))];
   }
   return items
     .flatMap((item) => (item.imagePath ? [{ slug: item.slug, name: item.name, imagePath: item.imagePath }] : []))
     .slice(0, PHOTO_MATCH_MAX_CANDIDATES);
 }
 
-async function listPublicItems(sdb: ServiceDb, customerId: string | null, scope: Scope) {
+async function listPublicItems(sdb: ServiceDb, customerId: string | null, scope: Scope, withColor: Set<string> | null) {
   // Categoria que não existe não pode zerar a busca: só cai.
   const categorySlug = scope.categoria ? await resolveCategorySlug(sdb as unknown as DbOrTx, scope.categoria) : null;
-  return listPublicProducts(sdb, {
+  const base = {
     ...(scope.busca ? { q: scope.busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
     viewer: { customerId },
     limit: 200,
-  });
+  };
+  const general = await listPublicProducts(sdb, base);
+  if (!withColor || withColor.size === 0) return general;
+  const colored = await listPublicProducts(sdb, { ...base, productIds: [...withColor].slice(0, COLOR_IDS_MAX) });
+  const seen = new Set(colored.map((item) => item.id));
+  return [...colored, ...general.filter((item) => !seen.has(item.id))];
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {

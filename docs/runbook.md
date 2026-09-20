@@ -770,24 +770,27 @@ Como funciona, em duas camadas (ferramenta `identificar_peca_na_foto`):
   mesma foto (reencodada, menor, com texto por cima); **9–10** = "talvez",
   a Lia confirma em 1 pergunta; acima disso não é a mesma. Calibrado com as
   fotos reais em 20/09: a mesma foto fica a ≤ 6; fotos de produtos públicos
-  diferentes nunca ficaram abaixo de 11. Só peças **públicas** (ativas, não
-  apagadas) entram; se duas peças públicas usam a mesma foto, a Lia lista as
-  duas e pergunta (aí é catálogo para arrumar).
+  diferentes nunca ficaram abaixo de 11. Só peças **públicas** entram — o
+  mesmo "pública" da vitrine: ativa, não apagada e já visível (`visible_from`
+  passou, ou a cliente é convidada do lançamento); se duas peças públicas usam
+  a mesma foto, a Lia lista as duas e pergunta (aí é catálogo para arrumar).
 - **Comparação visual (centavos).** Sem acerto exato, e só para a foto
   **deste turno**, a inteligência (o mesmo `bot_model` da Lia) recebe a foto
   dela ao lado de até 8 miniaturas de candidatas (pelos filtros categoria/
   cor/busca que a Lia informa; sem resultado, as primeiras do catálogo) e diz
   quais **aparecem** na foto: ≥ 0,75 vira "provavelmente" (a Lia confirma em
   meia frase), 0,5–0,75 "talvez" (confirma antes), abaixo nada. Teto de 12 s
-  para a comparação INTEIRA (candidatas, miniaturas — 3 s cada — e modelo) e
-  uma reserva de 12 s do prazo do modelo fica sempre para a resposta final:
-  só roda se restarem ≥ 17 s; sem tempo, provedor fora ou resposta torta ⇒
-  "não reconheci", e o turno segue. Os filtros caem um por vez (busca +
-  categoria → categoria → tudo); a cor só ordena as candidatas (quem existe
-  nessa cor vem primeiro, mesmo esgotada). Foto de antes do recurso (sem
-  impressão digital) só pode ser conferida se a cliente reenviar. ~3–4 mil
-  tokens de entrada por comparação (≈ US$ 0,01–0,02 no Sonnet); o audit
-  `wa.bot_turn` registra o `usage`.
+  para a comparação INTEIRA (candidatas, miniaturas — até 3 s cada, nunca
+  além do que sobra — e modelo) e uma reserva de 18 s do prazo do modelo fica
+  sempre para o resto do turno (o pior caso, "não reconheci", ainda chama
+  listar_produtos e escreve a resposta): só roda se restarem ≥ 23 s; sem
+  tempo, provedor fora ou resposta torta ⇒ "não reconheci", e o turno segue.
+  Os filtros caem um por vez (busca + categoria → categoria → tudo); a cor só
+  ordena as candidatas (quem existe nessa cor vem primeiro, mesmo esgotada,
+  buscada por id — não precisa estar entre as 200 mais novas). Foto de antes
+  do recurso (sem impressão digital) só pode ser conferida se a cliente
+  reenviar. ~3–4 mil tokens de entrada por comparação (≈ US$ 0,01–0,02 no
+  Sonnet); o audit `wa.bot_turn` registra o `usage`.
 - **Cartões (`bot_cards`) ficam fora do índice de propósito**: a moldura do
   cartão domina o hash e posts de peças diferentes saem quase iguais (510
   pares a ≤ 3 bits nos dados reais). Cartão repassado tem o nome da peça

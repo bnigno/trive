@@ -22,11 +22,13 @@ export const PHOTO_MATCH_MAYBE = 0.5;
 /**
  * Teto da comparação visual dentro do turno (miniaturas incluídas; o turno
  * inteiro tem 35 s), o mínimo que precisa sobrar para o modelo valer a pena
- * e a reserva que SEMPRE fica para a Lia escrever a resposta final depois.
+ * e a reserva que SEMPRE fica para o resto do turno: no pior caso ("não
+ * reconheci") são DUAS chamadas ao modelo — a que decide buscar parecidas e a
+ * resposta final — com listar_produtos no meio.
  */
 export const PHOTO_MATCH_BUDGET_MS = 12_000;
 export const PHOTO_MATCH_MIN_BUDGET_MS = 5_000;
-export const PHOTO_MATCH_REPLY_RESERVE_MS = 12_000;
+export const PHOTO_MATCH_REPLY_RESERVE_MS = 18_000;
 /** Cada miniatura de candidata tem este teto para baixar; a que não vier só sai da lista. */
 export const PHOTO_MATCH_THUMB_TIMEOUT_MS = 3_000;
 

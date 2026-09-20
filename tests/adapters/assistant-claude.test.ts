@@ -258,6 +258,9 @@ describe("ClaudeSalesAssistant", () => {
     expect(t.status).toBeUndefined();
     const a = await failure({ messages: { create: async () => { throw new Anthropic.APIUserAbortError(); } } });
     expect(a.retryable).toBe(false);
+    // Abort é quem chamou desistindo (orçamento da visão): caminho esperado, sem log de erro.
+    expect(a.reason).toBe("chamada cancelada por quem chamou");
+    expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
 
