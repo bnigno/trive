@@ -316,7 +316,7 @@ function cartItemLabel(item: BotCartItem): string {
 /**
  * Linhas da sacola prontas para o modelo: "• 1× Vestido (Preto · M) — R$ 289,00 [sku: X]".
  * O [sku: …] é só para a ferramenta (remover, quantidade): o colchete é
- * interno (regra 23) e polishBotReply o tira se o modelo copiar.
+ * interno (regra 20 do prompt) e polishBotReply o tira se o modelo copiar.
  */
 export function formatCartLines(cart: readonly BotCartItem[] | undefined): string[] {
   const itens = cart ?? [];

@@ -364,7 +364,7 @@ Castanhal** a entrega é **só por motoboy**; no resto do Brasil é pelos
   opção) explica, confirma a sacola e o endereço e **transfere para a
   equipe** com o resumo; a equipe cota no site dos Correios e fecha por lá
   (pedido pelo painel com o valor do frete, ou pela conversa). A Lia nunca
-  inventa valor nem cria o pedido sem cotação (regra 26 do prompt).
+  inventa valor nem cria o pedido sem cotação (regra 14 do prompt, FORA DA ÁREA DO MOTOBOY).
 - **Faixas**: `npx tsx scripts/frete-motoboy-regiao.ts` (simulação;
   `--apply` grava com auditoria no nome do dono) cria as cidades que faltam
   copiando preço, peso e janelas da "Motoboy Belém" e desliga a "Entrega
@@ -533,7 +533,7 @@ e a sacola não mostrava SKU nenhum). Desde então:
 
 - A sacola guarda também o **id da variante**; `ver_sacola` e o caderninho
   mostram cada linha com `[sku: …]` (só a Lia lê; se copiar, o texto some
-  antes de chegar à cliente). Regra 13 do prompt: SKU nunca vai para a cliente.
+  antes de chegar à cliente). Regra 7 do prompt (A SACOLA é o pedido): SKU nunca vai para a cliente.
 - **`adicionar_a_sacola`: quantidade é o TOTAL da linha**, nunca soma —
   repetir a chamada (o turno do "SIM") não muda nada; para 2 unidades a Lia
   passa `quantidade: 2`.

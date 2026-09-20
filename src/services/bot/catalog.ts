@@ -279,7 +279,7 @@ export async function execListarProdutos(
 
   // Catálogo inteiro: até CATALOG_MAX_LISTS_PER_CALL listas de PAGE_SIZE de
   // uma vez (a lista do WhatsApp só aceita 10 linhas). Guarda contra spam —
-  // a regra 11 manda chamar a ferramenta a cada "quero ver outra": se as
+  // a regra 5 do prompt manda chamar a ferramenta a cada "quero ver outra": se as
   // listas 2..N deste mesmo catálogo SAÍRAM (wa_messages 'sent') nos últimos
   // 30 min, vai só a primeira de novo. Ler o que foi entregue, e não um
   // estado gravado antes da entrega, cobre lista que falhou na Z-API,
