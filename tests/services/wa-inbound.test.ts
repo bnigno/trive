@@ -260,6 +260,17 @@ describe("processZapiInbound", () => {
     const [replay] = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.status_replay"));
     expect(replay).toMatchObject({ dedupeKey: "wa.status:MSG-ORFAO:delivered", payload: { zapiMessageId: "MSG-ORFAO", status: "delivered" }, status: "pending" });
     expect(replay.nextAttemptAt.getTime()).toBeGreaterThan(Date.now() + STATUS_REPLAY_DELAY_MS - 5_000);
+    // O payload leva a HORA DO RECIBO: aplicado depois, delivered_at é a hora real, não a do replay.
+    const receiptAt = new Date((replay.payload as { at: string }).at);
+    expect(Math.abs(receiptAt.getTime() - Date.now())).toBeLessThan(5_000);
+
+    // "Ao receber" de reação/contato/enquete (status RECEIVED sem texto, sem ids, sem type de status): ignorado, sem replay.
+    const reaction = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { messageId: "MSG-REACAO", phone: PHONE_ZAPI, status: "RECEIVED", reaction: { value: "❤️" } },
+    });
+    expect(reaction).toEqual({ action: "ignored", ignored: true });
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.status_replay"))).toHaveLength(1);
 
     // …a linha aparece (o turno commitou) e o replay aplica o recibo.
     const [conv] = await db.insert(schema.waConversations).values({ phoneE164: "+5511977775555" }).returning({ id: schema.waConversations.id });
@@ -267,10 +278,10 @@ describe("processZapiInbound", () => {
       .insert(schema.waMessages)
       .values({ conversationId: conv.id, direction: "outbound", body: "Oi", status: "sent", zapiMessageId: "MSG-ORFAO" })
       .returning({ id: schema.waMessages.id });
-    expect(await applyMessageStatus(sdb, { zapiMessageId: "MSG-ORFAO", target: "delivered" })).toBe(1);
+    expect(await applyMessageStatus(sdb, { zapiMessageId: "MSG-ORFAO", target: "delivered", at: receiptAt })).toBe(1);
     const [applied] = await db.select({ status: schema.waMessages.status, deliveredAt: schema.waMessages.deliveredAt }).from(schema.waMessages).where(eq(schema.waMessages.id, msg.id));
     expect(applied.status).toBe("delivered");
-    expect(applied.deliveredAt).not.toBeNull();
+    expect(applied.deliveredAt?.getTime()).toBe(receiptAt.getTime());
 
     // READ antes do DELIVERED: lida implica entregue.
     const [msg2] = await db

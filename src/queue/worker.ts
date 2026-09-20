@@ -7,6 +7,7 @@ import {
   nextAttemptDelayMs,
 } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import type { OutboxSource } from "@/core/queue/outbox-source";
 import { resolveOutboxHandler, type OutboxEvent } from "@/queue/handlers";
 
@@ -37,6 +38,8 @@ export type DrainOutboxOptions = {
   clock?: () => number;
   /** Só esta linha (o kick com id reclama o alvo antes de qualquer outra). */
   onlyId?: string;
+  /** Só as linhas deste agregado (os turnos seguintes da MESMA conversa, depois do alvo inline). */
+  aggregateId?: string;
   /** Quem está drenando — vai no evento para o handler registrar a origem. Padrão: o cron. */
   source?: OutboxSource;
 };
@@ -147,6 +150,7 @@ export async function drainOutbox(
       WHERE status IN ('pending', 'failed')
         AND next_attempt_at <= now()
         ${options.onlyId ? sql`AND id = ${options.onlyId}` : sql``}
+        ${options.aggregateId ? sql`AND aggregate_id = ${options.aggregateId}` : sql``}
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -210,6 +214,12 @@ export async function drainOutbox(
       `);
       result.done += 1;
     } catch (error) {
+      if (error instanceof HandlerOutOfTimeError) {
+        // Esperou e não sobrou tempo, antes de qualquer efeito: volta à fila
+        // sem contar tentativa; o kick pede outra invocação para ela.
+        await release([row.id]);
+        continue;
+      }
       const message = (
         error instanceof Error ? `${error.name}: ${error.message}` : String(error)
       ).slice(0, MAX_ERROR_LENGTH);
@@ -232,7 +242,8 @@ export async function drainOutbox(
         result.dead += 1;
       } else {
         const delayMs = nextAttemptDelayMs(policy, attempts);
-        const nextAttemptAt = new Date(now.getTime() + delayMs);
+        // Da hora da FALHA (o handler pode ter esperado dezenas de segundos), não do início do lote.
+        const nextAttemptAt = new Date((options.now ?? new Date()).getTime() + delayMs);
         await db.execute(sql`
           UPDATE outbox_events
           SET status = 'failed',

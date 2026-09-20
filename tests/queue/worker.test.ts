@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@/db/client";
 import * as schema from "@/db/schema";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import { drainOutbox } from "@/queue/worker";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -251,5 +252,31 @@ describe("drainOutbox — origem", () => {
     await insertEvent({ eventType: "order.receipt" });
     await drainOutbox(asDb(), { source: "kick" });
     expect(sources).toEqual(["cron", "inline", "kick"]);
+  });
+});
+
+describe("drainOutbox — sem tempo e hora da falha", () => {
+  it("HandlerOutOfTimeError devolve a linha a pending sem contar tentativa e a lista em releasedIds", async () => {
+    handlers["wa.bot_turn"] = async () => {
+      throw new HandlerOutOfTimeError(500);
+    };
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const result = await drainOutbox(asDb(), {});
+    expect(result).toMatchObject({ claimed: 1, done: 0, failed: 0, released: 1, releasedIds: [id] });
+    expect(await eventRow(id)).toMatchObject({ status: "pending", attempts: 0, lockedBy: null });
+  });
+
+  it("o backoff conta da hora da FALHA, não do início do lote (o handler pode ter esperado)", async () => {
+    handlers["order.receipt"] = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      throw new Error("provedor fora");
+    };
+    const id = await insertEvent({ eventType: "order.receipt" });
+    const before = Date.now();
+    await drainOutbox(asDb(), {});
+    const row = await eventRow(id);
+    expect(row.status).toBe("failed");
+    // Política padrão: 5 s × jitter [0,5; 1,5) a partir da falha (≥ 1,2 s depois do início).
+    expect(row.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 1_200 + 2_500);
   });
 });

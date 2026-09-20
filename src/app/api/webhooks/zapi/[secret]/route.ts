@@ -1,6 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
 import { getDb } from "@/db/client";
+import { handlerReserveMs } from "@/core/queue/retry-policy";
 import { INLINE_KICK_BUDGET_MS, runOutboxKick, WEBHOOK_INLINE_MAX_MS } from "@/queue/kick";
 import { processZapiInbound } from "@/services/wa-inbound";
 
@@ -40,19 +41,24 @@ export async function POST(
     }
     if ("outboxEventId" in result && typeof result.outboxEventId === "string") {
       const { outboxEventId } = result;
-      // O que sobra da vida desta lambda (o registro pode ter esperado o lock
-      // da conversa): sem ~32 s pela frente o kick não começa o turno e pede
-      // outra invocação ao Inngest em vez de morrer no meio aos 60 s.
-      const budgetMs = Math.max(0, Math.min(INLINE_KICK_BUDGET_MS, WEBHOOK_INLINE_MAX_MS - (Date.now() - startedAt)));
-      after(async () => {
-        try {
-          const kick = await runOutboxKick(getDb(), { outboxEventId, source: "inline", budgetMs });
-          console.info(`[webhook zapi] inline ${outboxEventId} → ${kick.target}`);
-        } catch (error) {
-          // Nunca vira 500 (a resposta já saiu): o kick e o cron entregam.
-          console.error(`[webhook zapi] turno inline ${outboxEventId} falhou; o kick e o cron cobrem`, error);
-        }
-      });
+      // O que sobra da vida desta lambda (o registro pode ter esperado o turno
+      // anterior da mesma conversa terminar): sem ~32 s pela frente o turno
+      // não roda aqui — o kick ao Inngest, que o serviço já mandou depois do
+      // commit, cuida dele numa função com 60 s inteiros.
+      const budgetMs = Math.min(INLINE_KICK_BUDGET_MS, WEBHOOK_INLINE_MAX_MS - (Date.now() - startedAt));
+      if (budgetMs >= handlerReserveMs("wa.bot_turn")) {
+        after(async () => {
+          try {
+            const kick = await runOutboxKick(getDb(), { outboxEventId, source: "inline", budgetMs });
+            console.info(`[webhook zapi] inline ${outboxEventId} → ${kick.target}`);
+          } catch (error) {
+            // Nunca vira 500 (a resposta já saiu): o kick e o cron entregam.
+            console.error(`[webhook zapi] turno inline ${outboxEventId} falhou; o kick e o cron cobrem`, error);
+          }
+        });
+      } else {
+        console.info(`[webhook zapi] inline ${outboxEventId} pulado: sobravam ${budgetMs} ms da lambda; o kick cuida`);
+      }
     }
   } catch (error) {
     // Nunca propaga: 200 mesmo assim para a Z-API não desativar o webhook.

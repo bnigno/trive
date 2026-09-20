@@ -45,13 +45,15 @@ export type OutboxKickOptions = {
   sleep?: (ms: number) => Promise<void>;
   /** Pede outra invocação (best-effort). Injetável nos testes. */
   requestKick?: (outboxEventId: string) => Promise<void>;
-  /**
-   * kick = o Inngest recebeu o aviso (padrão); inline = a própria invocação
-   * que enfileirou (webhook, transcrição) — cuida SÓ do alvo e não aproveita
-   * para drenar o resto: a lambda do webhook não é lugar de lote; cron =
-   * turno aninhado numa transcrição que a varredura processou.
-   */
+  /** Rótulo da origem, gravado no evento e nos tempos do turno (padrão: kick). */
   source?: OutboxSource;
+  /**
+   * Cuida SÓ do alvo (e dos turnos seguintes da MESMA conversa, se couberem)
+   * e não aproveita para drenar o resto da fila: a lambda do webhook e o
+   * handler da transcrição não são lugar de lote. Padrão: verdadeiro quando
+   * a origem é inline.
+   */
+  targetOnly?: boolean;
 };
 
 export type OutboxKickResult = DrainOutboxResult & {
@@ -80,7 +82,7 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
   const sleep = options.sleep ?? defaultSleep;
   const requestKick = options.requestKick ?? ((id: string) => kickOutbox(id, { rekick: true }));
   const source: OutboxSource = options.source ?? "kick";
-  const inline = source === "inline";
+  const targetOnly = options.targetOnly ?? source === "inline";
   const startedAt = clock();
   const totals: OutboxKickResult = {
     source,
@@ -97,13 +99,13 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
   };
   const remaining = () => budgetMs - (clock() - startedAt);
 
-  const drain = async (onlyId?: string): Promise<DrainOutboxResult> => {
+  const drain = async (scope: { onlyId?: string; aggregateId?: string } = {}): Promise<DrainOutboxResult> => {
     const result = await drainOutbox(db, {
       limit: 10,
       budgetMs: Math.max(1_000, remaining()),
       clock,
       source,
-      ...(onlyId ? { onlyId } : {}),
+      ...scope,
     });
     for (const key of ["recovered", "claimed", "done", "failed", "dead", "released"] as const) totals[key] += result[key];
     totals.releasedIds.push(...result.releasedIds);
@@ -175,23 +177,44 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
       }
       return totals;
     }
-    const targetDrain = await drain(options.outboxEventId);
+    const targetDrain = await drain({ onlyId: options.outboxEventId });
     if (targetDrain.claimed === 0) {
       // Outro worker levou a linha entre o SELECT e o claim (ou o relógio do banco ainda não a venceu).
       totals.target = "nao_reclamada";
       return totals;
     }
     totals.target = "processada";
-    // Inline que falhou (turno sem tempo depois de esperar o lock da conversa,
-    // provedor fora): o kick com id já passou enquanto a linha estava
-    // "processing" e não voltaria — pede outro, para não sobrar só o cron.
-    if (inline && targetDrain.failed > 0 && !options.rekick) {
+    // Alvo devolvido sem tempo (esperou o lock da conversa) ou que falhou
+    // numa invocação só do alvo: o kick com id pode já ter passado enquanto a
+    // linha estava "processing" e não voltaria — pede outro, para não sobrar
+    // só o cron.
+    await rekickReleased(targetDrain);
+    if (targetOnly && targetDrain.failed > 0 && !options.rekick) {
       await requestKick(options.outboxEventId);
       totals.rekicked.push(options.outboxEventId);
     }
+    if (targetOnly) {
+      // Rajada: a mensagem seguinte da MESMA conversa já pode ter enfileirado o
+      // turno dela enquanto este rodava. Roda aqui, na mesma lambda, enquanto
+      // couber — senão a cliente esperaria o Inngest começar outra função.
+      const aggregateId = await aggregateOf(db, options.outboxEventId);
+      while (aggregateId && targetDrain.done > 0 && remaining() >= handlerReserveMs("wa.bot_turn")) {
+        const next = await drain({ aggregateId });
+        await rekickReleased(next);
+        if (next.claimed === 0 || next.released > 0) break;
+      }
+      return totals;
+    }
     // Com o alvo entregue, aproveita a invocação para o resto da fila — só se
-    // sobra tempo de verdade (e nunca inline); senão o cron termina.
-    if (!inline && remaining() >= GENERAL_DRAIN_MIN_MS) await rekickReleased(await drain());
+    // sobra tempo de verdade; senão o cron termina.
+    if (remaining() >= GENERAL_DRAIN_MIN_MS) await rekickReleased(await drain());
     return totals;
   }
+}
+
+async function aggregateOf(db: Db, outboxEventId: string): Promise<string | null> {
+  const [row] = rowsOf<{ aggregate_id: string | null }>(
+    await db.execute(sql`SELECT aggregate_id FROM outbox_events WHERE id = ${outboxEventId}`),
+  );
+  return row?.aggregate_id ?? null;
 }

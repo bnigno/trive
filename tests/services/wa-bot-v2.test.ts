@@ -14,10 +14,11 @@ import { FakeSalesAssistant } from "@/adapters/assistant/fake";
 import { FakeCepLookup } from "@/adapters/cep/fake";
 import { FakeCorreiosQuoter } from "@/adapters/superfrete/fake";
 import { FakeMessagingProvider } from "@/adapters/zapi/fake";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import * as schema from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
-import { BotTurnOutOfTimeError, buildToolExecutor, runBotTurn } from "@/services/wa-bot";
+import { BOT_TURN_DELIVERY_RESERVE_MS, BOT_TURN_MIN_MODEL_MS, buildToolExecutor, runBotTurn } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 import { nextMessageStamp } from "../helpers/clock";
 
@@ -1112,10 +1113,16 @@ describe("balões", () => {
       replyTemplate: "Sacola vazia por enquanto!",
     });
     const enqueuedAt = new Date(Date.now() - 1_500);
-    // Prazo da fila curto demais (esperou o lock da conversa): o turno nem começa — erro próprio, sem chamar o modelo.
-    await expect(runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, deadlineAt: new Date(Date.now() + 12_000) })).rejects.toBeInstanceOf(BotTurnOutOfTimeError);
+    // Prazo da fila curto demais (esperou o lock da conversa): abaixo do mínimo de 5 s para o modelo
+    // (prazo da fila − 12 s de reserva da entrega), o turno nem começa — sem chamar o modelo, sem ✓✓, sem audit.
+    await expect(
+      runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, deadlineAt: new Date(Date.now() + BOT_TURN_DELIVERY_RESERVE_MS + BOT_TURN_MIN_MODEL_MS - 500) }),
+    ).rejects.toBeInstanceOf(HandlerOutOfTimeError);
     expect(assistant.turns).toHaveLength(0);
-    await runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, source: "inline" });
+    expect(provider.readReceipts).toHaveLength(0);
+    expect(await db.select().from(schema.auditLog)).toHaveLength(0);
+    // Com o mínimo (e uma folga para o relógio), roda.
+    await runBotTurn(sdb, assistant, provider, { conversationId, enqueuedAt, source: "inline", deadlineAt: new Date(Date.now() + BOT_TURN_DELIVERY_RESERVE_MS + BOT_TURN_MIN_MODEL_MS + 2_000) });
 
     const [trail] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.bot_turn"));
     const timings = (trail.after as { timings: Record<string, number | string | null> }).timings;

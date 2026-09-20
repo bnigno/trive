@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import type { OutboxSource } from "@/core/queue/outbox-source";
+import { getRetryPolicy, handlerReserveMs } from "@/core/queue/retry-policy";
 import { isWaLid } from "@/lib/phone";
 
 import { getSalesAssistant } from "@/adapters/assistant";
@@ -46,7 +47,7 @@ import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { getTranscriber } from "@/adapters/transcription";
 import { cardRenderPayloadSchema, renderAndSendBotCard } from "@/services/bot-cards";
 import { sendDailyDigestWa } from "@/services/daily-digest";
-import { applyMessageStatus } from "@/services/wa-inbound";
+import { applyMessageStatus, messageExists } from "@/services/wa-inbound";
 import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
@@ -197,7 +198,7 @@ const emailSendPayloadSchema = z.object({
 // raw: true envia o corpo como está — avisos do sistema (ex.: transferência
 // do bot) já chegam formatados e não são "fala de cliente".
 const waTranscribePayloadSchema = z.object({ waMessageId: z.uuid() });
-const waStatusReplayPayloadSchema = z.object({ zapiMessageId: z.string().min(1), status: z.enum(["delivered", "read"]) });
+const waStatusReplayPayloadSchema = z.object({ zapiMessageId: z.string().min(1), status: z.enum(["delivered", "read"]), at: z.iso.datetime() });
 
 const stockRestockedPayloadSchema = z.object({ variantId: z.uuid(), movementId: z.uuid() });
 const restockNotifyPayloadSchema = z.object({ alertId: z.uuid(), movementId: z.uuid() });
@@ -397,10 +398,20 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // Áudio da cliente: baixa, transcreve e só então decide a rota (turno da
   // vendedora ou dono). Falha do vendor relança até a política esgotar; na
   // última tentativa o serviço grava o marcador e a conversa segue.
-  // Recibo (entregue/lida) que chegou antes de a mensagem existir: aplica agora.
+  // Recibo (entregue/lida) que chegou antes de a mensagem existir: aplica com
+  // a HORA DO RECIBO. Enquanto a mensagem não existir, tenta de novo pela
+  // política; na última tentativa desiste em silêncio (recibo de mensagem
+  // que nunca foi nossa — a dona mandou do celular).
   "wa.status_replay": async (event) => {
-    const { zapiMessageId, status } = waStatusReplayPayloadSchema.parse(event.payload);
-    const changed = await applyMessageStatus(getDb(), { zapiMessageId, target: status });
+    const { zapiMessageId, status, at } = waStatusReplayPayloadSchema.parse(event.payload);
+    const db = getDb();
+    const changed = await applyMessageStatus(db, { zapiMessageId, target: status, at: new Date(at) });
+    if (changed === 0 && !(await messageExists(db, zapiMessageId))) {
+      const last = event.attempts + 1 >= getRetryPolicy("wa.status_replay").maxAttempts;
+      if (!last) throw new Error(`mensagem ${zapiMessageId} ainda não existe: o recibo ${status} espera a próxima tentativa`);
+      console.info(`[wa.status_replay] ${zapiMessageId} ${status} → mensagem nunca apareceu; desistindo`);
+      return;
+    }
     console.info(`[wa.status_replay] ${zapiMessageId} ${status} → ${changed} linha(s)`);
   },
   "wa.transcribe": async (event) => {
@@ -409,6 +420,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     // se couber no que sobra do orçamento; senão fica para o kick/cron (o
     // import é tardio porque kick → worker → handlers é um ciclo).
     const { INLINE_KICK_BUDGET_MS, runOutboxKick } = await import("@/queue/kick");
+    const minBudgetMs = handlerReserveMs("wa.bot_turn");
     const result = await transcribeInboundAudio(
       getDb(),
       getMessagingProvider(),
@@ -417,11 +429,17 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       {
         runInline: async (outboxEventId) => {
           const budgetMs = event.deadlineAt ? event.deadlineAt.getTime() - Date.now() : INLINE_KICK_BUDGET_MS;
+          // Sem o mínimo de um turno, o kick que a transcrição já mandou cuida.
+          if (budgetMs < minBudgetMs) {
+            console.info(`[wa.transcribe] turno aninhado ${outboxEventId} pulado: sobravam ${budgetMs} ms; o kick cuida`);
+            return;
+          }
           // A origem é a de quem processou a transcrição: só é "na hora" se
-          // foi a própria chamada do webhook; pelo kick ou pelo cron, o
-          // turno aninhado herda isso (o card conta a rede de segurança).
-          const kick = await runOutboxKick(getDb(), { outboxEventId, source: event.source, budgetMs });
-          console.info(`[wa.transcribe] turno inline ${outboxEventId} → ${kick.target}`);
+          // foi a própria chamada do webhook; pelo kick ou pelo cron, o turno
+          // aninhado herda isso (o card conta a rede de segurança). Só o alvo
+          // (e a mesma conversa): este handler já está dentro de um lote.
+          const kick = await runOutboxKick(getDb(), { outboxEventId, source: event.source, budgetMs, targetOnly: true });
+          console.info(`[wa.transcribe] turno aninhado ${outboxEventId} → ${kick.target}`);
         },
       },
     );

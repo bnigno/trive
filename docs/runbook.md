@@ -95,10 +95,13 @@ em autenticação.
 Mensagens e e-mails passam por uma fila com **retry automático** (tentativas
 repetidas com espera crescente). A resposta da Lia a uma mensagem sai na
 **mesma chamada do webhook** (o servidor responde 200 à Z-API e continua
-trabalhando — `after()` do Next); uma mensagem que chega enquanto a Lia
-ainda responde é gravada na hora (o turno não segura a conversa) e ganha o
-próprio turno logo depois. O aviso ao Inngest (kick, com teto de 3 s e
-aviso no log quando falha) e o cron de 1 minuto são **redes de segurança**
+trabalhando — `after()` do Next). Mensagem que chega **enquanto a Lia ainda
+responde** (rajada) espera o turno terminar para ser gravada (o turno segura
+a conversa — é o que garante que o caderninho nunca perde nada) e o turno
+dela roda em seguida **na mesma chamada** que respondeu a anterior; se essa
+chamada já não tem 32 s pela frente, o aviso ao Inngest cuida. O aviso ao
+Inngest (kick, com teto de 3 s e aviso no log quando falha) e o cron de 1
+minuto são **redes de segurança**
 para quando essa chamada morre no meio (deploy, estouro dos 60 s). No plano
 grátis do Inngest uma função leva ~30 s (p50; p90 ~70 s) só para COMEÇAR:
 o que depende só dele — pedidos do site, cartões, e-mail — leva meio minuto,
@@ -140,7 +143,12 @@ testar o Haiku no Ensaio); entrega alta = Z-API lenta.
    (`wa.bot_turn`) — cache lido baixo = prompt mudando a cada turno.
 4. **Entrega.** Balões × (digitando + 1 s) + mídia. "Entregue no celular"
    maior que "primeiro balão" por mais de ~3 s = a Z-API está segurando.
-5. **Diagnóstico completo, para o antes/depois de cada mudança:**
+5. **Recibos.** O recibo "entregue/lida" do primeiro balão costuma chegar
+   antes de o turno terminar de gravar: ele vira um item `wa.status_replay`
+   na fila (aplicado com a hora real do recibo em até ~1 min). É normal ver
+   alguns desses em /admin/fila; um que fica em falha definitiva é recibo de
+   mensagem que a loja mandou do celular, não pela Lia — pode ignorar.
+6. **Diagnóstico completo, para o antes/depois de cada mudança:**
    `npx tsx --env-file=.env.prod.local scripts/lia-diagnostico.ts --dias 30`
    (só leitura). Sai: tempos por trecho e por origem, cliente → 1º balão
    aceito e entregue, tokens/cache por modelo, ferramentas por turno, falhas

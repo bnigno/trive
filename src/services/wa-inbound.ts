@@ -461,14 +461,16 @@ export type MessageStatusTarget = "delivered" | "read";
  * MONOTÔNICA (nunca regride). Devolve quantas linhas mudaram: 0 = a mensagem
  * não existe (ainda) ou já estava adiante.
  */
-export async function applyMessageStatus(db: DbOrTx, input: { zapiMessageId: string; target: MessageStatusTarget }): Promise<number> {
+export async function applyMessageStatus(db: DbOrTx, input: { zapiMessageId: string; target: MessageStatusTarget; at?: Date }): Promise<number> {
+  // A hora é a do RECIBO (o replay pela fila roda dezenas de segundos depois).
+  const at = input.at ?? new Date();
   const res = await db
     .update(waMessages)
     .set(
       input.target === "read"
         ? // Lida implica entregue: READ que chegou antes do DELIVERED (ou DELIVERED perdido) não deixa delivered_at vazio.
-          { status: "read", readAt: new Date(), deliveredAt: sql`coalesce(${waMessages.deliveredAt}, now())` }
-        : { status: "delivered", deliveredAt: new Date() },
+          { status: "read", readAt: at, deliveredAt: sql`coalesce(${waMessages.deliveredAt}, ${at})` }
+        : { status: "delivered", deliveredAt: at },
     )
     .where(
       and(
@@ -480,7 +482,7 @@ export async function applyMessageStatus(db: DbOrTx, input: { zapiMessageId: str
   return res.length;
 }
 
-async function messageExists(db: DbOrTx, zapiMessageId: string): Promise<boolean> {
+export async function messageExists(db: DbOrTx, zapiMessageId: string): Promise<boolean> {
   const [row] = await db.select({ id: waMessages.id }).from(waMessages).where(eq(waMessages.zapiMessageId, zapiMessageId)).limit(1);
   return row !== undefined;
 }
@@ -525,25 +527,28 @@ export async function processZapiInbound(
       : statusUpper === "READ" || statusUpper === "PLAYED"
         ? "read"
         : null;
+  // Só o callback de STATUS de verdade (type ou lista de ids): o "ao receber"
+  // de reação, contato, enquete e afins também vem com status RECEIVED e sem
+  // texto — esses seguem para "ignorado", não viram recibo.
   const statusIds = (parsed.ids ?? (messageId ? [messageId] : [])).map(String);
-  if (statusTarget && statusIds.length > 0 && !text) {
+  const isStatusCallback = parsed.type === "MessageStatusCallback" || (parsed.ids !== undefined && parsed.ids !== null);
+  if (statusTarget && isStatusCallback && statusIds.length > 0 && !text) {
+    const receivedAt = new Date();
     let updated = 0;
     for (const id of statusIds) {
-      const changed = await applyMessageStatus(db, { zapiMessageId: id, target: statusTarget });
-      updated += changed;
-      // Recibo que chegou antes de a linha existir (o turno da Lia ainda não
-      // commitou o balão que acabou de enviar) não pode se perder: repete
-      // daqui a pouco pela fila — é ele que alimenta o ✓✓ e "entregue no
-      // celular". Linha que existe e já está adiante (DELIVERED depois do
-      // READ) não precisa de nada; mensagem que nunca foi nossa só faz a
-      // fila olhar de novo e concluir.
-      if (changed === 0 && !(await messageExists(db, id))) {
+      // Olha ANTES de aplicar: se a linha ainda não existe (o turno da Lia não
+      // commitou o balão que acabou de enviar), o recibo repete pela fila — é
+      // ele que alimenta o ✓✓ e "entregue no celular". Olhar antes fecha a
+      // janela em que o turno commita entre o UPDATE e a olhada.
+      const existed = await messageExists(db, id);
+      updated += await applyMessageStatus(db, { zapiMessageId: id, target: statusTarget, at: receivedAt });
+      if (!existed) {
         await enqueueOutboxEvent(
           db,
           {
             eventType: "wa.status_replay",
             dedupeKey: `wa.status:${id}:${statusTarget}`,
-            payload: { zapiMessageId: id, status: statusTarget },
+            payload: { zapiMessageId: id, status: statusTarget, at: receivedAt.toISOString() },
             nextAttemptAt: new Date(Date.now() + STATUS_REPLAY_DELAY_MS),
           },
           { kick: false },

@@ -18,6 +18,7 @@ const processZapiInbound = vi.fn();
 vi.mock("@/services/wa-inbound", () => ({ processZapiInbound: (...args: unknown[]) => processZapiInbound(...args) }));
 const runOutboxKick = vi.fn();
 vi.mock("@/queue/kick", () => ({ INLINE_KICK_BUDGET_MS: 45_000, WEBHOOK_INLINE_MAX_MS: 55_000, runOutboxKick: (...args: unknown[]) => runOutboxKick(...args) }));
+vi.mock("@/core/queue/retry-policy", () => ({ handlerReserveMs: () => 32_000 }));
 const fakeDb = { fake: true };
 vi.mock("@/db/client", () => ({ getDb: () => fakeDb }));
 
@@ -77,6 +78,15 @@ describe("POST /api/webhooks/zapi/[secret]", () => {
       await post({ messageId: "MSG-6" });
       await afterTasks[0]();
       expect(runOutboxKick).toHaveBeenCalledWith(fakeDb, { outboxEventId: "e3", source: "inline", budgetMs: 35_000 });
+
+      // Esperou 30 s (o turno anterior da mesma conversa): sobram 25 s < 32 s — nem agenda; o kick pós-commit cuida.
+      processZapiInbound.mockImplementation(async () => {
+        vi.advanceTimersByTime(30_000);
+        return { action: "bot_queued", conversationId: "c1", waMessageId: "m2", outboxEventId: "e4" };
+      });
+      const response = await post({ messageId: "MSG-7" });
+      expect(response.status).toBe(200);
+      expect(afterTasks).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
