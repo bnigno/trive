@@ -14,15 +14,16 @@ import {
 import { STORE_INSTAGRAM_DEFAULT } from "@/lib/brand";
 import {
   replaceFeeRuleAction,
+  type FormState,
   updateApprovalRulesAction,
+  updateCityDatesAction,
+  updateDebutLetterAction,
   updateMercadoPagoAction,
   updatePolicyAction,
   updateStockSettingsAction,
   updateStoreDataAction,
+  updateStoreFactsAction,
   updateStorefrontAction,
-  updateDebutLetterAction,
-  updateCityDatesAction,
-  type FormState,
 } from "./actions";
 
 const INITIAL_STATE: FormState = {};
@@ -581,6 +582,48 @@ export function StorefrontForm({
 
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar textos da vitrine</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// O que a Lia sabe da loja — horário, retirada e "sobre" (a ficha do prompt)
+// ---------------------------------------------------------------------------
+
+export function StoreFactsForm({ defaults }: { defaults: { hours: string; pickup: string; about: string } }) {
+  const [state, formAction] = useActionState(updateStoreFactsAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Horário de atendimento" hint="Como a Lia responde “que horas vocês atendem?”. Vazio = ela não fala de horário.">
+          <Input name="storeHours" maxLength={200} defaultValue={defaults.hours} placeholder="segunda a sábado, 9h às 19h" />
+        </Field>
+        <Field label="Retirada" hint="Se há loja aberta ou ponto de retirada. Vazio = ela não oferece retirada.">
+          <Input
+            name="storePickup"
+            maxLength={300}
+            defaultValue={defaults.pickup}
+            placeholder="Não temos loja aberta ao público: a entrega é por motoboy ou Correios."
+          />
+        </Field>
+      </div>
+      <Field label="Sobre a loja" hint="Até 600 caracteres, na sua voz. É o que ela conta quando perguntam quem é a TRIVÉ.">
+        <TextArea
+          name="storeAbout"
+          rows={4}
+          maxLength={600}
+          defaultValue={defaults.about}
+          placeholder="Peças escolhidas com calma pela curadora, em edições pequenas, feitas para o calor de Belém."
+        />
+      </Field>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar ficha da loja</SubmitButton>
       </div>
     </form>
   );

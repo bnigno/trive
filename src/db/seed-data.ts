@@ -22,6 +22,10 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "store_address", value: "" },
   { key: "store_email", value: "" },
   { key: "store_whatsapp", value: "" },
+  // O que a Lia sabe da loja (ficha do prompt): preencher em /admin/configuracoes.
+  { key: "store_hours", value: "" },
+  { key: "store_pickup", value: "" },
+  { key: "store_about", value: "" },
   // Correios automático (SuperFrete): desligado até a dona ligar em /admin/frete
   // e preencher o CEP de origem; acréscimo de embalagem R$ 3,00 por pedido.
   { key: "store_cep", value: "" },

@@ -104,6 +104,7 @@ import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
 import { applyPendingConversationTouches, isLockTimeoutError } from "./wa-conversation-touch";
 import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode, supersedePendingSuggestions } from "./wa-suggestions";
+import { getStoreFacts } from "./store-facts";
 import { execAnotar, execAtualizarCartela, execSugerirTamanho, loadMemoryLines } from "./bot/style";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
@@ -362,20 +363,14 @@ export type BotPromptBundle = {
 };
 
 export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle> {
-  const map = await getSettingsMap(db, [
-    "store_name",
-    "bot_extra_instructions",
-    "bot_model",
-    "bot_seller_name",
-    "store_exchange_policy",
-  ]);
+  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name"]);
   const text = (key: string): string =>
     typeof map[key] === "string" ? (map[key] as string).trim() : "";
   const storeName = text("store_name") || DEFAULT_STORE_NAME;
   const model = text("bot_model") || DEFAULT_BOT_MODEL;
   const sellerName = text("bot_seller_name") || DEFAULT_SELLER_NAME;
 
-  const storeMap = renderStoreMap(await getStoreMap(db));
+  const [storeMap, storeFacts] = await Promise.all([getStoreMap(db).then(renderStoreMap), getStoreFacts(db)]);
 
   const system = buildBotSystemPrompt({
     storeName,
@@ -383,7 +378,7 @@ export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle>
     extraInstructions: text("bot_extra_instructions"),
     siteUrl: siteBaseUrl(),
     ...(storeMap ? { storeMap } : {}),
-    exchangePolicy: text("store_exchange_policy"),
+    storeFacts,
   });
   return { system, model, sellerName };
 }

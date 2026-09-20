@@ -10,15 +10,16 @@ import { tryOrBuildFallback } from "@/lib/build-safe";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { describeContact, settingText } from "@/lib/settings-text";
 import { getSettingsMap } from "@/services/settings";
+import { EXCHANGE_FACTS } from "@/core/store/exchange-facts";
 
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: "Trocas e devoluções",
   description:
-    "Como trocar ou devolver um produto: direito de arrependimento de 7 dias, troca por defeito e passo a passo do reembolso.",
+    `Como trocar ou devolver um produto: direito de arrependimento de ${EXCHANGE_FACTS.regretDays} dias, troca por defeito e passo a passo do reembolso.`,
   alternates: { canonical: "/trocas-e-devolucoes" },
-  openGraph: { title: "Trocas e devoluções", description: "Como trocar ou devolver um produto: direito de arrependimento de 7 dias, troca por defeito e passo a passo do reembolso.", url: "/trocas-e-devolucoes", type: "website" },
+  openGraph: { title: "Trocas e devoluções", description: `Como trocar ou devolver um produto: direito de arrependimento de ${EXCHANGE_FACTS.regretDays} dias, troca por defeito e passo a passo do reembolso.`, url: "/trocas-e-devolucoes", type: "website" },
 };
 
 const TOC = [
@@ -58,14 +59,14 @@ export default async function ReturnsPage() {
         <p>
           Comprou pela internet e mudou de ideia? Tudo bem. A lei garante a você
           o <strong>direito de arrependimento</strong>: até{" "}
-          <strong>7 dias corridos</strong> após receber o produto, você pode
+          <strong>{EXCHANGE_FACTS.regretDays} dias corridos</strong> após receber o produto, você pode
           desistir da compra sem precisar dar nenhum motivo (art. 49 do Código
           de Defesa do Consumidor).
         </p>
         <p>Funciona assim:</p>
         <ol className="list-decimal space-y-2 pl-5">
           <li>
-            Fale com a gente {contact} dentro dos 7 dias, informando o número
+            Fale com a gente {contact} dentro dos {EXCHANGE_FACTS.regretDays} dias, informando o número
             do pedido.
           </li>
           <li>
@@ -78,7 +79,7 @@ export default async function ReturnsPage() {
           </li>
           <li>
             Assim que o produto chegar, devolvemos <strong>todo</strong> o valor
-            pago — produto e frete — em até 7 dias úteis, pelo mesmo meio em que
+            pago — produto e frete — em até {EXCHANGE_FACTS.refundBusinessDays} dias úteis, pelo mesmo meio em que
             você pagou (Pix, na maioria dos casos).
           </li>
         </ol>
@@ -88,8 +89,8 @@ export default async function ReturnsPage() {
         <p>
           Se o produto apresentar defeito, você tem direito à solução garantida
           pelo Código de Defesa do Consumidor (art. 26): prazo de{" "}
-          <strong>30 dias</strong> para reclamar de produtos não duráveis (como
-          itens de consumo) e <strong>90 dias</strong> para produtos duráveis
+          <strong>{EXCHANGE_FACTS.defectDaysNonDurable} dias</strong> para reclamar de produtos não duráveis (como
+          itens de consumo) e <strong>{EXCHANGE_FACTS.defectDaysDurable} dias</strong> para produtos duráveis
           (como roupas, acessórios e objetos), contados a partir do recebimento
           — ou da data em que o defeito aparecer, quando não for visível de
           cara.
@@ -127,7 +128,7 @@ export default async function ReturnsPage() {
           </ul>
         ) : null}
         <p>
-          Respondemos em até 2 dias úteis e conduzimos todo o processo com você,
+          Respondemos em até {EXCHANGE_FACTS.replyBusinessDays} dias úteis e conduzimos todo o processo com você,
           passo a passo. Nenhuma troca ou devolução é recusada dentro dos prazos
           e condições acima.
         </p>

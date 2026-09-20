@@ -466,6 +466,10 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .int("O acréscimo precisa ser um valor em centavos inteiros.")
     .min(0, "O acréscimo não pode ser negativo.")
     .max(10_000, "O acréscimo vai até R$ 100,00."),
+  // --- O que a Lia sabe da loja (ficha fixa do prompt; vazio = sem a linha) ---
+  store_hours: z.string().trim().max(200, "O horário de atendimento vai até 200 caracteres."),
+  store_pickup: z.string().trim().max(300, "A retirada vai até 300 caracteres."),
+  store_about: z.string().trim().max(600, "O texto sobre a loja vai até 600 caracteres."),
   // --- Vitrine (textos da home editáveis pelo dono; vazio = texto padrão) ---
   store_tagline: z
     .string()

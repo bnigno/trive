@@ -1012,10 +1012,17 @@ describe("caderninho", () => {
     expect(comNota.seen[0].system).toContain("Você é Lia, a vendedora da");
   });
 
-  it("nome da vendedora e política de troca vêm das configurações; planta da loja entra quando há catálogo", async () => {
+  it("nome da vendedora e política de troca vêm das configurações; a ficha da loja traz motoboy (cidades e janelas), horário e pagamento; planta da loja entra quando há catálogo", async () => {
     await db.insert(schema.settings).values([
       { key: "bot_seller_name", value: "Bia" },
       { key: "store_exchange_policy", value: "Troca em 7 dias com etiqueta." },
+      { key: "store_hours", value: "segunda a sábado, 9h às 19h" },
+      { key: "store_pix_key", value: "pix@trive.example" },
+    ]);
+    await db.insert(schema.shippingRates).values([
+      { name: "Motoboy Belém", kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", priceCents: 1500, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
+      { name: "Motoboy Ananindeua", kind: "motoboy", cepStart: "67000000", cepEnd: "67999999", priceCents: 2000, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
+      { name: "Motoboy antigo", kind: "motoboy", cepStart: "68000000", cepEnd: "68999999", priceCents: 2000, isActive: false, deliveryWindows: [{ start: "07:00", end: "08:00", cutoff: "06:00" }] },
     ]);
     const categoryId = await createCategory("Vestidos", "vestidos");
     await createSimpleProduct("VEST-1", "Vestido Um", 18900, { categoryId });
@@ -1025,9 +1032,18 @@ describe("caderninho", () => {
     await runBotTurn(sdb, seen, provider, { conversationId });
     const system = seen.seen[0].system;
     expect(system).toContain("Você é Bia, a vendedora da");
+    expect(system).toContain("FICHA DA LOJA");
     expect(system).toContain("Política de troca: Troca em 7 dias com etiqueta.");
+    expect(system).toContain("• Entrega por motoboy em Belém e Ananindeua, nas janelas 19h–21h (pague até 13h).");
+    expect(system).not.toContain("7h–8h");
+    expect(system).toContain("• Atendimento: segunda a sábado, 9h às 19h");
+    // Correios automático desligado (padrão): fora da área é pela equipe. Sem Mercado Pago ligado: Pix pela chave.
+    expect(system).toContain("• Fora dessa área: Correios com o frete calculado pela equipe");
+    expect(system).toContain("Pix pela chave da loja (enviar_chave_pix)");
     expect(system).toContain("PLANTA DA LOJA");
     expect(system).toContain(`• Vestidos (categoria: vestidos) — 1 peça, ${formatCentsBRL(18900)}`);
+    // A ficha vem antes do método e depois da apresentação.
+    expect(system.indexOf("FICHA DA LOJA")).toBeLessThan(system.indexOf("JEITO DE FALAR"));
   });
 });
 

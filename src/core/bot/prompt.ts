@@ -13,8 +13,8 @@ export type BotPromptOptions = {
   siteUrl: string;
   /** "Planta da loja": categorias, faixas de preço, cores e tamanhos que existem. */
   storeMap?: string;
-  /** Política de troca em texto (setting store_exchange_policy); vazio = não cadastrada. */
-  exchangePolicy?: string;
+  /** "Ficha da loja" (core/bot/store-facts.ts): onde fica, entrega, pagamento, troca. */
+  storeFacts?: string;
 };
 
 export const DEFAULT_SELLER_NAME = "Lia";
@@ -22,7 +22,7 @@ export const DEFAULT_SELLER_NAME = "Lia";
 export function buildBotSystemPrompt(options: BotPromptOptions): string {
   const { storeName, extraInstructions, siteUrl } = options;
   const sellerName = options.sellerName.trim() || DEFAULT_SELLER_NAME;
-  const exchangePolicy = options.exchangePolicy?.trim() ?? "";
+  const storeFacts = options.storeFacts?.trim() ?? "";
   const storeMap = options.storeMap?.trim() ?? "";
 
   const partes = [
@@ -51,9 +51,7 @@ Você é uma assistente de IA com nome. Se perguntarem se você é robô ou IA, 
 
     `OBJEÇÕES E CLIMA:
 • Preço: nunca negocie nem invente desconto. Explique o valor (tecido, acabamento, modelagem) e ofereça uma alternativa mais em conta do catálogo. Cupom só existe se validar_cupom confirmar: quando ela citar um código, valide com as peças já na sacola (a ferramenta calcula o desconto real) e passe o mesmo código em criar_pedido.cupom; código inválido, vencido ou esgotado: diga o motivo que a ferramenta devolveu e siga sem desconto.
-• Prazo de entrega: só o que cotar_frete devolveu.
 • Troca, defeito, reclamação, reembolso, atraso: acolha em 1 frase, sem piada, e transfira com transferir_para_atendente com um resumo de 3 linhas. Depois de transferir, encerre em 1 frase (a equipe assume dali) — não faça nova pergunta.
-• Política de troca: ${exchangePolicy !== "" ? exchangePolicy : "ainda não cadastrada — diga que a equipe explica direitinho e transfira se ela precisar"}.
 • Cliente que mandou vários dados de uma vez: use todos, não peça de novo.`,
 
     `PÓS-ENTREGA (Chegou bem?):
@@ -111,6 +109,16 @@ Você é uma assistente de IA com nome. Se perguntarem se você é robô ou IA, 
 27. CHEGOU: quando a cliente disser que o pedido chegou ("chegou", "recebi", "já está comigo"), chame confirmar_entrega (com o número se ela disser) e responda curto — "Que bom que chegou 🤎" — perguntando se a peça ficou boa. Só quando ELA disser que recebeu; em dúvida ("chegou o boleto?"), pergunte antes.
 28. MEDIDAS DO CORPO: busto, cintura e quadril que ela contar vão SÓ para atualizar_cartela.medidas (em cm de contorno — "sou 42" é numeração, não medida: pergunte o contorno em cm) — nunca para anotar, nunca repetidos de volta na conversa, nunca estimados por foto. Ao sugerir tamanho, fale em folga ("sobram 6 cm no busto"), não nas medidas dela. Se ela pedir para apagar as medidas, chame atualizar_cartela com medidas.apagar = true.`,
   ];
+
+  // Os fatos da casa vêm logo depois da apresentação: onde fica, como entrega,
+  // como paga, como troca — antes do método, para a Lia responder sem inventar.
+  if (storeFacts !== "") {
+    partes.splice(
+      1,
+      0,
+      `FICHA DA LOJA (fatos fixos da casa — use com naturalidade; valores exatos de frete, prazo e estoque só pelas ferramentas):\n${storeFacts}`,
+    );
+  }
 
   if (storeMap !== "") {
     partes.push(
