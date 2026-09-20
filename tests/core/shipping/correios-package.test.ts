@@ -12,11 +12,14 @@ import {
   isQuoteReusable,
   isQuoteValid,
   MIN_BILLABLE_WEIGHT_GRAMS,
+  PARTIAL_QUOTE_RETRY_MS,
+  pickCachedQuotes,
   QUOTE_REUSE_MAX_AGE_MS,
   QUOTE_TTL_MS,
   quoteExpiresAt,
   quoteRequestKey,
   quoteRowToRate,
+  type CachedQuoteRow,
 } from "@/core/shipping/correios-package";
 
 const KEY_INPUT = {
@@ -91,6 +94,84 @@ describe("correios-package (core)", () => {
       deliveryDaysMax: 9,
       kind: "correios",
       deliveryWindows: [],
+    });
+  });
+
+  describe("pickCachedQuotes (a regra do cache)", () => {
+    const NOW = new Date("2026-09-19T15:00:00Z");
+    const H = 3600_000;
+    function row(over: Partial<CachedQuoteRow> & { name: string; ageMs: number; id: string }): CachedQuoteRow {
+      const createdAt = new Date(NOW.getTime() - over.ageMs);
+      return {
+        priceCents: over.name === "PAC" ? 2590 : 4290,
+        deliveryDaysMin: over.name === "PAC" ? 6 : 2,
+        deliveryDaysMax: over.name === "PAC" ? 9 : 3,
+        createdAt,
+        expiresAt: quoteExpiresAt(createdAt),
+        ...over,
+      };
+    }
+
+    it("sem nada: pergunta ao provedor, sem plano B", () => {
+      expect(pickCachedQuotes([], NOW, CORREIOS_SERVICES)).toEqual({ rates: [], askProvider: true, fallbackRates: [] });
+    });
+
+    it("lote completo recente: devolve as duas linhas por preço e não pergunta", () => {
+      const pick = pickCachedQuotes([row({ id: "s1", name: "SEDEX", ageMs: H }), row({ id: "p1", name: "PAC", ageMs: H })], NOW, CORREIOS_SERVICES);
+      expect(pick.askProvider).toBe(false);
+      expect(pick.rates.map((r) => [r.rateId, r.name, r.kind])).toEqual([["p1", "PAC", "correios"], ["s1", "SEDEX", "correios"]]);
+      expect(pick.fallbackRates.map((r) => r.rateId)).toEqual(["p1", "s1"]);
+    });
+
+    it("dois lotes reaproveitáveis da mesma chave: por serviço vence a linha MAIS ANTIGA (o id da cliente não muda)", () => {
+      const pick = pickCachedQuotes(
+        [row({ id: "p2", name: "PAC", ageMs: 1_000 }), row({ id: "s2", name: "SEDEX", ageMs: 1_000 }), row({ id: "p1", name: "PAC", ageMs: 2 * H }), row({ id: "s1", name: "SEDEX", ageMs: 2 * H })],
+        NOW,
+        CORREIOS_SERVICES,
+      );
+      expect(pick.rates.map((r) => r.rateId)).toEqual(["p1", "s1"]);
+      expect(pick.askProvider).toBe(false);
+    });
+
+    it("lote parcial (só PAC): dentro da carência devolve só o PAC sem perguntar; depois da carência pergunta e o PAC antigo continua na frente", () => {
+      const recent = pickCachedQuotes([row({ id: "p1", name: "PAC", ageMs: PARTIAL_QUOTE_RETRY_MS })], NOW, CORREIOS_SERVICES);
+      expect(recent).toMatchObject({ askProvider: false });
+      expect(recent.rates.map((r) => r.rateId)).toEqual(["p1"]);
+
+      const later = pickCachedQuotes([row({ id: "p1", name: "PAC", ageMs: PARTIAL_QUOTE_RETRY_MS + 1 })], NOW, CORREIOS_SERVICES);
+      expect(later.askProvider).toBe(true);
+      expect(later.rates.map((r) => r.rateId)).toEqual(["p1"]);
+      expect(later.fallbackRates.map((r) => r.rateId)).toEqual(["p1"]);
+
+      // O provedor respondeu com os dois: o PAC antigo segue com o mesmo id; o SEDEX é o novo.
+      const merged = pickCachedQuotes([row({ id: "p1", name: "PAC", ageMs: 2 * H }), row({ id: "p2", name: "PAC", ageMs: 0 }), row({ id: "s2", name: "SEDEX", ageMs: 0 })], NOW, CORREIOS_SERVICES);
+      expect(merged.rates.map((r) => r.rateId)).toEqual(["p1", "s2"]);
+      expect(merged.askProvider).toBe(false);
+    });
+
+    it("entre 12 h e 24 h: pergunta ao provedor, mas o plano B é a linha mais recente ainda válida (o id que a cliente carrega fecha pedido)", () => {
+      const pick = pickCachedQuotes(
+        [row({ id: "p0", name: "PAC", ageMs: 20 * H }), row({ id: "p1", name: "PAC", ageMs: 13 * H }), row({ id: "s1", name: "SEDEX", ageMs: 13 * H })],
+        NOW,
+        CORREIOS_SERVICES,
+      );
+      expect(pick.askProvider).toBe(true);
+      expect(pick.rates).toEqual([]);
+      expect(pick.fallbackRates.map((r) => r.rateId)).toEqual(["p1", "s1"]);
+    });
+
+    it("linha vencida não conta nem como plano B; exatamente 12 h ainda reaproveita", () => {
+      const expired = row({ id: "p0", name: "PAC", ageMs: 25 * H });
+      expect(pickCachedQuotes([expired], NOW, CORREIOS_SERVICES)).toEqual({ rates: [], askProvider: true, fallbackRates: [] });
+      const edge = pickCachedQuotes([row({ id: "p1", name: "PAC", ageMs: QUOTE_REUSE_MAX_AGE_MS }), row({ id: "s1", name: "SEDEX", ageMs: QUOTE_REUSE_MAX_AGE_MS })], NOW, CORREIOS_SERVICES);
+      expect(edge.askProvider).toBe(false);
+      expect(edge.rates.map((r) => r.rateId)).toEqual(["p1", "s1"]);
+    });
+
+    it("só o serviço pedido conta", () => {
+      const pick = pickCachedQuotes([row({ id: "p1", name: "PAC", ageMs: H }), row({ id: "s1", name: "SEDEX", ageMs: H })], NOW, ["SEDEX"]);
+      expect(pick.rates.map((r) => r.rateId)).toEqual(["s1"]);
+      expect(pick.askProvider).toBe(false);
     });
   });
 });

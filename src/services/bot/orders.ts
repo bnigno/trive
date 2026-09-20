@@ -205,7 +205,7 @@ export async function execCriarPedido(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
   // Recota pelas opções de AGORA (a janela do motoboy some quando passa da hora-limite).
-  const fresh = (await quoteDeliveryOptions(db, { cep: identity.postalCode, totalWeightGrams, now }, { correios: ctx.correiosQuoter })).map((option) => toBotQuote(option, neededBy, now));
+  const fresh = (await quoteDeliveryOptions(db, { cep: identity.postalCode, totalWeightGrams, now }, { correios: ctx.correiosQuoter, dryRun: ctx.dryRun })).map((option) => toBotQuote(option, neededBy, now));
   const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
   if (!confirmed.ok) return confirmed;
   const chosen = confirmed.quote;

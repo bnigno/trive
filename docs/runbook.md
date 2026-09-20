@@ -343,6 +343,19 @@ Castanhal** a entrega é **só por motoboy**; no resto do Brasil é pelos
   resposta bruta em `raw` para conferir a re-pesagem). Falha do provedor
   (timeout de 6 s, HTTP ≠ 2xx, sem token) = lista vazia = o fluxo pela
   equipe de sempre, com `console.warn("[correios] …")` nos logs da Vercel.
+  Regras do cache (`pickCachedQuotes`, core): por serviço vale a linha MAIS
+  ANTIGA ainda reaproveitável (dois lotes nascidos quase juntos não trocam o
+  id da cliente); resposta incompleta (só PAC) volta a perguntar pelo SEDEX
+  depois de 1 h; provedor fora do ar entre 12 h e 24 h devolve a última
+  cotação ainda válida (a Lia e o checkout fecham com o id que a cliente já
+  tinha). O ensaio da Lia cota de verdade mas não grava. Consequências a
+  saber: **desativar** uma faixa de motoboy faz os CEPs dela receberem
+  PAC/SEDEX (a exclusividade é só de faixa ativa — igual a antes, quando
+  ganhavam "frete pela equipe"); uma faixa manual de Correios criada DEPOIS
+  de uma cotação não invalida o id já entregue (fecha por até 24 h pelo
+  valor visto); duas abas cotando a MESMA chave no mesmo segundo podem
+  gerar ids diferentes — o checkout avisa "a opção foi atualizada" e mostra
+  a marcada antes de fechar.
   Desligar o toggle desfaz tudo na hora. Caixa padrão 16 × 4 × 24 cm e peso
   mínimo de 300 g (`src/core/shipping/correios-package.ts`); pacote maior é
   custo da loja no balcão, nunca cobrança extra à cliente. Produção: migração

@@ -85,7 +85,9 @@ export type BotExecutorContext = {
   /**
    * Ensaio (playground do painel): nada com efeito externo ou de escrita
    * acontece — criar_pedido, enviar_chave_pix, avisar_dono e transferir
-   * respondem um texto explicando que estão desligados no ensaio.
+   * respondem um texto explicando que estão desligados no ensaio. Exceção
+   * consciente: cotar_frete consulta o provedor dos Correios de verdade (sem
+   * gravar cache), para a dona ver a cotação no ensaio.
    */
   dryRun?: boolean;
   /** Relógio injetável (hora-limite do motoboy, data marcada); padrão: agora. */

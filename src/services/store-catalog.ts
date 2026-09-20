@@ -605,6 +605,8 @@ export async function activeMotoboyCoversCep(db: ServiceDb, cep: string): Promis
 /** O que a cotação pode usar além das faixas: o provedor dos Correios (ausente = só faixas, como sempre). */
 export interface QuoteDeliveryDeps {
   correios?: CorreiosQuoter;
+  /** Ensaio da Lia: cota, mas não grava cache (ids descartáveis). */
+  dryRun?: boolean;
 }
 
 /**
@@ -628,7 +630,7 @@ export async function quoteDeliveryOptions(
   if (options.length > 0 || !deps.correios) return options;
   const cep = normalizeCep(input.cep);
   if (await activeMotoboyCoversCep(db, cep)) return options;
-  const correios = await quoteCorreiosOptions(db, deps.correios, { cep, totalWeightGrams: input.totalWeightGrams, now });
+  const correios = await quoteCorreiosOptions(db, deps.correios, { cep, totalWeightGrams: input.totalWeightGrams, now, dryRun: deps.dryRun });
   return expandDeliveryOptions(correios, now);
 }
 

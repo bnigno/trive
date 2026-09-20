@@ -183,17 +183,19 @@ export async function updateCorreiosAutoAction(
 ): Promise<FormState> {
   const user = await requireOwner("frete");
   try {
-    const db = getDb();
     const surchargeCents = parseMoneyField(
       String(formData.get("correiosSurcharge") ?? ""),
       "Acréscimo por pedido (R$)",
     );
-    await updateSetting(db, { key: "store_cep", value: String(formData.get("storeCep") ?? ""), userId: user.id });
-    await updateSetting(db, { key: "correios_surcharge_cents", value: surchargeCents, userId: user.id });
-    await updateSetting(db, {
-      key: "correios_auto_enabled",
-      value: formData.get("correiosAutoEnabled") === "on",
-      userId: user.id,
+    // As três juntas: um valor recusado não deixa o CEP novo com o toggle velho.
+    await getDb().transaction(async (tx) => {
+      await updateSetting(tx, { key: "store_cep", value: String(formData.get("storeCep") ?? ""), userId: user.id });
+      await updateSetting(tx, { key: "correios_surcharge_cents", value: surchargeCents, userId: user.id });
+      await updateSetting(tx, {
+        key: "correios_auto_enabled",
+        value: formData.get("correiosAutoEnabled") === "on",
+        userId: user.id,
+      });
     });
     revalidatePath("/admin/frete");
     return {

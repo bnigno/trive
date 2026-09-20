@@ -713,6 +713,64 @@ describe("quoteDeliveryOptions (Correios automático pela SuperFrete)", () => {
     expect(dearer[0].priceCents).toBe(2290 + 500);
   });
 
+  it("resposta só com PAC: por 1 h ninguém pergunta de novo; depois pergunta, o SEDEX aparece e o PAC mantém o id antigo", async () => {
+    await enableCorreiosAuto();
+    fake.set([{ service: "PAC", serviceCode: "1", priceCents: 2290, deliveryDaysMin: 6, deliveryDaysMax: 9, raw: null }]);
+    const first = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake });
+    expect(first.map((o) => o.name)).toEqual(["PAC"]);
+
+    fake.set(null);
+    const soon = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: new Date(NOW.getTime() + 30 * 60_000) }, { correios: fake });
+    expect(soon.map((o) => o.name)).toEqual(["PAC"]);
+    expect(fake.calls).toHaveLength(1);
+
+    const later = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: new Date(NOW.getTime() + 61 * 60_000) }, { correios: fake });
+    expect(fake.calls).toHaveLength(2);
+    expect(later.map((o) => [o.name, o.rateId === first[0].rateId])).toEqual([["PAC", true], ["SEDEX", false]]);
+    expect(await db.$count(schema.shippingQuotes)).toBe(3);
+  });
+
+  it("entre 12 h e 24 h a recotação pergunta ao provedor; se ele falhar, volta a última cotação ainda válida (mesmos ids)", async () => {
+    await enableCorreiosAuto();
+    const first = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake });
+    fake.failNext("timeout");
+    const later = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: new Date(NOW.getTime() + 13 * 3600_000) }, { correios: fake });
+    expect(fake.calls).toHaveLength(2);
+    expect(later.map((o) => o.rateId)).toEqual(first.map((o) => o.rateId));
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("vale a cotação anterior"));
+    // Depois de vencer (24 h), nem o plano B: frete pela equipe.
+    fake.failNext("timeout");
+    expect(await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: new Date(NOW.getTime() + 25 * 3600_000) }, { correios: fake })).toEqual([]);
+  });
+
+  it("dois lotes da mesma chave gravados quase juntos: todo mundo passa a ver o mais antigo (o id da sacola não some)", async () => {
+    await enableCorreiosAuto();
+    const first = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake });
+    // Um segundo lote nasce por fora (corrida entre duas abas): linhas novas com ids novos.
+    const [row] = await db.select().from(schema.shippingQuotes).limit(1);
+    await db.insert(schema.shippingQuotes).values([
+      { ...row, id: undefined, batchId: "00000000-0000-4000-8000-0000000000bb", createdAt: new Date(NOW.getTime() + 1000) },
+      { ...row, id: undefined, batchId: "00000000-0000-4000-8000-0000000000bb", serviceCode: "2", name: "SEDEX", priceCents: 4290, createdAt: new Date(NOW.getTime() + 1000) },
+    ]);
+    const again = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: new Date(NOW.getTime() + 5000) }, { correios: fake });
+    expect(again.map((o) => o.rateId)).toEqual(first.map((o) => o.rateId));
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("ensaio (dryRun): cota de verdade, devolve PAC/SEDEX, mas não grava nada", async () => {
+    await enableCorreiosAuto();
+    const options = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake, dryRun: true });
+    expect(options.map((o) => o.name)).toEqual(["PAC", "SEDEX"]);
+    expect(options[0].rateId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(fake.calls).toHaveLength(1);
+    expect(await db.$count(schema.shippingQuotes)).toBe(0);
+    // Com cache gravado por uma cotação real, o ensaio lê o cache e não chama o provedor.
+    const real = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake });
+    const rehearsed = await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake, dryRun: true });
+    expect(rehearsed.map((o) => o.rateId)).toEqual(real.map((o) => o.rateId));
+    expect(fake.calls).toHaveLength(2);
+  });
+
   it("lote recente mas já vencido (expires_at no passado) não é reaproveitado", async () => {
     await enableCorreiosAuto();
     await quoteDeliveryOptions(db, { cep: SP, totalWeightGrams: 600, now: NOW }, { correios: fake });

@@ -197,7 +197,8 @@ export function CheckoutClient({
   const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
   const [selectedOptionKey, setSelectedOptionKey] = useState(initialOptionKey || null);
   /** A janela escolhida na sacola sumiu da cotação (passou da hora-limite). */
-  const [windowGone, setWindowGone] = useState(false);
+  /** A escolha da sacola sumiu da lista: 'window' (janela do motoboy passou da hora-limite) ou 'option' (cotação dos Correios renovada/vencida). */
+  const [choiceGone, setChoiceGone] = useState<"window" | "option" | null>(null);
   const [shippingCentsOverride, setShippingCentsOverride] = useState<number | null>(
     null,
   );
@@ -241,12 +242,13 @@ export function CheckoutClient({
       });
       writeStoredCep(cepDigits);
       setShippingCentsOverride(null);
-      // A janela de hoje pode ter passado da hora-limite entre a sacola e o
-      // checkout: a chave some da lista, a escolha cai na primeira opção e a
-      // cliente é avisada (nunca troca de motoboy para Correios em silêncio).
+      // A escolha da sacola pode sumir da lista entre a sacola e o checkout:
+      // a janela de hoje passou da hora-limite, ou a cotação dos Correios foi
+      // renovada (id novo) — a escolha cai na primeira opção e a cliente é
+      // avisada (nunca troca de opção em silêncio).
       setSelectedOptionKey((current) => {
         const next = pickDefaultOptionKey(result.options, current);
-        setWindowGone(isWindowOptionKey(current) && next !== current);
+        setChoiceGone(current !== null && next !== current ? (isWindowOptionKey(current) ? "window" : "option") : null);
         return next;
       });
     });
@@ -758,9 +760,11 @@ export function CheckoutClient({
                     items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}
                   />
                 ) : null}
-                {windowGone && options.length > 0 ? (
+                {choiceGone && options.length > 0 ? (
                   <Notice tone="gold" role="alert">
-                    O horário de entrega que você escolheu na sacola já passou da hora-limite. Confira a opção marcada abaixo ou escolha outra.
+                    {choiceGone === "window"
+                      ? "O horário de entrega que você escolheu na sacola já passou da hora-limite. Confira a opção marcada abaixo ou escolha outra."
+                      : "A opção de entrega que você escolheu na sacola foi atualizada. Confira a opção marcada abaixo ou escolha outra."}
                   </Notice>
                 ) : null}
                 {options.length > 0 ? (
@@ -776,7 +780,7 @@ export function CheckoutClient({
                           onChange={() => {
                             setSelectedOptionKey(option.optionKey);
                             setShippingCentsOverride(null);
-                            setWindowGone(false);
+                            setChoiceGone(null);
                           }}
                           title={option.name}
                           detail={

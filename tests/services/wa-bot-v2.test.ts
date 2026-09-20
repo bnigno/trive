@@ -424,7 +424,7 @@ describe("cotar_frete fora da área com Correios automático (SuperFrete)", () =
     expect(cotacao.ok).toBe(true);
     expect(cotacao.text).toContain(`1. PAC — ${formatCentsBRL(2590)} (6-9 dias úteis)`);
     expect(cotacao.text).toContain(`2. SEDEX — ${formatCentsBRL(4290)} (2-3 dias úteis)`);
-    expect(cotacao.text).toContain("[Correios: o prazo é em dias úteis a partir da postagem e o valor já inclui a embalagem.");
+    expect(cotacao.text).toContain("[Correios: o prazo é em dias úteis a partir da postagem");
     expect(cotacao.text).toContain("Pergunte à cliente qual opção ela prefere");
     expect(cotacao.text).not.toContain("FRETE É CALCULADO PELA EQUIPE");
     expect(correios.calls).toEqual([
@@ -496,6 +496,8 @@ describe("cotar_frete fora da área com Correios automático (SuperFrete)", () =
     expect(ensaio.ok).toBe(true);
     expect(ensaio.text).toContain(`1. PAC — ${formatCentsBRL(2590)}`);
     expect(ensaio.text).toContain(`2. SEDEX — ${formatCentsBRL(4290)}`);
+    // O ensaio cota de verdade, mas não grava cache.
+    expect(await db.$count(schema.shippingQuotes)).toBe(0);
     vi.restoreAllMocks();
   });
 });

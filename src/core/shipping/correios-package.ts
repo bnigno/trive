@@ -31,11 +31,18 @@ export const DEFAULT_SURCHARGE_CENTS = 300;
 export const QUOTE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Até esta idade a mesma pergunta reaproveita o lote gravado, e portanto os
+ * Até esta idade a mesma pergunta reaproveita a linha gravada, e portanto os
  * MESMOS ids (a sacola guarda `?frete=<id>`; a Lia, `quoteKey`). Metade da
  * validade: todo id entregue à cliente ainda vale por ≥ 12 h.
  */
 export const QUOTE_REUSE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * Resposta incompleta (só PAC, SEDEX com erro passageiro nos Correios): a
+ * linha que veio continua servindo, mas depois desta carência vale perguntar
+ * de novo pelo serviço que faltou.
+ */
+export const PARTIAL_QUOTE_RETRY_MS = 60 * 60 * 1000;
 
 /** O peso que vai ao provedor, entra na chave do cache e é conferido no fechamento. */
 export function billableWeightGrams(totalWeightGrams: number): number {
@@ -65,9 +72,10 @@ export interface QuoteRequestKeyInput {
 
 /**
  * A identidade de uma pergunta ao provedor: mesma chave = mesma resposta
- * esperada, então o lote gravado serve. O acréscimo entra na chave de
- * propósito — quando a dona muda a embalagem, o cache antigo deixa de valer
- * na hora, sem limpar nada.
+ * esperada, então a linha gravada serve. O acréscimo entra na chave de
+ * propósito — quando a dona muda a embalagem, as PRÓXIMAS cotações já saem
+ * com o valor novo, sem limpar nada (um id já entregue à cliente continua
+ * fechando pelo valor que ela viu, até vencer).
  */
 export function quoteRequestKey(input: QuoteRequestKeyInput): string {
   const from = input.cepFrom.replace(/\D/g, "");
@@ -98,6 +106,64 @@ export interface StoredQuoteRow {
   priceCents: number;
   deliveryDaysMin: number;
   deliveryDaysMax: number;
+}
+
+export interface CachedQuoteRow extends StoredQuoteRow {
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+export interface CachedQuotePick {
+  /** O que devolver sem perguntar ao provedor: por serviço, a linha MAIS ANTIGA ainda reaproveitável (ids estáveis). */
+  rates: RateForOptions[];
+  /** Falta algum serviço e não há tentativa recente: vale perguntar ao provedor. */
+  askProvider: boolean;
+  /**
+   * Plano B quando o provedor falha: por serviço, a linha reaproveitável ou,
+   * na falta dela, a mais recente ainda VÁLIDA (≤ 24 h, mesmo fora da janela
+   * de reuso) — o id que a cliente carrega continua fechando pedido.
+   */
+  fallbackRates: RateForOptions[];
+}
+
+function byPrice(a: RateForOptions, b: RateForOptions): number {
+  return a.priceCents - b.priceCents;
+}
+
+/**
+ * O que o cache de shipping_quotes responde para uma chave, dadas TODAS as
+ * linhas ainda válidas dela. A linha mais antiga reaproveitável de cada
+ * serviço ganha, para o id não mudar entre a sacola e o checkout nem entre o
+ * caderninho da Lia e o fechamento — mesmo que dois lotes tenham nascido
+ * quase juntos. Sem linha de algum serviço, pergunta-se ao provedor, salvo
+ * se a última tentativa foi há pouco (carência de PARTIAL_QUOTE_RETRY_MS).
+ */
+export function pickCachedQuotes(rows: readonly CachedQuoteRow[], now: Date, services: readonly CorreiosServiceName[]): CachedQuotePick {
+  const valid = rows.filter((row) => isQuoteValid(row.expiresAt, now)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const reusable = valid.filter((row) => isQuoteReusable(row.createdAt, now));
+
+  const oldestReusable = new Map<string, CachedQuoteRow>();
+  for (const row of reusable) if (!oldestReusable.has(row.name)) oldestReusable.set(row.name, row);
+  const newestValid = new Map<string, CachedQuoteRow>();
+  for (const row of valid) newestValid.set(row.name, row);
+
+  const rates = services.flatMap((service) => {
+    const row = oldestReusable.get(service);
+    return row ? [quoteRowToRate(row)] : [];
+  });
+  const fallbackRates = services.flatMap((service) => {
+    const row = oldestReusable.get(service) ?? newestValid.get(service);
+    return row ? [quoteRowToRate(row)] : [];
+  });
+  const complete = services.every((service) => oldestReusable.has(service));
+  const lastAttemptAt = reusable.reduce<number | null>((max, row) => Math.max(max ?? 0, row.createdAt.getTime()), null);
+  const recentlyTried = lastAttemptAt !== null && now.getTime() - lastAttemptAt <= PARTIAL_QUOTE_RETRY_MS;
+
+  return {
+    rates: rates.sort(byPrice),
+    askProvider: !complete && !recentlyTried,
+    fallbackRates: fallbackRates.sort(byPrice),
+  };
 }
 
 /** A linha de shipping_quotes na forma que o funil de opções já entende (uma faixa de Correios). */

@@ -218,9 +218,12 @@ export default async function FretePage() {
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             Fora da área do motoboy, a loja e a Lia cotam PAC e SEDEX na hora
             pela SuperFrete (preços já com o desconto da plataforma) e somam o
-            acréscimo de embalagem. Uma faixa de Correios ativa continua
-            valendo na frente: a cotação automática só entra onde nenhuma
-            faixa cobre o CEP. A postagem segue manual — você gera a etiqueta
+            acréscimo de embalagem. As suas faixas continuam valendo na frente:
+            a cotação automática só entra quando nenhuma faixa ativa atende o
+            CEP <em>e o peso</em> da sacola — e nenhuma faixa de motoboy ativa
+            cobre o CEP. Atenção: <strong>desativar</strong> uma faixa de motoboy
+            faz os CEPs dela passarem a receber PAC e SEDEX (antes, ficavam com o
+            frete pela equipe). A postagem segue manual — você gera a etiqueta
             no painel da SuperFrete e marca o pedido como enviado.
           </p>
 

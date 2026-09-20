@@ -1,15 +1,16 @@
 // Cotação automática dos Correios (SuperFrete) para os CEPs que nenhuma
-// faixa cobre: lê as configurações da dona, reaproveita o lote gravado em
-// shipping_quotes (≤ 12 h) ou pergunta ao provedor e grava um lote novo. O
-// id de cada linha é o `rateId` que a sacola e a Lia carregam até o
-// fechamento; createStoreOrder confere a linha por findShippingQuoteById.
+// faixa cobre: lê as configurações da dona, reaproveita as linhas gravadas
+// em shipping_quotes (≤ 12 h; a regra é pickCachedQuotes, no core) ou
+// pergunta ao provedor e grava um lote novo. O id de cada linha é o `rateId`
+// que a sacola e a Lia carregam até o fechamento; createStoreOrder confere a
+// linha por findShippingQuoteById.
 //
 // Nunca lança: qualquer falha (provedor fora, sem token, sem CEP de origem)
-// vira lista vazia e a loja segue exatamente como antes — Correios com o
-// frete calculado pela equipe.
+// vira a última cotação ainda válida ou, sem ela, lista vazia — e a loja
+// segue exatamente como antes, Correios com o frete calculado pela equipe.
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 
 import { CorreiosQuoteUnavailableError, isCorreiosQuotesConfigured, type CorreiosQuoter } from "@/adapters/superfrete";
 import {
@@ -18,10 +19,10 @@ import {
   CORREIOS_SERVICES,
   DEFAULT_PACKAGE_CM,
   DEFAULT_SURCHARGE_CENTS,
-  QUOTE_REUSE_MAX_AGE_MS,
+  pickCachedQuotes,
   quoteExpiresAt,
   quoteRequestKey,
-  quoteRowToRate,
+  type CachedQuoteRow,
 } from "@/core/shipping/correios-package";
 import type { RateForOptions } from "@/core/shipping/delivery-windows";
 import { shippingQuotes } from "@/db/schema";
@@ -57,12 +58,15 @@ export interface QuoteCorreiosInput {
   cep: string;
   totalWeightGrams: number;
   now: Date;
+  /** Ensaio da Lia: pergunta ao provedor (e lê o cache) mas NÃO grava — os ids devolvidos são descartáveis. */
+  dryRun?: boolean;
 }
 
 /**
  * PAC e SEDEX para o CEP, já com o acréscimo de embalagem, como faixas de
  * Correios que o funil de opções entende. [] quando a cotação automática
- * está desligada, mal configurada, o provedor falhou ou não atende o trecho.
+ * está desligada, mal configurada, ou o provedor falhou/não atende o trecho
+ * e não há cotação anterior ainda válida.
  */
 export async function quoteCorreiosOptions(
   db: ServiceDb,
@@ -87,8 +91,9 @@ export async function quoteCorreiosOptions(
     services: CORREIOS_SERVICES,
   });
 
-  const cached = await findReusableBatch(db, requestKey, input.now);
-  if (cached.length > 0) return cached;
+  const cachedRows = await listValidQuoteRows(db, requestKey, input.now);
+  const cached = pickCachedQuotes(cachedRows, input.now, CORREIOS_SERVICES);
+  if (!cached.askProvider) return cached.rates;
 
   let results;
   try {
@@ -101,67 +106,64 @@ export async function quoteCorreiosOptions(
     });
   } catch (error) {
     const why = error instanceof CorreiosQuoteUnavailableError ? error.reason : error instanceof Error ? error.message : String(error);
-    console.warn(`[correios] cotação indisponível para ${input.cep} (${why}): frete pela equipe.`);
-    return [];
+    // Só o prefixo do CEP no log (a cidade, não o endereço).
+    console.warn(`[correios] cotação indisponível para ${input.cep.slice(0, 5)}xxx (${why}): ${cached.fallbackRates.length > 0 ? "vale a cotação anterior" : "frete pela equipe"}.`);
+    return cached.fallbackRates;
   }
-  if (results.length === 0) return [];
+  if (results.length === 0) return cached.fallbackRates;
 
   const batchId = randomUUID();
   const expiresAt = quoteExpiresAt(input.now);
-  const rows = await db
-    .insert(shippingQuotes)
-    .values(
-      results.map((result) => ({
-        provider: "superfrete",
-        requestKey,
-        batchId,
-        serviceCode: result.serviceCode,
-        name: result.service,
-        cepFrom: settings.storeCep!,
-        cepTo: input.cep,
-        weightGrams,
-        package: { ...DEFAULT_PACKAGE_CM },
-        providerPriceCents: result.priceCents,
-        surchargeCents: settings.surchargeCents,
-        priceCents: applySurcharge(result.priceCents, settings.surchargeCents),
-        deliveryDaysMin: result.deliveryDaysMin,
-        deliveryDaysMax: result.deliveryDaysMax,
-        raw: result.raw ?? null,
-        createdAt: input.now,
-        expiresAt,
-      })),
-    )
-    .returning({
-      id: shippingQuotes.id,
-      name: shippingQuotes.name,
-      priceCents: shippingQuotes.priceCents,
-      deliveryDaysMin: shippingQuotes.deliveryDaysMin,
-      deliveryDaysMax: shippingQuotes.deliveryDaysMax,
-    });
-  return rows.map(quoteRowToRate).sort((a, b) => a.priceCents - b.priceCents);
+  const values = results.map((result) => ({
+    provider: "superfrete",
+    requestKey,
+    batchId,
+    serviceCode: result.serviceCode,
+    name: result.service,
+    cepFrom: settings.storeCep!,
+    cepTo: input.cep,
+    weightGrams,
+    package: { ...DEFAULT_PACKAGE_CM },
+    providerPriceCents: result.priceCents,
+    surchargeCents: settings.surchargeCents,
+    priceCents: applySurcharge(result.priceCents, settings.surchargeCents),
+    deliveryDaysMin: result.deliveryDaysMin,
+    deliveryDaysMax: result.deliveryDaysMax,
+    raw: result.raw ?? null,
+    createdAt: input.now,
+    expiresAt,
+  }));
+  const inserted: CachedQuoteRow[] = input.dryRun
+    ? values.map((value) => ({ ...value, id: randomUUID() }))
+    : await db.insert(shippingQuotes).values(values).returning({
+        id: shippingQuotes.id,
+        name: shippingQuotes.name,
+        priceCents: shippingQuotes.priceCents,
+        deliveryDaysMin: shippingQuotes.deliveryDaysMin,
+        deliveryDaysMax: shippingQuotes.deliveryDaysMax,
+        createdAt: shippingQuotes.createdAt,
+        expiresAt: shippingQuotes.expiresAt,
+      });
+  // A escolha final passa pela mesma regra: a linha antiga de um serviço continua na frente da recém-gravada.
+  return pickCachedQuotes([...cachedRows, ...inserted], input.now, CORREIOS_SERVICES).rates;
 }
 
-/** O lote mais recente da mesma pergunta, se ainda é reaproveitável (≤ 12 h e não vencido). */
-async function findReusableBatch(db: ServiceDb, requestKey: string, now: Date): Promise<RateForOptions[]> {
-  const since = new Date(now.getTime() - QUOTE_REUSE_MAX_AGE_MS);
+/** Todas as linhas ainda válidas (≤ 24 h) da mesma pergunta, da mais antiga para a mais nova. */
+async function listValidQuoteRows(db: ServiceDb, requestKey: string, now: Date): Promise<CachedQuoteRow[]> {
   const rows = await db
     .select({
       id: shippingQuotes.id,
-      batchId: shippingQuotes.batchId,
       name: shippingQuotes.name,
       priceCents: shippingQuotes.priceCents,
       deliveryDaysMin: shippingQuotes.deliveryDaysMin,
       deliveryDaysMax: shippingQuotes.deliveryDaysMax,
+      createdAt: shippingQuotes.createdAt,
+      expiresAt: shippingQuotes.expiresAt,
     })
     .from(shippingQuotes)
-    .where(and(eq(shippingQuotes.requestKey, requestKey), gt(shippingQuotes.createdAt, since), gt(shippingQuotes.expiresAt, now)))
-    .orderBy(desc(shippingQuotes.createdAt), shippingQuotes.serviceCode);
-  if (rows.length === 0) return [];
-  const latestBatch = rows[0].batchId;
-  return rows
-    .filter((row) => row.batchId === latestBatch)
-    .map(quoteRowToRate)
-    .sort((a, b) => a.priceCents - b.priceCents);
+    .where(and(eq(shippingQuotes.requestKey, requestKey), gt(shippingQuotes.expiresAt, now)))
+    .orderBy(asc(shippingQuotes.createdAt), asc(shippingQuotes.serviceCode));
+  return rows.map((row) => ({ ...row, priceCents: Number(row.priceCents) }));
 }
 
 export interface ResolvedShippingQuote {
