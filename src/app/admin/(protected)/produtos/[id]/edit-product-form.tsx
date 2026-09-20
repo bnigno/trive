@@ -26,6 +26,7 @@ export function EditProductForm({
   categoryOptions,
   supplierOptions,
   autoFocusDescription = false,
+  autoFocusField,
 }: {
   product: {
     id: string;
@@ -44,6 +45,8 @@ export function EditProductForm({
   supplierOptions: SupplierOption[];
   /** Vindo do selo "descrição curta": o cursor já cai no campo. */
   autoFocusDescription?: boolean;
+  /** Vindo do card "o que falta para a Lia": o cursor cai no campo da ficha. */
+  autoFocusField?: "composition" | "fitNotes" | "pieceType";
 }) {
   const [state, formAction] = useActionState(updateProductAction, initialState);
   const [descriptionLength, setDescriptionLength] = useState(
@@ -99,7 +102,7 @@ export function EditProductForm({
           className="sm:col-span-2"
           hint={`A Lia usa o tipo para achar a peça quando a cliente pede "um corset" ou "vestidos". ${product.pieceType ? "" : "Sugerido pelo nome quando vazio — confira antes de salvar."}`}
         >
-          <Select name="pieceType" defaultValue={product.pieceType ?? suggestPieceType(product.name) ?? ""}>
+          <Select name="pieceType" defaultValue={product.pieceType ?? suggestPieceType(product.name) ?? ""} autoFocus={autoFocusField === "pieceType"}>
             <option value="">Sem tipo</option>
             {PIECE_TYPES.map((type) => (
               <option key={type.slug} value={type.slug}>
@@ -143,7 +146,7 @@ export function EditProductForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Composição" className="sm:col-span-2" hint="Ex.: 100% linho · forro 100% viscose">
-          <Input name="composition" defaultValue={product.composition ?? ""} placeholder="Tecido e forro" />
+          <Input name="composition" defaultValue={product.composition ?? ""} placeholder="Tecido e forro" autoFocus={autoFocusField === "composition"} />
         </Field>
         <CareFields symbols={care.symbols} freeText={care.freeText} />
         <Field
@@ -153,6 +156,7 @@ export function EditProductForm({
         >
           <TextArea
             name="fitNotes"
+            autoFocus={autoFocusField === "fitNotes"}
             rows={3}
             defaultValue={product.fitNotes ?? ""}
             placeholder="Ex.: Caimento fluido, comprimento midi; a modelo tem 1,68 m e veste M."

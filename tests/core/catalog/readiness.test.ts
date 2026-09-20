@@ -2,11 +2,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assessLiaReadiness,
   assessProductReadiness,
   DESCRIPTION_MIN_CHARS,
-  summarizeReadiness,
   type ReadinessFacts,
   type ReadinessVariantFacts,
+  summarizeLiaReadiness,
+  summarizeReadiness,
 } from "@/core/catalog/readiness";
 
 const variant = (over: Partial<ReadinessVariantFacts> = {}): ReadinessVariantFacts => ({
@@ -25,6 +27,11 @@ const completa: ReadinessFacts = {
   categoryId: "cat-1",
   categoryHasCover: true,
   variants: [variant()],
+  // Ficha completa para a Lia (tipo, composição, como veste, nota): não muda a prontidão de venda.
+  pieceType: "vestido",
+  compositionLength: 20,
+  fitNotesLength: 40,
+  curatorNoteLength: 60,
 };
 
 const codes = (facts: ReadinessFacts) =>
@@ -36,6 +43,7 @@ describe("assessProductReadiness", () => {
       level: "ready",
       issues: [],
       primaryIssue: null,
+      lia: [],
     });
   });
 
@@ -160,5 +168,42 @@ describe("summarizeReadiness", () => {
       allReady: true,
     });
     expect(summarizeReadiness([])).toEqual({ ready: 0, total: 0, allReady: false });
+  });
+});
+
+describe("o que falta para a Lia falar bem (assessLiaReadiness)", () => {
+  const pronta = {
+    status: "active",
+    descriptionLength: 300,
+    photoCount: 2,
+    categoryId: "c1",
+    categoryHasCover: true,
+    variants: [{ isActive: true, weightGrams: 300, hasActivePrice: true, hasPendingPrice: false, available: 3 }],
+  };
+
+  it("peça pronta para vender com a ficha vazia: continua 'ready', mas os 4 campos da Lia faltam, na ordem em que a dona resolveria", () => {
+    const readiness = assessProductReadiness(pronta);
+    expect(readiness.level).toBe("ready");
+    expect(readiness.primaryIssue).toBeNull();
+    expect(readiness.lia.map((issue) => issue.code)).toEqual(["no_piece_type", "no_composition", "no_fit_notes", "no_curator_note"]);
+    expect(readiness.lia[0]).toMatchObject({ anchor: "dados-basicos", focus: "pieceType" });
+    expect(readiness.lia[3]).toMatchObject({ anchor: "nota-da-curadora" });
+  });
+
+  it("ficha completa → nada falta; arquivada → nada (não é caso para a Lia)", () => {
+    expect(assessLiaReadiness({ ...pronta, pieceType: "vestido", compositionLength: 20, fitNotesLength: 40, curatorNoteLength: 60 })).toEqual([]);
+    expect(assessLiaReadiness({ ...pronta, status: "archived" })).toEqual([]);
+    expect(assessProductReadiness({ ...pronta, status: "archived" }).lia).toEqual([]);
+  });
+
+  it("o resumo conta peças não arquivadas com ficha completa e as faltas por campo", () => {
+    const completa = assessProductReadiness({ ...pronta, pieceType: "vestido", compositionLength: 20, fitNotesLength: 40, curatorNoteLength: 60 });
+    const soTipo = assessProductReadiness({ ...pronta, pieceType: "corset" });
+    const arquivada = assessProductReadiness({ ...pronta, status: "archived" });
+    expect(summarizeLiaReadiness([completa, soTipo, arquivada])).toEqual({
+      total: 2,
+      complete: 1,
+      byCode: { no_piece_type: 0, no_composition: 1, no_fit_notes: 1, no_curator_note: 1 },
+    });
   });
 });

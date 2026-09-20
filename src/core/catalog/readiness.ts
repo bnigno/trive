@@ -24,6 +24,11 @@ export type ReadinessFacts = {
   categoryId: string | null;
   categoryHasCover: boolean;
   variants: readonly ReadinessVariantFacts[];
+  /** A ficha que a Lia lê para falar da peça (não mexe na prontidão de venda). Ausente = vazio. */
+  compositionLength?: number;
+  fitNotesLength?: number;
+  curatorNoteLength?: number;
+  pieceType?: string | null;
 };
 
 export type ReadinessCode =
@@ -49,9 +54,10 @@ export type ReadinessAnchor =
   | "dados-basicos"
   | "imagens"
   | "variacoes"
-  | "categorias";
+  | "categorias"
+  | "nota-da-curadora";
 
-export type ReadinessFocus = "description" | "weightGrams";
+export type ReadinessFocus = "description" | "weightGrams" | "composition" | "fitNotes" | "pieceType";
 
 export type ReadinessIssue = {
   code: ReadinessCode;
@@ -63,11 +69,30 @@ export type ReadinessIssue = {
 
 export type ReadinessLevel = "ready" | "almost" | "blocked" | "archived";
 
+/** O que falta para a Lia falar bem da peça — não entra em `level` nem no selo: a peça vende, mas a Lia fala "genérico". */
+export type LiaReadinessCode = "no_piece_type" | "no_composition" | "no_fit_notes" | "no_curator_note";
+
+export type LiaIssue = {
+  code: LiaReadinessCode;
+  label: string;
+  anchor: ReadinessAnchor;
+  focus?: ReadinessFocus;
+};
+
 export type ProductReadiness = {
   level: ReadinessLevel;
   issues: ReadinessIssue[];
   /** O que aparece no selo: o bloqueio mais grave ou, sem bloqueio, o 1º aviso. */
   primaryIssue: ReadinessIssue | null;
+  /** Campos da ficha que a Lia usa e ainda estão vazios (vazio para arquivada). */
+  lia: LiaIssue[];
+};
+
+export type LiaReadinessSummary = {
+  /** Peças não arquivadas e quantas têm a ficha completa para a Lia. */
+  total: number;
+  complete: number;
+  byCode: Record<LiaReadinessCode, number>;
 };
 
 export type ReadinessSummary = {
@@ -116,6 +141,35 @@ function issue(code: ReadinessCode): ReadinessIssue {
   return { code, ...ISSUES[code] };
 }
 
+export const LIA_ISSUES: Record<LiaReadinessCode, Omit<LiaIssue, "code">> = {
+  no_piece_type: { label: 'Sem tipo de peça (a Lia não acha por "vestido")', anchor: "dados-basicos", focus: "pieceType" },
+  no_composition: { label: "Sem composição (a Lia não fala do tecido)", anchor: "dados-basicos", focus: "composition" },
+  no_fit_notes: { label: 'Sem "como veste" (a Lia não fala do caimento)', anchor: "dados-basicos", focus: "fitNotes" },
+  no_curator_note: { label: "Sem nota da curadora (a Lia não tem a sua voz)", anchor: "nota-da-curadora" },
+};
+
+export const LIA_READINESS_CODES = Object.keys(LIA_ISSUES) as LiaReadinessCode[];
+
+/** Na ordem em que a dona resolveria: tipo (um toque), composição, como veste, nota. Arquivada: nada. */
+export function assessLiaReadiness(facts: ReadinessFacts): LiaIssue[] {
+  if (facts.status === "archived") return [];
+  const codes: LiaReadinessCode[] = [];
+  if (!facts.pieceType) codes.push("no_piece_type");
+  if ((facts.compositionLength ?? 0) === 0) codes.push("no_composition");
+  if ((facts.fitNotesLength ?? 0) === 0) codes.push("no_fit_notes");
+  if ((facts.curatorNoteLength ?? 0) === 0) codes.push("no_curator_note");
+  return codes.map((code) => ({ code, ...LIA_ISSUES[code] }));
+}
+
+export function summarizeLiaReadiness(
+  list: readonly { level: ReadinessLevel; lia: readonly LiaIssue[] }[],
+): LiaReadinessSummary {
+  const counted = list.filter((item) => item.level !== "archived");
+  const byCode = { no_piece_type: 0, no_composition: 0, no_fit_notes: 0, no_curator_note: 0 } as Record<LiaReadinessCode, number>;
+  for (const item of counted) for (const issue of item.lia) byCode[issue.code] += 1;
+  return { total: counted.length, complete: counted.filter((item) => item.lia.length === 0).length, byCode };
+}
+
 /**
  * Bloqueios primeiro, na ordem em que a dona resolveria (ativar → variação →
  * preço → estoque → foto); depois os avisos. O primeiro da lista vira o selo.
@@ -123,7 +177,7 @@ function issue(code: ReadinessCode): ReadinessIssue {
 export function assessProductReadiness(facts: ReadinessFacts): ProductReadiness {
   if (facts.status === "archived") {
     const only = issue("archived");
-    return { level: "archived", issues: [only], primaryIssue: only };
+    return { level: "archived", issues: [only], primaryIssue: only, lia: [] };
   }
 
   const issues: ReadinessIssue[] = [];
@@ -166,7 +220,7 @@ export function assessProductReadiness(facts: ReadinessFacts): ProductReadiness 
     : issues.length > 0
       ? "almost"
       : "ready";
-  return { level, issues, primaryIssue: issues[0] ?? null };
+  return { level, issues, primaryIssue: issues[0] ?? null, lia: assessLiaReadiness(facts) };
 }
 
 /** Conta só o que a loja mostra: peças arquivadas não entram no termômetro. */

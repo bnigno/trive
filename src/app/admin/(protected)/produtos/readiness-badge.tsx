@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ProductReadiness, ReadinessIssue } from "@/core/catalog/readiness";
+import type { LiaIssue, ProductReadiness, ReadinessAnchor, ReadinessFocus } from "@/core/catalog/readiness";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 
 const LEVEL_TONES: Record<ProductReadiness["level"], BadgeTone> = {
@@ -10,7 +10,7 @@ const LEVEL_TONES: Record<ProductReadiness["level"], BadgeTone> = {
 };
 
 /** Para onde o toque no motivo leva: o campo que falta, na tela certa. */
-export function readinessIssueHref(productId: string, issue: ReadinessIssue): string {
+export function readinessIssueHref(productId: string, issue: { code: string; anchor: ReadinessAnchor; focus?: ReadinessFocus }): string {
   if (issue.code === "price_pending") return "/admin/precos/pendencias";
   if (issue.code === "no_price") return `/admin/precos/calculadora?product=${productId}`;
   if (issue.anchor === "categorias") return "/admin/produtos#categorias";
@@ -44,5 +44,23 @@ export function ReadinessBadge({
         </Link>
       ) : null}
     </span>
+  );
+}
+
+/** Embaixo do selo: o que falta para a Lia falar bem da peça, cada item levando ao campo. */
+export function LiaIssueLinks({ productId, issues }: { productId: string; issues: readonly LiaIssue[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400" data-lia-issues="">
+      Lia:{" "}
+      {issues.map((issue, index) => (
+        <span key={issue.code}>
+          {index > 0 ? " · " : ""}
+          <Link href={readinessIssueHref(productId, issue)} className="underline hover:text-zinc-800 dark:hover:text-zinc-200">
+            {issue.label}
+          </Link>
+        </span>
+      ))}
+    </p>
   );
 }

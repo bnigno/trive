@@ -130,10 +130,11 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).not.toContain("• Prazo de entrega: só o que cotar_frete devolveu.");
   });
 
-  it("sobre tecido e caimento, a nota da curadora é a palavra dela — cita; sem nada, confere com a equipe", () => {
+  it("sobre tecido e caimento, só o que detalhar_produto trouxer (a ferramenta diz como citar a nota); sem nada, confere com a equipe", () => {
     const prompt = buildBotSystemPrompt(OPCOES);
-    expect(prompt).toContain("a nota da curadora dizem");
-    expect(prompt).toContain('cite-a ("a curadora diz que…")');
+    expect(prompt).toContain("a nota da curadora que detalhar_produto trouxer dizem");
+    expect(prompt).not.toContain('cite-a ("a curadora diz que…")');
+    expect(prompt).toContain("enviar_nota_da_curadora");
     expect(prompt).toContain("diga que confere com a equipe (nunca invente)");
   });
 

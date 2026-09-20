@@ -359,6 +359,7 @@ export default async function ProdutoDetalhePage({
         <Card id="dados-basicos" title="Dados básicos">
           <EditProductForm
             autoFocusDescription={foco === "description"}
+            autoFocusField={foco === "composition" || foco === "fitNotes" || foco === "pieceType" ? foco : undefined}
             product={{
               id: detail.id,
               name: detail.name,
