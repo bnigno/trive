@@ -309,6 +309,15 @@ export default async function PedidoDetalhePage({
                   </span>
                 </div>
               ) : null}
+              {!order.deliveryWindow && order.shippingService ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-zinc-500 dark:text-zinc-400">Entrega</span>
+                  <span className="text-right font-medium text-zinc-900 dark:text-zinc-100">
+                    Correios — {order.shippingService}
+                    {order.shippingQuoteId ? <span className="block text-xs font-normal text-zinc-500">cotação automática (SuperFrete) · poste e marque como enviado</span> : null}
+                  </span>
+                </div>
+              ) : null}
               {stop ? (
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-zinc-500 dark:text-zinc-400">Motoboy</span>

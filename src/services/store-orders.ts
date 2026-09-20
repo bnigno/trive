@@ -37,10 +37,13 @@ import {
   type CouponQuote,
 } from "@/services/coupons";
 import { ServiceError, transitionOrder } from "@/services/orders";
+import { billableWeightGrams, isQuoteValid } from "@/core/shipping/correios-package";
 import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
 import { isValidNeededBy, neededByLabel, OCCASION_MAX, shipByFor } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
+import { findShippingQuoteById, getCorreiosAutoSettings } from "@/services/correios-quotes";
 import { parseWindows } from "@/services/shipping";
+import { activeMotoboyCoversCep, computeTotalWeightGrams } from "@/services/store-catalog";
 
 export { ServiceError };
 
@@ -224,7 +227,9 @@ export async function createStoreOrder(
     // (a) Itens: preço ATIVO atual — o servidor SEMPRE recalcula. Divergências
     // são acumuladas para reportar TODAS de uma vez.
     const priceChanges: PriceChange[] = [];
-    let totalWeightGrams = 0;
+    // Peso pela MESMA regra da vitrine (variante sem peso = 300 g), senão a
+    // faixa/cotação do fechamento não é a que a cliente viu na sacola.
+    const weightLines: { weightGrams: number | null; quantity: number }[] = [];
     const itemRows: {
       productVariantId: string;
       skuSnapshot: string;
@@ -308,7 +313,7 @@ export async function createStoreOrder(
         label ? `${variant.productName} (${label})` : variant.productName,
       );
 
-      totalWeightGrams += (variant.weightGrams ?? 0) * item.quantity;
+      weightLines.push({ weightGrams: variant.weightGrams, quantity: item.quantity });
       itemRows.push({
         productVariantId: variant.id,
         skuSnapshot: variant.sku,
@@ -324,9 +329,14 @@ export async function createStoreOrder(
     if (priceChanges.length > 0) {
       throw new PriceChangedError(priceChanges);
     }
+    const totalWeightGrams = computeTotalWeightGrams(weightLines);
 
-    // (b) Frete: a opção escolhida deve estar ativa; o valor é RECALCULADO
-    // pelo peso total e pelo CEP (faixas da tabela shipping_rates).
+    // (b) Frete: o id escolhido é uma faixa da dona (shipping_rates) ou, fora
+    // das faixas, uma cotação automática dos Correios (shipping_quotes). Nos
+    // dois casos o valor é RECALCULADO pelo servidor com o peso e o CEP de
+    // agora — nunca o que veio do navegador.
+    const now = clock.now ?? new Date();
+    const cep = parsed.address.postalCode;
     const [chosenRate] = await tx
       .select({
         id: shippingRates.id,
@@ -338,39 +348,126 @@ export async function createStoreOrder(
       })
       .from(shippingRates)
       .where(eq(shippingRates.id, parsed.shippingRateId));
-    if (!chosenRate || !chosenRate.isActive) {
-      throw new ServiceError(
+    const rateUnavailable = () =>
+      new ServiceError(
         "SHIPPING_RATE_UNAVAILABLE",
         "A opção de frete escolhida não está mais disponível. Escolha outra opção de entrega.",
       );
-    }
+    const motoboyOnly = () =>
+      new ServiceError(
+        "SHIPPING_MOTOBOY_ONLY",
+        "Para este CEP a entrega é só por motoboy. Volte à entrega e escolha um horário.",
+      );
 
-    // (b1) Motoboy: a janela tem de existir na faixa e ainda valer AGORA no
-    // relógio de São Paulo (hoje até a hora-limite, ou amanhã — os únicos
-    // dias que a sacola oferece). O retrato vai no pedido.
-    const now = clock.now ?? new Date();
     let deliveryWindowSnapshot: typeof orders.$inferInsert["deliveryWindow"] = null;
-    if (chosenRate.kind === "motoboy") {
-      const windows = parseWindows(chosenRate.deliveryWindows);
-      const choice = parsed.deliveryWindow;
-      if (!choice || !windowBelongsToRate(choice, windows)) {
-        throw new ServiceError("DELIVERY_WINDOW_REQUIRED", "Escolha um horário de entrega do motoboy.");
+    let shippingCents: number;
+    /** Prazo máximo em dias úteis (Correios) para o dia-limite de sair; motoboy usa a janela. */
+    let deliveryDaysMax: number;
+    /** "PAC"/"SEDEX" ou o nome da faixa manual de Correios; null no motoboy. */
+    let shippingService: string | null = null;
+    let shippingQuoteId: string | null = null;
+
+    if (chosenRate) {
+      if (!chosenRate.isActive) throw rateUnavailable();
+
+      // (b1) Motoboy: a janela tem de existir na faixa e ainda valer AGORA no
+      // relógio de São Paulo (hoje até a hora-limite, ou amanhã — os únicos
+      // dias que a sacola oferece). O retrato vai no pedido.
+      if (chosenRate.kind === "motoboy") {
+        const windows = parseWindows(chosenRate.deliveryWindows);
+        const choice = parsed.deliveryWindow;
+        if (!choice || !windowBelongsToRate(choice, windows)) {
+          throw new ServiceError("DELIVERY_WINDOW_REQUIRED", "Escolha um horário de entrega do motoboy.");
+        }
+        if (!isWindowBookable(choice, now)) {
+          throw new ServiceError(
+            "DELIVERY_WINDOW_EXPIRED",
+            `Esse horário já passou da hora-limite (${hourLabel(choice.cutoff)}). Escolha outro horário de entrega.`,
+          );
+        }
+        deliveryWindowSnapshot = { ...choice, rateName: chosenRate.name, label: windowDateLabel(choice) };
       }
-      if (!isWindowBookable(choice, now)) {
+
+      const [applicableRate] = await tx
+        .select({ id: shippingRates.id, priceCents: shippingRates.priceCents })
+        .from(shippingRates)
+        .where(
+          and(
+            eq(shippingRates.isActive, true),
+            eq(shippingRates.name, chosenRate.name),
+            lte(shippingRates.cepStart, cep),
+            gte(shippingRates.cepEnd, cep),
+            lte(shippingRates.weightMinGrams, totalWeightGrams),
+            gte(shippingRates.weightMaxGrams, totalWeightGrams),
+          ),
+        )
+        .orderBy(asc(shippingRates.sortOrder), asc(shippingRates.id))
+        .limit(1);
+      if (!applicableRate) {
         throw new ServiceError(
-          "DELIVERY_WINDOW_EXPIRED",
-          `Esse horário já passou da hora-limite (${hourLabel(choice.cutoff)}). Escolha outro horário de entrega.`,
+          "SHIPPING_UNAVAILABLE",
+          "Não há entrega disponível para o CEP informado com esta opção de frete. Escolha outra opção.",
         );
       }
-      deliveryWindowSnapshot = { ...choice, rateName: chosenRate.name, label: windowDateLabel(choice) };
+
+      // (b3) Onde o motoboy chega, a entrega é só por motoboy (a mesma regra da
+      // cotação, motoboyExclusive): uma aba antiga do checkout ou um POST
+      // montado à mão não fecha um pedido de Belém pelos Correios.
+      if (chosenRate.kind === "correios") {
+        const motoboyRates = await tx
+          .select({ deliveryWindows: shippingRates.deliveryWindows })
+          .from(shippingRates)
+          .where(
+            and(
+              eq(shippingRates.isActive, true),
+              eq(shippingRates.kind, "motoboy"),
+              lte(shippingRates.cepStart, cep),
+              gte(shippingRates.cepEnd, cep),
+              lte(shippingRates.weightMinGrams, totalWeightGrams),
+              gte(shippingRates.weightMaxGrams, totalWeightGrams),
+            ),
+          );
+        if (motoboyRates.some((rate) => parseWindows(rate.deliveryWindows).length > 0)) {
+          throw motoboyOnly();
+        }
+        shippingService = chosenRate.name;
+      }
+
+      shippingCents = applicableRate.priceCents;
+      deliveryDaysMax = chosenRate.deliveryDaysMax;
+    } else {
+      // (b4) Cotação automática dos Correios: a linha tem de existir, ainda
+      // valer (24 h) e ser DESTE CEP e DESTE peso — sacola ou endereço
+      // mudaram desde a cotação → SHIPPING_QUOTE_STALE, e a vitrine/Lia
+      // cotam de novo (não é "o frete mudou": o id velho não serve mais).
+      const quote = await findShippingQuoteById(tx, parsed.shippingRateId);
+      if (!quote) throw rateUnavailable();
+      // Toggle desligado desfaz tudo na hora: nem um id já emitido fecha mais (o checkout recota e volta ao fluxo pela equipe).
+      if (!(await getCorreiosAutoSettings(tx)).enabled) throw rateUnavailable();
+      if (
+        !isQuoteValid(quote.expiresAt, now) ||
+        quote.cepTo !== cep ||
+        quote.weightGrams !== billableWeightGrams(totalWeightGrams)
+      ) {
+        throw new ServiceError(
+          "SHIPPING_QUOTE_STALE",
+          "A cotação dos Correios venceu ou não vale mais para esta sacola e este CEP. Calcule a entrega de novo para continuar.",
+        );
+      }
+      // A cotação automática só existe fora da área do motoboy (a mesma regra de quoteDeliveryOptions).
+      if (await activeMotoboyCoversCep(tx, cep)) throw motoboyOnly();
+      shippingCents = quote.priceCents;
+      deliveryDaysMax = quote.deliveryDaysMax;
+      shippingService = quote.name;
+      shippingQuoteId = quote.id;
     }
 
     // (b2) Data marcada: hoje ou depois (dia de SP); o dia-limite para sair
-    // vem do prazo máximo da faixa (Correios, dias úteis) ou da janela
-    // (motoboy). Não recusa quando não dá tempo — a cliente já viu o aviso
-    // no checkout; a dona vê o semáforo vermelho.
-    // A data explícita é recusada quando inválida; a do presente (a Lia
-    // manda sem saber o dia de hoje) fica só informativa quando não serve.
+    // vem do prazo máximo (Correios, dias úteis) ou da janela (motoboy). Não
+    // recusa quando não dá tempo — a cliente já viu o aviso no checkout; a
+    // dona vê o semáforo vermelho. A data explícita é recusada quando
+    // inválida; a do presente (a Lia manda sem saber o dia de hoje) fica só
+    // informativa quando não serve.
     const todayKey = spDayKey(now);
     if (parsed.neededBy !== undefined && !isValidNeededBy(parsed.neededBy, todayKey)) {
       throw new ServiceError("NEEDED_BY_INVALID", "A data marcada precisa ser hoje ou um dia que ainda vem.");
@@ -383,58 +480,9 @@ export async function createStoreOrder(
         ? null
         : deliveryWindowSnapshot
           ? (deliveryWindowSnapshot.dayKey < neededBy ? deliveryWindowSnapshot.dayKey : neededBy)
-          : shipByFor({ kind: "correios", deliveryDaysMax: chosenRate.deliveryDaysMax }, neededBy);
+          : shipByFor({ kind: "correios", deliveryDaysMax }, neededBy);
     const occasion = parsed.occasion?.trim() || null;
 
-    const cep = parsed.address.postalCode;
-    const [applicableRate] = await tx
-      .select({ id: shippingRates.id, priceCents: shippingRates.priceCents })
-      .from(shippingRates)
-      .where(
-        and(
-          eq(shippingRates.isActive, true),
-          eq(shippingRates.name, chosenRate.name),
-          lte(shippingRates.cepStart, cep),
-          gte(shippingRates.cepEnd, cep),
-          lte(shippingRates.weightMinGrams, totalWeightGrams),
-          gte(shippingRates.weightMaxGrams, totalWeightGrams),
-        ),
-      )
-      .orderBy(asc(shippingRates.sortOrder), asc(shippingRates.id))
-      .limit(1);
-    if (!applicableRate) {
-      throw new ServiceError(
-        "SHIPPING_UNAVAILABLE",
-        "Não há entrega disponível para o CEP informado com esta opção de frete. Escolha outra opção.",
-      );
-    }
-
-    // (b3) Onde o motoboy chega, a entrega é só por motoboy (a mesma regra da
-    // cotação, motoboyExclusive): uma aba antiga do checkout ou um POST
-    // montado à mão não fecha um pedido de Belém pelos Correios.
-    if (chosenRate.kind === "correios") {
-      const motoboyRates = await tx
-        .select({ deliveryWindows: shippingRates.deliveryWindows })
-        .from(shippingRates)
-        .where(
-          and(
-            eq(shippingRates.isActive, true),
-            eq(shippingRates.kind, "motoboy"),
-            lte(shippingRates.cepStart, cep),
-            gte(shippingRates.cepEnd, cep),
-            lte(shippingRates.weightMinGrams, totalWeightGrams),
-            gte(shippingRates.weightMaxGrams, totalWeightGrams),
-          ),
-        );
-      if (motoboyRates.some((rate) => parseWindows(rate.deliveryWindows).length > 0)) {
-        throw new ServiceError(
-          "SHIPPING_MOTOBOY_ONLY",
-          "Para este CEP a entrega é só por motoboy. Volte à entrega e escolha um horário.",
-        );
-      }
-    }
-
-    const shippingCents = applicableRate.priceCents;
     if (shippingCents !== parsed.expectedShippingCents) {
       throw new ShippingChangedError(shippingCents);
     }
@@ -624,6 +672,8 @@ export async function createStoreOrder(
         couponId: coupon?.couponId ?? null,
         couponCode: coupon?.code ?? null,
         shippingCents,
+        shippingService,
+        shippingQuoteId,
         totalCents: totals.totalCents,
         shippingAddress: addressValues,
         deliveryWindow: deliveryWindowSnapshot,
@@ -914,6 +964,8 @@ export interface PublicOrder {
   giftNotePath: string | null;
   /** Entrega por motoboy: "hoje, 19h–21h" (retrato do fechamento). */
   deliveryWindowLabel: string | null;
+  /** Entrega pelos Correios: "PAC" / "SEDEX" (ou o nome da faixa manual); null no motoboy e nos pedidos antigos. */
+  shippingServiceLabel: string | null;
   /** Data marcada: "Para o dia 16/10 — aniversário da mãe". */
   neededByLabel: string | null;
 }
@@ -958,6 +1010,7 @@ export async function getPublicOrder(
         giftRecipientName: orders.giftRecipientName,
         giftNotePath: orders.giftNotePath,
         deliveryWindow: orders.deliveryWindow,
+        shippingService: orders.shippingService,
         neededBy: orders.neededBy,
         occasion: orders.occasion,
       })
@@ -1027,6 +1080,7 @@ export async function getPublicOrder(
     giftRecipientName: order.giftRecipientName,
     giftNotePath: order.giftNotePath,
     deliveryWindowLabel: order.deliveryWindow ? `${order.deliveryWindow.rateName} — ${order.deliveryWindow.label}` : null,
+    shippingServiceLabel: !order.deliveryWindow && order.shippingService ? order.shippingService : null,
     neededByLabel: order.neededBy ? neededByLabel(order.neededBy, order.occasion) : null,
   };
 }

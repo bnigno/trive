@@ -22,6 +22,11 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "store_address", value: "" },
   { key: "store_email", value: "" },
   { key: "store_whatsapp", value: "" },
+  // Correios automático (SuperFrete): desligado até a dona ligar em /admin/frete
+  // e preencher o CEP de origem; acréscimo de embalagem R$ 3,00 por pedido.
+  { key: "store_cep", value: "" },
+  { key: "correios_auto_enabled", value: false },
+  { key: "correios_surcharge_cents", value: 300 },
   // Fase 4 — WhatsApp (Z-API). wa_enabled fica false até o dono conectar a
   // sessão; recuperação de pedido não pago dispara após N minutos (UMA vez).
   { key: "wa_enabled", value: false },

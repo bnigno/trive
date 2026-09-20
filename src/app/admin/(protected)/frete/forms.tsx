@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/form";
 import {
   createShippingRateAction,
+  updateCorreiosAutoAction,
   updateShippingRateAction,
   type FormState,
 } from "./actions";
@@ -231,6 +232,60 @@ export function ShippingRateEditForm({
       <FormSuccess message={state.success} />
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Correios automático (SuperFrete)
+// ---------------------------------------------------------------------------
+
+export type CorreiosAutoDefaults = {
+  enabled: boolean;
+  /** '66045-335' ou ''. */
+  storeCep: string;
+  /** '3,00'. */
+  surcharge: string;
+};
+
+export function CorreiosAutoForm({ defaults }: { defaults: CorreiosAutoDefaults }) {
+  const [state, formAction] = useActionState(updateCorreiosAutoAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="CEP de origem" hint="De onde os pacotes saem (o CEP da loja). Ex.: 66045-335.">
+          <Input name="storeCep" defaultValue={defaults.storeCep} inputMode="numeric" placeholder="00000-000" />
+        </Field>
+        <Field
+          label="Acréscimo por pedido (R$)"
+          hint="Embalagem: somado ao preço dos Correios e mostrado como um valor só para a cliente. Padrão: 3,00."
+        >
+          <Input name="correiosSurcharge" defaultValue={defaults.surcharge} inputMode="decimal" placeholder="3,00" />
+        </Field>
+      </div>
+
+      <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          name="correiosAutoEnabled"
+          defaultChecked={defaults.enabled}
+          className="mt-0.5 h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+        />
+        <span>
+          Cotar PAC e SEDEX automaticamente fora da área do motoboy
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+            Com o toggle ligado, o token da SuperFrete no site e o CEP de origem preenchido, a sacola e a Lia mostram PAC e SEDEX com valor e prazo.
+          </span>
+        </span>
+      </label>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar Correios automático</SubmitButton>
       </div>
     </form>
   );

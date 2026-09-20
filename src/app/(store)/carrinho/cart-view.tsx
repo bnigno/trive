@@ -389,6 +389,9 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                       />
                     ))}
                   </div>
+                  {quote.options.some((option) => option.kind === "correios") ? (
+                    <p className="mt-2 font-store text-xs text-ink-500">Correios: prazo em dias úteis, contado a partir da postagem.</p>
+                  ) : null}
                 </fieldset>
               ) : null}
             </SheetSection>

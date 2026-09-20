@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
+import { getAdapterMode } from "@/adapters/adapter-mode";
+import { isCorreiosQuotesConfigured } from "@/adapters/superfrete";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { hourLabel } from "@/core/shipping/delivery-windows";
+import { getCorreiosAutoSettings, type CorreiosAutoSettings } from "@/services/correios-quotes";
 import { listShippingRates, type ShippingRate } from "@/services/shipping";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -12,6 +15,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { Button } from "@/components/ui/form";
 import { toggleShippingRateAction } from "./actions";
 import {
+  CorreiosAutoForm,
   ShippingRateCreateForm,
   ShippingRateEditForm,
   type RateFormDefaults,
@@ -69,9 +73,12 @@ function formatWindows(rate: ShippingRate): string {
   return rate.deliveryWindows.map((w) => `${hourLabel(w.start)}–${hourLabel(w.end)} (até ${hourLabel(w.cutoff)})`).join(" · ");
 }
 
-async function loadRates(): Promise<ShippingRate[] | null> {
+async function loadRates(): Promise<{ rates: ShippingRate[]; correios: CorreiosAutoSettings } | null> {
   try {
-    return await listShippingRates(getDb());
+    const db = getDb();
+    const rates = await listShippingRates(db);
+    const correios = await getCorreiosAutoSettings(db);
+    return { rates, correios };
   } catch {
     return null;
   }
@@ -79,9 +86,9 @@ async function loadRates(): Promise<ShippingRate[] | null> {
 
 export default async function FretePage() {
   await requireOwner("frete");
-  const rates = await loadRates();
+  const loaded = await loadRates();
 
-  if (!rates) {
+  if (!loaded) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader
@@ -95,6 +102,10 @@ export default async function FretePage() {
       </div>
     );
   }
+
+  const { rates, correios } = loaded;
+  const correiosTokenReady = isCorreiosQuotesConfigured();
+  const correiosSimulated = correiosTokenReady && getAdapterMode() !== "real";
 
   return (
     <div className="flex flex-col gap-8">
@@ -111,9 +122,12 @@ export default async function FretePage() {
             de Correios ficam para os CEPs sem motoboy. Sem nenhuma faixa para o
             CEP, o site e a Lia dizem que a entrega é pelos Correios com o frete
             calculado pela equipe: a cliente chega no WhatsApp com a sacola e o
-            CEP, e a equipe cota no site dos Correios e fecha por lá. O nome da
-            faixa de motoboy é o que a cliente lê (&ldquo;Motoboy Belém&rdquo;) e
-            monta a lista de cidades atendidas.
+            CEP, e a equipe cota no site dos Correios e fecha por lá. Com o{" "}
+            <strong>Correios automático</strong> ligado (cartão abaixo), esses
+            CEPs sem faixa recebem PAC e SEDEX cotados na hora pela SuperFrete,
+            já com o acréscimo de embalagem; se a cotação falhar, vale o fluxo
+            pela equipe. O nome da faixa de motoboy é o que a cliente lê
+            (&ldquo;Motoboy Belém&rdquo;) e monta a lista de cidades atendidas.
           </p>
 
           {rates.length === 0 ? (
@@ -196,6 +210,67 @@ export default async function FretePage() {
               ))}
             </div>
           ) : null}
+        </div>
+      </Card>
+
+      <Card title="Correios automático (SuperFrete)">
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Fora da área do motoboy, a loja e a Lia cotam PAC e SEDEX na hora
+            pela SuperFrete (preços já com o desconto da plataforma) e somam o
+            acréscimo de embalagem. As suas faixas continuam valendo na frente:
+            a cotação automática só entra quando nenhuma faixa ativa atende o
+            CEP <em>e o peso</em> da sacola — e nenhuma faixa de motoboy ativa
+            cobre o CEP. Atenção: <strong>desativar</strong> uma faixa de motoboy
+            faz os CEPs dela passarem a receber PAC e SEDEX (antes, ficavam com o
+            frete pela equipe). A postagem segue manual — você gera a etiqueta
+            no painel da SuperFrete e marca o pedido como enviado.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-zinc-700 dark:text-zinc-300">
+              Token da SuperFrete (SUPERFRETE_TOKEN)
+            </span>
+            {correiosSimulated ? (
+              <Badge tone="success">✓ simulado (ADAPTER_MODE=fake)</Badge>
+            ) : correiosTokenReady ? (
+              <Badge tone="success">✓ configurado</Badge>
+            ) : (
+              <Badge tone="warning">pendente</Badge>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+            <p className="font-medium text-zinc-800 dark:text-zinc-200">Como configurar</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>
+                Crie a conta em superfrete.com (CPF ou CNPJ, sem mensalidade) e, em{" "}
+                <strong>Integrações</strong>, gere o token da API.
+              </li>
+              <li>
+                Cadastre{" "}
+                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                  SUPERFRETE_TOKEN
+                </code>{" "}
+                nas variáveis de ambiente do site (Vercel → Production). Só você tem acesso a esse painel.
+              </li>
+              <li>Informe o CEP de origem, confira o acréscimo e ligue o toggle abaixo.</li>
+            </ol>
+          </div>
+
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            Sem o token ou sem o CEP de origem, nada muda: os CEPs sem faixa
+            seguem com o frete calculado pela equipe. Para voltar ao fluxo
+            antigo a qualquer momento, basta desligar o toggle.
+          </p>
+
+          <CorreiosAutoForm
+            defaults={{
+              enabled: correios.enabled,
+              storeCep: correios.storeCep ? formatCep(correios.storeCep) : "",
+              surcharge: centsToInput(correios.surchargeCents),
+            }}
+          />
         </div>
       </Card>
 

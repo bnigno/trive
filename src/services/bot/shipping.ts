@@ -37,7 +37,7 @@ export async function execCotarFrete(
   const stateNeededBy = state.neededBy && isValidNeededBy(state.neededBy, todayKey) ? state.neededBy : undefined;
   const neededBy = input.entregar_ate && isValidNeededBy(input.entregar_ate, todayKey) ? input.entregar_ate : stateNeededBy;
   const occasion = input.ocasiao?.trim() || (neededBy === state.neededBy ? state.occasion : undefined);
-  const options = await quoteDeliveryOptions(db, { cep: input.cep, totalWeightGrams, now });
+  const options = await quoteDeliveryOptions(db, { cep: input.cep, totalWeightGrams, now }, { correios: ctx.correiosQuoter, dryRun: ctx.dryRun });
   const quotes = options.map((option) => toBotQuote(option, neededBy, now));
 
   // Endereço do CEP (melhor esforço): a cliente digita só número e
@@ -98,6 +98,9 @@ export async function execCotarFrete(
   }
   if (quotes.some((quote) => quote.kind === "motoboy")) {
     lines.push("[Motoboy: cada linha é uma janela de horário; 'pague até' é a hora-limite do pagamento para sair naquela janela. A cliente escolhe a janela; passe-a em criar_pedido (campo frete, pelo número ou pelo texto).]");
+  }
+  if (quotes.some((quote) => quote.kind === "correios")) {
+    lines.push("[Correios: o prazo é em dias úteis a partir da postagem — nunca prometa dia certo por conta própria; o valor mostrado já é o total do frete.]");
   }
   if (isEstimate) {
     lines.push("Estimativa para 1 peça — o valor final aparece no resumo do pedido.");

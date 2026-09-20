@@ -580,6 +580,151 @@ describe("createStoreOrder — motoboy com janela", () => {
   });
 });
 
+describe("createStoreOrder — cotação automática dos Correios (shipping_quotes)", () => {
+  const NOW = new Date("2026-09-19T15:00:00Z"); // 12:00 SP, sábado 19/09
+  const DAY = 24 * 3600_000;
+
+  async function setupQuoted(opts: { weightGrams?: number | null } = {}) {
+    // Uma cotação só fecha pedido com o Correios automático ligado (a linha nasceu dele).
+    await db.insert(schema.settings).values({ key: "correios_auto_enabled", value: true });
+    const { variantId } = await createTestVariant(db, { sku: "CANECA-AZUL", costCents: 1200, onHand: 10, name: "Caneca Azul" });
+    await activatePrice(variantId, 4990);
+    if (opts.weightGrams !== undefined) {
+      await db.update(schema.productVariants).set({ weightGrams: opts.weightGrams }).where(eq(schema.productVariants.id, variantId));
+    }
+    return { variantId };
+  }
+
+  async function insertQuote(over: Partial<typeof schema.shippingQuotes.$inferInsert> = {}): Promise<string> {
+    const [row] = await db
+      .insert(schema.shippingQuotes)
+      .values({
+        requestKey: "superfrete|66045335|01310100|600|4x16x24|s300|PAC,SEDEX",
+        batchId: "00000000-0000-4000-8000-0000000000aa",
+        serviceCode: "1",
+        name: "PAC",
+        cepFrom: "66045335",
+        cepTo: "01310100",
+        weightGrams: 600,
+        package: { heightCm: 4, widthCm: 16, lengthCm: 24 },
+        providerPriceCents: 2290,
+        surchargeCents: 300,
+        priceCents: 2590,
+        deliveryDaysMin: 6,
+        deliveryDaysMax: 9,
+        createdAt: NOW,
+        expiresAt: new Date(NOW.getTime() + DAY),
+        ...over,
+      })
+      .returning({ id: schema.shippingQuotes.id });
+    return row.id;
+  }
+
+  it("fecha com a cotação: frete = price_cents (com embalagem), shipping_service e shipping_quote_id gravados, sem janela; ship_by pelo prazo máximo", async () => {
+    const { variantId } = await setupQuoted(); // 2 × 300 g (padrão) = 600 g
+    const quoteId = await insertQuote();
+    const result = await createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2590, neededBy: "2026-10-15" }), { now: NOW });
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
+    expect(order.shippingCents).toBe(2590);
+    expect(order.totalCents).toBe(2 * 4990 + 2590);
+    expect(order.shippingService).toBe("PAC");
+    expect(order.shippingQuoteId).toBe(quoteId);
+    expect(order.deliveryWindow).toBeNull();
+    // 9 dias úteis antes de 15/10 (quinta), pulando o feriado de 12/10: 01/10.
+    expect(order.shipBy).toBe("2026-10-01");
+
+    const pub = await getPublicOrder(sdb, result.publicToken);
+    expect(pub?.shippingServiceLabel).toBe("PAC");
+    expect(pub?.deliveryWindowLabel).toBeNull();
+  });
+
+  it("id que não é faixa nem cotação: SHIPPING_RATE_UNAVAILABLE; vencida, de outro CEP ou de outro peso: SHIPPING_QUOTE_STALE — nada gravado", async () => {
+    const { variantId } = await setupQuoted();
+    const stale = { code: "SHIPPING_QUOTE_STALE" };
+    await expect(
+      createStoreOrder(sdb, baseInput(variantId, "00000000-0000-4000-8000-0000000000ff", { expectedShippingCents: 2590 }), { now: NOW }),
+    ).rejects.toMatchObject({ code: "SHIPPING_RATE_UNAVAILABLE" });
+
+    const expired = await insertQuote({ expiresAt: NOW });
+    await expect(createStoreOrder(sdb, baseInput(variantId, expired, { expectedShippingCents: 2590 }), { now: NOW })).rejects.toMatchObject(stale);
+
+    const otherCep = await insertQuote({ cepTo: "01310101" });
+    await expect(createStoreOrder(sdb, baseInput(variantId, otherCep, { expectedShippingCents: 2590 }), { now: NOW })).rejects.toMatchObject(stale);
+
+    // Cotada para 300 g, mas a sacola tem 2 × 300 g.
+    const lighter = await insertQuote({ weightGrams: 300 });
+    await expect(createStoreOrder(sdb, baseInput(variantId, lighter, { expectedShippingCents: 2590 }), { now: NOW })).rejects.toMatchObject(stale);
+
+    expect(await db.$count(schema.orders)).toBe(0);
+  });
+
+  it("peso do fechamento segue a regra da vitrine: variante sem peso conta 300 g; 1 peça de 100 g cobra o mínimo de 300 g", async () => {
+    const { variantId } = await setupQuoted({ weightGrams: 100 });
+    const minimum = await insertQuote({ weightGrams: 300 });
+    const result = await createStoreOrder(
+      sdb,
+      baseInput(variantId, minimum, { expectedShippingCents: 2590, items: [{ variantId, quantity: 1, expectedUnitPriceCents: 4990 }] }),
+      { now: NOW },
+    );
+    expect(result.orderId).toBeDefined();
+
+    // Sem peso cadastrado (null): 2 × 300 g = 600 g, a cotação de 600 g serve.
+    await db.update(schema.productVariants).set({ weightGrams: null }).where(eq(schema.productVariants.id, variantId));
+    const quote600 = await insertQuote();
+    const second = await createStoreOrder(
+      sdb,
+      baseInput(variantId, quote600, { expectedShippingCents: 2590, customer: { fullName: "Ana", document: VALID_CPF_2, phone: "(11) 98888-7777", marketingOptIn: false } }),
+      { now: NOW },
+    );
+    expect(second.orderId).toBeDefined();
+  });
+
+  it("onde um motoboy ativo cobre o CEP a cotação não fecha (SHIPPING_MOTOBOY_ONLY); frete diferente do visto → ShippingChangedError com o valor da cotação", async () => {
+    const { variantId } = await setupQuoted();
+    const quoteId = await insertQuote();
+    await createRate({ name: "Motoboy SP", priceCents: 1500, kind: "motoboy", cepStart: "01000000", cepEnd: "01999999", deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] });
+    await expect(createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2590 }), { now: NOW })).rejects.toMatchObject({ code: "SHIPPING_MOTOBOY_ONLY" });
+
+    await db.update(schema.shippingRates).set({ isActive: false });
+    await expect(createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2290 }), { now: NOW })).rejects.toMatchObject({
+      code: "SHIPPING_CHANGED",
+      newPriceCents: 2590,
+    });
+    expect(await db.$count(schema.orders)).toBe(0);
+  });
+
+  it("toggle do Correios automático desligado: nem um id já emitido fecha (SHIPPING_RATE_UNAVAILABLE — o checkout recota)", async () => {
+    const { variantId } = await setupQuoted();
+    const quoteId = await insertQuote();
+    await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "correios_auto_enabled"));
+    await expect(createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2590 }), { now: NOW })).rejects.toMatchObject({ code: "SHIPPING_RATE_UNAVAILABLE" });
+    await db.update(schema.settings).set({ value: true }).where(eq(schema.settings.key, "correios_auto_enabled"));
+    expect((await createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2590 }), { now: NOW })).orderId).toBeDefined();
+  });
+
+  it("faixa manual de Correios grava o nome da faixa em shipping_service; motoboy grava null; cotação apagada deixa o pedido (FK set null)", async () => {
+    const { variantId } = await setupQuoted();
+    const pac = await createRate({ name: "PAC Brasil", priceCents: 1990 });
+    const manual = await createStoreOrder(sdb, baseInput(variantId, pac.id, { expectedShippingCents: 1990 }), { now: NOW });
+    const [manualOrder] = await db.select().from(schema.orders).where(eq(schema.orders.id, manual.orderId));
+    expect(manualOrder.shippingService).toBe("PAC Brasil");
+    expect(manualOrder.shippingQuoteId).toBeNull();
+
+    await db.update(schema.shippingRates).set({ isActive: false });
+    const quoteId = await insertQuote();
+    const quoted = await createStoreOrder(
+      sdb,
+      baseInput(variantId, quoteId, { expectedShippingCents: 2590, customer: { fullName: "Ana", document: VALID_CPF_2, phone: "(11) 98888-7777", marketingOptIn: false } }),
+      { now: NOW },
+    );
+    await db.delete(schema.shippingQuotes).where(eq(schema.shippingQuotes.id, quoteId));
+    const [quotedOrder] = await db.select().from(schema.orders).where(eq(schema.orders.id, quoted.orderId));
+    expect(quotedOrder.shippingQuoteId).toBeNull();
+    expect(quotedOrder.shippingService).toBe("PAC");
+  });
+});
+
 describe("getPublicOrder", () => {
   it("retorna apenas dados não pessoais (sem nome/telefone/documento/endereço)", async () => {
     const { variantId, rate } = await setupStore();
@@ -616,6 +761,7 @@ describe("getPublicOrder", () => {
         "giftRecipientName",
         "giftNotePath",
         "deliveryWindowLabel",
+        "shippingServiceLabel",
         "neededByLabel",
       ].sort(),
     );

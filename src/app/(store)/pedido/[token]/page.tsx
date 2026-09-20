@@ -279,6 +279,11 @@ export default async function OrderPage({
                   Entrega por motoboy: <span className="font-medium text-ink-900">{order.deliveryWindowLabel}</span>.
                 </p>
               ) : null}
+              {order.shippingServiceLabel ? (
+                <p className="mb-4 font-store text-sm text-ink-700">
+                  Entrega pelos Correios: <span className="font-medium text-ink-900">{order.shippingServiceLabel}</span>. O prazo conta em dias úteis a partir da postagem.
+                </p>
+              ) : null}
               {order.neededByLabel ? (
                 <p className="mb-4 font-store text-sm text-ink-700">
                   Data marcada: <span className="font-medium text-ink-900">{order.neededByLabel}</span>. A TRIVÉ prioriza a saída.

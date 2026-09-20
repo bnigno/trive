@@ -2,6 +2,7 @@
 // sem conversa gravada e sem efeito externo (dryRun) — o dono sente o tom
 // antes de salvar as instruções. Custa centavos por mensagem (API real).
 import { getCepLookup } from "@/adapters/cep";
+import { getCorreiosQuoter } from "@/adapters/superfrete";
 import { z } from "zod";
 
 import type { BotChatMessage, SalesAssistant } from "@/adapters/assistant";
@@ -65,6 +66,7 @@ export async function rehearseBotTurn(
     onAttachment: (attachment) => attachments.push(attachment),
     dryRun: true,
     cepLookup: getCepLookup(),
+    correiosQuoter: getCorreiosQuoter(),
     ...(deps.cards ? { cards: deps.cards } : {}),
   });
 
