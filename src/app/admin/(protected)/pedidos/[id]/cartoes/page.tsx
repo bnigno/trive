@@ -71,9 +71,10 @@ export default async function EditionCardsPage({ params, searchParams }: { param
   const cardsDxf = silhouette
     ? rectLabelCutDxf({ page: PAGE_A4, positions: layout.cardPositions, widthMm: EDITION_CARD.widthMm, heightMm: EDITION_CARD.heightMm, cornerRadiusMm: EDITION_CARD.cornerRadiusMm })
     : null;
+  // O corte da carta é o do adesivo da sacola inteiro (2 retângulos simétricos): o mesmo arquivo do Studio serve.
   const letterDxf =
-    silhouette && layout.letterPosition
-      ? rectLabelCutDxf({ page: PAGE_A4, positions: [layout.letterPosition], widthMm: EDITION_LETTER.widthMm, heightMm: EDITION_LETTER.heightMm, cornerRadiusMm: EDITION_LETTER.cornerRadiusMm })
+    silhouette && layout.letterCutPositions.length > 0
+      ? rectLabelCutDxf({ page: PAGE_A4, positions: layout.letterCutPositions, widthMm: EDITION_LETTER.widthMm, heightMm: EDITION_LETTER.heightMm, cornerRadiusMm: EDITION_LETTER.cornerRadiusMm })
       : null;
 
   const warnings: { key: string; text: string }[] = [];
@@ -224,7 +225,7 @@ export default async function EditionCardsPage({ params, searchParams }: { param
               </div>
               <div className="flex flex-wrap gap-2">
                 {cardsDxf ? <DxfDownloadButton dxf={cardsDxf} fileName="cartoes-corte-silhouette.dxf" label="Baixar corte dos cartões (DXF)" /> : null}
-                {letterDxf && cards.letter ? <DxfDownloadButton dxf={letterDxf} fileName="carta-corte-silhouette.dxf" label="Baixar corte da carta (DXF)" /> : null}
+                {letterDxf && cards.letter ? <DxfDownloadButton dxf={letterDxf} fileName="adesivo-sacola-corte-silhouette.dxf" label="Baixar corte da carta (DXF, o mesmo do adesivo da sacola)" /> : null}
               </div>
               <div>
                 <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">Primeira vez (uma vez só)</h3>
@@ -236,7 +237,7 @@ export default async function EditionCardsPage({ params, searchParams }: { param
                     Abra o DXF. <em>Configuração de página</em>: tamanho <strong>A4</strong>, base de corte <em>Portrait</em>; <strong>marcas de registro ligadas</strong>, em <em>Restaurar padrões</em>. Selecione tudo, confira <strong>210 × 297 mm</strong> no <em>Transformar</em>, ponto de referência no canto superior esquerdo → <strong>X 0, Y 0</strong> → apague o retângulo grande (camada PAGINA). Os dois retângulos devem cair na área sem hachura, com a mesma folga em cima e embaixo.
                   </li>
                   <li>
-                    <em>Salvar como</em> <strong>&ldquo;TRIVÉ cartões.studio3&rdquo;</strong>. A carta não precisa de arquivo novo: é o <strong>&ldquo;TRIVÉ sacola.studio3&rdquo;</strong> do adesivo (se ainda não existir, o DXF da carta está acima e o passo é o mesmo).
+                    <em>Salvar como</em> <strong>&ldquo;TRIVÉ cartões.studio3&rdquo;</strong>. A carta não precisa de arquivo novo: é o <strong>&ldquo;TRIVÉ sacola.studio3&rdquo;</strong> do adesivo (se ainda não existir, o DXF da carta acima é exatamente o do adesivo — dois retângulos, e o de baixo corta papel em branco; o passo é o mesmo).
                   </li>
                 </ol>
               </div>

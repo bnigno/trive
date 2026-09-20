@@ -35,6 +35,8 @@ describe("editionSheetLayout", () => {
     expect(297 - (150.5 + 120)).toBeCloseTo(26.5, 2);
     expect(layout.letterPosition?.yMm).toBe(45.5);
     expect(layout.letterPosition?.xMm).toBeCloseTo(36.61, 2);
+    // O corte da carta é a grade inteira do adesivo (2 células, simétricas na altura: 45,5 e 151,5).
+    expect(layout.letterCutPositions.map((p) => p.yMm)).toEqual([45.5, 151.5]);
     expect(layout.mixedCardPositions).toEqual([]);
   });
 });

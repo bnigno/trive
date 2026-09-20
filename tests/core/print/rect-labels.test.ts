@@ -119,8 +119,9 @@ describe("gridPositions — cartão da edição (90 × 120)", () => {
 
     expect(EDITION_LETTER).toBe(BAG_STICKER);
     const letterPositions = gridPositions({ ...cell, area: safe, centerIn });
-    const letterDxf = rectLabelCutDxf({ page: PAGE_A4, positions: [letterPositions[0]], widthMm: EDITION_LETTER.widthMm, heightMm: EDITION_LETTER.heightMm, cornerRadiusMm: EDITION_LETTER.cornerRadiusMm });
-    const bagDxf = rectLabelCutDxf({ page: PAGE_A4, positions: [letterPositions[0]], widthMm: BAG_STICKER.widthMm, heightMm: BAG_STICKER.heightMm, cornerRadiusMm: BAG_STICKER.cornerRadiusMm });
+    const letterDxf = rectLabelCutDxf({ page: PAGE_A4, positions: letterPositions, widthMm: EDITION_LETTER.widthMm, heightMm: EDITION_LETTER.heightMm, cornerRadiusMm: EDITION_LETTER.cornerRadiusMm });
+    const bagDxf = rectLabelCutDxf({ page: PAGE_A4, positions: letterPositions, widthMm: BAG_STICKER.widthMm, heightMm: BAG_STICKER.heightMm, cornerRadiusMm: BAG_STICKER.cornerRadiusMm });
     expect(letterDxf).toBe(bagDxf);
+    expect(letterDxf.split("\n").filter((l) => l === "POLYLINE")).toHaveLength(3);
   });
 });

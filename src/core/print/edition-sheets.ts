@@ -46,6 +46,13 @@ export interface EditionSheetLayout {
   cardPositions: GridPosition[];
   /** Onde a carta cai (a primeira célula da grade do adesivo da sacola). */
   letterPosition: GridPosition | null;
+  /**
+   * O corte da carta na plotter: a grade INTEIRA do adesivo da sacola (2
+   * células, simétricas na altura) — o DXF sai byte a byte igual ao do
+   * adesivo, o mesmo arquivo do Studio serve e um DXF importado invertido no
+   * Y cai no mesmo lugar; a 2ª célula corta papel em branco.
+   */
+  letterCutPositions: GridPosition[];
   /** A4: os cartões da linha de baixo, que dividem a folha com a carta. */
   mixedCardPositions: GridPosition[];
 }
@@ -69,6 +76,7 @@ export function editionSheetLayout(format: EditionSheetFormat, page: PageMm = PA
     format,
     cardPositions,
     letterPosition: letterPositions[0] ?? null,
+    letterCutPositions: letterPositions,
     mixedCardPositions: silhouette ? [] : cardPositions.filter((p) => p.row === lastRow && lastRow > 0),
   };
 }

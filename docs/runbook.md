@@ -706,8 +706,11 @@ já com a quantidade). Dois modelos:
   26,5/150,5) e a **carta sozinha** na folha (layout misto não é simétrico na
   altura: DXF invertido cortaria trocado); DXF `cartoes-corte-silhouette.dxf`
   → "TRIVÉ cartões.studio3"; a carta usa **o mesmo corte do adesivo da
-  sacola** ("TRIVÉ sacola.studio3", trocando o material ao Enviar: cartolina
-  ou photo paper, **corte total**, não kiss cut). Por baixo de cada imagem
+  sacola** — o DXF baixado é byte a byte o do adesivo (2 retângulos
+  simétricos na altura; o de baixo corta papel em branco; a simetria é o
+  que protege de um DXF importado invertido no Y) e o "TRIVÉ
+  sacola.studio3" serve, trocando o material ao Enviar: cartolina ou photo
+  paper, **corte total**, não kiss cut. Por baixo de cada imagem
   uma base marfim `EDITION_PAPER` (#fdfbf6, a cor exata dos JPEGs) 1 mm
   maior; na Silhouette a imagem recua 0,3 mm num quadro com cantos r 5, para
   a hairline do JPEG não aparecer. Só entra na folha o que já tem imagem
