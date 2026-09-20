@@ -579,6 +579,55 @@ da imagem e a linha `{{edicoes}}` na legenda — template em produção:
 `scripts/sync-seed.ts --templates owner_daily_digest --force-templates`
 (confira antes se a dona editou o texto).
 
+
+## O que a Lia sabe da loja e onde editar
+
+A Lia lê três coisas, nesta ordem de "peso":
+
+1. A **ficha da loja** (fixa, no prompt): nome e frase, "sobre", endereço,
+   Instagram, horário de atendimento, retirada, área e janelas do motoboy,
+   Correios (cotado na hora ou pela equipe), formas de pagamento e a política
+   de troca. Edita-se em **Configurações → Dados da loja** e **→ O que a Lia
+   sabe da loja** (com a prévia do texto exato que ela lê), em **Frete** (as
+   faixas e janelas do motoboy entram sozinhas) e em **WhatsApp → Vendedora**
+   (política de troca e o "tom e fatos" do dono). Os prazos de troca por lei
+   (7 dias de arrependimento, 90 de defeito) moram em
+   `src/core/store/exchange-facts.ts` e são os mesmos da página
+   /trocas-e-devolucoes.
+2. A **planta da loja** (nasce do catálogo): categorias, tipos de peça
+   (vestido, corset, bolsa…) com contagem e faixa de preço, cores e tamanhos
+   com estoque, Edições de Belém. Muda quando você ativa/desativa peças ou
+   preenche o **Tipo de peça** na ficha da peça (`scripts/sugerir-tipo-de-peca.ts`
+   sugere pelo nome; `--apply` grava onde há sugestão).
+3. O **caderninho** de cada conversa: cliente, sacola, peça em vista, mais as
+   **Novidades (últimos 14 dias)** e **Mais vendidas (30 dias)** — só nomes,
+   para puxar assunto.
+
+Preço, estoque, frete e prazo exatos ela **sempre** busca nas ferramentas.
+Mudou um dado da ficha? Vale na próxima mensagem (o prompt é remontado a
+cada turno). O campo **Tom e fatos da loja** ajusta o jeito de falar e
+completa a ficha, mas fica abaixo do método e das regras: se você escrever
+"pergunte o nome", "dê 10 % de desconto" ou "maison", o painel avisa na hora
+e a Lia não obedece. Para conferir o efeito: **WhatsApp → Testar a vendedora**.
+
+## Por que a Lia diz "confere com a equipe"
+
+Ela só afirma o que está na ficha da peça ou o que uma ferramenta devolveu.
+"Confere com a equipe" aparece quando:
+
+- a peça não tem **composição**, **como veste** ou **descrição** — o card
+  **O que falta para a Lia falar bem das peças**, em Produtos, lista quais e
+  leva direto ao campo;
+- não há **tabela de medidas** (Fita métrica) para responder "o M me serve?";
+- a **política de troca** está vazia em WhatsApp → Vendedora;
+- o CEP está **fora da área do motoboy** e o Correios automático está
+  desligado (frete pela equipe);
+- a cliente pergunta algo que não está na ficha da loja (horário, retirada,
+  "quem é a TRIVÉ") — preencha em Configurações → O que a Lia sabe da loja.
+
+Se ela disser isso para algo que já está cadastrado, abra a conversa no
+painel: o campo pode estar em rascunho ou a peça sem variação ativa.
+
 ## Lia: janelas do motoboy e data marcada
 
 `cotar_frete` devolve as mesmas opções da sacola do site — Correios por prazo
