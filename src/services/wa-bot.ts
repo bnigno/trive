@@ -102,6 +102,7 @@ import { enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
+import { applyPendingConversationTouches, isLockTimeoutError } from "./wa-conversation-touch";
 import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode, supersedePendingSuggestions } from "./wa-suggestions";
 import { execAnotar, execAtualizarCartela, execSugerirTamanho, loadMemoryLines } from "./bot/style";
 
@@ -768,6 +769,38 @@ export type BotTurnTimings = {
   source: OutboxSource | null;
 };
 
+/** Sem prazo da fila (chamada direta, testes), espera a vez da conversa até isto. */
+const LOCK_WAIT_DEFAULT_MS = 30_000;
+
+/**
+ * FOR UPDATE na conversa com teto de espera: o que sobra do prazo da fila
+ * menos a reserva da entrega e o mínimo do modelo — esperar mais que isso é
+ * esperar para não fazer nada, segurando conexão e linha. Estourou →
+ * HandlerOutOfTimeError (a fila devolve a linha sem contar tentativa). Com
+ * a vez, aplica os toques pendentes do webhook e relê a linha.
+ */
+async function lockConversationForTurn(tx: DbOrTx, conversationId: string, queueDeadlineAt: Date | undefined) {
+  const waitMs = queueDeadlineAt
+    ? queueDeadlineAt.getTime() - Date.now() - BOT_TURN_DELIVERY_RESERVE_MS - BOT_TURN_MIN_MODEL_MS
+    : LOCK_WAIT_DEFAULT_MS;
+  if (waitMs < 1_000) throw new HandlerOutOfTimeError(waitMs);
+  await tx.execute(sql.raw(`set local lock_timeout = '${Math.floor(waitMs)}ms'`));
+  let rows: (typeof waConversations.$inferSelect)[];
+  try {
+    rows = await tx.select().from(waConversations).where(eq(waConversations.id, conversationId)).for("update");
+  } catch (error) {
+    if (isLockTimeoutError(error)) throw new HandlerOutOfTimeError(0);
+    throw error;
+  }
+  // Só a espera pela conversa tem teto; o resto do turno segue como antes.
+  await tx.execute(sql.raw("set local lock_timeout = 0"));
+  if (rows.length === 0) return undefined;
+  const touched = await applyPendingConversationTouches(tx, conversationId);
+  if (touched === 0) return rows[0];
+  const [fresh] = await tx.select().from(waConversations).where(eq(waConversations.id, conversationId));
+  return fresh;
+}
+
 function modelDeadlineFor(turnStartedAt: number, queueDeadlineAt: Date | undefined): Date {
   return new Date(
     Math.min(
@@ -788,11 +821,10 @@ export async function runBotTurn(
   // `attempt` = tentativas ANTERIORES da fila (0 na primeira).
   const lastModelAttempt = (input.attempt ?? 0) + 1 >= BOT_TURN_MODEL_ATTEMPTS;
   const result = await db.transaction(async (tx): Promise<RunBotTurnResult> => {
-    const [conversation] = await tx
-      .select()
-      .from(waConversations)
-      .where(eq(waConversations.id, conversationId))
-      .for("update");
+    // Um turno por conversa: espera a vez só o que o prazo da fila permite
+    // (a espera não segura conexão nem linha além disso) e, com a vez,
+    // aplica os toques que o webhook deixou na fila enquanto a linha estava presa.
+    const conversation = await lockConversationForTurn(tx, conversationId, input.deadlineAt);
     // O relógio do turno começa DEPOIS do lock: quem esperou o turno anterior
     // mede o que sobra de verdade. O modelo tem até 35 s — ou o que sobra do
     // prazo da fila menos a reserva da entrega, se for menos; sem o mínimo
@@ -1074,7 +1106,7 @@ export async function runScheduledBotTurn(
     // retorno. Senão os dois turnos se travam em cruz e um deles cai.
     const [pointer] = await tx.select({ conversationId: waFollowups.conversationId }).from(waFollowups).where(eq(waFollowups.id, followupId)).limit(1);
     if (!pointer) return { skipped: "inexistente", followupId };
-    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, pointer.conversationId)).for("update");
+    const conversation = await lockConversationForTurn(tx, pointer.conversationId, input.deadlineAt ?? undefined);
     // Relógio depois do lock e a mesma guarda do reativo: sem o mínimo para
     // uma chamada, volta à fila sem contar tentativa (nada foi feito ainda).
     const turnStartedAt = Date.now();

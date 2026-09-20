@@ -54,6 +54,8 @@ export type DrainOutboxResult = {
   released: number;
   /** Ids devolvidos por falta de tempo — o kick pode pedir outra invocação para eles. */
   releasedIds: string[];
+  /** Ids que falharam neste lote (voltam pela política) — o kick só-alvo pede outra invocação para eles. */
+  failedIds: string[];
 };
 
 /**
@@ -87,6 +89,7 @@ export async function drainOutbox(
     dead: 0,
     released: 0,
     releasedIds: [],
+    failedIds: [],
   };
 
   // db.execute retorna { rows } no pg/PGlite e array no postgres.js — normalize.
@@ -256,6 +259,7 @@ export async function drainOutbox(
             AND locked_by = ${workerId}
         `);
         result.failed += 1;
+        result.failedIds.push(row.id);
       }
     }
   }

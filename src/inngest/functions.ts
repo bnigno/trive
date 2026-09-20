@@ -41,6 +41,7 @@ export const outboxSweep = inngest.createFunction(
       dead: 0,
       released: 0,
       releasedIds: [],
+      failedIds: [],
       budgetExceeded: false,
     };
     for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch++) {
@@ -63,6 +64,7 @@ export const outboxSweep = inngest.createFunction(
       totals.dead += result.dead;
       totals.released += result.released;
       totals.releasedIds.push(...result.releasedIds);
+      totals.failedIds.push(...result.failedIds);
       if (result.claimed === 0 || result.released > 0) break;
     }
     // Turno da Lia devolvido por não caber no que sobrava: outra invocação

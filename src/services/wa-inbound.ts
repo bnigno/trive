@@ -40,9 +40,9 @@ import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
 import { firstNameOf, isOwnerPhone } from "@/services/wa-messaging";
+import { touchConversationOrDefer, type ConversationTouch } from "@/services/wa-conversation-touch";
 import { findActiveCourierByPhone } from "@/services/couriers";
 import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
-import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
 import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
 import { cancelStockAlertsByPhone } from "@/services/stock-alerts";
 import { consumeSiteCartByCode } from "@/services/site-carts";
@@ -659,9 +659,20 @@ export async function processZapiInbound(
           .limit(1)
       : [];
 
-    // No máximo UMA conversa não-fechada por endereço (unique parcial):
-    // upsert reaproveita a aberta; conversa fechada não conflita e nasce outra.
-    const [conversation] = await tx
+    // No máximo UMA conversa não-fechada por endereço (unique parcial): a
+    // aberta é reaproveitada; conversa fechada não conflita e nasce outra.
+    // A conversa existente NÃO é atualizada aqui — só lida, sem esperar o
+    // lock que o turno da Lia segura enquanto responde: o que a mensagem
+    // muda nela (última entrada, LID, cliente, nome, ponte) é o "toque", que
+    // vai no fim da transação com um teto de espera (touchConversationOrDefer).
+    const conversationColumns = {
+      id: waConversations.id,
+      phoneE164: waConversations.phoneE164,
+      status: waConversations.status,
+      createdAt: waConversations.createdAt,
+      botDisabledUntil: waConversations.botDisabledUntil,
+    };
+    const [created] = await tx
       .insert(waConversations)
       .values({
         phoneE164: conversationAddress,
@@ -669,26 +680,22 @@ export async function processZapiInbound(
         customerId: customer?.id ?? null,
         lastInboundAt: now,
       })
-      .onConflictDoUpdate({
-        target: waConversations.phoneE164,
-        targetWhere: sql`${waConversations.status} <> 'closed'`,
-        set: {
-          lastInboundAt: now,
-          updatedAt: now,
-          ...(lid ? { lid: sql`coalesce(${waConversations.lid}, ${lid})` } : {}),
-          // Nunca sobrescreve um vínculo existente com outro cliente.
-          ...(customer
-            ? { customerId: sql`coalesce(${waConversations.customerId}, ${customer.id})` }
-            : {}),
-        },
-      })
-      .returning({
-        id: waConversations.id,
-        phoneE164: waConversations.phoneE164,
-        status: waConversations.status,
-        createdAt: waConversations.createdAt,
-        botDisabledUntil: waConversations.botDisabledUntil,
-      });
+      .onConflictDoNothing({ target: waConversations.phoneE164, where: sql`${waConversations.status} <> 'closed'` })
+      .returning(conversationColumns);
+    const [conversation] = created
+      ? [created]
+      : await tx
+          .select(conversationColumns)
+          .from(waConversations)
+          .where(and(eq(waConversations.phoneE164, conversationAddress), sql`${waConversations.status} <> 'closed'`))
+          .limit(1);
+    if (!conversation) throw new Error(`Conversa de ${conversationAddress} sumiu entre o insert e a leitura.`);
+    const touch: ConversationTouch = {
+      conversationId: conversation.id,
+      inboundAt: now.toISOString(),
+      ...(lid ? { lid } : {}),
+      ...(customer ? { customerId: customer.id } : {}),
+    };
     // Daqui em diante, o endereço é o da CONVERSA (telefone quando conhecido,
     // senão o LID): é para ele que a resposta volta. A IDENTIDADE (dono,
     // motoboy, opt-out, feedback) usa o telefone real quando o temos.
@@ -733,37 +740,28 @@ export async function processZapiInbound(
               (note): note is string => typeof note === "string",
             ) as string[])
           : [];
-      if (notes.length > 0) {
-        await tx
-          .update(waConversations)
-          .set({
-            botState: sql`coalesce(${waConversations.botState}, '{}'::jsonb) || jsonb_build_object('notes', ${JSON.stringify(notes)}::jsonb)`,
-          })
-          .where(eq(waConversations.id, conversation.id));
-      }
+      if (notes.length > 0) touch.notes = notes;
     }
 
     // Nome do perfil do WhatsApp: a vendedora chama a cliente pelo nome sem
     // precisar perguntar. Vai para o bot_state (jsonb livre), só se houver.
     const senderName = parsed.senderName?.trim();
-    if (senderName && senderName.length <= 80) {
-      await tx
-        .update(waConversations)
-        .set({
-          botState: sql`coalesce(${waConversations.botState}, '{}'::jsonb) || jsonb_build_object('displayName', ${senderName}::text)`,
-        })
-        .where(eq(waConversations.id, conversation.id));
-    }
+    if (senderName && senderName.length <= 80) touch.displayName = senderName;
 
     if (!message) {
+      await touchConversationOrDefer(tx, touch);
       return { action: "duplicate", duplicate: true } as const;
     }
 
-    const markDone = () =>
-      tx
+    // Fecha o evento inbound e dá o toque na conversa (ou o deixa na fila, se
+    // a linha estiver presa pelo turno): é o último passo de cada ramo.
+    const markDone = async () => {
+      await tx
         .update(inboundEvents)
         .set({ status: "done", processedAt: new Date() })
         .where(eq(inboundEvents.id, inboundId));
+      await touchConversationOrDefer(tx, touch);
+    };
 
     const queueTranscription = async (): Promise<string | null> => {
       await tx
@@ -952,16 +950,8 @@ export async function processZapiInbound(
     if (bridgeCode) {
       const bridge = await consumeSiteCartByCode(tx, { code: bridgeCode, conversationId: conversation.id, now });
       if (bridge) {
-        const [current] = await tx
-          .select({ botState: waConversations.botState })
-          .from(waConversations)
-          .where(eq(waConversations.id, conversation.id))
-          .limit(1);
-        const state = parseBotState(current?.botState);
-        await tx
-          .update(waConversations)
-          .set({ botState: mergeBridgeIntoState(state, bridge), updatedAt: now })
-          .where(eq(waConversations.id, conversation.id));
+        // A fusão com a sacola da conversa é parte do toque (a linha pode estar presa).
+        touch.bridge = bridge;
         // O texto da cliente vem primeiro e inteiro (o encaminhamento corta em
         // FORWARD_BODY_MAX_CHARS); a linha da ponte fecha, curta.
         const bridgeLine = bridgeContextLine(bridge, now).slice(0, 90);

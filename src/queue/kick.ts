@@ -93,6 +93,7 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
     dead: 0,
     released: 0,
     releasedIds: [],
+    failedIds: [],
     target: "sem_id",
     polls: 0,
     rekicked: [],
@@ -109,7 +110,17 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
     });
     for (const key of ["recovered", "claimed", "done", "failed", "dead", "released"] as const) totals[key] += result[key];
     totals.releasedIds.push(...result.releasedIds);
+    totals.failedIds.push(...result.failedIds);
     return result;
+  };
+  // Só-alvo: o kick com id de uma linha que falhou aqui pode já ter passado
+  // enquanto ela estava "processing" e não voltaria — pede outro para cada.
+  const rekickFailed = async (result: DrainOutboxResult): Promise<void> => {
+    if (!targetOnly || options.rekick) return;
+    for (const id of result.failedIds) {
+      await requestKick(id);
+      totals.rekicked.push(id);
+    }
   };
   // Linha devolvida por falta de tempo (um turno da Lia que não cabia):
   // outra invocação, com orçamento inteiro, em vez de esperar o cron.
@@ -189,10 +200,7 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
     // linha estava "processing" e não voltaria — pede outro, para não sobrar
     // só o cron.
     await rekickReleased(targetDrain);
-    if (targetOnly && targetDrain.failed > 0 && !options.rekick) {
-      await requestKick(options.outboxEventId);
-      totals.rekicked.push(options.outboxEventId);
-    }
+    await rekickFailed(targetDrain);
     if (targetOnly) {
       // Rajada: a mensagem seguinte da MESMA conversa já pode ter enfileirado o
       // turno dela enquanto este rodava. Roda aqui, na mesma lambda, enquanto
@@ -201,6 +209,7 @@ export async function runOutboxKick(db: Db, options: OutboxKickOptions = {}): Pr
       while (aggregateId && targetDrain.done > 0 && remaining() >= handlerReserveMs("wa.bot_turn")) {
         const next = await drain({ aggregateId });
         await rekickReleased(next);
+        await rekickFailed(next);
         if (next.claimed === 0 || next.released > 0) break;
       }
       return totals;

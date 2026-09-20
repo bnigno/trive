@@ -39,7 +39,7 @@ import { getMessagingProvider } from "@/adapters/zapi";
 import { getGeocoder } from "@/adapters/geocoding";
 import { GEOCODE_MAX_ROUNDS, geocodeRunStops } from "@/services/delivery-runs";
 import { getDb } from "@/db/client";
-import { orders, products, productVariants, stockLevels } from "@/db/schema";
+import { orders, productVariants, products, stockLevels, waConversations } from "@/db/schema";
 import { enqueueOutboxEvent } from "@/queue/enqueue";
 import { loadReceiptAssets } from "@/receipts/assets";
 import { renderReceiptPng } from "@/receipts/render";
@@ -47,6 +47,7 @@ import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { getTranscriber } from "@/adapters/transcription";
 import { cardRenderPayloadSchema, renderAndSendBotCard } from "@/services/bot-cards";
 import { sendDailyDigestWa } from "@/services/daily-digest";
+import { applyConversationTouch, conversationTouchSchema } from "@/services/wa-conversation-touch";
 import { applyMessageStatus, messageExists } from "@/services/wa-inbound";
 import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { sendQueuedEmail } from "@/services/email-inbox";
@@ -398,6 +399,15 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // Áudio da cliente: baixa, transcreve e só então decide a rota (turno da
   // vendedora ou dono). Falha do vendor relança até a política esgotar; na
   // última tentativa o serviço grava o marcador e a conversa segue.
+  // Toque na conversa que o webhook não conseguiu dar (a linha estava presa
+  // pelo turno): aplica agora, esperando o lock — o worker tem tempo.
+  "wa.conversation_touch": async (event) => {
+    const touch = conversationTouchSchema.parse(event.payload);
+    await getDb().transaction(async (tx) => {
+      await tx.select({ id: waConversations.id }).from(waConversations).where(eq(waConversations.id, touch.conversationId)).for("update");
+      await applyConversationTouch(tx, touch);
+    });
+  },
   // Recibo (entregue/lida) que chegou antes de a mensagem existir: aplica com
   // a HORA DO RECIBO. Enquanto a mensagem não existir, tenta de novo pela
   // política; na última tentativa desiste em silêncio (recibo de mensagem
@@ -405,8 +415,11 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "wa.status_replay": async (event) => {
     const { zapiMessageId, status, at } = waStatusReplayPayloadSchema.parse(event.payload);
     const db = getDb();
+    // Olha ANTES de aplicar (mesma ordem do webhook): se o turno commitar entre
+    // as duas consultas, o UPDATE pega; se commitar depois, a próxima tentativa pega.
+    const existed = await messageExists(db, zapiMessageId);
     const changed = await applyMessageStatus(db, { zapiMessageId, target: status, at: new Date(at) });
-    if (changed === 0 && !(await messageExists(db, zapiMessageId))) {
+    if (changed === 0 && !existed) {
       const last = event.attempts + 1 >= getRetryPolicy("wa.status_replay").maxAttempts;
       if (!last) throw new Error(`mensagem ${zapiMessageId} ainda não existe: o recibo ${status} espera a próxima tentativa`);
       console.info(`[wa.status_replay] ${zapiMessageId} ${status} → mensagem nunca apareceu; desistindo`);

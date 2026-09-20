@@ -96,12 +96,15 @@ Mensagens e e-mails passam por uma fila com **retry automático** (tentativas
 repetidas com espera crescente). A resposta da Lia a uma mensagem sai na
 **mesma chamada do webhook** (o servidor responde 200 à Z-API e continua
 trabalhando — `after()` do Next). Mensagem que chega **enquanto a Lia ainda
-responde** (rajada) espera o turno terminar para ser gravada (o turno segura
-a conversa — é o que garante que o caderninho nunca perde nada) e o turno
-dela roda em seguida **na mesma chamada** que respondeu a anterior; se essa
-chamada já não tem 32 s pela frente, o aviso ao Inngest cuida. O aviso ao
-Inngest (kick, com teto de 3 s e aviso no log quando falha) e o cron de 1
-minuto são **redes de segurança**
+responde** (rajada) é gravada na hora — o webhook não espera o turno: o que a
+mensagem muda na conversa (última entrada, nome, ponte do site) é um "toque"
+que, com a conversa presa pelo turno, fica na fila (`wa.conversation_touch`)
+e o turno seguinte aplica ao pegar a vez. O turno dela roda em seguida **na
+mesma chamada** que respondeu a anterior; se essa chamada já não tem 32 s
+pela frente, o aviso ao Inngest cuida. O turno espera a vez da conversa só o
+que o prazo permite (`lock_timeout`); sem tempo, volta à fila sem contar
+tentativa. O aviso ao Inngest (kick, com teto de 3 s e aviso no log quando
+falha) e o cron de 1 minuto são **redes de segurança**
 para quando essa chamada morre no meio (deploy, estouro dos 60 s). No plano
 grátis do Inngest uma função leva ~30 s (p50; p90 ~70 s) só para COMEÇAR:
 o que depende só dele — pedidos do site, cartões, e-mail — leva meio minuto,
