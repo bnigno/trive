@@ -26,6 +26,11 @@ function formatDays(min: number, max: number): string {
   return min === max ? `${min} dias úteis` : `${min}-${max} dias úteis`;
 }
 
+/** Correios (sem janela); `kind` é opcional no caderninho antigo, por isso a janela também conta. */
+function isCorreiosQuote(quote: BotQuote): boolean {
+  return quote.kind !== "motoboy" && !quote.window;
+}
+
 /**
  * "1. PAC — R$ 19,90 (5-8 dias úteis)" e, para o motoboy, "2. Motoboy —
  * hoje, 19h–21h — R$ 15,00 (pague até 13h)". Com data marcada, cada linha
@@ -204,7 +209,11 @@ export function confirmQuoteUnchanged(
       text: `Nenhuma faixa cobre mais o CEP ${cep} para esta sacola: a entrega é pelos Correios com o frete calculado pela equipe. NÃO feche o pedido — chame cotar_frete de novo com este CEP e siga a instrução devolvida (confirmar sacola e endereço → transferir_para_atendente). Não invente valor nem repita o frete antigo.`,
     };
   }
-  const current = fresh.find((quote) => quoteKey(quote) === quoteKey(approved));
+  const current =
+    fresh.find((quote) => quoteKey(quote) === quoteKey(approved)) ??
+    // Cotação automática dos Correios reemitida (cache renovado = id novo):
+    // é o mesmo serviço pelo nome; o preço é conferido logo abaixo.
+    (isCorreiosQuote(approved) ? fresh.find((quote) => isCorreiosQuote(quote) && quote.name === approved.name) : undefined);
   if (!current) {
     // Só é "passou da hora-limite" quando a faixa ainda existe com outra janela; senão a faixa sumiu mesmo.
     const sameRateOtherWindow = approved.kind === "motoboy" && fresh.some((quote) => quote.rateId === approved.rateId);

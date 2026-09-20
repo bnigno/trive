@@ -327,8 +327,31 @@ Castanhal** a entrega é **só por motoboy**; no resto do Brasil é pelos
   Marituba 67200-000–67299-999 · Castanhal 68740-000–68749-999 · Santa Izabel
   68790-000–68794-999 · Benevides 68795-000–68797-999 · Santa Bárbara
   68798-000–68798-999.
-- Cotação automática dos Correios (SuperFrete/Melhor Envio) fica para um PR
-  próprio, quando a loja tiver a conta.
+- **Cotação automática (SuperFrete), desde 2026-09-19**: com o toggle de
+  **/admin/frete → Correios automático** ligado, `SUPERFRETE_TOKEN` na Vercel
+  e o CEP de origem preenchido, os CEPs **sem nenhuma faixa** (e sem motoboy
+  ativo cobrindo o CEP) recebem **PAC e SEDEX** cotados na hora, já com o
+  acréscimo de embalagem (`correios_surcharge_cents`, padrão R$ 3,00). Uma
+  faixa de Correios ativa continua mandando: a cotação só entra onde o funil
+  de faixas volta vazio. As cotações ficam em `shipping_quotes` (uma linha
+  por serviço, `batch_id` por chamada): a mesma pergunta em até **12 h**
+  reaproveita o lote (mesmos ids — `?frete=` da sacola e o caderninho da Lia
+  continuam válidos) e cada cotação fecha pedido por **24 h**; depois, o
+  checkout devolve `SHIPPING_QUOTE_STALE` e recota sozinho, e a Lia é
+  instruída a chamar `cotar_frete` de novo. O pedido guarda
+  `shipping_service` ("PAC"/"SEDEX") e `shipping_quote_id` (a linha, com a
+  resposta bruta em `raw` para conferir a re-pesagem). Falha do provedor
+  (timeout de 6 s, HTTP ≠ 2xx, sem token) = lista vazia = o fluxo pela
+  equipe de sempre, com `console.warn("[correios] …")` nos logs da Vercel.
+  Desligar o toggle desfaz tudo na hora. Caixa padrão 16 × 4 × 24 cm e peso
+  mínimo de 300 g (`src/core/shipping/correios-package.ts`); pacote maior é
+  custo da loja no balcão, nunca cobrança extra à cliente. Produção: migração
+  0045 + `scripts/sync-seed.ts --settings store_cep,correios_auto_enabled,correios_surcharge_cents`.
+  A tabela cresce devagar (≈ 2 linhas por CEP × peso a cada 12 h); limpeza
+  opcional: `delete from shipping_quotes where expires_at < now() - interval '90 days'`
+  (a FK do pedido é `set null`). Pendência conhecida: o selo "peça até" da
+  cidade (`getDeliveryHorizonDays`) segue sem horizonte quando não há faixa
+  de Correios ativa.
 
 ## Embalar antes de sair (foto do pacote obrigatória)
 

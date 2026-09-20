@@ -19,6 +19,7 @@ import {
   type SalesAssistant,
 } from "@/adapters/assistant";
 import { getCepLookup } from "@/adapters/cep";
+import { getCorreiosQuoter } from "@/adapters/superfrete";
 import type { MessagingProvider } from "@/adapters/zapi";
 import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memory";
 import { copilotBlockedText, isToolBlockedInCopilot } from "@/core/bot/copilot";
@@ -826,6 +827,7 @@ export async function runBotTurn(
       lastInboundId: lastInbound.id,
       onAttachment: (attachment) => attachments.push(attachment),
       cepLookup: getCepLookup(),
+      correiosQuoter: getCorreiosQuoter(),
       recentImages,
       copilot,
       ...(deps.cards ? { cards: deps.cards } : {}),
@@ -1111,6 +1113,7 @@ export async function runScheduledBotTurn(
       lastInboundId: followupId,
       onAttachment: (attachment) => attachments.push(attachment),
       cepLookup: getCepLookup(),
+      correiosQuoter: getCorreiosQuoter(),
       recentImages: loaded.recentImages,
       now,
       proactive: true,

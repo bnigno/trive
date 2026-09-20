@@ -18,6 +18,7 @@ import { coupons } from "./coupons";
 import { customers } from "./customers";
 import { productVariants } from "./catalog";
 import { priceVersions } from "./pricing";
+import { shippingQuotes } from "./shipping";
 
 export const orders = pgTable(
   "orders",
@@ -71,6 +72,10 @@ export const orders = pgTable(
     // Snapshot do endereço no momento do pedido.
     shippingAddress: jsonb("shipping_address"),
     shippingTrackingCode: text("shipping_tracking_code"),
+    /** Serviço dos Correios do pedido ("PAC"/"SEDEX", ou o nome da faixa manual de Correios); null no motoboy. */
+    shippingService: text("shipping_service"),
+    /** A cotação automática (shipping_quotes) que fechou o pedido; null nas faixas manuais. */
+    shippingQuoteId: uuid("shipping_quote_id").references(() => shippingQuotes.id, { onDelete: "set null" }),
     /**
      * Entrega por motoboy: janela escolhida no fechamento {dayKey,start,end,cutoff,rateName,label}
      * + dispatchedAt (ISO) quando a peça saiu com o motoboy — é o que marca a saída de um

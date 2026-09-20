@@ -29,9 +29,11 @@ import {
   type SameDayPromise,
   type ShippingKind,
 } from "@/core/shipping/delivery-windows";
+import type { CorreiosQuoter } from "@/adapters/superfrete";
 import { cepDigits } from "@/lib/cep";
 import type { DbOrTx } from "@/queue/enqueue";
 import { listStoreMapEditions, type StoreMapEdition } from "@/services/city-editions";
+import { quoteCorreiosOptions } from "@/services/correios-quotes";
 import { parseWindows } from "@/services/shipping";
 
 /**
@@ -583,17 +585,51 @@ export async function quoteShipping(
   }));
 }
 
+/** Alguma faixa de motoboy ATIVA cobre o CEP? Só a faixa de CEP — peso e janelas não contam (a exclusividade do motoboy é por CEP). */
+export async function activeMotoboyCoversCep(db: ServiceDb, cep: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: shippingRates.id })
+    .from(shippingRates)
+    .where(
+      and(
+        eq(shippingRates.isActive, true),
+        eq(shippingRates.kind, "motoboy"),
+        lte(shippingRates.cepStart, cep),
+        gte(shippingRates.cepEnd, cep),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
+/** O que a cotação pode usar além das faixas: o provedor dos Correios (ausente = só faixas, como sempre). */
+export interface QuoteDeliveryDeps {
+  correios?: CorreiosQuoter;
+}
+
 /**
  * As opções que a sacola e o checkout mostram: Correios vira uma; motoboy
  * vira uma por janela ("hoje, 19h–21h · pague até 13h" antes do limite no
  * relógio de SP, "amanhã, 19h–21h" depois). `now` injetável.
+ *
+ * As faixas da dona mandam. Só quando NENHUMA faixa devolve opção para o
+ * CEP — e nenhum motoboy ativo cobre o CEP — entra a cotação automática dos
+ * Correios (PAC/SEDEX pela SuperFrete, se ligada em /admin/frete). Falhou
+ * ou desligada: lista vazia, o "frete pela equipe" de sempre.
  */
 export async function quoteDeliveryOptions(
   db: ServiceDb,
   input: QuoteShippingInput & { now?: Date },
+  deps: QuoteDeliveryDeps = {},
 ): Promise<DeliveryOption[]> {
+  const now = input.now ?? new Date();
   const quotes = await quoteShipping(db, { cep: input.cep, totalWeightGrams: input.totalWeightGrams });
-  return expandDeliveryOptions(quotes, input.now ?? new Date());
+  const options = expandDeliveryOptions(quotes, now);
+  if (options.length > 0 || !deps.correios) return options;
+  const cep = normalizeCep(input.cep);
+  if (await activeMotoboyCoversCep(db, cep)) return options;
+  const correios = await quoteCorreiosOptions(db, deps.correios, { cep, totalWeightGrams: input.totalWeightGrams, now });
+  return expandDeliveryOptions(correios, now);
 }
 
 /**

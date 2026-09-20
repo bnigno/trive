@@ -23,7 +23,7 @@ export { cityEditionProducts, cityEditions } from "./city-editions";
 export { dropInvites, dropProducts, drops, dropWaitlist } from "./drops";
 export { suppliers } from "./suppliers";
 export { financialEntries } from "./financial";
-export { shippingRates } from "./shipping";
+export { shippingQuotes, shippingRates } from "./shipping";
 export { botCards, waConversations, waMessages, waTemplates } from "./whatsapp";
 export { siteCarts } from "./site-carts";
 export { campaignLinks } from "./campaign-links";

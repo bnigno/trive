@@ -18,6 +18,8 @@ describe("parseFreteParam", () => {
   it("aceita só o formato da sacola: uuid ou uuid:dia:HH:MM", () => {
     const uuid = "6f1c2a0e-9d3b-4f7a-8c21-0b5e4d2a9f10";
     expect(parseFreteParam(uuid)).toBe(uuid);
+    // O id de uma cotação automática dos Correios (shipping_quotes, gen_random_uuid) tem a mesma forma.
+    expect(parseFreteParam("a3f1e7c2-5b8d-4e9f-9a1b-2c3d4e5f6a7b")).toBe("a3f1e7c2-5b8d-4e9f-9a1b-2c3d4e5f6a7b");
     expect(parseFreteParam(` ${uuid}:2026-09-18:19:00 `)).toBe(`${uuid}:2026-09-18:19:00`);
     expect(parseFreteParam(`${uuid}:19:00`)).toBeNull();
     expect(parseFreteParam("PAC")).toBeNull();

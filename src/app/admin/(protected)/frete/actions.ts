@@ -10,12 +10,13 @@ import {
   ServiceError,
   updateShippingRate,
 } from "@/services/shipping";
+import { ServiceError as SettingsServiceError, updateSetting } from "@/services/settings";
 import { parseBRLToCents } from "@/lib/money";
 
 export type FormState = { error?: string; success?: string };
 
 function toErrorMessage(error: unknown): string {
-  if (error instanceof ServiceError) return error.message;
+  if (error instanceof ServiceError || error instanceof SettingsServiceError) return error.message;
   if (error instanceof z.ZodError) {
     return error.issues[0]?.message ?? "Dados inválidos. Confira os campos.";
   }
@@ -170,4 +171,36 @@ export async function toggleShippingRateAction(formData: FormData): Promise<void
     userId: user.id,
   });
   revalidatePath("/admin/frete");
+}
+
+// ---------------------------------------------------------------------------
+// Correios automático (SuperFrete): CEP de origem, acréscimo e o interruptor.
+// ---------------------------------------------------------------------------
+
+export async function updateCorreiosAutoAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("frete");
+  try {
+    const db = getDb();
+    const surchargeCents = parseMoneyField(
+      String(formData.get("correiosSurcharge") ?? ""),
+      "Acréscimo por pedido (R$)",
+    );
+    await updateSetting(db, { key: "store_cep", value: String(formData.get("storeCep") ?? ""), userId: user.id });
+    await updateSetting(db, { key: "correios_surcharge_cents", value: surchargeCents, userId: user.id });
+    await updateSetting(db, {
+      key: "correios_auto_enabled",
+      value: formData.get("correiosAutoEnabled") === "on",
+      userId: user.id,
+    });
+    revalidatePath("/admin/frete");
+    return {
+      success:
+        "Correios automático salvo. Sem o token da SuperFrete ou sem o CEP de origem, os CEPs sem faixa seguem com o frete calculado pela equipe.",
+    };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
 }

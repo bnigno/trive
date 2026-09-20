@@ -441,6 +441,31 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
       }
       return handle;
     }),
+  // --- Correios automático (SuperFrete), ligado em /admin/frete ---
+  /**
+   * CEP de origem das postagens; vazio = a cotação automática não roda. Gravado
+   * SEMPRE com hífen ("66045-335"): um jsonb só de dígitos volta do banco como
+   * número (dupla análise do Drizzle) e perderia a forma.
+   */
+  store_cep: z
+    .string()
+    .trim()
+    .transform((value) => value.replace(/\D/g, ""))
+    .refine((digits) => digits === "" || /^\d{8}$/.test(digits), "CEP inválido. Informe os 8 dígitos, ex.: 66045-335.")
+    .transform((digits) => (digits === "" ? "" : `${digits.slice(0, 5)}-${digits.slice(5)}`)),
+  /**
+   * Cotação automática dos Correios (PAC/SEDEX pela SuperFrete) para os CEPs
+   * sem faixa. Como mp_enabled: o toggle sozinho não basta — exige
+   * SUPERFRETE_TOKEN no ambiente (ou ADAPTER_MODE fake) e store_cep; sem
+   * isso, os CEPs sem faixa seguem com o frete calculado pela equipe.
+   */
+  correios_auto_enabled: z.boolean(),
+  /** Acréscimo de embalagem por pedido somado ao preço dos Correios, em centavos (padrão R$ 3,00). */
+  correios_surcharge_cents: z
+    .number()
+    .int("O acréscimo precisa ser um valor em centavos inteiros.")
+    .min(0, "O acréscimo não pode ser negativo.")
+    .max(10_000, "O acréscimo vai até R$ 100,00."),
   // --- Vitrine (textos da home editáveis pelo dono; vazio = texto padrão) ---
   store_tagline: z
     .string()

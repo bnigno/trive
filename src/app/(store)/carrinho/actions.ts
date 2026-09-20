@@ -7,6 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { z, ZodError } from "zod";
 
+import { getCorreiosQuoter } from "@/adapters/superfrete";
 import { getDb } from "@/db/client";
 import { priceVersions, productVariants } from "@/db/schema";
 import {
@@ -70,7 +71,8 @@ export async function quoteShippingAction(
       })),
     );
 
-    const options = await quoteDeliveryOptions(db, { cep: parsed.cep, totalWeightGrams });
+    // Sem faixa para o CEP, PAC/SEDEX cotados na hora (quando a dona ligou o Correios automático).
+    const options = await quoteDeliveryOptions(db, { cep: parsed.cep, totalWeightGrams }, { correios: getCorreiosQuoter() });
 
     // Só precisamos do WhatsApp e da área do motoboy quando não há opção de
     // entrega, mas ler é barato e evita uma segunda action.

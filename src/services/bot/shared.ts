@@ -1,6 +1,7 @@
 // Peças comuns dos executores da vendedora: tipos, constantes, caderninho (bot_state) e emissor de cartões.
 import { eq } from "drizzle-orm";
 import type { CepLookup } from "@/adapters/cep";
+import type { CorreiosQuoter } from "@/adapters/superfrete";
 import type { FileStorage } from "@/adapters/storage";
 import { parseBotState, type BotState } from "@/core/bot/memory";
 import { OPTION_LIST_MAX_OPTIONS } from "@/core/bot/option-list";
@@ -98,6 +99,8 @@ export type BotExecutorContext = {
   stateOverlay?: { current: BotState | null };
   /** Consulta de CEP: cotar_frete devolve também rua/bairro/cidade/UF. */
   cepLookup?: CepLookup;
+  /** Cotação automática dos Correios (SuperFrete) fora das faixas; ausente = só faixas (frete pela equipe fora da área). */
+  correiosQuoter?: CorreiosQuoter;
   /**
    * As fotos recentes da cliente (últimos 30 min, na ordem, até 3): as deste
    * turno que a Lia viu e as do turno anterior ("foto → qual peça? → ela

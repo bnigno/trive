@@ -152,6 +152,20 @@ describe("confirmQuoteUnchanged", () => {
     const fresh = [{ ...SEDEX, deliveryDaysMax: 3 }, PAC];
     expect(confirmQuoteUnchanged(SEDEX, fresh, "01310100")).toEqual({ ok: true, quote: fresh[0] });
   });
+
+  it("cotação automática dos Correios reemitida (id novo, mesmo nome): fecha com a fresca se o preço é o mesmo; preço diferente recusa", () => {
+    // O cache da SuperFrete renova a cada 12 h e os ids mudam — o serviço é o mesmo.
+    const approved: BotQuote = { ...SEDEX, rateId: "q-velha", optionKey: "q-velha", kind: "correios" };
+    const reissued: BotQuote = { ...SEDEX, rateId: "q-nova", optionKey: "q-nova", kind: "correios" };
+    expect(confirmQuoteUnchanged(approved, [{ ...PAC, rateId: "q-pac", optionKey: "q-pac", kind: "correios" }, reissued], "01310100")).toEqual({ ok: true, quote: reissued });
+
+    const dearer = confirmQuoteUnchanged(approved, [{ ...reissued, priceCents: 3490 }], "01310100");
+    expect(dearer.ok).toBe(false);
+    if (!dearer.ok) expect(dearer.text).toContain(`mudou de ${formatCentsBRL(2990)} para ${formatCentsBRL(3490)}`);
+
+    // Caderninho antigo (sem kind) também é Correios quando não tem janela.
+    expect(confirmQuoteUnchanged({ ...SEDEX, rateId: "q-velha" }, [reissued], "01310100")).toEqual({ ok: true, quote: reissued });
+  });
 });
 
 const MOTO_19: BotQuote = {
@@ -173,6 +187,13 @@ const MOTO_16: BotQuote = {
 };
 
 describe("janelas do motoboy (I4)", () => {
+  it("o casamento pelo nome é só dos Correios: janela do motoboy que sumiu continua recusada", () => {
+    const outraJanela = { ...MOTO_19, rateId: "r-moto-2", optionKey: "r-moto-2:2026-09-18:19:00" };
+    const result = confirmQuoteUnchanged(MOTO_19, [outraJanela], "66045335");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.text).toContain("não está mais disponível");
+  });
+
   it("formatQuoteLines mostra a janela e a hora-limite; com data marcada, o 'chega dia'", () => {
     expect(formatQuoteLines([PAC, MOTO_19])).toEqual([
       `1. PAC — ${formatCentsBRL(1990)} (5-8 dias úteis)`,

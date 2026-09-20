@@ -230,6 +230,26 @@ describe("updateSetting / getSettingsMap", () => {
     await expect(updateSetting(db, { key: "store_instagram", value: "trivé maison", userId: FIXED_USER_ID })).rejects.toThrow(/Instagram inválido/);
   });
 
+  it("Correios automático: store_cep grava com hífen (o jsonb só de dígitos viraria número), vazio desliga, 7 dígitos rejeita; acréscimo é inteiro 0..10000; toggle é boolean", async () => {
+    await updateSetting(db, { key: "store_cep", value: " 66045335 ", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["store_cep"])).store_cep).toBe("66045-335");
+    await updateSetting(db, { key: "store_cep", value: "01310-100", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["store_cep"])).store_cep).toBe("01310-100");
+    await updateSetting(db, { key: "store_cep", value: "", userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["store_cep"])).store_cep).toBe("");
+    await expect(updateSetting(db, { key: "store_cep", value: "6604533", userId: FIXED_USER_ID })).rejects.toThrow(/CEP inválido/);
+
+    await updateSetting(db, { key: "correios_surcharge_cents", value: 300, userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["correios_surcharge_cents"])).correios_surcharge_cents).toBe(300);
+    await expect(updateSetting(db, { key: "correios_surcharge_cents", value: 3.5, userId: FIXED_USER_ID })).rejects.toThrow(ServiceError);
+    await expect(updateSetting(db, { key: "correios_surcharge_cents", value: -1, userId: FIXED_USER_ID })).rejects.toThrow(/negativo/);
+    await expect(updateSetting(db, { key: "correios_surcharge_cents", value: 10_001, userId: FIXED_USER_ID })).rejects.toThrow(/R\$ 100,00/);
+
+    await updateSetting(db, { key: "correios_auto_enabled", value: true, userId: FIXED_USER_ID });
+    expect((await getSettingsMap(db, ["correios_auto_enabled"])).correios_auto_enabled).toBe(true);
+    await expect(updateSetting(db, { key: "correios_auto_enabled", value: "sim", userId: FIXED_USER_ID })).rejects.toThrow(ServiceError);
+  });
+
   it("rejeita key desconhecida com ServiceError", async () => {
     await expect(
       updateSetting(db, {

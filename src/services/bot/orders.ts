@@ -18,6 +18,7 @@ import { variantLabel } from "@/core/catalog/attributes";
 import { auditLog, customers, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
 import { formatDateTimeSP } from "@/emails/templates";
 import { isValidCpf } from "@/lib/document";
+import { formatCep } from "@/lib/cep";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -204,7 +205,7 @@ export async function execCriarPedido(
     resolved.map((r) => ({ weightGrams: r.weightGrams, quantity: r.quantity })),
   );
   // Recota pelas opções de AGORA (a janela do motoboy some quando passa da hora-limite).
-  const fresh = (await quoteDeliveryOptions(db, { cep: identity.postalCode, totalWeightGrams, now })).map((option) => toBotQuote(option, neededBy, now));
+  const fresh = (await quoteDeliveryOptions(db, { cep: identity.postalCode, totalWeightGrams, now }, { correios: ctx.correiosQuoter })).map((option) => toBotQuote(option, neededBy, now));
   const confirmed = confirmQuoteUnchanged(approved.quote, fresh, identity.postalCode);
   if (!confirmed.ok) return confirmed;
   const chosen = confirmed.quote;
@@ -286,6 +287,13 @@ export async function execCriarPedido(
         return {
           ok: false,
           text: `${error.message}\n[O cupom ${couponCode}, validado antes nesta conversa, foi aplicado sozinho e recusado agora; já o esqueci. Avise a cliente e chame criar_pedido de novo para fechar sem cupom — ou valide outro código com validar_cupom.]`,
+        };
+      }
+      // Cotação automática dos Correios vencida ou de outra sacola/CEP: a saída é cotar de novo.
+      if (error instanceof ServiceError && error.code === "SHIPPING_QUOTE_STALE") {
+        return {
+          ok: false,
+          text: `${error.message}\n[Chame cotar_frete de novo com o CEP ${formatCep(identity.postalCode)}, apresente as opções atuais e, com o SIM da cliente, chame criar_pedido de novo.]`,
         };
       }
       return { ok: false, text: error.message };

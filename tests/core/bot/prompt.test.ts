@@ -85,6 +85,7 @@ describe("buildBotSystemPrompt", () => {
   it("regra 26: fora da área do motoboy, Correios com frete calculado pela equipe — transferir, nunca inventar valor nem criar_pedido", () => {
     const prompt = buildBotSystemPrompt({ storeName: "TRIVÉ", sellerName: "Lia", siteUrl: "https://x", extraInstructions: "", exchangePolicy: "" });
     expect(prompt).toContain("26. FORA DA ÁREA DO MOTOBOY");
+    expect(prompt).toContain("Quando cotar_frete devolver PAC/SEDEX com valor e prazo");
     expect(prompt).toContain("transferir_para_atendente com o resumo");
     expect(prompt).toContain("Nunca chame criar_pedido sem uma cotação desta conversa");
   });

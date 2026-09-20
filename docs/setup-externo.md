@@ -132,3 +132,15 @@ A Lia transcreve os áudios que as clientes mandam no WhatsApp com a API da Open
 3. Na Central "Vendedora & WhatsApp", o interruptor **"A Lia vê fotos e ouve áudios"** liga e desliga o recurso. Sem a chave, o áudio vira "[a cliente enviou um áudio]" e a vendedora pede para escrever.
 
 Privacidade: o arquivo de áudio e a foto são processados na hora e não ficam guardados por nós; o texto transcrito fica na conversa como qualquer mensagem.
+
+## 9. SuperFrete — os Correios cotados na hora
+
+Fora da área do motoboy, a sacola e a Lia cotam **PAC e SEDEX** na hora pela SuperFrete (preços já com o desconto da plataforma) e somam o acréscimo de embalagem que a dona define. A cotação é gratuita; paga-se só a etiqueta, quando ela é emitida no painel da SuperFrete.
+
+1. Crie a conta em <https://superfrete.com> (CPF ou CNPJ, sem mensalidade).
+2. No painel, em **Integrações → Integrar em Desenvolvedores**, confirme e copie o **token da API** (não expira; se vazar, gere outro no mesmo lugar).
+3. Cadastre `SUPERFRETE_TOKEN` na Vercel em **Production** (e Preview, se quiser testar antes) e faça um redeploy. A chave nunca vai para o navegador (o CI bloqueia). Para testar sem cotar de verdade, existe o sandbox (<https://sandbox.superfrete.com>, conta e token próprios) com `SUPERFRETE_BASE_URL=https://sandbox.superfrete.com`.
+4. Em **/admin/frete → Correios automático**: informe o **CEP de origem** (de onde os pacotes saem), confira o **acréscimo por pedido** (padrão R$ 3,00) e ligue o toggle. O selo do token mostra ✓ quando a variável existe.
+5. Teste: sacola com um CEP fora de Belém (ex.: 01310-100) deve mostrar PAC e SEDEX com valor e prazo em dias úteis; no ensaio da Lia, "meu CEP é 01310100" faz o mesmo.
+
+Sem token ou sem CEP de origem, nada muda: os CEPs sem faixa continuam com "frete calculado pela equipe". Uma faixa de Correios **ativa** em /admin/frete vale na frente da cotação automática (a cotação só entra onde nenhuma faixa cobre o CEP). A postagem segue manual: a dona gera a etiqueta no painel da SuperFrete e marca o pedido como enviado.

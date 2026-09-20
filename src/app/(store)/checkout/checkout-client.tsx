@@ -362,7 +362,13 @@ export function CheckoutClient({
           return;
         }
         setSubmitError({ code: result.code, message: result.message });
-        if (result.code === "DELIVERY_WINDOW_EXPIRED" || result.code === "DELIVERY_WINDOW_REQUIRED") {
+        // A escolha não serve mais (janela passou, cotação dos Correios venceu ou a faixa sumiu): recota e a seleção cai numa opção válida.
+        if (
+          result.code === "DELIVERY_WINDOW_EXPIRED" ||
+          result.code === "DELIVERY_WINDOW_REQUIRED" ||
+          result.code === "SHIPPING_QUOTE_STALE" ||
+          result.code === "SHIPPING_RATE_UNAVAILABLE"
+        ) {
           setQuoteNonce((n) => n + 1);
         }
       });
@@ -793,6 +799,9 @@ export function CheckoutClient({
                         />
                       ))}
                     </div>
+                    {options.some((option) => option.kind === "correios") ? (
+                      <p className="mt-2 font-store text-xs text-ink-500">Correios: prazo em dias úteis, contado a partir da postagem.</p>
+                    ) : null}
                   </fieldset>
                 ) : null}
               </div>

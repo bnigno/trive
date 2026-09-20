@@ -12,6 +12,7 @@ import type {
 } from "@/adapters/assistant";
 import { FakeSalesAssistant } from "@/adapters/assistant/fake";
 import { FakeCepLookup } from "@/adapters/cep/fake";
+import { FakeCorreiosQuoter } from "@/adapters/superfrete/fake";
 import { FakeMessagingProvider } from "@/adapters/zapi/fake";
 import * as schema from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
@@ -221,7 +222,7 @@ async function outboundTexts(conversationId: string) {
     .orderBy(schema.waMessages.createdAt);
 }
 
-function executorFor(conversationId: string, dryRun = false, cepLookup?: FakeCepLookup) {
+function executorFor(conversationId: string, dryRun = false, cepLookup?: FakeCepLookup, correiosQuoter?: FakeCorreiosQuoter) {
   return buildToolExecutor(sdb, {
     conversationId,
     phoneE164: PHONE,
@@ -229,6 +230,7 @@ function executorFor(conversationId: string, dryRun = false, cepLookup?: FakeCep
     lastInboundId: DUMMY_INBOUND_ID,
     ...(dryRun ? { dryRun: true } : {}),
     ...(cepLookup ? { cepLookup } : {}),
+    ...(correiosQuoter ? { correiosQuoter } : {}),
   });
 }
 
@@ -390,6 +392,111 @@ describe("cotar_frete fora da área do motoboy", () => {
     expect(soPergunta.ok).toBe(true);
     expect(soPergunta.text).toContain("NÃO transfira agora");
     expect(soPergunta.text).not.toContain("chame transferir_para_atendente");
+  });
+});
+
+describe("cotar_frete fora da área com Correios automático (SuperFrete)", () => {
+  async function enableCorreiosAuto(): Promise<void> {
+    await db.insert(schema.settings).values([
+      { key: "correios_auto_enabled", value: true },
+      { key: "store_cep", value: "66045-335" },
+      { key: "correios_surcharge_cents", value: 300 },
+    ]);
+    await db.insert(schema.shippingRates).values({
+      name: "Motoboy Belém",
+      kind: "motoboy",
+      cepStart: "66000000",
+      cepEnd: "66999999",
+      priceCents: 1500,
+      deliveryWindows: [{ start: "16:00", end: "19:00", cutoff: "13:00" }],
+    });
+  }
+
+  it("fora da área a Lia recebe PAC e SEDEX com valor (já com a embalagem) e prazo em dias úteis, guarda as duas no caderninho e fecha o pedido com a escolhida", async () => {
+    await enableCorreiosAuto();
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990, { weightGrams: 800 });
+    const correios = new FakeCorreiosQuoter();
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId, false, new FakeCepLookup(), correios);
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+
+    const cotacao = await executor("cotar_frete", { cep: "01310-100" });
+    expect(cotacao.ok).toBe(true);
+    expect(cotacao.text).toContain(`1. PAC — ${formatCentsBRL(2590)} (6-9 dias úteis)`);
+    expect(cotacao.text).toContain(`2. SEDEX — ${formatCentsBRL(4290)} (2-3 dias úteis)`);
+    expect(cotacao.text).toContain("[Correios: o prazo é em dias úteis a partir da postagem e o valor já inclui a embalagem.");
+    expect(cotacao.text).toContain("Pergunte à cliente qual opção ela prefere");
+    expect(cotacao.text).not.toContain("FRETE É CALCULADO PELA EQUIPE");
+    expect(correios.calls).toEqual([
+      { fromCep: "66045335", toCep: "01310100", weightGrams: 800, package: { heightCm: 4, widthCm: 16, lengthCm: 24 }, services: ["PAC", "SEDEX"] },
+    ]);
+
+    const state = await botState(conversationId);
+    expect(state.lastCep).toBe("01310100");
+    expect(state.lastQuotes).toHaveLength(2);
+    expect(state.chosenOptionKey).toBeUndefined();
+
+    const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "sedex" });
+    expect(pedido.ok).toBe(true);
+    const [order] = await db.select().from(schema.orders);
+    expect(order.shippingCents).toBe(4290);
+    expect(order.shippingService).toBe("SEDEX");
+    expect(order.shippingQuoteId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(order.deliveryWindow).toBeNull();
+    // A recotação do fechamento reaproveitou o cache: uma chamada só ao provedor.
+    expect(correios.calls).toHaveLength(1);
+  });
+
+  it("cotação vencida no fechamento: a recotação reemite (id novo) e a guarda casa pelo nome; preço diferente na renovação recusa e pede nova cotação", async () => {
+    await enableCorreiosAuto();
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990, { weightGrams: 800 });
+    const correios = new FakeCorreiosQuoter();
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId, false, undefined, correios);
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+    await executor("cotar_frete", { cep: "01310-100" });
+
+    // A cotação venceu entre a conversa e o fechamento (o cache também: a recotação gera ids novos, mesmo nome e preço).
+    await db.update(schema.shippingQuotes).set({ expiresAt: new Date(Date.now() - 1000) });
+    const pedido = await executor("criar_pedido", { ...IDENTITY, frete: "pac" });
+    expect(pedido.ok).toBe(true);
+    const [order] = await db.select().from(schema.orders);
+    expect(order.shippingService).toBe("PAC");
+    expect(order.shippingCents).toBe(2590);
+
+    // Preço do provedor mudou na renovação: a guarda recusa e pede nova cotação.
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+    await executor("cotar_frete", { cep: "01310-100" });
+    await db.update(schema.shippingQuotes).set({ expiresAt: new Date(Date.now() - 1000) });
+    correios.set([{ service: "PAC", serviceCode: "1", priceCents: 2990, deliveryDaysMin: 6, deliveryDaysMax: 9, raw: null }]);
+    const recusa = await executor("criar_pedido", { ...IDENTITY, frete: "pac" });
+    expect(recusa.ok).toBe(false);
+    expect(recusa.text).toContain(`mudou de ${formatCentsBRL(2590)} para ${formatCentsBRL(3290)}`);
+    expect(recusa.text).toContain("Chame cotar_frete de novo");
+  });
+
+  it("provedor fora do ar: o texto de 'frete pela equipe' de sempre, caderninho com cotação vazia; no ensaio (dryRun) a cotação também aparece", async () => {
+    await enableCorreiosAuto();
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    const correios = new FakeCorreiosQuoter();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId, false, undefined, correios);
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+
+    correios.failNext("timeout");
+    const fora = await executor("cotar_frete", { cep: "01310100" });
+    expect(fora.ok).toBe(true);
+    expect(fora.text).toContain("FRETE É CALCULADO PELA EQUIPE");
+    expect(fora.text).toContain("transferir_para_atendente");
+    expect((await botState(conversationId)).lastQuotes).toEqual([]);
+
+    const rehearsal = executorFor(conversationId, true, undefined, correios);
+    const ensaio = await rehearsal("cotar_frete", { cep: "01310100" });
+    expect(ensaio.ok).toBe(true);
+    expect(ensaio.text).toContain(`1. PAC — ${formatCentsBRL(2590)}`);
+    expect(ensaio.text).toContain(`2. SEDEX — ${formatCentsBRL(4290)}`);
+    vi.restoreAllMocks();
   });
 });
 
