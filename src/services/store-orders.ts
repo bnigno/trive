@@ -41,7 +41,7 @@ import { billableWeightGrams, isQuoteValid } from "@/core/shipping/correios-pack
 import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
 import { isValidNeededBy, neededByLabel, OCCASION_MAX, shipByFor } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
-import { findShippingQuoteById } from "@/services/correios-quotes";
+import { findShippingQuoteById, getCorreiosAutoSettings } from "@/services/correios-quotes";
 import { parseWindows } from "@/services/shipping";
 import { activeMotoboyCoversCep, computeTotalWeightGrams } from "@/services/store-catalog";
 
@@ -442,6 +442,8 @@ export async function createStoreOrder(
       // cotam de novo (não é "o frete mudou": o id velho não serve mais).
       const quote = await findShippingQuoteById(tx, parsed.shippingRateId);
       if (!quote) throw rateUnavailable();
+      // Toggle desligado desfaz tudo na hora: nem um id já emitido fecha mais (o checkout recota e volta ao fluxo pela equipe).
+      if (!(await getCorreiosAutoSettings(tx)).enabled) throw rateUnavailable();
       if (
         !isQuoteValid(quote.expiresAt, now) ||
         quote.cepTo !== cep ||

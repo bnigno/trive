@@ -114,16 +114,15 @@ export interface CachedQuoteRow extends StoredQuoteRow {
 }
 
 export interface CachedQuotePick {
-  /** O que devolver sem perguntar ao provedor: por serviço, a linha MAIS ANTIGA ainda reaproveitável (ids estáveis). */
-  rates: RateForOptions[];
-  /** Falta algum serviço e não há tentativa recente: vale perguntar ao provedor. */
-  askProvider: boolean;
   /**
-   * Plano B quando o provedor falha: por serviço, a linha reaproveitável ou,
-   * na falta dela, a mais recente ainda VÁLIDA (≤ 24 h, mesmo fora da janela
-   * de reuso) — o id que a cliente carrega continua fechando pedido.
+   * O que o cache responde: por serviço, a linha MAIS ANTIGA ainda
+   * reaproveitável (ids estáveis) ou, na falta dela, a mais recente ainda
+   * VÁLIDA (≤ 24 h) — o id que a cliente carrega continua aparecendo e
+   * fechando pedido enquanto o provedor não responde de novo.
    */
-  fallbackRates: RateForOptions[];
+  rates: RateForOptions[];
+  /** Algum serviço está sem linha reaproveitável e não há tentativa recente: vale perguntar ao provedor. */
+  askProvider: boolean;
 }
 
 function byPrice(a: RateForOptions, b: RateForOptions): number {
@@ -135,8 +134,10 @@ function byPrice(a: RateForOptions, b: RateForOptions): number {
  * linhas ainda válidas dela. A linha mais antiga reaproveitável de cada
  * serviço ganha, para o id não mudar entre a sacola e o checkout nem entre o
  * caderninho da Lia e o fechamento — mesmo que dois lotes tenham nascido
- * quase juntos. Sem linha de algum serviço, pergunta-se ao provedor, salvo
- * se a última tentativa foi há pouco (carência de PARTIAL_QUOTE_RETRY_MS).
+ * quase juntos. Serviço sem linha reaproveitável (> 12 h ou resposta
+ * incompleta) pede nova pergunta ao provedor, salvo se a última tentativa
+ * foi há pouco (carência de PARTIAL_QUOTE_RETRY_MS); enquanto isso vale a
+ * linha ainda válida que houver.
  */
 export function pickCachedQuotes(rows: readonly CachedQuoteRow[], now: Date, services: readonly CorreiosServiceName[]): CachedQuotePick {
   const valid = rows.filter((row) => isQuoteValid(row.expiresAt, now)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
@@ -148,10 +149,6 @@ export function pickCachedQuotes(rows: readonly CachedQuoteRow[], now: Date, ser
   for (const row of valid) newestValid.set(row.name, row);
 
   const rates = services.flatMap((service) => {
-    const row = oldestReusable.get(service);
-    return row ? [quoteRowToRate(row)] : [];
-  });
-  const fallbackRates = services.flatMap((service) => {
     const row = oldestReusable.get(service) ?? newestValid.get(service);
     return row ? [quoteRowToRate(row)] : [];
   });
@@ -159,11 +156,7 @@ export function pickCachedQuotes(rows: readonly CachedQuoteRow[], now: Date, ser
   const lastAttemptAt = reusable.reduce<number | null>((max, row) => Math.max(max ?? 0, row.createdAt.getTime()), null);
   const recentlyTried = lastAttemptAt !== null && now.getTime() - lastAttemptAt <= PARTIAL_QUOTE_RETRY_MS;
 
-  return {
-    rates: rates.sort(byPrice),
-    askProvider: !complete && !recentlyTried,
-    fallbackRates: fallbackRates.sort(byPrice),
-  };
+  return { rates: rates.sort(byPrice), askProvider: !complete && !recentlyTried };
 }
 
 /** A linha de shipping_quotes na forma que o funil de opções já entende (uma faixa de Correios). */

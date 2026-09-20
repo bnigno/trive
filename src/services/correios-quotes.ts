@@ -107,10 +107,14 @@ export async function quoteCorreiosOptions(
   } catch (error) {
     const why = error instanceof CorreiosQuoteUnavailableError ? error.reason : error instanceof Error ? error.message : String(error);
     // Só o prefixo do CEP no log (a cidade, não o endereço).
-    console.warn(`[correios] cotação indisponível para ${input.cep.slice(0, 5)}xxx (${why}): ${cached.fallbackRates.length > 0 ? "vale a cotação anterior" : "frete pela equipe"}.`);
-    return cached.fallbackRates;
+    console.warn(`[correios] cotação indisponível para ${input.cep.slice(0, 5)}xxx (${why}): ${cached.rates.length > 0 ? "vale a cotação anterior" : "frete pela equipe"}.`);
+    return cached.rates;
   }
-  if (results.length === 0) return cached.fallbackRates;
+  if (results.length === 0) {
+    // Sem PAC nem SEDEX para o trecho (CEP inexistente, Correios sem cobertura): nada a guardar.
+    console.warn(`[correios] provedor sem serviço para ${input.cep.slice(0, 5)}xxx com ${weightGrams} g: ${cached.rates.length > 0 ? "vale a cotação anterior" : "frete pela equipe"}.`);
+    return cached.rates;
+  }
 
   const batchId = randomUUID();
   const expiresAt = quoteExpiresAt(input.now);

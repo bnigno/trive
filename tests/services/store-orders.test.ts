@@ -585,6 +585,8 @@ describe("createStoreOrder — cotação automática dos Correios (shipping_quot
   const DAY = 24 * 3600_000;
 
   async function setupQuoted(opts: { weightGrams?: number | null } = {}) {
+    // Uma cotação só fecha pedido com o Correios automático ligado (a linha nasceu dele).
+    await db.insert(schema.settings).values({ key: "correios_auto_enabled", value: true });
     const { variantId } = await createTestVariant(db, { sku: "CANECA-AZUL", costCents: 1200, onHand: 10, name: "Caneca Azul" });
     await activatePrice(variantId, 4990);
     if (opts.weightGrams !== undefined) {
@@ -690,6 +692,15 @@ describe("createStoreOrder — cotação automática dos Correios (shipping_quot
       newPriceCents: 2590,
     });
     expect(await db.$count(schema.orders)).toBe(0);
+  });
+
+  it("toggle do Correios automático desligado: nem um id já emitido fecha (SHIPPING_RATE_UNAVAILABLE — o checkout recota)", async () => {
+    const { variantId } = await setupQuoted();
+    const quoteId = await insertQuote();
+    await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "correios_auto_enabled"));
+    await expect(createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2590 }), { now: NOW })).rejects.toMatchObject({ code: "SHIPPING_RATE_UNAVAILABLE" });
+    await db.update(schema.settings).set({ value: true }).where(eq(schema.settings.key, "correios_auto_enabled"));
+    expect((await createStoreOrder(sdb, baseInput(variantId, quoteId, { expectedShippingCents: 2590 }), { now: NOW })).orderId).toBeDefined();
   });
 
   it("faixa manual de Correios grava o nome da faixa em shipping_service; motoboy grava null; cotação apagada deixa o pedido (FK set null)", async () => {
