@@ -9,10 +9,15 @@ import {
   Select,
   SubmitButton,
 } from "@/components/ui/form";
+import { Money } from "@/components/ui/money";
+import { Table, Td, Tr } from "@/components/ui/table";
+import { formatCep } from "@/lib/cep";
 import {
   createShippingRateAction,
+  probeCorreiosQuoteAction,
   updateCorreiosAutoAction,
   updateShippingRateAction,
+  type CorreiosProbeFormState,
   type FormState,
 } from "./actions";
 
@@ -286,6 +291,73 @@ export function CorreiosAutoForm({ defaults }: { defaults: CorreiosAutoDefaults 
 
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar Correios automático</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Testar cotação (SuperFrete de verdade, sem gravar)
+// ---------------------------------------------------------------------------
+
+const PROBE_INITIAL_STATE: CorreiosProbeFormState = {};
+
+/** Mesma regra da tabela de faixas: "7 dias" ou "6 a 9 dias". */
+function formatProbeDays(min: number, max: number): string {
+  if (min === max) return min === 1 ? "1 dia útil" : `${min} dias úteis`;
+  return `${min} a ${max} dias úteis`;
+}
+
+export function CorreiosProbeForm({ simulated }: { simulated: boolean }) {
+  const [state, formAction] = useActionState(probeCorreiosQuoteAction, PROBE_INITIAL_STATE);
+  const result = state.result;
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="CEP de destino" hint="Um CEP fora da área do motoboy. Ex.: 01310-100 (São Paulo).">
+          <Input name="cep" inputMode="numeric" placeholder="01310-100" required />
+        </Field>
+        <Field label="Peso (g)" hint="Peso da sacola em gramas. Os Correios cobram no mínimo 300 g.">
+          <Input name="weightGrams" type="number" inputMode="numeric" min={1} step={1} defaultValue="300" />
+        </Field>
+      </div>
+
+      {simulated ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Valores simulados (ADAPTER_MODE=fake): a chamada de verdade à SuperFrete só acontece no site em produção.
+        </p>
+      ) : null}
+
+      <FormError message={state.error} />
+
+      {result ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            A SuperFrete respondeu: {formatCep(result.storeCep)} → {formatCep(result.cep)}, {result.weightGrams} g,
+            acréscimo de <Money cents={result.surchargeCents} /> já incluído.
+          </p>
+          <Table headers={["Serviço", "Preço final", "SuperFrete", "Prazo"]}>
+            {result.quotes.map((quote) => (
+              <Tr key={quote.service}>
+                <Td className="font-medium">{quote.service}</Td>
+                <Td className="font-medium tabular-nums">
+                  <Money cents={quote.priceCents} />
+                </Td>
+                <Td className="tabular-nums text-zinc-500 dark:text-zinc-400">
+                  <Money cents={quote.providerPriceCents} />
+                </Td>
+                <Td>{formatProbeDays(quote.deliveryDaysMin, quote.deliveryDaysMax)}</Td>
+              </Tr>
+            ))}
+          </Table>
+        </div>
+      ) : null}
+
+      <div>
+        <SubmitButton variant="outline" pendingLabel="Cotando…">
+          Cotar agora
+        </SubmitButton>
       </div>
     </form>
   );
