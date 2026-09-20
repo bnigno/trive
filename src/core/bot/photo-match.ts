@@ -19,9 +19,16 @@ export const PHOTO_MATCH_MAX_CANDIDATES = 8;
 /** Comparação visual: a partir daqui é "provavelmente"; entre MAYBE e isto, "talvez". */
 export const PHOTO_MATCH_CONFIDENT = 0.75;
 export const PHOTO_MATCH_MAYBE = 0.5;
-/** Teto da comparação visual dentro do turno (o turno inteiro tem 35 s) e o mínimo que precisa sobrar para valer a pena. */
+/**
+ * Teto da comparação visual dentro do turno (miniaturas incluídas; o turno
+ * inteiro tem 35 s), o mínimo que precisa sobrar para o modelo valer a pena
+ * e a reserva que SEMPRE fica para a Lia escrever a resposta final depois.
+ */
 export const PHOTO_MATCH_BUDGET_MS = 12_000;
 export const PHOTO_MATCH_MIN_BUDGET_MS = 5_000;
+export const PHOTO_MATCH_REPLY_RESERVE_MS = 12_000;
+/** Cada miniatura de candidata tem este teto para baixar; a que não vier só sai da lista. */
+export const PHOTO_MATCH_THUMB_TIMEOUT_MS = 3_000;
 
 /** Uma foto do catálogo com impressão digital, já com a peça (pública) a que pertence. */
 export interface IndexedPhoto {
@@ -168,7 +175,7 @@ export function photoMatchUserText(candidates: readonly VisionCandidate[]): stri
 // O texto que a ferramenta devolve ao modelo.
 // ---------------------------------------------------------------------------
 
-export type VisionSkipReason = "sem_tempo" | "sem_bytes" | "sem_deps" | "falhou";
+export type VisionSkipReason = "sem_tempo" | "sem_bytes" | "sem_hash" | "sem_deps" | "falhou";
 
 export interface PhotoMatchOutcome {
   /** Camada 1 (hash): a mesma foto. */
@@ -222,11 +229,61 @@ export function describePhotoMatches(outcome: PhotoMatchOutcome): { ok: boolean;
       ? " [sem tempo para a comparação visual neste turno]"
       : outcome.visionSkipped === "sem_bytes"
         ? " [foto de um turno anterior: só a comparação exata foi possível]"
-        : outcome.visionSkipped === "falhou"
-          ? " [a comparação visual falhou agora]"
-          : "";
+        : outcome.visionSkipped === "sem_hash"
+          ? " [foto anterior ao reconhecimento, sem impressão digital: se ela quiser que você confira, peça para reenviar]"
+          : outcome.visionSkipped === "falhou"
+            ? " [a comparação visual falhou agora]"
+            : "";
   return {
     ok: false,
     text: `Não reconheci nenhuma peça do catálogo nessa foto: diga o que viu e busque parecidas com listar_produtos (categoria + cor).${why}`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// O que fica gravado em media_meta.reconhecido (e como a Central o lê).
+// ---------------------------------------------------------------------------
+
+/** exato = a mesma foto; provavel = a visão teve ≥ 0,75; talvez = a Lia ainda vai confirmar com a cliente. */
+export type RecognitionLevel = "exato" | "provavel" | "talvez";
+
+export interface Recognition {
+  slugs: string[];
+  nomes: string[];
+  camada: "hash" | "visao";
+  nivel: RecognitionLevel;
+  distancia?: number;
+  confianca?: number;
+}
+
+/**
+ * O registro segue a MESMA precedência do texto devolvido ao modelo: exato
+ * (hash) > provável (visão) > talvez (hash 9–10 e visão 0,5–0,75, juntos, na
+ * ordem em que a Lia os ouviu). Null quando nada foi reconhecido.
+ */
+export function recognitionOf(outcome: PhotoMatchOutcome): Recognition | null {
+  const pieces = (list: readonly { slug: string; name: string }[]) => ({ slugs: list.map((piece) => piece.slug), nomes: list.map((piece) => piece.name) });
+  if (outcome.exact.length > 0) {
+    return { ...pieces(outcome.exact), camada: "hash", nivel: "exato", distancia: outcome.exact[0].distance };
+  }
+  if (outcome.provaveis.length > 0) {
+    return { ...pieces(outcome.provaveis), camada: "visao", nivel: "provavel", confianca: outcome.provaveis[0].confidence };
+  }
+  const talvez = [...outcome.maybe, ...outcome.talvez];
+  if (talvez.length === 0) return null;
+  return outcome.maybe.length > 0
+    ? { ...pieces(talvez), camada: "hash", nivel: "talvez", distancia: outcome.maybe[0].distance }
+    : { ...pieces(talvez), camada: "visao", nivel: "talvez", confianca: outcome.talvez[0].confidence };
+}
+
+/** O nível de um registro, inclusive dos gravados antes de existir `nivel` (deduzido de camada + distância/confiança). */
+export function recognitionLevel(
+  recognized: { nivel?: RecognitionLevel; camada: "hash" | "visao"; distancia?: number; confianca?: number } | null | undefined,
+): RecognitionLevel | null {
+  if (!recognized) return null;
+  if (recognized.nivel) return recognized.nivel;
+  if (recognized.camada === "hash") {
+    return recognized.distancia !== undefined && recognized.distancia <= PHOTO_MATCH_MAX_DISTANCE ? "exato" : "talvez";
+  }
+  return recognized.confianca !== undefined && recognized.confianca >= PHOTO_MATCH_CONFIDENT ? "provavel" : "talvez";
 }

@@ -377,7 +377,7 @@ export default async function WhatsappPage() {
             settingKey="bot_photo_match_enabled"
             checked={data.photoMatchEnabled}
             label={`A ${sellerName} reconhece a peça na foto`}
-            hint="Foto da própria loja repassada pela cliente (post, site, cartão): compara com as fotos do catálogo pela impressão digital (grátis) e, se não bater, com até 8 peças parecidas pela inteligência (centavos). Guarda só a impressão digital e o nome reconhecido — nunca a foto."
+            hint="Foto da própria loja repassada pela cliente (post, site, etiqueta): compara com as fotos do catálogo pela impressão digital (grátis) e, se não bater, com até 8 peças parecidas pela inteligência (centavos). Desligado, ela volta a descrever a foto e buscar parecidas. A impressão digital (16 caracteres, irreversível) é calculada com ou sem este interruptor; a foto em si nunca é guardada."
           />
           <ToggleSwitch
             settingKey="catalog_draft_enabled"

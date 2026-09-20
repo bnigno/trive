@@ -12,7 +12,7 @@ import { FakeFileStorage } from "@/adapters/storage/fake";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { imagePhash } from "@/services/image-fingerprint";
-import { findProductsByPhotoHash, listIndexedPhotos } from "@/services/photo-match";
+import { findProductsByPhotoHash, listIndexedPhotos, matchPhotoWithVision } from "@/services/photo-match";
 import { buildToolExecutor } from "@/services/wa-bot";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -70,10 +70,10 @@ async function webp(svg: string, width?: number): Promise<Buffer> {
 }
 
 /** Peça pública com uma foto no Storage (full + thumb) e a impressão digital gravada, como addProductImage faria. */
-async function seedProduct(input: { name: string; slug: string; seed: number; color?: string; status?: "active" | "archived"; phash?: string | null }): Promise<{ productId: string; phash: string }> {
+async function seedProduct(input: { name: string; slug: string; seed: number; color?: string; status?: "active" | "archived"; phash?: string | null; categoryId?: string }): Promise<{ productId: string; phash: string }> {
   const [product] = await db
     .insert(schema.products)
-    .values({ name: input.name, slug: input.slug, status: input.status ?? "active", attributesSchema: ["cor", "tamanho"] })
+    .values({ name: input.name, slug: input.slug, status: input.status ?? "active", attributesSchema: ["cor", "tamanho"], ...(input.categoryId ? { categoryId: input.categoryId } : {}) })
     .returning({ id: schema.products.id });
   const [variant] = await db
     .insert(schema.productVariants)
@@ -115,7 +115,8 @@ function executorFor(conversationId: string, opts: { recentImages?: Parameters<t
     ...(opts.recentImages ? { recentImages: opts.recentImages } : {}),
     ...(opts.dryRun ? { dryRun: true } : {}),
     ...(opts.copilot ? { copilot: true } : {}),
-    ...(opts.withVision === false ? {} : { photoMatch: { assistant, storage, deadlineAt: opts.deadlineAt ?? new Date(NOW.getTime() + 30_000) } }),
+    // O prazo do modelo é relógio REAL (a ferramenta mede o que resta com new Date()), não o NOW congelado do turno.
+    ...(opts.withVision === false ? {} : { photoMatch: { assistant, storage, deadlineAt: opts.deadlineAt ?? new Date(Date.now() + 30_000) } }),
   });
 }
 
@@ -186,7 +187,8 @@ describe("identificar_peca_na_foto", () => {
     expect(sent.jsonSchema).toMatchObject({ type: "object" });
     expect(sent.signal).toBeInstanceOf(AbortSignal);
     expect(sent.signal?.aborted).toBe(false);
-    expect(await mediaMetaOf(waMessageId)).toMatchObject({ reconhecido: { slugs: ["blusa-maelle"], camada: "visao", confianca: 0.9 } });
+    expect(sent.maxTokens).toBe(2048);
+    expect(await mediaMetaOf(waMessageId)).toMatchObject({ reconhecido: { slugs: ["blusa-maelle"], camada: "visao", nivel: "provavel", confianca: 0.9 } });
   });
 
   it("modelo diz que nenhuma é a mesma → ok false com o caminho das parecidas; sem bot_model usa o padrão", async () => {
@@ -255,7 +257,7 @@ describe("identificar_peca_na_foto", () => {
     await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1 });
     const { conversationId, waMessageId } = await seedConversationWithPhoto();
     const photo = await customerPhoto(4);
-    const late = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }], deadlineAt: new Date(NOW.getTime() + 3_000) })("identificar_peca_na_foto", {});
+    const late = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }], deadlineAt: new Date(Date.now() + 3_000) })("identificar_peca_na_foto", {});
     expect(late.ok).toBe(false);
     expect(late.text).toContain("[sem tempo para a comparação visual neste turno]");
     const noDeps = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }], withVision: false })("identificar_peca_na_foto", {});
@@ -288,5 +290,63 @@ describe("identificar_peca_na_foto", () => {
     const copilot = await executorFor(conversationId, { recentImages, copilot: true })("identificar_peca_na_foto", {});
     expect(copilot.ok).toBe(true);
     expect(copilot.text).toContain("Blusa Maelle");
+  });
+});
+
+describe("candidatas, filtros e orçamento da comparação visual", () => {
+  it("foto de antes do recurso (sem impressão digital, sem bytes): pede para reenviar, sem consultar índice nem modelo", async () => {
+    await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1 });
+    const { conversationId, waMessageId } = await seedConversationWithPhoto();
+    const result = await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u" }] })("identificar_peca_na_foto", {});
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("[foto anterior ao reconhecimento, sem impressão digital");
+    expect(result.text).not.toContain("[foto de um turno anterior");
+    expect(assistant.extractions).toHaveLength(0);
+    expect(await mediaMetaOf(waMessageId)).not.toHaveProperty("reconhecido");
+  });
+
+  it("acerto exato grava nivel 'exato' junto com a camada e a distância", async () => {
+    await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1 });
+    const { conversationId, waMessageId } = await seedConversationWithPhoto();
+    const photo = await customerPhoto(1);
+    await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash }] })("identificar_peca_na_foto", {});
+    expect(await mediaMetaOf(waMessageId)).toMatchObject({ reconhecido: { slugs: ["blusa-maelle"], camada: "hash", nivel: "exato" } });
+  });
+
+  it("a cor ordena as candidatas (quem existe nessa cor vem primeiro, mesmo esgotada) em vez de filtrar", async () => {
+    await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1, color: "Preto" });
+    await seedProduct({ name: "Blusa Aurélie", slug: "blusa-aurelie", seed: 2, color: "Vermelho" });
+    await db.update(schema.stockLevels).set({ onHand: 0 });
+    const { conversationId, waMessageId } = await seedConversationWithPhoto();
+    const photo = await customerPhoto(4);
+    await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }] })("identificar_peca_na_foto", { cor: "vermelho" });
+    expect(assistant.extractions).toHaveLength(1);
+    expect(assistant.extractions[0].userText).toBe(["Imagem 1: a foto da cliente.", "Imagem 2: blusa-aurelie — Blusa Aurélie", "Imagem 3: blusa-maelle — Blusa Maelle", "Quais desses rótulos aparecem na imagem 1?"].join("\n"));
+  });
+
+  it("busca sem resultado derruba só a busca: a categoria continua valendo (um filtro de cada vez)", async () => {
+    const [category] = await db.insert(schema.categories).values({ name: "Blusas", slug: "blusas" }).returning({ id: schema.categories.id });
+    await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1, categoryId: category.id });
+    await seedProduct({ name: "Vestido Alba", slug: "vestido-alba", seed: 2 });
+    const { conversationId, waMessageId } = await seedConversationWithPhoto();
+    const photo = await customerPhoto(4);
+    await executorFor(conversationId, { recentImages: [{ waMessageId, mediaUrl: "u", phash: photo.phash, image: photo.image }] })("identificar_peca_na_foto", { categoria: "blusas", busca: "palavra-que-nao-existe" });
+    expect(assistant.extractions).toHaveLength(1);
+    expect(assistant.extractions[0].images).toHaveLength(2);
+    expect(assistant.extractions[0].userText).toContain("blusa-maelle");
+    expect(assistant.extractions[0].userText).not.toContain("vestido-alba");
+  });
+
+  it("o orçamento conta as miniaturas: download lento come o tempo e o modelo nem é chamado (sem_tempo)", async () => {
+    await seedProduct({ name: "Blusa Maelle", slug: "blusa-maelle", seed: 1 });
+    const photo = await customerPhoto(4);
+    const download = storage.download.bind(storage);
+    vi.spyOn(storage, "download").mockImplementation(async (path: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return download(path);
+    });
+    const result = await matchPhotoWithVision(sdb, { assistant, storage }, { image: photo.image, filters: {}, customerId: null, budgetMs: 60 });
+    expect(result).toMatchObject({ failed: "sem_tempo", candidates: 1, provaveis: [], talvez: [] });
+    expect(assistant.extractions).toHaveLength(0);
   });
 });

@@ -10,6 +10,8 @@ import type { FileStorage } from "@/adapters/storage";
 import {
   PHOTO_MATCH_JSON_SCHEMA,
   PHOTO_MATCH_MAX_CANDIDATES,
+  PHOTO_MATCH_MIN_BUDGET_MS,
+  PHOTO_MATCH_THUMB_TIMEOUT_MS,
   photoMatchSystemPrompt,
   photoMatchUserText,
   rankPhotoMatches,
@@ -66,13 +68,13 @@ export interface VisionMatchInput {
   /** O que a Lia viu na foto: afunila as candidatas. */
   filters: { categoria?: string; cor?: string; busca?: string };
   customerId: string | null;
-  /** Quanto tempo a comparação pode levar (quem chama já descontou o resto do turno). */
+  /** Quanto tempo a comparação INTEIRA pode levar — candidatas, miniaturas e modelo (quem chama já reservou o resto do turno). */
   budgetMs: number;
 }
 
 export interface VisionMatchResult extends VisionTiers {
   /** Por que não houve resposta útil (null = a comparação rodou). */
-  failed: "sem_candidatas" | "ia_indisponivel" | "ia_demorou" | "json_invalido" | "ia_erro" | null;
+  failed: "sem_candidatas" | "sem_tempo" | "ia_indisponivel" | "ia_demorou" | "json_invalido" | "ia_erro" | null;
   candidates: number;
 }
 
@@ -88,27 +90,40 @@ export async function matchPhotoWithVision(
   input: VisionMatchInput,
 ): Promise<VisionMatchResult> {
   const empty: VisionTiers = { provaveis: [], talvez: [] };
+  // O orçamento cobre tudo: as consultas, os downloads e o modelo. Cada etapa
+  // desconta o que gastou; o modelo só é chamado com o que sobrar.
+  const startedAt = Date.now();
+  const remainingMs = () => input.budgetMs - (Date.now() - startedAt);
   const candidates = await pickCandidates(db, input);
   if (candidates.length === 0) return { ...empty, failed: "sem_candidatas", candidates: 0 };
 
-  // Miniaturas (400 px, webp) em paralelo; a que não abrir só sai da lista.
-  const thumbs = await Promise.all(
-    candidates.map(async (candidate) => {
-      try {
-        const file = await deps.storage.download(thumbPathFor(candidate.imagePath));
-        return { candidate, image: { mediaType: "image/webp" as const, base64: Buffer.from(file.data).toString("base64") } };
-      } catch (error) {
-        console.warn(`[photo-match] miniatura indisponível (${candidate.slug}):`, error instanceof Error ? error.message : error);
-        return null;
-      }
-    }),
-  );
+  // Miniaturas (400 px, webp) em paralelo, cada uma com o próprio teto; a que
+  // não abrir só sai da lista. O modelo configurado é lido no mesmo passo.
+  const [thumbs, settingsMap] = await Promise.all([
+    Promise.all(
+      candidates.map(async (candidate) => {
+        try {
+          const file = await withTimeout(deps.storage.download(thumbPathFor(candidate.imagePath)), PHOTO_MATCH_THUMB_TIMEOUT_MS, () => {});
+          return { candidate, image: { mediaType: "image/webp" as const, base64: Buffer.from(file.data).toString("base64") } };
+        } catch (error) {
+          console.warn(`[photo-match] miniatura indisponível (${candidate.slug}):`, error instanceof Error ? error.message : error);
+          return null;
+        }
+      }),
+    ),
+    getSettingsMap(db as unknown as ServiceDb, ["bot_model"]),
+  ]);
   const withThumb = thumbs.flatMap((entry) => (entry ? [entry] : []));
   if (withThumb.length === 0) return { ...empty, failed: "sem_candidatas", candidates: 0 };
   const labels: VisionCandidate[] = withThumb.map(({ candidate }) => ({ slug: candidate.slug, name: candidate.name }));
 
-  const settingsMap = await getSettingsMap(db as unknown as ServiceDb, ["bot_model"]);
   const model = typeof settingsMap.bot_model === "string" && settingsMap.bot_model.trim() !== "" ? settingsMap.bot_model.trim() : DEFAULT_BOT_MODEL;
+
+  const modelBudgetMs = remainingMs();
+  if (modelBudgetMs < PHOTO_MATCH_MIN_BUDGET_MS) {
+    console.warn(`[photo-match] sem tempo para o modelo: sobraram ${modelBudgetMs} ms de ${input.budgetMs} depois das miniaturas.`);
+    return { ...empty, failed: "sem_tempo", candidates: labels.length };
+  }
 
   const controller = new AbortController();
   let extraction;
@@ -120,10 +135,11 @@ export async function matchPhotoWithVision(
         userText: photoMatchUserText(labels),
         model,
         jsonSchema: PHOTO_MATCH_JSON_SCHEMA,
-        maxTokens: 512,
+        // A resposta é curta (≤ 8 itens), mas o teto cobre a fatia de raciocínio: 512 cortava a saída no meio.
+        maxTokens: 2048,
         signal: controller.signal,
       }),
-      input.budgetMs,
+      modelBudgetMs,
       () => controller.abort(),
     );
   } catch (error) {
@@ -138,34 +154,49 @@ export async function matchPhotoWithVision(
 }
 
 type Candidate = { slug: string; name: string; imagePath: string };
+type Scope = { busca?: string; categoria?: string };
 
-/** Primeiro com os filtros da Lia; sem resultado, sem filtro — só peças públicas com foto. */
+/**
+ * Do filtro mais estreito ao mais largo, UM filtro de cada vez (busca +
+ * categoria → categoria → tudo), sem repetir consulta igual; só peças públicas
+ * com foto. A cor não filtra — ordena: quem existe nessa cor (mesmo esgotada)
+ * vem primeiro, porque reconhecer uma foto não depende de estoque.
+ */
 async function pickCandidates(db: DbOrTx, input: VisionMatchInput): Promise<Candidate[]> {
-  const strict = await listCandidates(db, input, true);
-  if (strict.length > 0) return strict;
-  return listCandidates(db, input, false);
-}
-
-async function listCandidates(db: DbOrTx, input: VisionMatchInput, useFilters: boolean): Promise<Candidate[]> {
   const sdb = db as unknown as ServiceDb;
-  const busca = useFilters ? input.filters.busca?.trim() : undefined;
-  const categoria = useFilters ? input.filters.categoria?.trim() : undefined;
-  const cor = useFilters ? input.filters.cor?.trim() : undefined;
-  // Categoria que não existe não pode zerar a busca: só cai.
-  const categorySlug = categoria ? await resolveCategorySlug(db, categoria) : null;
-  let items = await listPublicProducts(sdb, {
-    ...(busca ? { q: busca, includeDescription: true } : {}),
-    ...(categorySlug ? { categorySlug } : {}),
-    viewer: { customerId: input.customerId },
-    limit: 200,
-  });
-  if (cor) {
-    const withColor = await listProductIdsWithVariant(sdb, { cor });
-    if (withColor) items = items.filter((item) => withColor.has(item.id));
+  const busca = input.filters.busca?.trim() || undefined;
+  const categoria = input.filters.categoria?.trim() || undefined;
+  const cor = input.filters.cor?.trim() || undefined;
+
+  const scopes: Scope[] = [];
+  if (busca && categoria) scopes.push({ busca, categoria });
+  if (categoria) scopes.push({ categoria });
+  else if (busca) scopes.push({ busca });
+  scopes.push({});
+
+  let items: Awaited<ReturnType<typeof listPublicProducts>> = [];
+  for (const scope of scopes) {
+    items = await listPublicItems(sdb, input.customerId, scope);
+    if (items.length > 0) break;
+  }
+  if (cor && items.length > 1) {
+    const withColor = await listProductIdsWithVariant(sdb, { cor }, { requireStock: false });
+    if (withColor) items = [...items.filter((item) => withColor.has(item.id)), ...items.filter((item) => !withColor.has(item.id))];
   }
   return items
     .flatMap((item) => (item.imagePath ? [{ slug: item.slug, name: item.name, imagePath: item.imagePath }] : []))
     .slice(0, PHOTO_MATCH_MAX_CANDIDATES);
+}
+
+async function listPublicItems(sdb: ServiceDb, customerId: string | null, scope: Scope) {
+  // Categoria que não existe não pode zerar a busca: só cai.
+  const categorySlug = scope.categoria ? await resolveCategorySlug(sdb as unknown as DbOrTx, scope.categoria) : null;
+  return listPublicProducts(sdb, {
+    ...(scope.busca ? { q: scope.busca, includeDescription: true } : {}),
+    ...(categorySlug ? { categorySlug } : {}),
+    viewer: { customerId },
+    limit: 200,
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {

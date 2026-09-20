@@ -779,19 +779,26 @@ Como funciona, em duas camadas (ferramenta `identificar_peca_na_foto`):
   cor/busca que a Lia informa; sem resultado, as primeiras do catálogo) e diz
   quais **aparecem** na foto: ≥ 0,75 vira "provavelmente" (a Lia confirma em
   meia frase), 0,5–0,75 "talvez" (confirma antes), abaixo nada. Teto de 12 s
-  dentro do turno e só roda se sobrarem ≥ 5 s do prazo do modelo; sem tempo,
-  provedor fora ou resposta torta ⇒ "não reconheci", e o turno segue. ~3–4
-  mil tokens de entrada por comparação (≈ US$ 0,01–0,02 no Sonnet); o audit
+  para a comparação INTEIRA (candidatas, miniaturas — 3 s cada — e modelo) e
+  uma reserva de 12 s do prazo do modelo fica sempre para a resposta final:
+  só roda se restarem ≥ 17 s; sem tempo, provedor fora ou resposta torta ⇒
+  "não reconheci", e o turno segue. Os filtros caem um por vez (busca +
+  categoria → categoria → tudo); a cor só ordena as candidatas (quem existe
+  nessa cor vem primeiro, mesmo esgotada). Foto de antes do recurso (sem
+  impressão digital) só pode ser conferida se a cliente reenviar. ~3–4 mil
+  tokens de entrada por comparação (≈ US$ 0,01–0,02 no Sonnet); o audit
   `wa.bot_turn` registra o `usage`.
 - **Cartões (`bot_cards`) ficam fora do índice de propósito**: a moldura do
   cartão domina o hash e posts de peças diferentes saem quase iguais (510
   pares a ≤ 3 bits nos dados reais). Cartão repassado tem o nome da peça
   escrito — o prompt manda a Lia ler e chamar `detalhar_produto` pelo nome.
 - **O que fica gravado**: `media_meta.phash` e `media_meta.reconhecido`
-  (slugs, nomes, camada e distância/confiança) na mensagem da foto; a Central
-  mostra "🔎 Lia reconheceu: …" sob a foto. Interruptor **"A Lia reconhece a
-  peça na foto"** em Vendedora & WhatsApp (`bot_photo_match_enabled`,
-  ausente = ligado; exige o de mídia ligado).
+  (slugs, nomes, camada, nível `exato`/`provavel`/`talvez` e distância/
+  confiança) na mensagem da foto; a Central mostra "🔎 Lia reconheceu: …" sob
+  a foto (ou "achou parecido (sem confirmar)" quando o nível é talvez).
+  Interruptor **"A Lia reconhece a peça na foto"** em Vendedora & WhatsApp
+  (`bot_photo_match_enabled`, ausente = ligado; exige o de mídia ligado). A
+  impressão digital é calculada com ou sem o interruptor.
 
 Quando ela reconhece errado: veja a distância em `media_meta.reconhecido`
 e rode `scripts/backfill-image-hashes.ts --relatorio` — o relatório mostra

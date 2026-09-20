@@ -693,7 +693,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "identificar_peca_na_foto",
     description:
-      "A cliente mandou há pouco uma foto que parece ser da própria loja — print do site ou do Instagram, foto de um cartão que você enviou, foto com a etiqueta da loja. Confere contra as fotos do catálogo e diz QUAL peça aparece (pode ser mais de uma). Passe categoria e cor do que você vê para ajudar na comparação; foto = qual das fotos recentes (1 = a primeira; omita para a última). Depois responda à pergunta dela com detalhar_produto pelo slug devolvido. Não serve para foto DELA vestindo (use registrar_foto_com_a_peca) nem para peça de outra loja.",
+      "A cliente mandou há pouco uma foto que parece ser da própria loja — print do site ou do Instagram, foto com a etiqueta da loja, peça no flatlay. Confere contra as fotos do catálogo e diz QUAL peça aparece (pode ser mais de uma). Passe categoria e cor do que você vê para ajudar na comparação; foto = qual das fotos recentes (1 = a primeira; omita para a última). Depois responda à pergunta dela com detalhar_produto pelo slug devolvido. Cartão ou print com o NOME da peça escrito dispensa esta ferramenta: vá direto a detalhar_produto por esse nome. Não serve para foto DELA vestindo (use registrar_foto_com_a_peca) nem para peça de outra loja.",
     input_schema: {
       type: "object",
       properties: {

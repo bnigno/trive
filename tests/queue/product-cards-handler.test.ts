@@ -99,8 +99,12 @@ describe("runProductCardsPrerender", () => {
 
   it("estreia marcada: reagenda para a data com chave única por tentativa; nunca antes de 60 s", async () => {
     const productId = await activeProduct();
-    const now = new Date("2026-09-12T12:00:00Z");
-    const estreia = new Date("2026-09-20T13:00:00Z");
+    // prerenderProductPosts compara a estreia com o relógio REAL (Date.now());
+    // só o reagendamento usa deps.now. Datas fixas viravam bomba-relógio
+    // quando o calendário passava da estreia: aqui ela é sempre daqui a 8 dias.
+    const DIA_MS = 24 * 60 * 60 * 1000;
+    const estreia = new Date(Math.ceil(Date.now() / 1000) * 1000 + 8 * DIA_MS);
+    const now = new Date(estreia.getTime() - 8 * DIA_MS - 60 * 60 * 1000);
     await db.update(schema.products).set({ visibleFrom: estreia }).where(eq(schema.products.id, productId));
 
     const first = await runProductCardsPrerender(deps(now), event(productId, "11111111-1111-4111-8111-111111111111"));

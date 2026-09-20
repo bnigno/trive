@@ -5,17 +5,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   describePhotoMatches,
+  type IndexedPhoto,
+  type PhotoMatchOutcome,
+  photoMatchSystemPrompt,
+  photoMatchUserText,
   PHOTO_MATCH_CONFIDENT,
   PHOTO_MATCH_JSON_SCHEMA,
   PHOTO_MATCH_MAX_DISTANCE,
   PHOTO_MATCH_MAYBE,
   PHOTO_MATCH_MAYBE_DISTANCE,
-  photoMatchSystemPrompt,
-  photoMatchUserText,
   rankPhotoMatches,
+  recognitionLevel,
+  recognitionOf,
   tierVisionMatches,
-  type IndexedPhoto,
-  type PhotoMatchOutcome,
 } from "@/core/bot/photo-match";
 import { hexToPhash, phashToHex } from "@/core/images/phash";
 
@@ -131,7 +133,32 @@ describe("describePhotoMatches", () => {
     expect(describePhotoMatches(empty)).toEqual({ ok: false, text: "Não reconheci nenhuma peça do catálogo nessa foto: diga o que viu e busque parecidas com listar_produtos (categoria + cor)." });
     expect(describePhotoMatches({ ...empty, visionSkipped: "sem_tempo" }).text).toContain("[sem tempo para a comparação visual neste turno]");
     expect(describePhotoMatches({ ...empty, visionSkipped: "sem_bytes" }).text).toContain("[foto de um turno anterior");
+    expect(describePhotoMatches({ ...empty, visionSkipped: "sem_hash" }).text).toContain("[foto anterior ao reconhecimento, sem impressão digital");
     expect(describePhotoMatches({ ...empty, visionSkipped: "falhou" }).text).toContain("[a comparação visual falhou agora]");
     expect(describePhotoMatches({ ...empty, visionSkipped: "sem_deps" }).text).not.toContain("[");
+  });
+});
+
+describe("o que fica gravado em media_meta.reconhecido", () => {
+  const empty: PhotoMatchOutcome = { exact: [], maybe: [], provaveis: [], talvez: [], visionSkipped: null };
+  const maelle = { slug: "blusa-maelle", name: "Blusa Maelle", distance: 2, colors: ["Preto"], tier: "exact" as const };
+  const aurelie = { slug: "blusa-aurelie", name: "Blusa Aurélie", confidence: 0.9, color: null };
+
+  it("segue a mesma precedência do texto: exato > provável > talvez (hash 9–10 e visão juntos)", () => {
+    expect(recognitionOf({ ...empty, exact: [maelle], provaveis: [aurelie] })).toEqual({ slugs: ["blusa-maelle"], nomes: ["Blusa Maelle"], camada: "hash", nivel: "exato", distancia: 2 });
+    // A visão disse "provavelmente" e o hash só "talvez": o que a Lia ouviu (e confirma) é a provável — não o talvez do hash.
+    expect(recognitionOf({ ...empty, maybe: [{ ...maelle, distance: 9, tier: "maybe" }], provaveis: [aurelie] })).toEqual({ slugs: ["blusa-aurelie"], nomes: ["Blusa Aurélie"], camada: "visao", nivel: "provavel", confianca: 0.9 });
+    expect(recognitionOf({ ...empty, maybe: [{ ...maelle, distance: 10, tier: "maybe" }], talvez: [{ ...aurelie, confidence: 0.6 }] })).toEqual({ slugs: ["blusa-maelle", "blusa-aurelie"], nomes: ["Blusa Maelle", "Blusa Aurélie"], camada: "hash", nivel: "talvez", distancia: 10 });
+    expect(recognitionOf({ ...empty, talvez: [{ ...aurelie, confidence: 0.55 }] })).toEqual({ slugs: ["blusa-aurelie"], nomes: ["Blusa Aurélie"], camada: "visao", nivel: "talvez", confianca: 0.55 });
+    expect(recognitionOf(empty)).toBeNull();
+  });
+
+  it("o nível de registros antigos (sem nivel) é deduzido da camada e da distância/confiança", () => {
+    expect(recognitionLevel({ camada: "hash", distancia: 3 })).toBe("exato");
+    expect(recognitionLevel({ camada: "hash", distancia: 9 })).toBe("talvez");
+    expect(recognitionLevel({ camada: "visao", confianca: 0.9 })).toBe("provavel");
+    expect(recognitionLevel({ camada: "visao", confianca: 0.6 })).toBe("talvez");
+    expect(recognitionLevel({ camada: "visao", confianca: 0.6, nivel: "provavel" })).toBe("provavel");
+    expect(recognitionLevel(undefined)).toBeNull();
   });
 });

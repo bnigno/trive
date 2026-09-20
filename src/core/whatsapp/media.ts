@@ -39,6 +39,8 @@ export const waMediaMetaSchema = z
         slugs: z.array(z.string()),
         nomes: z.array(z.string()),
         camada: z.enum(["hash", "visao"]),
+        /** exato = a mesma foto; provavel = visão ≥ 0,75; talvez = a Lia ainda precisa confirmar com a cliente. */
+        nivel: z.enum(["exato", "provavel", "talvez"]).optional(),
         distancia: z.number().optional(),
         confianca: z.number().optional(),
       })

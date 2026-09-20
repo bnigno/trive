@@ -8,6 +8,8 @@ import {
   describePhotoMatches,
   PHOTO_MATCH_BUDGET_MS,
   PHOTO_MATCH_MIN_BUDGET_MS,
+  PHOTO_MATCH_REPLY_RESERVE_MS,
+  recognitionOf,
   type PhotoMatchOutcome,
   type VisionSkipReason,
 } from "@/core/bot/photo-match";
@@ -16,7 +18,7 @@ import { waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { findProductsByPhotoHash, isBotPhotoMatchEnabled, matchPhotoWithVision } from "@/services/photo-match";
 
-import type { BotExecutorContext, ToolResult } from "./shared";
+import type { BotExecutorContext, RecentImage, ToolResult } from "./shared";
 
 export async function execIdentificarPecaNaFoto(
   db: DbOrTx,
@@ -34,7 +36,9 @@ export async function execIdentificarPecaNaFoto(
     return { ok: false, text: `Ela mandou ${photos.length === 1 ? "1 foto" : `${photos.length} fotos`} recentes: passe foto entre 1 e ${photos.length}.` };
   }
   const photo = input.foto !== undefined ? photos[input.foto - 1] : photos[photos.length - 1];
-  const now = ctx.now ?? new Date();
+  // Relógio real, não ctx.now: o prazo do modelo é absoluto e o turno já pode
+  // ter gastado segundos até aqui (no proativo, ctx.now é o início do turno).
+  const now = new Date();
 
   const outcome: PhotoMatchOutcome = { exact: [], maybe: [], provaveis: [], talvez: [], visionSkipped: null };
 
@@ -46,21 +50,23 @@ export async function execIdentificarPecaNaFoto(
   }
 
   // Camada 2: só sem acerto exato, com os bytes da foto (turno atual), com as
-  // dependências do turno e com tempo sobrando para o modelo ainda responder.
+  // dependências do turno e com tempo sobrando para o modelo ainda responder
+  // — descontada a reserva para a Lia escrever a resposta final.
   if (outcome.exact.length === 0) {
-    const skip = visionSkipReason(ctx, photo.image, now);
+    const skip = visionSkipReason(ctx, photo, now);
     if (skip) {
       outcome.visionSkipped = skip;
     } else {
-      const remainingMs = ctx.photoMatch!.deadlineAt.getTime() - now.getTime() - PHOTO_MATCH_MIN_BUDGET_MS;
+      const budgetMs = Math.min(PHOTO_MATCH_BUDGET_MS, ctx.photoMatch!.deadlineAt.getTime() - now.getTime() - PHOTO_MATCH_REPLY_RESERVE_MS);
       const vision = await matchPhotoWithVision(
         db,
         { assistant: ctx.photoMatch!.assistant, storage: ctx.photoMatch!.storage },
-        { image: photo.image!, filters: { categoria: input.categoria, cor: input.cor, busca: input.busca }, customerId: ctx.customerId, budgetMs: Math.min(PHOTO_MATCH_BUDGET_MS, remainingMs) },
+        { image: photo.image!, filters: { categoria: input.categoria, cor: input.cor, busca: input.busca }, customerId: ctx.customerId, budgetMs },
       );
       outcome.provaveis = vision.provaveis;
       outcome.talvez = vision.talvez;
-      if (vision.failed && vision.failed !== "sem_candidatas") outcome.visionSkipped = "falhou";
+      if (vision.failed === "sem_tempo") outcome.visionSkipped = "sem_tempo";
+      else if (vision.failed && vision.failed !== "sem_candidatas") outcome.visionSkipped = "falhou";
     }
   }
 
@@ -68,25 +74,18 @@ export async function execIdentificarPecaNaFoto(
   return describePhotoMatches(outcome);
 }
 
-function visionSkipReason(ctx: BotExecutorContext, image: { base64: string } | undefined, now: Date): VisionSkipReason | null {
+function visionSkipReason(ctx: BotExecutorContext, photo: RecentImage, now: Date): VisionSkipReason | null {
+  // Foto de turno anterior: sem bytes não há visão; sem hash (anterior ao recurso) nem a comparação exata houve.
+  if (!photo.image) return photo.phash ? "sem_bytes" : "sem_hash";
   if (!ctx.photoMatch) return "sem_deps";
-  if (!image) return "sem_bytes";
-  if (ctx.photoMatch.deadlineAt.getTime() - now.getTime() < PHOTO_MATCH_MIN_BUDGET_MS * 2) return "sem_tempo";
+  if (ctx.photoMatch.deadlineAt.getTime() - now.getTime() < PHOTO_MATCH_REPLY_RESERVE_MS + PHOTO_MATCH_MIN_BUDGET_MS) return "sem_tempo";
   return null;
 }
 
 /** O que a Lia reconheceu fica em media_meta.reconhecido da foto (merge jsonb: não apaga o resto); a foto em si nunca é guardada. */
 async function recordRecognition(db: DbOrTx, waMessageId: string, outcome: PhotoMatchOutcome): Promise<void> {
-  const byHash = outcome.exact.length > 0 ? outcome.exact : outcome.maybe;
-  const byVision = [...outcome.provaveis, ...outcome.talvez];
-  const chosen: { slug: string; name: string }[] = byHash.length > 0 ? byHash : byVision;
-  if (chosen.length === 0) return;
-  const reconhecido = {
-    slugs: chosen.map((piece) => piece.slug),
-    nomes: chosen.map((piece) => piece.name),
-    camada: byHash.length > 0 ? "hash" : "visao",
-    ...(byHash.length > 0 ? { distancia: byHash[0].distance } : { confianca: byVision[0].confidence }),
-  };
+  const reconhecido = recognitionOf(outcome);
+  if (!reconhecido) return;
   await db
     .update(waMessages)
     .set({ mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || ${JSON.stringify({ reconhecido })}::jsonb` })

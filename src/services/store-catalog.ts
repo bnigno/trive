@@ -919,16 +919,17 @@ const compareSizes = compareSizeLabels;
 export async function listProductIdsWithVariant(
   db: ServiceDb,
   input: { cor?: string; tamanho?: string },
+  /** `requireStock: false` = a peça existe nessa cor/tamanho, mesmo esgotada (reconhecer uma foto não depende de estoque). */
+  opts: { requireStock?: boolean } = {},
 ): Promise<Set<string> | null> {
   const cor = input.cor?.trim();
   const tamanho = input.tamanho?.trim();
   if (!cor && !tamanho) return null;
 
-  const filters = [
-    eq(products.status, "active"),
-    isNull(products.deletedAt),
-    sql`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0) > 0`,
-  ];
+  const filters = [eq(products.status, "active"), isNull(products.deletedAt)];
+  if (opts.requireStock !== false) {
+    filters.push(sql`coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0) > 0`);
+  }
   if (cor) {
     filters.push(sql`lower(trim(${productVariants.attributes} ->> 'cor')) = lower(${cor})`);
   }

@@ -75,8 +75,9 @@ export function MessageBubble({
           </a>
         ) : null}
         {!outbound && message.recognized && message.recognized.length > 0 ? (
-          <p data-recognized="" className="mb-1 text-[11px] font-medium text-ink-400">
-            🔎 Lia reconheceu: {message.recognized.join(", ")}
+          <p data-recognized={message.recognizedLevel ?? "exato"} className="mb-1 text-[11px] font-medium text-ink-400">
+            {message.recognizedLevel === "talvez" ? "🔎 Lia achou parecido (sem confirmar): " : "🔎 Lia reconheceu: "}
+            {message.recognized.join(", ")}
           </p>
         ) : null}
         {message.kind === "audio" ? (
