@@ -15,6 +15,7 @@ import {
   type BotAttachment,
   type BotCardDeps,
 } from "@/services/wa-bot";
+import { catalogHighlightLines } from "@/services/bot/highlights";
 
 const rehearsalSchema = z.object({
   history: z
@@ -73,7 +74,8 @@ export async function rehearseBotTurn(
   const startedAt = Date.now();
   const turn = await assistant.respondTurn({
     system: bundle.system,
-    history: assembleHistory({}, messages),
+    // O ensaio lê o mesmo caderninho de catálogo (e a data) que a produção.
+    history: assembleHistory({}, messages, { lines: await catalogHighlightLines(db, new Date()), now: new Date() }),
     model: bundle.model,
     executeTool,
   });

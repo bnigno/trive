@@ -104,6 +104,7 @@ import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
 import { applyPendingConversationTouches, isLockTimeoutError } from "./wa-conversation-touch";
 import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode, supersedePendingSuggestions } from "./wa-suggestions";
+import { catalogHighlightLines } from "./bot/highlights";
 import { getStoreFacts } from "./store-facts";
 import { execAnotar, execAtualizarCartela, execSugerirTamanho, loadMemoryLines } from "./bot/style";
 
@@ -517,7 +518,7 @@ export async function loadTurnHistory(
     };
   });
   const state = parseBotState(conversation.botState);
-  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines] = await Promise.all([
+  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines, highlightLines] = await Promise.all([
     loadMemoryLines(tx, conversation.phoneE164),
     purchaseMemoryLineFor(tx, {
       customerId: conversation.customerId,
@@ -533,6 +534,8 @@ export async function loadTurnHistory(
       ? bridgeStockLine(tx, state.bridge)
       : Promise.resolve(null),
     followupMemoryLines(tx, conversationId),
+    // Novidades e mais vendidas por último: são as primeiras a cair no teto do caderninho.
+    catalogHighlightLines(tx, now),
   ]);
   const history = assembleHistory(state, messages, {
     lines: [
@@ -541,6 +544,7 @@ export async function loadTurnHistory(
       ...(shipmentLine ? [shipmentLine] : []),
       ...(bridgeLine ? [bridgeLine] : []),
       ...followupLines,
+      ...highlightLines,
     ],
     now,
   });
