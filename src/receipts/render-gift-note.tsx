@@ -5,6 +5,7 @@
 // flexbox, todo <div> com mais de um filho declara display:flex, sem rede.
 import { ImageResponse } from "next/og";
 
+import { EDITION_PAPER } from "@/core/edition/layout";
 import { giftMessageFontSize } from "@/core/gifts/text";
 import type { GiftNoteData } from "@/core/gifts/types";
 import { normalizeReceiptText, type ReceiptAssets } from "@/core/receipts/types";
@@ -13,7 +14,7 @@ export const GIFT_NOTE_WIDTH = 1080;
 export const GIFT_NOTE_HEIGHT = 720;
 
 const C = {
-  ivory50: "#fdfbf6",
+  ivory50: EDITION_PAPER,
   ivory300: "#e7dfcc",
   ink900: "#201d18",
   ink700: "#453f35",

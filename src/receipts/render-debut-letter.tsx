@@ -5,6 +5,7 @@
 // só flexbox, todo <div> com mais de um filho declara display:flex, sem rede.
 import { ImageResponse } from "next/og";
 
+import { EDITION_PAPER } from "@/core/edition/layout";
 import { postEyebrow } from "@/core/cards/post";
 import { DEBUT_LETTER_GEOMETRY as L, debutLetterLayout } from "@/core/edition/debut";
 import type { DebutLetterData } from "@/core/edition/types";
@@ -14,7 +15,7 @@ export const DEBUT_LETTER_WIDTH = L.width;
 export const DEBUT_LETTER_HEIGHT = L.height;
 
 const C = {
-  ivory50: "#fdfbf6",
+  ivory50: EDITION_PAPER,
   ivory300: "#e7dfcc",
   ink900: "#201d18",
   ink700: "#453f35",

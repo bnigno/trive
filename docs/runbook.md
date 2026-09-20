@@ -693,6 +693,28 @@ já com a quantidade). Dois modelos:
   Geometria em
   `src/core/print/round-labels.ts`; desenho em
   `src/app/admin/(protected)/produtos/selos/seal.tsx`.
+- **Cartões da edição** (`/admin/pedidos/<id>/cartoes`, desde 2026-09-20):
+  os JPEGs do cartão (9 × 12) e da carta de estreia (15 × 10) — os mesmos da
+  caixa — arrumados em folha **A4 de papel fotográfico** (a L4260 imprime foto
+  só de um lado; cartão dobrável foi descartado: o fotográfico quebra na
+  dobra). *Tesoura* (`?formato=a4`): **4 cartões por folha** (2 × 2; x 12/108,
+  y 25,5/151,5) e, na primeira compra, uma **folha mista** com a carta em cima
+  (30, 45,5) e 2 cartões embaixo; corte pela linha marfim do cartão e pelas
+  marcas dos cantos; imprimir como "Premium Presentation Paper Matte" (fosco)
+  ou "Photo Paper Glossy". *Silhouette* (`?formato=silhouette`): **2 por
+  folha** (uma coluna — a área útil tem 165 mm; calha 4; x 66,61, y
+  26,5/150,5) e a **carta sozinha** na folha (layout misto não é simétrico na
+  altura: DXF invertido cortaria trocado); DXF `cartoes-corte-silhouette.dxf`
+  → "TRIVÉ cartões.studio3"; a carta usa **o mesmo corte do adesivo da
+  sacola** ("TRIVÉ sacola.studio3", trocando o material ao Enviar: cartolina
+  ou photo paper, **corte total**, não kiss cut). Por baixo de cada imagem
+  uma base marfim `EDITION_PAPER` (#fdfbf6, a cor exata dos JPEGs) 1 mm
+  maior; na Silhouette a imagem recua 0,3 mm num quadro com cantos r 5, para
+  a hairline do JPEG não aparecer. Só entra na folha o que já tem imagem
+  (peça nova ou carta escrita depois ficam fora até "Gerar de novo"; a tela
+  avisa). Geometria e alocação em `src/core/print/edition-sheets.ts`
+  (`planEditionSheets`); folha em `pedidos/[id]/cartoes/card-sheet.tsx`. O
+  bilhete do presente continua na própria página (`/bilhete`).
 
 Tetos: 200 por variação e 20 folhas por vez. As medidas ficam em
 `src/app/admin/(protected)/produtos/[id]/etiquetas/hang-tag.tsx` (tag) e

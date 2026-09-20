@@ -8,6 +8,7 @@
 import type { CSSProperties } from "react";
 
 import { LETTERING_SYMBOL, PRINT_INK, PRINT_SANS, PRINT_SERIF } from "@/components/print/brand-lettering";
+import { CropMarks } from "@/components/print/crop-marks";
 import { RegistrationMarks } from "@/components/print/registration-marks";
 import { BRAND } from "@/components/store/brand/assets";
 import { TAGLINE_LETTERING, WORDMARK_LETTERING } from "@/components/store/brand/lettering.generated";
@@ -125,35 +126,6 @@ function BagBase({ mode }: { mode: SealMode }) {
   );
 }
 
-/** Marcas de corte nos 4 cantos, fora do adesivo (modo tesoura). */
-function CropMarks() {
-  const g = BAG_ART.cropGapMm;
-  const l = BAG_ART.cropLengthMm;
-  const corners: [number, number, 1 | -1, 1 | -1][] = [
-    [0, 0, -1, -1],
-    [W, 0, 1, -1],
-    [0, H, -1, 1],
-    [W, H, 1, 1],
-  ];
-  return (
-    <svg
-      data-crop-marks=""
-      aria-hidden="true"
-      viewBox={`${-g - l} ${-g - l} ${W + 2 * (g + l)} ${H + 2 * (g + l)}`}
-      style={{ position: "absolute", left: `${-g - l}mm`, top: `${-g - l}mm`, width: `${W + 2 * (g + l)}mm`, height: `${H + 2 * (g + l)}mm`, pointerEvents: "none" }}
-    >
-      <g stroke={PRINT_INK.mark} strokeWidth={0.15}>
-        {corners.map(([x, y, sx, sy]) => (
-          <g key={`${x}-${y}`}>
-            <line x1={x + sx * g} y1={y} x2={x + sx * (g + l)} y2={y} />
-            <line x1={x} y1={y + sy * g} x2={x} y2={y + sy * (g + l)} />
-          </g>
-        ))}
-      </g>
-    </svg>
-  );
-}
-
 const eyebrow: CSSProperties = { fontFamily: PRINT_SANS, fontWeight: 500, fontSize: "6.5pt", letterSpacing: "0.22em", textTransform: "uppercase", color: PRINT_INK.taupe, lineHeight: 1.2 };
 const value: CSSProperties = { fontFamily: PRINT_SANS, fontWeight: 500, fontSize: "10pt", letterSpacing: "0.02em", color: PRINT_INK.ink, lineHeight: 1.25 };
 
@@ -163,7 +135,7 @@ export function BagSticker({ data, mode }: { data: BagStickerData; mode: SealMod
   return (
     <div className="seal bag-sticker" data-mode={mode} style={box}>
       <BagBase mode={mode} />
-      {mode === "scissors" ? <CropMarks /> : null}
+      {mode === "scissors" ? <CropMarks widthMm={W} heightMm={H} gapMm={BAG_ART.cropGapMm} lengthMm={BAG_ART.cropLengthMm} /> : null}
 
       {/* Coluna da marca */}
       <img

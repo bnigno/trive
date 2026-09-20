@@ -6,6 +6,13 @@
 
 import { fitEditionNote, textWidthUnits, type WidthFont } from "@/core/edition/text";
 
+/**
+ * O marfim do fundo dos JPEGs (cartão, carta de estreia, bilhete do presente).
+ * A folha impressa pinta a mesma cor 1 mm além de cada imagem, para o corte
+ * um pouco fora não mostrar papel branco — por isso é uma constante só.
+ */
+export const EDITION_PAPER = "#fdfbf6";
+
 /** A geometria do desenho (px numa imagem 1080×1440 ≈ 9×12 cm a 300 dpi). */
 export const EDITION_GEOMETRY = {
   width: 1080,
