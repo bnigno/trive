@@ -8,6 +8,8 @@
 // fechamento do pedido é quem confirma.
 import { spDayKey, spMinutesOfDay, weekdayIndexSP } from "@/lib/sp-day";
 
+import { effectiveValue, type ValueStep } from "./schedule";
+
 export type CouponType = "percent" | "fixed" | "free_shipping";
 export type FreeShippingScope = "any" | "motoboy" | "correios";
 export type ShippingKind = "motoboy" | "correios";
@@ -37,6 +39,8 @@ export interface CouponRule {
   validToMinute: number | null;
   productIds: string[];
   categoryIds: string[];
+  /** Degraus do cupom que muda com o tempo (core/coupons/schedule); null = valor fixo. */
+  valueSchedule: ValueStep[] | null;
   createdAt: Date;
 }
 
@@ -211,15 +215,17 @@ export function evaluateCoupon(rule: CouponRule, ctx: CouponContext): CouponEval
     };
   }
 
+  // O valor de HOJE (degraus por tempo); sem degraus é o da coluna.
+  const value = effectiveValue(rule, ctx.now);
   const discountCents =
     rule.type === "percent"
-      ? Math.floor((eligible * rule.value) / 100)
-      : Math.min(rule.value, eligible);
+      ? Math.floor((eligible * value) / 100)
+      : Math.min(value, eligible);
 
   return {
     ok: true,
     discountCents,
-    appliedValue: rule.value,
+    appliedValue: value,
     freeShipping: false,
     shippingDiscountCents: 0,
     eligibleSubtotalCents: eligible,

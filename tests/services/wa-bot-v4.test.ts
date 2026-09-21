@@ -305,6 +305,18 @@ describe("validar_cupom", () => {
     expect((await botState()).coupon).toBeUndefined();
   });
 
+  it("cupom que muda com o tempo: a Lia recebe a dica e o caderninho guarda", async () => {
+    await setupStore();
+    await createCoupon(sdb, { code: "AMADURECE", type: "percent", value: 5, valueSchedule: [{ afterDays: 7, value: 10 }], userId: FIXED_USER_ID });
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    const result = await execute("validar_cupom", { cupom: "AMADURECE" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("[Este cupom muda com o tempo — Hoje vale 5%. Em 7 dias (");
+    expect(result.text).toContain("sem pressionar");
+    expect(((await botState()).coupon as { hint?: string }).hint).toMatch(/^Hoje vale 5%/);
+  });
+
   it("cupom pessoal: o do telefone da conversa vale (mesmo sem cadastro); o de outra cliente é recusado; frete grátis fala de frete", async () => {
     await setupStore();
     await createCoupon(sdb, { code: "MEU", type: "percent", value: 10, userId: FIXED_USER_ID, customerPhone: PHONE });

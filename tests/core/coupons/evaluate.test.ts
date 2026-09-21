@@ -35,6 +35,7 @@ function rule(overrides: Partial<CouponRule> = {}): CouponRule {
     validToMinute: null,
     productIds: [],
     categoryIds: [],
+    valueSchedule: null,
     createdAt: new Date("2026-09-01T12:00:00.000Z"),
     ...overrides,
   };
@@ -233,5 +234,20 @@ describe("isWithinSchedule — relógio de São Paulo", () => {
     expect(evaluateCoupon(rule({ validWeekdays: [1, 2] }), ctx())).toEqual({ ok: false, code: "COUPON_WRONG_WEEKDAY" });
     expect(evaluateCoupon(rule({ validFromMinute: 840, validToMinute: 900 }), ctx())).toEqual({ ok: false, code: "COUPON_OUTSIDE_HOURS" });
     expect(evaluateCoupon(rule({ validWeekdays: [0, 6], validFromMinute: 900, validToMinute: 960 }), ctx()).ok).toBe(true);
+  });
+});
+
+describe("evaluateCoupon — cupom que muda com o tempo", () => {
+  it("usa o valor do dia (degraus desde a criação) e devolve appliedValue", () => {
+    const stepped = rule({ value: 5, valueSchedule: [{ afterDays: 7, value: 10 }, { afterDays: 30, value: 15 }] });
+    // NOW = 20/09; criado em 01/09 → dia 19 → 10%.
+    const r = expectOk(evaluateCoupon(stepped, ctx({ items: [VESTIDO] })));
+    expect(r.appliedValue).toBe(10);
+    expect(r.discountCents).toBe(1990);
+    const later = expectOk(evaluateCoupon(stepped, ctx({ items: [VESTIDO], now: new Date("2026-10-05T18:30:00.000Z") })));
+    expect(later.appliedValue).toBe(15);
+    // Fixo: os degraus são centavos e o clamp vale sobre o degrau.
+    const fixed = rule({ type: "fixed", value: 1000, valueSchedule: [{ afterDays: 1, value: 999_999 }] });
+    expect(expectOk(evaluateCoupon(fixed, ctx({ items: [VESTIDO] })))).toMatchObject({ appliedValue: 999_999, discountCents: 19900 });
   });
 });

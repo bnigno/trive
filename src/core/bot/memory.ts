@@ -111,6 +111,8 @@ export const botStateSchema = z
         discountCents: z.number().int(),
         /** Cupom de frete grátis: o frete é zerado no fechamento (o desconto nas peças é 0). */
         freeShipping: z.boolean().optional(),
+        /** Cupom que muda com o tempo: "Hoje vale 10%. Em 9 dias…" (para a Lia contar). */
+        hint: z.string().optional(),
         at: z.string(),
       })
       .optional(),
@@ -424,7 +426,7 @@ export function renderContextNote(
       ? "frete grátis no fechamento"
       : `desconto de ${formatCentsBRL(state.coupon.discountCents)} nesta sacola`;
     linhas.push(
-      `• Cupom validado nesta conversa: ${state.coupon.code} (${efeito}) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
+      `• Cupom validado nesta conversa: ${state.coupon.code} (${efeito}${state.coupon.hint ? ` · ${state.coupon.hint}` : ""}) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
     );
   }
   if (state.lastOrderNumber !== undefined) {

@@ -21,6 +21,7 @@ import {
   type ShippingKind,
 } from "@/core/coupons/evaluate";
 import { couponErrorMessage } from "@/core/coupons/messages";
+import { scheduleCustomerHint, valueScheduleSchema, type ValueStep } from "@/core/coupons/schedule";
 import {
   auditLog,
   COUPON_ORIGINS,
@@ -89,6 +90,13 @@ function parseWeekdays(value: unknown): number[] | null {
   return [...new Set(parsed.data)].sort((a, b) => a - b);
 }
 
+/** Degraus tortos no banco (edição por fora) viram "sem degraus", nunca um erro na sacola. */
+function parseValueSchedule(value: unknown): ValueStep[] | null {
+  if (value === null || value === undefined) return null;
+  const parsed = valueScheduleSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 type CouponRow = typeof coupons.$inferSelect;
 
 function toCoupon(row: CouponRow, productIds: string[], categoryIds: string[]): Coupon {
@@ -113,6 +121,7 @@ function toCoupon(row: CouponRow, productIds: string[], categoryIds: string[]): 
     validToMinute: row.validToMinute,
     productIds,
     categoryIds,
+    valueSchedule: parseValueSchedule(row.valueSchedule),
     origin: row.origin as CouponOrigin,
     note: row.note,
     dedupeKey: row.dedupeKey,
@@ -219,6 +228,8 @@ export interface CouponQuote {
   shippingDiscountCents: number;
   /** O que só o fechamento confirma (sacola anônima ou sem entrega escolhida). */
   pending: PendingCheck[];
+  /** Cupom que muda com o tempo: "Hoje vale 10%. Em 9 dias (20/10) passa a 15%…"; null nos demais. */
+  hint: string | null;
 }
 
 /** Preço ATIVO, produto e categoria de cada linha — nunca o que veio do navegador. */
@@ -339,6 +350,7 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     freeShipping: result.freeShipping,
     shippingDiscountCents: result.shippingDiscountCents,
     pending: result.pending,
+    hint: scheduleCustomerHint(coupon, now),
   };
 }
 
@@ -723,6 +735,8 @@ const ruleFieldsSchema = z.object({
   productRefs: z.array(z.string().trim().min(1)).max(200).optional(),
   categoryIds: z.array(z.uuid()).max(100).optional(),
   note: z.string().trim().max(500, "A nota interna deve ter no máximo 500 caracteres.").nullable().optional(),
+  /** Degraus do cupom que muda com o tempo; null/ausente = valor fixo. */
+  valueSchedule: valueScheduleSchema.nullable().optional(),
 });
 
 function refineRuleFields(value: z.output<typeof ruleFieldsSchema>, ctx: z.RefinementCtx): void {
@@ -734,6 +748,14 @@ function refineRuleFields(value: z.output<typeof ruleFieldsSchema>, ctx: z.Refin
   }
   if (value.type === "free_shipping" && value.value !== 0) {
     ctx.addIssue({ code: "custom", path: ["value"], message: "Cupom de frete grátis não tem valor." });
+  }
+  if (value.valueSchedule && value.valueSchedule.length > 0) {
+    if (value.type === "free_shipping") {
+      ctx.addIssue({ code: "custom", path: ["valueSchedule"], message: "Frete grátis não tem degraus de valor." });
+    }
+    if (value.type === "percent" && value.valueSchedule.some((step) => step.value > 100)) {
+      ctx.addIssue({ code: "custom", path: ["valueSchedule"], message: "Os degraus de um cupom percentual ficam entre 1 e 100." });
+    }
   }
   if (value.startsAt instanceof Date && value.expiresAt instanceof Date && value.expiresAt.getTime() <= value.startsAt.getTime()) {
     ctx.addIssue({ code: "custom", path: ["expiresAt"], message: "A data de expiração deve ser depois do início da vigência." });
@@ -817,6 +839,7 @@ function ruleSnapshot(coupon: Coupon): Record<string, unknown> {
     validToMinute: coupon.validToMinute,
     productIds: coupon.productIds,
     categoryIds: coupon.categoryIds,
+    valueSchedule: coupon.valueSchedule,
     isActive: coupon.isActive,
     note: coupon.note,
   };
@@ -859,6 +882,7 @@ export async function createCoupon(db: DbOrTx, input: CreateCouponInput): Promis
           validWeekdays: parseWeekdays(parsed.validWeekdays),
           validFromMinute: parsed.validFromMinute ?? null,
           validToMinute: parsed.validToMinute ?? null,
+          valueSchedule: parsed.valueSchedule && parsed.valueSchedule.length > 0 ? parsed.valueSchedule : null,
           note: parsed.note || null,
         })
         .returning();
@@ -912,6 +936,7 @@ const LOCKED_AFTER_USE = [
   "validToMinute",
   "productRefs",
   "categoryIds",
+  "valueSchedule",
 ] as const;
 
 /**
@@ -956,6 +981,7 @@ export async function updateCoupon(db: DbOrTx, input: UpdateCouponInput): Promis
       validFromMinute: parsed.validFromMinute === undefined ? before.validFromMinute : parsed.validFromMinute,
       validToMinute: parsed.validToMinute === undefined ? before.validToMinute : parsed.validToMinute,
       note: parsed.note === undefined ? before.note : parsed.note,
+      valueSchedule: parsed.valueSchedule === undefined ? before.valueSchedule : parsed.valueSchedule,
     });
 
     const set: Partial<typeof coupons.$inferInsert> = { updatedAt: new Date() };
@@ -974,6 +1000,7 @@ export async function updateCoupon(db: DbOrTx, input: UpdateCouponInput): Promis
       set.validWeekdays = parseWeekdays(rule.validWeekdays);
       set.validFromMinute = rule.validFromMinute ?? null;
       set.validToMinute = rule.validToMinute ?? null;
+      set.valueSchedule = rule.valueSchedule && rule.valueSchedule.length > 0 ? rule.valueSchedule : null;
       // Vínculo pessoal: só muda quando o telefone muda de verdade. Telefone
       // igual ao de antes não re-resolve (não perde o cadastro); vazio só
       // solta o vínculo quando ele era por telefone — um cupom preso ao

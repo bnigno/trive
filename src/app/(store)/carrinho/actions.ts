@@ -146,6 +146,8 @@ export type QuoteCouponActionResult =
       shippingDiscountCents: number;
       /** "Confirmamos no fechamento…" quando algo depende de CPF/telefone/entrega; null quando não. */
       pendingNotice: string | null;
+      /** Cupom que muda com o tempo: "Hoje vale 10%. Em 9 dias (20/10) passa a 15%…"; null nos demais. */
+      hint: string | null;
     }
   | { ok: false; error: string; errorCode?: string };
 
@@ -176,6 +178,7 @@ export async function quoteCouponAction(
       freeShipping: quote.freeShipping,
       shippingDiscountCents: quote.shippingDiscountCents,
       pendingNotice: pendingNotice(quote.pending),
+      hint: quote.hint,
     };
   } catch (error) {
     if (error instanceof CouponServiceError) {

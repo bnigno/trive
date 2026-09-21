@@ -283,6 +283,7 @@ export function CheckoutClient({
     freeShipping: boolean;
     shippingDiscountCents: number;
     pendingNotice: string | null;
+    hint: string | null;
   } | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [, startCouponQuote] = useTransition();
@@ -329,6 +330,7 @@ export function CheckoutClient({
           freeShipping: result.freeShipping,
           shippingDiscountCents: result.shippingDiscountCents,
           pendingNotice: result.pendingNotice,
+          hint: result.hint,
         });
         setCouponError(null);
         return;
@@ -686,6 +688,9 @@ export function CheckoutClient({
                 remover cupom
               </button>
             </p>
+          ) : null}
+          {appliedCoupon?.hint ? (
+            <p className="mt-2 font-store text-xs text-gold-800">{appliedCoupon.hint}</p>
           ) : null}
           {appliedCoupon?.pendingNotice ? (
             <p className="mt-2 font-store text-xs text-ink-500">{appliedCoupon.pendingNotice}</p>

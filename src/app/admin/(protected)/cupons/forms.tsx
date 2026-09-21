@@ -45,6 +45,8 @@ export type CouponFormDefaults = {
   productRefs: string;
   categoryIds: string[];
   note: string;
+  /** Degraus do cupom que muda com o tempo: até 3 pares (dia, valor como a dona digita). */
+  steps: { afterDays: string; value: string }[];
 };
 
 export const EMPTY_COUPON_DEFAULTS: CouponFormDefaults = {
@@ -64,6 +66,7 @@ export const EMPTY_COUPON_DEFAULTS: CouponFormDefaults = {
   productRefs: "",
   categoryIds: [],
   note: "",
+  steps: [],
 };
 
 const checkboxClasses =
@@ -279,6 +282,46 @@ function CouponRuleFields({
           </Field>
         </div>
       </details>
+
+      {type !== "free_shipping" ? (
+        <details className="rounded-lg border border-zinc-200 dark:border-zinc-800" open={defaults.steps.length > 0}>
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            Cupom que muda com o tempo (opcional)
+          </summary>
+          <div className="flex flex-col gap-4 border-t border-zinc-200 p-4 dark:border-zinc-800">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              O valor acima é o do dia 0. Os degraus contam desde o início da vigência (ou da criação). Ex.: dia 7 → 10%, dia 30
+              → 15% — o cupom que amadurece (“espero subir ou a peça acaba?”). Para um cupom que derrete, use valores decrescentes.
+              A cliente vê “Hoje vale 10%. Em 9 dias passa a 15%, se a peça ainda estiver aqui.”
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="flex flex-col gap-3 rounded-md border border-zinc-100 p-3 dark:border-zinc-800">
+                  <Field label={`Degrau ${index + 2} — a partir do dia`}>
+                    <Input
+                      name={`step${index}Days`}
+                      type="number"
+                      min={1}
+                      max={365}
+                      step={1}
+                      defaultValue={defaults.steps[index]?.afterDays ?? ""}
+                      placeholder={index === 0 ? "7" : index === 1 ? "30" : ""}
+                    />
+                  </Field>
+                  <Field label={type === "percent" ? "passa a valer (%)" : "passa a valer (R$)"}>
+                    <Input
+                      name={`step${index}Value`}
+                      inputMode="decimal"
+                      defaultValue={defaults.steps[index]?.value ?? ""}
+                      placeholder={type === "percent" ? (index === 0 ? "10" : index === 1 ? "15" : "") : "20,00"}
+                    />
+                  </Field>
+                </div>
+              ))}
+            </div>
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }

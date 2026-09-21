@@ -127,6 +127,7 @@ function readRuleFields(formData: FormData): Omit<CreateCouponInput, "code" | "u
     throw new ServiceError("horario_invalido", "O fim do horário deve ser depois do início.");
   }
   const customerPhone = text(formData, "customerPhone").trim();
+  const valueSchedule = parseScheduleFields(formData, type);
   return {
     type,
     value,
@@ -144,7 +145,36 @@ function readRuleFields(formData: FormData): Omit<CreateCouponInput, "code" | "u
     productRefs: parseProductRefs(text(formData, "productRefs")),
     categoryIds: formData.getAll("categoryIds").map(String).filter((id) => id !== ""),
     note: text(formData, "note").trim() || null,
+    valueSchedule,
   };
+}
+
+/**
+ * Os degraus do cupom que muda com o tempo: até 3 pares (dia, valor). Par
+ * vazio é ignorado; par pela metade é erro; os dias precisam crescer.
+ */
+function parseScheduleFields(formData: FormData, type: "percent" | "fixed" | "free_shipping"): { afterDays: number; value: number }[] | null {
+  if (type === "free_shipping") return null;
+  const steps: { afterDays: number; value: number }[] = [];
+  for (let index = 0; index < 3; index++) {
+    const rawDays = text(formData, `step${index}Days`).trim();
+    const rawValue = text(formData, `step${index}Value`).trim();
+    if (rawDays === "" && rawValue === "") continue;
+    if (rawDays === "" || rawValue === "") {
+      throw new ServiceError("degrau_invalido", `Degrau ${index + 2}: informe o dia e o valor (ou deixe os dois vazios).`);
+    }
+    const afterDays = Number(rawDays);
+    if (!Number.isInteger(afterDays) || afterDays < 1 || afterDays > 365) {
+      throw new ServiceError("degrau_invalido", `Degrau ${index + 2}: o dia precisa ser um número inteiro de 1 a 365.`);
+    }
+    const value = type === "percent" ? parsePercentField(rawValue, `Degrau ${index + 2}`) : parseMoneyField(rawValue, `Degrau ${index + 2}`);
+    if (value <= 0) throw new ServiceError("degrau_invalido", `Degrau ${index + 2}: informe um valor maior que zero.`);
+    if (steps.length > 0 && afterDays <= steps[steps.length - 1].afterDays) {
+      throw new ServiceError("degrau_invalido", `Degrau ${index + 2}: o dia precisa ser depois do degrau anterior.`);
+    }
+    steps.push({ afterDays, value });
+  }
+  return steps.length > 0 ? steps : null;
 }
 
 export async function createCouponAction(

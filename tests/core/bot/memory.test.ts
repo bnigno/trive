@@ -311,6 +311,12 @@ describe("renderContextNote", () => {
       `• Cupom validado nesta conversa: BEMVINDA10 (desconto de ${formatCentsBRL(899)} nesta sacola) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
     );
     expect(renderContextNote({})).toBeNull();
+
+    // Frete grátis e cupom que muda com o tempo: a linha diz o efeito e a dica.
+    const frete = renderContextNote(parseBotState({ coupon: { code: "FRETE", discountCents: 0, freeShipping: true, at: "2026-09-11T12:00:00.000Z" } }));
+    expect(frete).toContain("• Cupom validado nesta conversa: FRETE (frete grátis no fechamento)");
+    const amadurece = renderContextNote(parseBotState({ coupon: { code: "AMADURECE", discountCents: 500, hint: "Hoje vale 5%. Em 7 dias (18/09) passa a 10%, se a peça ainda estiver aqui.", at: "2026-09-11T12:00:00.000Z" } }));
+    expect(amadurece).toContain(`(desconto de ${formatCentsBRL(500)} nesta sacola · Hoje vale 5%. Em 7 dias (18/09) passa a 10%, se a peça ainda estiver aqui.)`);
   });
 
   it("guarda quando a cotação foi feita", () => {

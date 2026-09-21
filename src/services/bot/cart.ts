@@ -74,8 +74,8 @@ async function refreshCoupon(
   try {
     const quote = await quoteCartCoupon(db, ctx, state, code);
     return {
-      coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, at: new Date().toISOString() },
-      note: `[Cupom ${quote.code} continua válido: ${quoteSummary(quote, cartSubtotalCents(cart))}.]`,
+      coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, hint: quote.hint ?? undefined, at: new Date().toISOString() },
+      note: `[Cupom ${quote.code} continua válido: ${quoteSummary(quote, cartSubtotalCents(cart))}.${quote.hint ? ` ${quote.hint}` : ""}]`,
     };
   } catch (error) {
     if (error instanceof CouponServiceError) {
@@ -351,13 +351,14 @@ export async function execValidarCupom(
   }
   await updateBotState(db, ctx, (current) => ({
     ...current,
-    coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, at: new Date().toISOString() },
+    coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, hint: quote.hint ?? undefined, at: new Date().toISOString() },
   }));
   const notice = pendingNotice(quote.pending);
   return {
     ok: true,
     text: [
       `Cupom ${quote.code} válido: ${quoteSummary(quote, subtotalCents)}.`,
+      ...(quote.hint ? [`[Este cupom muda com o tempo — ${quote.hint} Conte isso para ela em 1 frase, com leveza e sem pressionar: é uma surpresa boa, não uma ameaça.]`] : []),
       ...(notice ? [`[${notice}]`] : []),
       `Passe cupom: "${quote.code}" em criar_pedido — o desconto só é aplicado ao fechar o pedido, e o resumo oficial virá com o valor final.`,
     ].join("\n"),
