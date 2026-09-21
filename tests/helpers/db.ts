@@ -59,6 +59,7 @@ export async function createTestUser(
     fullName?: string | null;
     role?: "owner" | "staff";
     isActive?: boolean;
+    lastSeenAt?: Date | null;
   } = {},
 ): Promise<typeof schema.users.$inferSelect> {
   const id = opts.id ?? randomUUID();
@@ -70,6 +71,7 @@ export async function createTestUser(
       fullName: opts.fullName === undefined ? "Pessoa Teste" : opts.fullName,
       role: opts.role ?? "staff",
       isActive: opts.isActive ?? true,
+      lastSeenAt: opts.lastSeenAt ?? null,
     })
     .returning();
   return user;

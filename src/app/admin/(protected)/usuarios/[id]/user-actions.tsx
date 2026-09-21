@@ -2,14 +2,9 @@
 
 import { useActionState } from "react";
 
-import { ConfirmButton } from "@/components/ui/confirm-button";
-import { FormError, FormSuccess, SubmitButton } from "@/components/ui/form";
+import { FormError, SubmitButton } from "@/components/ui/form";
 import { AccessResult } from "../access-result";
-import {
-  resetUserAccessAction,
-  setUserActiveAction,
-  type FormState,
-} from "../actions";
+import { resetUserAccessAction, type FormState } from "../actions";
 import { RadioOption } from "../user-form";
 
 const initialState: FormState = {};
@@ -80,54 +75,5 @@ export function ResetAccessForm({
 
       {state.access ? <AccessResult data={state.access} /> : null}
     </div>
-  );
-}
-
-/**
- * Liga e desliga o acesso. Nunca apagamos: o histórico de quem registrou
- * custo e ajuste de estoque depende da linha continuar existindo.
- */
-export function ToggleActiveForm({
-  userId,
-  isActive,
-  isSelf,
-}: {
-  userId: string;
-  isActive: boolean;
-  isSelf: boolean;
-}) {
-  const [state, formAction] = useActionState(setUserActiveAction, initialState);
-
-  if (isActive && isSelf) {
-    return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        Você não pode desativar o seu próprio acesso. Peça para outro
-        proprietário fazer isso.
-      </p>
-    );
-  }
-
-  return (
-    <form action={formAction} className="flex flex-col gap-2">
-      <input type="hidden" name="userId" value={userId} />
-      <input type="hidden" name="isActive" value={isActive ? "false" : "true"} />
-
-      <div>
-        <ConfirmButton
-          size="sm"
-          variant={isActive ? "danger" : "primary"}
-          confirmMessage={
-            isActive
-              ? "Desativar este acesso? A pessoa é bloqueada no próximo clique e o histórico dela continua guardado."
-              : "Ativar este acesso? A pessoa volta a entrar no painel com a senha que já tinha."
-          }
-        >
-          {isActive ? "Desativar acesso" : "Ativar acesso"}
-        </ConfirmButton>
-      </div>
-
-      <FormError message={state.error} />
-      <FormSuccess message={state.success} />
-    </form>
   );
 }

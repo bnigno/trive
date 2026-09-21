@@ -1,10 +1,12 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { eq } from "drizzle-orm";
 import type { AdminArea } from "@/core/auth/access";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { touchUserSeen, USER_SEEN_THROTTLE_MS } from "./users";
 
 export type AuthUser = {
   id: string;
@@ -45,6 +47,8 @@ const resolveAuthUser = cache(async (): Promise<AuthResolution> => {
     return { user: null, reason: "inativo" };
   }
 
+  scheduleSeenTouch(record);
+
   return {
     user: {
       id: record.id,
@@ -54,6 +58,28 @@ const resolveAuthUser = cache(async (): Promise<AuthResolution> => {
     },
   };
 });
+
+/**
+ * "Visto por último" sem custo no caminho do login: a escrita roda depois
+ * da resposta (`after`) e só quando a linha está velha — dentro dos 15 min
+ * nem agenda. Falha aqui nunca derruba a sessão.
+ */
+function scheduleSeenTouch(record: { id: string; lastSeenAt: Date | null }): void {
+  const now = new Date();
+  if (
+    record.lastSeenAt &&
+    now.getTime() - record.lastSeenAt.getTime() < USER_SEEN_THROTTLE_MS
+  ) {
+    return;
+  }
+  try {
+    after(() =>
+      touchUserSeen(getDb(), { userId: record.id, now }).catch(() => undefined),
+    );
+  } catch {
+    // Fora de um request do Next (script, teste): não há sessão a registrar.
+  }
+}
 
 // Guard por layout + por action (sem middleware): sem sessão válida,
 // redireciona para o login com o motivo.
