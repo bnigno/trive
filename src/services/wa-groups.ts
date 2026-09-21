@@ -35,6 +35,7 @@ import {
   renderQuemVestiuPost,
   tallyPoll,
 } from "@/core/groups/rituals";
+import { groupSignalMemoryLines } from "@/core/groups/mention";
 import { decodePollVote, type GroupSignal, parseGroupInbound } from "@/core/groups/signals";
 import {
   auditLog,
@@ -51,11 +52,12 @@ import {
   waGroups,
   waGroupSignals,
 } from "@/db/schema";
-import { isWaLid, toWaGroupId } from "@/lib/phone";
+import { isWaLid, toWaGroupId, waMeUrl } from "@/lib/phone";
 import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { type DbOrTx, enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { loadSendPolicy } from "@/services/wa-send-policy";
+import { loadBridgeSettings } from "@/services/site-carts";
 import { isWaEnabled, siteBaseUrl } from "@/services/wa-messaging";
 
 export class ServiceError extends Error {
@@ -304,6 +306,22 @@ function isPaused(group: { pausedUntil: Date | null }, now: Date): boolean {
 // Membras — sincronizadas do metadata da Z-API (entradas, saídas, kill switch)
 // ---------------------------------------------------------------------------
 
+export const PROVADOR_INVITE_ACTION = "wa.provador_invite";
+
+/** Saída pedida ("só privado"/SAIR): por tanto tempo o sync não a considera de volta mesmo que o metadata ainda a liste. */
+export const REQUESTED_EXIT_GRACE_MS = 7 * 86_400_000;
+
+/** Ela já pediu o convite pela Lia? (audit wa.provador_invite pelo telefone — vale para o sync marcar "pela Lia".) */
+export async function findProvadorInviteByPhone(db: DbOrTx, phoneE164: string, since: Date): Promise<boolean> {
+  const [row] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, PROVADOR_INVITE_ACTION), sql`${auditLog.after} ->> 'phoneE164' = ${phoneE164}`, sql`${auditLog.createdAt} >= ${since}`))
+    .limit(1);
+  return row !== undefined;
+}
+
+
 type ParticipantLike = { phoneE164: string | null; lid: string | null; isAdmin: boolean };
 
 /** O endereço de conversa da participante: telefone quando existe, senão o LID. */
@@ -330,7 +348,7 @@ async function syncMembersFromMetadata(
     if (key) present.set(key, participant);
   }
   const rows = await db
-    .select({ id: waGroupMembers.id, phoneE164: waGroupMembers.phoneE164, lid: waGroupMembers.lid, leftAt: waGroupMembers.leftAt })
+    .select({ id: waGroupMembers.id, phoneE164: waGroupMembers.phoneE164, lid: waGroupMembers.lid, leftAt: waGroupMembers.leftAt, leftReason: waGroupMembers.leftReason })
     .from(waGroupMembers)
     .where(eq(waGroupMembers.groupId, groupId));
   const knownByPhone = new Map(rows.map((row) => [row.phoneE164, row]));
@@ -359,19 +377,32 @@ async function syncMembersFromMetadata(
             .where(and(eq(customers.phoneE164, participant.phoneE164), isNull(customers.deletedAt)))
             .limit(1)
         : [];
+      // Entrou pelo convite que a Lia mandou nos últimos 30 dias? Então "pela Lia".
+      const invited = participant.phoneE164 ? await findProvadorInviteByPhone(db, participant.phoneE164, new Date(now.getTime() - 30 * 86_400_000)) : false;
       await db.insert(waGroupMembers).values({
         groupId,
         phoneE164: key,
         lid: participant.phoneE164 ? participant.lid : null,
         customerId: customer?.id ?? null,
         isAdmin: participant.isAdmin,
-        source: "sync",
+        source: invited ? "lia" : "sync",
         joinedAt: now,
       });
       joined += 1;
       continue;
     }
     matched.add(row.id);
+    // Ela pediu para sair ("só privado"/SAIR) há poucos dias e a remoção ainda
+    // não aconteceu: a presença no metadata não a traz de volta — o pedido
+    // dela vale mais. Passado o prazo, presença é presença (ela pode ter
+    // voltado pelo link, ou a dona a recolocou).
+    if (
+      row.leftAt !== null &&
+      (row.leftReason === "so_privado" || row.leftReason === "removida") &&
+      now.getTime() - row.leftAt.getTime() < REQUESTED_EXIT_GRACE_MS
+    ) {
+      continue;
+    }
     // O telefone é o endereço melhor: a linha sobe do LID para ele, nunca o contrário.
     const identity = participant.phoneE164
       ? row.phoneE164 !== participant.phoneE164
@@ -381,9 +412,11 @@ async function syncMembersFromMetadata(
           : {}
       : {};
     if (row.leftAt !== null) {
+      // Voltou: pelo convite da Lia (30 dias) conta como "pela Lia" de novo.
+      const invited = participant.phoneE164 ? await findProvadorInviteByPhone(db, participant.phoneE164, new Date(now.getTime() - 30 * 86_400_000)) : false;
       await db
         .update(waGroupMembers)
-        .set({ ...identity, leftAt: null, leftReason: null, joinedAt: now, isAdmin: participant.isAdmin, updatedAt: now })
+        .set({ ...identity, ...(invited ? { source: "lia" } : {}), leftAt: null, leftReason: null, joinedAt: now, isAdmin: participant.isAdmin, updatedAt: now })
         .where(eq(waGroupMembers.id, row.id));
       joined += 1;
     } else {
@@ -550,6 +583,8 @@ const composePostSchema = z.discriminatedUnion("kind", [
     maxOptions: z.number().int().min(1).max(12).optional(),
     outcome: z.string().trim().max(80).optional(),
     voterHoldHours: z.number().int().min(0).max(168).optional(),
+    /** A peça da enquete (opcional): quando a cor/tamanho vencedor chegar ao estoque, quem votou nela é avisada. */
+    productId: z.uuid().optional(),
   }),
   z.object({
     kind: z.literal("quem_vestiu"),
@@ -724,7 +759,11 @@ export async function composeGroupPost(
       const problem = pollProblem(input);
       if (problem) throw new ServiceError(`enquete_${problem}`, POLL_PROBLEM_MESSAGES[problem]);
       const poll = renderPoll(input);
-      return { ...base, body: poll.message, pollOptions: poll.options, pollMaxOptions: input.maxOptions ?? 1 };
+      if (input.productId) {
+        const [product] = await db.select({ id: products.id }).from(products).where(and(eq(products.id, input.productId), isNull(products.deletedAt))).limit(1);
+        if (!product) throw new ServiceError("peca_inexistente", "A peça da enquete não existe mais.");
+      }
+      return { ...base, body: poll.message, pollOptions: poll.options, pollMaxOptions: input.maxOptions ?? 1, productIds: input.productId ? [input.productId] : null };
     }
     case "quem_vestiu": {
       const looks = await loadLooks(db, input.lookIds);
@@ -1039,6 +1078,21 @@ export async function sendGroupPost(db: DbOrTx, provider: MessagingProvider, inp
       .update(waGroupPosts)
       .set({ status: "sent", sentAt: now, providerMessageId, updatedAt: now })
       .where(eq(waGroupPosts.id, post.id));
+    // Chegadas: quem tem afinidade com uma peça recebe, no privado, "chegou
+    // no seu tamanho" — escalonado e com opt-in (handler em wa-group-lia).
+    if (post.kind === "chegadas" && post.productIds && post.productIds.length > 0) {
+      await enqueueOutboxEvent(
+        tx,
+        {
+          eventType: "wa.group_affinity_fanout",
+          dedupeKey: `wa.group_affinity_fanout:${post.id}`,
+          aggregateType: "wa_group_post",
+          aggregateId: post.id,
+          payload: { postId: post.id },
+        },
+        { kick: false },
+      );
+    }
     if (post.kind === "enquete") {
       await enqueueOutboxEvent(
         tx,
@@ -1131,7 +1185,7 @@ export async function closeGroupPoll(db: DbOrTx, provider: MessagingProvider, in
 // ---------------------------------------------------------------------------
 
 export type RecordGroupSignalResult =
-  | { recorded: true; kind: GroupSignal["kind"]; groupId: string; postId: string | null; signalId: string }
+  | { recorded: true; kind: GroupSignal["kind"]; groupId: string; postId: string | null; signalId: string; mention?: "queued" | "duplicado" | "desligado" | "teto_hora" }
   | { ignored: "provador_desligado" | "sala_desconhecida" | "sala_inativa" | "nao_e_sinal" };
 
 /**
@@ -1211,6 +1265,9 @@ export async function recordGroupSignal(db: DbOrTx, signal: GroupSignal, opts: {
   return { recorded: true, kind: signal.kind, groupId: group.id, postId: post?.id ?? null, signalId: signalId ?? "" };
 }
 
+/** Quem enfileira a resposta da Lia a uma menção (injetado para não fechar ciclo com wa-bot). */
+export type MentionEnqueuer = (db: DbOrTx, input: { signalId: string; groupId: string; now?: Date }) => Promise<"queued" | "duplicado" | "desligado" | "teto_hora">;
+
 /** O que o webhook precisa entregar de uma mensagem de grupo (já validado por Zod lá). */
 export type GroupInboundBody = {
   messageId: string;
@@ -1227,7 +1284,11 @@ export type GroupInboundBody = {
  * Entrada de grupo pelo webhook: classifica (core) e grava. Com o Provador
  * desligado nada é lido — nem para contar.
  */
-export async function processGroupInbound(db: DbOrTx, body: GroupInboundBody, opts: { now?: Date } = {}): Promise<RecordGroupSignalResult> {
+export async function processGroupInbound(
+  db: DbOrTx,
+  body: GroupInboundBody,
+  opts: { now?: Date; onMention?: MentionEnqueuer } = {},
+): Promise<RecordGroupSignalResult> {
   const policy = await loadGroupPolicy(db);
   if (!policy.groupsEnabled) return { ignored: "provador_desligado" };
   const map = await getSettingsMap(db, ["bot_seller_name", "store_whatsapp"]);
@@ -1238,7 +1299,47 @@ export async function processGroupInbound(db: DbOrTx, body: GroupInboundBody, op
     { sellerName, storePhoneDigits },
   );
   if (!signal) return { ignored: "nao_e_sinal" };
-  return recordGroupSignal(db, signal, opts);
+  const recorded = await recordGroupSignal(db, signal, opts);
+  if ("recorded" in recorded && recorded.kind === "mention" && recorded.signalId && opts.onMention) {
+    const mention = await opts.onMention(db, { signalId: recorded.signalId, groupId: recorded.groupId, now: opts.now });
+    return { ...recorded, mention };
+  }
+  return recorded;
+}
+
+// ---------------------------------------------------------------------------
+// Caderninho: o que o Provador sabe desta cliente
+// ---------------------------------------------------------------------------
+
+export async function groupMemoryLines(db: DbOrTx, phoneE164: string): Promise<string[]> {
+  const rows = await db
+    .select({
+      kind: waGroupSignals.kind,
+      value: waGroupSignals.value,
+      createdAt: waGroupSignals.createdAt,
+      postKind: waGroupPosts.kind,
+      postAt: waGroupPosts.sentAt,
+      productIds: waGroupPosts.productIds,
+    })
+    .from(waGroupSignals)
+    .leftJoin(waGroupPosts, eq(waGroupPosts.id, waGroupSignals.postId))
+    .where(and(eq(waGroupSignals.participantPhone, phoneE164), inArray(waGroupSignals.kind, ["poll_vote", "reaction", "mention"])))
+    .orderBy(desc(waGroupSignals.createdAt))
+    .limit(12);
+  if (rows.length === 0) return [];
+  const ids = [...new Set(rows.flatMap((row) => row.productIds ?? []))];
+  const names = ids.length > 0 ? await db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, ids)) : [];
+  const nameById = new Map(names.map((row) => [row.id, row.name]));
+  return groupSignalMemoryLines(
+    rows.map((row) => ({
+      kind: row.kind as "poll_vote" | "reaction" | "mention",
+      value: row.value,
+      createdAt: row.createdAt,
+      postKind: (row.postKind as GroupPostKind | null) ?? null,
+      postAt: row.postAt ?? null,
+      productNames: (row.productIds ?? []).map((id) => nameById.get(id)).filter((name): name is string => Boolean(name)),
+    })),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1290,6 +1391,17 @@ export async function getGroupPostStats(db: DbOrTx, postId: string): Promise<Gro
     conversations: Number(funnel?.conversations ?? 0),
     orders: Number(funnel?.orders ?? 0),
   };
+}
+
+/** A mensagem que a porta de entrada (/provador, QR, adesivo) põe na boca da cliente. */
+export function provadorEntryMessage(sellerName: string): string {
+  return `Oi ${sellerName.trim() || "Lia"}, quero entrar no Provador`;
+}
+
+/** O wa.me da porta de entrada — null quando a loja não tem o número do WhatsApp configurado. */
+export async function provadorEntryUrl(db: DbOrTx): Promise<string | null> {
+  const settings = await loadBridgeSettings(db);
+  return waMeUrl(settings.storeWhatsapp, provadorEntryMessage(settings.sellerName));
 }
 
 /** "10:00" do horário marcado, para o painel. */

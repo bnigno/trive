@@ -467,7 +467,7 @@ async function loadAffinityProducts(db: DbOrTx, dropId: string): Promise<DropAff
   return [...map.values()].map(({ sizes, colors, ...rest }) => ({ ...rest, sizesAvailable: [...sizes], colorsAvailable: [...colors] }));
 }
 
-async function loadAudienceCandidates(db: DbOrTx): Promise<AudienceCandidate[]> {
+export async function loadAudienceCandidates(db: DbOrTx): Promise<AudienceCandidate[]> {
   const people = await db
     .select({ id: customers.id, fullName: customers.fullName, phoneE164: customers.phoneE164 })
     .from(customers)

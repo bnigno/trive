@@ -87,6 +87,7 @@ import type {
 } from "./bot/shared";
 import { execCotarFrete } from "./bot/shipping";
 import { execAgendarRetorno } from "./bot/followups";
+import { execEntrarNoProvador } from "./bot/provador";
 import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
 import { execIdentificarPecaNaFoto } from "./bot/photo-match";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
@@ -333,6 +334,8 @@ export function buildToolExecutor(
         return execRetirarMinhaFoto(db, ctx);
       case "agendar_retorno":
         return execAgendarRetorno(db, ctx, parsed.data as BotToolInputs["agendar_retorno"]);
+      case "entrar_no_provador":
+        return execEntrarNoProvador(db, ctx, parsed.data as BotToolInputs["entrar_no_provador"]);
       case "transferir_para_atendente":
         return execTransferir(
           db,
@@ -351,6 +354,7 @@ const TOOLS_NEEDING_PHONE = new Set<BotToolName>([
   "atualizar_cartela",
   "agendar_retorno",
   "registrar_foto_com_a_peca",
+  "entrar_no_provador",
 ]);
 const HIDDEN_NUMBER_TOOL_TEXT =
   "O WhatsApp esconde o número desta cliente, então não dá para registrar isso no cadastro. Peça a ela o telefone com DDD (ela pode mandar aqui mesmo) e avise a equipe pelo avisar_dono.";
@@ -367,7 +371,7 @@ export type BotPromptBundle = {
 };
 
 export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle> {
-  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name", "lia_gift_enabled"]);
+  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name", "lia_gift_enabled", "groups_enabled"]);
   const text = (key: string): string =>
     typeof map[key] === "string" ? (map[key] as string).trim() : "";
   const storeName = text("store_name") || DEFAULT_STORE_NAME;
@@ -384,6 +388,7 @@ export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle>
     ...(storeMap ? { storeMap } : {}),
     storeFacts,
     liaGiftEnabled: map["lia_gift_enabled"] === true,
+    provadorEnabled: map["groups_enabled"] === true,
   });
   return { system, model, sellerName };
 }

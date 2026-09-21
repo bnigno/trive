@@ -49,11 +49,13 @@ async function row(id: string) {
   return r;
 }
 
+// A ponte tem prazo (a linha "Veio do site" some dias depois): o instante é
+// relativo ao relógio de verdade, senão o teste morre com o calendário.
 const bridge = {
   siteCartId: "33333333-3333-4333-8333-333333333333",
   source: "cart" as const,
   code: "K7F2",
-  at: "2026-09-20T12:00:00.000Z",
+  at: new Date(Date.now() - 5 * 60_000).toISOString(),
   items: [{ sku: "DUNAS-PRET-M", name: "Longo Dunas", quantity: 1, variation: "Preto · M", priceCents: 28900 }],
 };
 

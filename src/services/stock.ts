@@ -19,6 +19,7 @@ import {
   isLowStock,
   movementsForTransition,
   type StockLevel,
+  lastUnitCrossed,
   restockCrossed,
 } from "@/core/stock/ledger";
 import {
@@ -121,6 +122,28 @@ async function maybeEnqueueRestocked(
       aggregateType: "product_variant",
       aggregateId: variantId,
       payload: { variantId, movementId, available: after.onHand - after.reserved },
+    });
+  }
+}
+
+/**
+ * Sobrou uma unidade → evento stock.last_unit (uma vez por movimento): o
+ * Provador avisa, no privado, quem reagiu ao post da peça e veste o tamanho.
+ */
+async function maybeEnqueueLastUnit(
+  tx: DbOrTx,
+  variantId: string,
+  before: StockLevel,
+  after: StockLevel,
+  movementId: string,
+): Promise<void> {
+  if (lastUnitCrossed(before, after)) {
+    await enqueueOutboxEvent(tx, {
+      eventType: "stock.last_unit",
+      dedupeKey: `stock.last_unit:${movementId}`,
+      aggregateType: "product_variant",
+      aggregateId: variantId,
+      payload: { variantId, movementId },
     });
   }
 }
@@ -572,6 +595,7 @@ export async function adjustStock(
     await updateLevel(tx, parsed.variantId, after);
     await maybeEnqueueLowStock(tx, parsed.variantId, before, after, before.lowStockThreshold);
     await maybeEnqueueRestocked(tx, parsed.variantId, before, after, movement.id);
+    await maybeEnqueueLastUnit(tx, parsed.variantId, before, after, movement.id);
 
     await tx.insert(auditLog).values({
       actorType: "user",
@@ -657,6 +681,7 @@ export async function applyStockEffectTx(
         before.lowStockThreshold,
       );
       await maybeEnqueueRestocked(trx, parsed.variantId, before, current, lastMovementId ?? parsed.referenceId);
+      await maybeEnqueueLastUnit(trx, parsed.variantId, before, current, lastMovementId ?? parsed.referenceId);
     }
 
     return { applied: appliedAny, onHand: current.onHand, reserved: current.reserved };

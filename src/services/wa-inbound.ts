@@ -47,7 +47,14 @@ import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
 import { cancelStockAlertsByPhone } from "@/services/stock-alerts";
 import { consumeSiteCartByCode } from "@/services/site-carts";
 import { processGroupInbound, type RecordGroupSignalResult } from "@/services/wa-groups";
+import { leaveGroupsByPhone, maybeEnqueueMentionTurn } from "@/services/wa-group-lia";
+import { isSoPrivadoCommand } from "@/core/groups/mention";
 
+/** Resposta ao "só privado": saiu do Provador, segue no privado. */
+export const SO_PRIVADO_ACK_BODY =
+  "Combinado: te tirei do Provador. Continuo te avisando por aqui só do que serve no seu tamanho — e se quiser voltar ao grupo, é só me pedir o link.";
+export const SO_PRIVADO_NOT_MEMBER_BODY =
+  "Você já não está em nenhum grupo da loja — por aqui continuamos normalmente. Se não quiser receber mais nada, responda SAIR.";
 export const OPT_OUT_ACK_BODY =
   "Pronto! Você não receberá mais avisos. Se mudar de ideia, é só chamar. 💬";
 
@@ -173,6 +180,8 @@ export type ProcessZapiInboundResult =
   | { action: "ignored"; ignored: true; reason?: string }
   /** Mensagem de grupo (Provador): virou sinal, nunca conversa. */
   | { action: "group"; group: RecordGroupSignalResult }
+  /** "só privado": saiu das salas do Provador (pela fila) e continua no privado. */
+  | { action: "so_privado"; conversationId: string; waMessageId: string; groups: number; outboxEventId: string | null }
   | { action: "duplicate"; duplicate: true }
   | { action: "status"; updated: number }
   // `outboxEventId`: o evento que esta mensagem enfileirou (turno da Lia,
@@ -593,7 +602,9 @@ export async function processZapiInbound(
         reaction: parsed.reaction
           ? { ...parsed.reaction, reactionBy: parsed.reaction.reactionBy != null ? String(parsed.reaction.reactionBy) : null }
           : null,
-      });
+      }, { onMention: maybeEnqueueMentionTurn });
+      // A resposta da Lia a uma menção sai pela fila: o kick depois de gravar.
+      if ("recorded" in result && result.mention === "queued") await kickOutbox(undefined, { eventType: "wa.group_mention" });
       return { action: "group", group: result };
     } catch (error) {
       console.warn(`[wa-inbound] sinal de grupo ${rawPhone}/${messageId} falhou:`, error);
@@ -834,6 +845,9 @@ export async function processZapiInbound(
 
     const keyword = normalizeKeyword(text);
     const isOptOut = keyword === "SAIR" || keyword === "PARAR";
+    // "só privado": sai do Provador e continua recebendo só o que serve no
+    // privado — o contrário do SAIR, que desliga tudo.
+    const isSoPrivado = !isOptOut && isSoPrivadoCommand(text);
 
     // O celular do dono no número da maison: Ateliê antes de tudo. Foto
     // abre o lote; áudio vai transcrever (a rota volta ao Ateliê depois);
@@ -881,12 +895,32 @@ export async function processZapiInbound(
       }
     }
 
+    if (isSoPrivado) {
+      const { groups } = await leaveGroupsByPhone(tx, { phoneE164: identityPhone, reason: "so_privado", now });
+      const ackEventId = await enqueueOutboxEvent(tx, {
+        eventType: "wa.send",
+        dedupeKey: `wa.so_privado_ack:${messageId}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: {
+          templateKey: null,
+          phoneE164,
+          body: groups > 0 ? SO_PRIVADO_ACK_BODY : SO_PRIVADO_NOT_MEMBER_BODY,
+          dedupeKey: `wa.so_privado_ack:${messageId}`,
+        },
+      });
+      await markDone();
+      return { action: "so_privado", conversationId: conversation.id, waMessageId: message.id, groups, outboxEventId: ackEventId } as const;
+    }
+
     if (isOptOut) {
       // Com ou sem cadastro: o que esse telefone pediu para receber é cancelado
       // (lista da estreia e avisos de "voltou") — a /estreia é sem login.
       await cancelDropWaitlistByPhone(tx, identityPhone, now);
       await cancelStockAlertsByPhone(tx, identityPhone, now);
       await cancelBotFollowupsByPhone(tx, { phoneE164: identityPhone, reason: "sair", now });
+      // "SAIR desliga tudo" (cartão do Provador): sai das salas também (a loja a remove).
+      await leaveGroupsByPhone(tx, { phoneE164: identityPhone, reason: "removida", now });
       if (customer) {
         await tx
           .update(customers)

@@ -10,6 +10,7 @@ import { resolveProductDetail } from "./catalog";
 import { listFeedbackByPhone } from "@/services/delivery-feedback";
 import { listLooksMemoryLines } from "@/services/customer-looks";
 import { getActiveHoldByPhone } from "@/services/stock-holds";
+import { groupMemoryLines } from "@/services/wa-groups";
 
 import { DRY_RUN_TEXT, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
@@ -88,12 +89,13 @@ export async function execSugerirTamanho(
 
 /** Linhas do caderninho que moram em tabela própria (cartela, reserva, avisos). */
 export async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<string[]> {
-  const [profile, hold, alerts, feedback, looks] = await Promise.all([
+  const [profile, hold, alerts, feedback, looks, provador] = await Promise.all([
     getStyleProfileByPhone(db, phoneE164),
     getActiveHoldByPhone(db, phoneE164),
     listOpenAlertsByPhone(db, phoneE164),
     listFeedbackByPhone(db, phoneE164),
     listLooksMemoryLines(db, phoneE164),
+    groupMemoryLines(db, phoneE164),
   ]);
   const lines: string[] = [];
   if (profile) lines.push(...renderProfileNote(profile.profile, profile.paletteName, { hasBody: profile.hasBodyMeasurements }));
@@ -105,7 +107,7 @@ export async function loadMemoryLines(db: DbOrTx, phoneE164: string): Promise<st
         .join(", ")}`,
     );
   }
-  lines.push(...feedback, ...looks);
+  lines.push(...feedback, ...looks, ...provador);
   return lines;
 }
 

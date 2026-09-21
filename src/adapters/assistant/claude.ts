@@ -235,7 +235,8 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       messages.unshift({ role: "user", content: "(início da conversa)" });
     }
 
-    const tools: Anthropic.Tool[] = BOT_TOOLS.map((tool) => ({
+    const allowed = input.tools ? new Set<string>(input.tools) : null;
+    const tools: Anthropic.Tool[] = BOT_TOOLS.filter((tool) => allowed === null || allowed.has(tool.name)).map((tool) => ({
       name: tool.name,
       description: tool.description,
       input_schema: tool.input_schema as Anthropic.Tool.InputSchema,

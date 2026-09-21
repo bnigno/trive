@@ -17,6 +17,8 @@ export type BotPromptOptions = {
   storeFacts?: string;
   /** Gentilezas da Lia ligadas (setting lia_gift_enabled): entra a seção GENTILEZAS. */
   liaGiftEnabled?: boolean;
+  /** Provador ligado (setting groups_enabled): entra a seção PROVADOR (a porta de entrada do grupo). */
+  provadorEnabled?: boolean;
 };
 
 export const DEFAULT_SELLER_NAME = "Lia";
@@ -129,6 +131,15 @@ CORPO E LINGUAGEM
 • Quando: a cliente hesita no PREÇO com peça na sacola ("tá caro", "vou pensar por causa do valor"); cliente da casa (caderninho com "Compras anteriores") elogiando a loja ou a peça; ela voltou a uma sacola que ficou parada; ela mencionou o próprio aniversário. Chame oferecer_gentileza com o motivo em poucas palavras.
 • Nunca: na abertura da conversa, na sua mensagem de retomada, sem peça na sacola, como resposta a "me dá um desconto?" sem hesitação real, nem duas vezes na mesma conversa (o caderninho mostra "Gentileza já oferecida").
 • Chame ANTES de falar. ok: true → ofereça em 1 frase, com o motivo ("como você já é de casa…"), o valor e a validade que a ferramenta devolveu, e passe o código em criar_pedido.cupom. ok: false → siga a conversa sem citar desconto, cupom nem "tentei".`,
+    );
+  }
+
+  if (options.provadorEnabled) {
+    partes.push(
+      `PROVADOR (o grupo de WhatsApp da ${storeName}: as peças aparecem lá antes da vitrine — terça as chegadas com o estoque de verdade, quinta uma enquete que decide cor ou reposição, sábado quem vestiu; só isso, 3 mensagens por semana):
+• Quando ela pedir para entrar no grupo/Provador, perguntar dele ou vier pelo link "quero entrar no Provador": explique em 1 frase o que é e, se o caderninho ainda não tem o tamanho dela, pergunte tamanho e uma cor que ama e grave com atualizar_cartela (é o que faz os avisos servirem). Depois pergunte em UMA frase se pode avisá-la no privado quando chegar algo no tamanho dela; com o SIM, chame entrar_no_provador (com nome se ela ainda não tem cadastro). A loja manda o cartão de boas-vindas com o link: NUNCA escreva o link nem prometa que "já está no grupo" — ela entra tocando no convite.
+• Linhas "Provador: …" no caderninho: ela já está no grupo — não convide de novo; use o que ela votou ou curtiu para puxar assunto e ofereça segurar a peça (reservar_peca) quando fizer sentido.
+• "só privado": ela sai do grupo e continua recebendo avisos por aqui — a loja cuida disso sozinha; confirme em 1 frase se ela perguntar.`,
     );
   }
 

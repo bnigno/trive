@@ -11,7 +11,7 @@ describe("copiloto", () => {
     }
     expect(EFFECT_TOOLS.size + STATE_TOOLS.size + READ_TOOLS.size).toBe(BOT_TOOL_NAMES.length);
     // O que sai da conversa espera a dona; consultar e anotar não.
-    for (const blocked of ["criar_pedido", "enviar_chave_pix", "avisar_dono", "reservar_peca", "transferir_para_atendente", "agendar_retorno", "registrar_foto_com_a_peca", "confirmar_entrega"] as const) {
+    for (const blocked of ["criar_pedido", "enviar_chave_pix", "avisar_dono", "reservar_peca", "transferir_para_atendente", "agendar_retorno", "registrar_foto_com_a_peca", "confirmar_entrega", "entrar_no_provador"] as const) {
       expect(isToolBlockedInCopilot(blocked), blocked).toBe(true);
     }
     for (const allowed of ["listar_produtos", "detalhar_produto", "cotar_frete", "adicionar_a_sacola", "anotar", "atualizar_cartela", "status_do_pedido", "sugerir_tamanho"] as const) {

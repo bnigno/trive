@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { describeHold, holdExpiresAt, isReminderDue } from "@/core/stock/holds";
-import { restockCrossed } from "@/core/stock/ledger";
+import { lastUnitCrossed, restockCrossed } from "@/core/stock/ledger";
 
 describe("reserva gentil", () => {
   const now = new Date("2026-09-10T15:00:00Z");
@@ -39,5 +39,17 @@ describe("restockCrossed", () => {
     expect(restockCrossed({ onHand: 3, reserved: 0 }, { onHand: 5, reserved: 0 })).toBe(false);
     expect(restockCrossed({ onHand: 1, reserved: 1 }, { onHand: 1, reserved: 1 })).toBe(false);
     expect(restockCrossed({ onHand: 2, reserved: 0 }, { onHand: 0, reserved: 0 })).toBe(false);
+  });
+});
+
+describe("lastUnitCrossed (Provador: 'ficou a última no seu tamanho')", () => {
+  it("só quando o disponível cai de 2+ para exatamente 1 — venda ou reserva; reposição, zerar e ficar em 1 não contam", () => {
+    expect(lastUnitCrossed({ onHand: 2, reserved: 0 }, { onHand: 1, reserved: 0 })).toBe(true);
+    expect(lastUnitCrossed({ onHand: 3, reserved: 1 }, { onHand: 3, reserved: 2 })).toBe(true);
+    expect(lastUnitCrossed({ onHand: 5, reserved: 0 }, { onHand: 1, reserved: 0 })).toBe(true);
+    expect(lastUnitCrossed({ onHand: 1, reserved: 0 }, { onHand: 1, reserved: 0 })).toBe(false);
+    expect(lastUnitCrossed({ onHand: 2, reserved: 0 }, { onHand: 0, reserved: 0 })).toBe(false);
+    expect(lastUnitCrossed({ onHand: 0, reserved: 0 }, { onHand: 1, reserved: 0 })).toBe(false);
+    expect(lastUnitCrossed({ onHand: 1, reserved: 0 }, { onHand: 2, reserved: 0 })).toBe(false);
   });
 });

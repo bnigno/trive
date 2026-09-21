@@ -12,6 +12,9 @@ export const TEMPLATE_TRIGGERS: Record<string, string> = {
   hold_reminder: "Lembrete único, 2 h antes de uma reserva gentil vencer",
   stock_back: "Uma vez, quando a peça que a cliente pediu para avisar volta ao estoque",
   drop_vip_invite: "Convite VIP de lançamento, para as clientes com mais afinidade, antes da publicação",
+  provador_affinity: "Provador: depois do “Passou pelo Provador”, para quem tem a peça no tamanho/cor (uma por pessoa por post, de 5 em 5 min)",
+  provador_last_unit: "Provador: quando sobra uma unidade no tamanho de quem reagiu ao post da peça (no máximo uma por semana)",
+  provador_poll_winner: "Provador: quando a cor vencedora da enquete chega ao estoque, para quem votou nela",
   order_shipped: "Quando você marca o pedido como enviado (Correios, com rastreio)",
   order_out_for_delivery: "Quando você marca “Saiu” na Rota do dia — a peça foi com o motoboy",
   order_canceled:
@@ -29,6 +32,10 @@ export const TEMPLATE_TRIGGERS: Record<string, string> = {
 
 export const PREVIEW_VARIABLES: Record<string, string> = {
   nome: "Maria",
+  peca: "Vestido Terracota",
+  horas: "24",
+  tamanho: "M",
+  opcao: "Verde-oliva",
   cliente: "Maria da Silva",
   pedido: "#1042",
   total: "R$ 289,00",

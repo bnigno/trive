@@ -34,6 +34,7 @@ export const BOT_TOOL_NAMES = [
   "identificar_peca_na_foto",
   "retirar_minha_foto",
   "agendar_retorno",
+  "entrar_no_provador",
   "transferir_para_atendente",
 ] as const;
 
@@ -132,6 +133,7 @@ export type BotToolInputs = {
   retirar_minha_foto: Record<string, never>;
   /** Só depois do SIM dela à pergunta "posso te chamar …?". Data/hora no relógio de São Paulo. */
   agendar_retorno: { data: string; hora: string; motivo: string; cliente_autorizou: true };
+  entrar_no_provador: { cliente_autorizou: true; nome?: string };
   transferir_para_atendente: { motivo: string; resumo?: string };
 };
 
@@ -767,6 +769,28 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "entrar_no_provador",
+    description:
+      "Coloca a cliente no Provador — o grupo de WhatsApp da loja onde as peças aparecem antes da vitrine (terça: chegadas; quinta: enquete; sábado: quem vestiu). Registra o consentimento dela para avisos no privado e a LOJA manda o cartão de boas-vindas com o link do grupo (você nunca escreve o link). Só chame quando ela pedir para entrar ou disser SIM ao seu convite (cliente_autorizou: true), e DEPOIS de a cartela ter o tamanho dela (atualizar_cartela) — sem cartela a ferramenta recusa e diz o que falta. Passe nome quando ela ainda não tem cadastro.",
+    input_schema: {
+      type: "object",
+      properties: {
+        cliente_autorizou: {
+          type: "boolean",
+          enum: [true],
+          description: "true só com o pedido ou o sim explícito dela para entrar no grupo e receber avisos no privado.",
+        },
+        nome: {
+          type: "string",
+          maxLength: 80,
+          description: "Primeiro nome (ou nome completo) dela, quando ainda não tem cadastro — como ela disse.",
+        },
+      },
+      required: ["cliente_autorizou"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "transferir_para_atendente",
     description:
       "Passa a conversa para a equipe da loja e encerra a sua participação. Use quando a cliente pedir para falar com uma pessoa, quando você não conseguir ajudar após 2 tentativas, ou em reclamação, troca, defeito ou reembolso. Passe um resumo de 3 linhas para a equipe não perguntar nada de novo.",
@@ -1009,6 +1033,10 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     hora: z.string().trim().min(4).max(5),
     motivo: z.string().trim().min(3).max(140),
     cliente_autorizou: z.literal(true),
+  }),
+  entrar_no_provador: z.strictObject({
+    cliente_autorizou: z.literal(true),
+    nome: z.string().trim().min(2).max(80).optional(),
   }),
   transferir_para_atendente: z.strictObject({
     motivo: z.string().min(1),
