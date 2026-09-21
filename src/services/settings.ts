@@ -594,6 +594,11 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   catalog_draft_enabled: z.boolean(),
   atelier_enabled: z.boolean(),
   feedback_ask_enabled: z.boolean(),
+  /** Cupom de desculpas quando o motoboy entrega depois da janela prometida + carência. */
+  late_delivery_coupon_enabled: z.boolean(),
+  late_delivery_grace_minutes: z.number().int().min(0).max(240, { error: "No máximo 240 minutos (4 horas)." }),
+  late_delivery_coupon_percent: z.number().int().min(1).max(50, { error: "Entre 1% e 50%." }),
+  late_delivery_coupon_days: z.number().int().min(1).max(180, { error: "Entre 1 e 180 dias." }),
   /** "Quem já vestiu": a Lia guarda a foto da cliente com a peça e pede consentimento. */
   customer_looks_enabled: z.boolean(),
   /** A Lia manda a nota em áudio da curadora como mensagem de voz (ausente = ligado). */

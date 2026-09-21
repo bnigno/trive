@@ -17,6 +17,8 @@ import { Button } from "@/components/ui/form";
 import { toggleCouponAction } from "./actions";
 import { CouponCreateForm, CouponDeleteForm, CouponEditForm, type CouponCategoryOption, type CouponFormDefaults } from "./forms";
 import { formatCouponValue, ORIGIN_LABELS } from "./labels";
+import { LateDeliverySettingsForm } from "./automatic-forms";
+import { loadLateDeliverySettings, type LateDeliverySettings } from "@/services/late-delivery";
 
 export const dynamic = "force-dynamic";
 
@@ -95,10 +97,12 @@ async function loadPage(): Promise<{
   coupons: CouponListItem[];
   categories: CouponCategoryOption[];
   slugById: Map<string, string>;
+  lateDelivery: LateDeliverySettings;
 } | null> {
   try {
     const db = getDb();
     const coupons = await listCoupons(db);
+    const lateDelivery = await loadLateDeliverySettings(db);
     const categoryRows = await db
       .select({ id: categories.id, name: categories.name })
       .from(categories)
@@ -111,7 +115,7 @@ async function loadPage(): Promise<{
             .from(products)
             .where(and(inArray(products.id, productIds), isNull(products.deletedAt)))
         : [];
-    return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])) };
+    return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])), lateDelivery };
   } catch {
     return null;
   }
@@ -135,7 +139,7 @@ export default async function CuponsPage() {
       </div>
     );
   }
-  const { coupons, categories: categoryOptions, slugById } = page;
+  const { coupons, categories: categoryOptions, slugById, lateDelivery } = page;
 
   return (
     <div className="flex flex-col gap-8">
@@ -288,6 +292,16 @@ export default async function CuponsPage() {
               })}
             </div>
           ) : null}
+        </div>
+      </Card>
+
+      <Card title="Cupons automáticos">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Cupons que a casa emite sozinha, um por cliente, com nota do motivo. Aparecem na lista acima com a origem;
+            você pode desativar qualquer um. Tudo nasce desligado.
+          </p>
+          <LateDeliverySettingsForm defaults={lateDelivery} />
         </div>
       </Card>
 

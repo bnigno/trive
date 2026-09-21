@@ -42,6 +42,7 @@ import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { findActiveCourierByPhone } from "@/services/couriers";
 import { assertDeliveryPhotoAcceptable, courierDeliveryPhotoStoragePath, deliveryPhotoSchema, processDeliveryPhoto } from "@/services/delivery";
 import { addressLineOf, completeDispatchedOrder, dispatchOrder, listRouteOrders, summarizeOrderItems, type RouteOrder } from "@/services/delivery-routes";
+import { enqueueStopDelivered } from "@/services/late-delivery";
 import { ServiceError } from "@/services/orders";
 import { getStoreName } from "@/services/settings";
 import { firstNameOf, siteBaseUrl } from "@/services/wa-messaging";
@@ -536,6 +537,9 @@ async function completeStopTx(
         updatedAt: now,
       })
       .where(eq(deliveryStops.id, stop.id));
+    // A hora real da entrega está gravada: quem decide se atrasou (e pede
+    // desculpas com cupom) é o handler deste evento — nunca esta transação.
+    await enqueueStopDelivered(tx, { orderId: order.id, stopId: stop.id });
     // A prova entra ANTES da transição: o evento order.delivered (mesma
     // transação) já encontra quem recebeu. Não sobrescreve o que a dona
     // (foto) ou a cliente ("Chegou!") já tinham registrado.

@@ -33,6 +33,8 @@ import { customerLookCardPayloadSchema, renderAndSendCustomerLookCard } from "@/
 
 const storeRevalidatePayloadSchema = z.object({ paths: z.array(z.string().regex(/^\/[a-z0-9\-/]*$/i)).min(1).max(10) });
 import { askDeliveryFeedback, feedbackAskPayloadSchema, scheduleDeliveryFeedback } from "@/services/delivery-feedback";
+import { couponIssuedPayloadSchema, sendCouponIssuedWa } from "@/services/coupon-notices";
+import { issueLateDeliveryCoupon, stopDeliveredPayloadSchema } from "@/services/late-delivery";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -751,6 +753,20 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const { orderId } = feedbackAskPayloadSchema.parse(event.payload);
     const result = await askDeliveryFeedback(getDb(), getMessagingProvider(), { orderId });
     console.info(`[wa.feedback_ask] ${orderId} → ${JSON.stringify(result)}`);
+  },
+  // O motoboy tocou "Entregue": passou da janela prometida + carência → cupom
+  // de desculpas (idempotente por pedido) e o aviso abaixo.
+  "delivery.stop_delivered": async (event) => {
+    const { stopId } = stopDeliveredPayloadSchema.parse(event.payload);
+    const result = await issueLateDeliveryCoupon(getDb(), { stopId });
+    console.info(`[delivery.stop_delivered] ${stopId} → ${JSON.stringify(result)}`);
+  },
+  // Cupom emitido pela casa (atraso, proteção de preço, prêmio da indicação):
+  // a mensagem com o código, pelo template da origem, só com opt-in.
+  "coupon.issued": async (event) => {
+    const payload = couponIssuedPayloadSchema.parse(event.payload);
+    const result = await sendCouponIssuedWa(getDb(), getMessagingProvider(), payload);
+    console.info(`[coupon.issued] ${payload.couponId} → ${JSON.stringify(result)}`);
   },
   // Cancelado (pela dona ou pela expiração da reserva): a cliente recebe o
   // motivo em linguagem humana e o link do pedido (só com opt-in).
