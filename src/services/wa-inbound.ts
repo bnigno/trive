@@ -46,6 +46,7 @@ import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
 import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
 import { cancelStockAlertsByPhone } from "@/services/stock-alerts";
 import { consumeSiteCartByCode } from "@/services/site-carts";
+import { processGroupInbound, type RecordGroupSignalResult } from "@/services/wa-groups";
 
 export const OPT_OUT_ACK_BODY =
   "Pronto! Você não receberá mais avisos. Se mudar de ideia, é só chamar. 💬";
@@ -75,6 +76,22 @@ const zapiInboundBodySchema = z
     isGroup: z.boolean().nullish(),
     senderName: optionalText,
     chatName: optionalText,
+    // Sinais de GRUPO (Provador): voto em enquete e reação. Em conversa 1:1
+    // continuam "ignorados" (sem texto) como sempre.
+    participantPhone: z.union([z.string(), z.number()]).nullish(),
+    pollVote: z
+      .object({
+        pollMessageId: optionalText,
+        options: z.array(z.object({ name: optionalText })).nullish(),
+      })
+      .nullish(),
+    reaction: z
+      .object({
+        value: optionalText,
+        reactionBy: z.union([z.string(), z.number()]).nullish(),
+        referencedMessage: z.object({ messageId: optionalText }).nullish(),
+      })
+      .nullish(),
     text: z.object({ message: optionalText }).nullish(),
     body: z.object({ message: optionalText }).nullish(),
     listResponseMessage: z
@@ -154,6 +171,8 @@ export type ProcessZapiInboundInput = {
 export type ProcessZapiInboundResult =
   | { action: "rejected"; rejected: "secret" | "client_token" }
   | { action: "ignored"; ignored: true; reason?: string }
+  /** Mensagem de grupo (Provador): virou sinal, nunca conversa. */
+  | { action: "group"; group: RecordGroupSignalResult }
   | { action: "duplicate"; duplicate: true }
   | { action: "status"; updated: number }
   // `outboxEventId`: o evento que esta mensagem enfileirou (turno da Lia,
@@ -556,6 +575,30 @@ export async function processZapiInbound(
       }
     }
     return { action: "status", updated };
+  }
+
+  // GRUPO (Provador): não é conversa — vira sinal (voto, reação, menção ou só
+  // o fato de alguém ter falado) e para por aqui. Erro no sinal não pode
+  // derrubar o webhook: fica no log.
+  if (parsed.isGroup === true && parsed.fromMe !== true && messageId && rawPhone) {
+    try {
+      const result = await processGroupInbound(db, {
+        messageId,
+        phone: rawPhone,
+        participantPhone: parsed.participantPhone != null ? String(parsed.participantPhone) : null,
+        participantLid: parsed.participantLid ?? null,
+        fromMe: parsed.fromMe ?? null,
+        text: text ?? null,
+        pollVote: parsed.pollVote ?? null,
+        reaction: parsed.reaction
+          ? { ...parsed.reaction, reactionBy: parsed.reaction.reactionBy != null ? String(parsed.reaction.reactionBy) : null }
+          : null,
+      });
+      return { action: "group", group: result };
+    } catch (error) {
+      console.warn(`[wa-inbound] sinal de grupo ${rawPhone}/${messageId} falhou:`, error);
+      return { action: "ignored", ignored: true, reason: "sinal_de_grupo" };
+    }
   }
 
   // Sem texto nem mídia = status/ack — ignorados (não registram inbound,

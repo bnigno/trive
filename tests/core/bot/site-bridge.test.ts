@@ -14,6 +14,7 @@ import {
   isBridgeCurrent,
   isBridgeFresh,
   normalizeCampaignSlug,
+  isProvadorCampaign,
   originLabel,
 } from "@/core/bot/site-bridge";
 
@@ -103,6 +104,23 @@ describe("buildBridgeMessage / originLabel", () => {
     expect(originLabel("campaign", "Dunas no story")).toBe("story «Dunas no story»");
     expect(originLabel("campaign", "  ")).toBe("story");
     expect(originLabel("campaign")).toBe("story");
+  });
+
+  it("link do Provador (slug prov-…): a cliente 'vem pelo Provador' e a origem diz Provador, não story", () => {
+    expect(isProvadorCampaign("prov-20260922-chegadas")).toBe(true);
+    expect(isProvadorCampaign("provador")).toBe(false);
+    expect(isProvadorCampaign(null)).toBe(false);
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "campaign", campaignSlug: "prov-20260922-chegadas", product: { name: "Vestido Terracota" } })).toBe(
+      "Oi Lia, vi o Vestido Terracota no Provador (#K7F2)",
+    );
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "campaign", campaignSlug: "prov-20260922-enquete" })).toBe("Oi Lia, vim pelo Provador (#K7F2)");
+    // Slug comum continua story; fora de campaign o slug é ignorado.
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "campaign", campaignSlug: "dunas" })).toBe("Oi Lia, vim pelo story (#K7F2)");
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7F2", source: "footer", campaignSlug: "prov-x" })).toBe("Oi Lia, vim pelo site (#K7F2)");
+    expect(originLabel("campaign", "chegadas 22/09", "prov-20260922-chegadas")).toBe("Provador «chegadas 22/09»");
+    // Link apagado: o rótulo É o slug, e o slug ainda diz que era do Provador.
+    expect(originLabel("campaign", "prov-20260922-chegadas")).toBe("Provador «prov-20260922-chegadas»");
+    expect(originLabel("campaign", "Dunas", "dunas")).toBe("story «Dunas»");
   });
 });
 
