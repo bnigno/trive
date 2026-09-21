@@ -34,6 +34,8 @@ import { DeliverForm } from "./deliver-form";
 import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
 import { getFeedbackForOrder } from "@/services/delivery-feedback";
 import { getStopForOrder } from "@/services/delivery-runs";
+import { lateDeliveryForOrder } from "@/services/late-delivery";
+import { minutesLateLabel } from "@/core/delivery/lateness";
 import { FAILURE_REASON_LABELS, STOP_STATUS_LABELS } from "@/core/delivery/state";
 import { FEEDBACK_LABELS } from "@/core/orders/feedback";
 import { giftNoteUrl } from "@/services/gifts";
@@ -74,6 +76,7 @@ export default async function PedidoDetalhePage({
   const feedback = order.status === "delivered" || order.status === "refunded" ? await getFeedbackForOrder(db, id) : null;
   // Saída do motoboy com GPS: a prova da entrega (hora, quem recebeu, ponto).
   const stop = order.deliveryWindow ? await getStopForOrder(db, id) : null;
+  const late = stop?.stopStatus === "delivered" ? await lateDeliveryForOrder(db, id) : null;
   const status = order.status as OrderStatus;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
@@ -332,6 +335,16 @@ export default async function PedidoDetalhePage({
                           ? `não entregue: ${stop.failureReason ? FAILURE_REASON_LABELS[stop.failureReason] : ""}`
                           : STOP_STATUS_LABELS[stop.stopStatus].toLowerCase()}
                     </span>
+                    {late && late.lateness.minutesLate > 0 ? (
+                      <span className={late.lateness.late ? "block text-xs text-amber-700 dark:text-amber-400" : "block text-xs text-zinc-500"}>
+                        {late.lateness.late ? "atrasou" : "passou"} {minutesLateLabel(late.lateness.minutesLate)} da janela
+                        {late.coupon
+                          ? ` · cupom ${late.coupon.code} (${late.coupon.value}%${late.coupon.expiresAt ? `, até ${formatDateTimeSP(late.coupon.expiresAt).slice(0, 5)}` : ""}${late.coupon.isActive ? "" : ", desativado"})`
+                          : late.lateness.late
+                            ? " · sem cupom de desculpas"
+                            : " · dentro da carência"}
+                      </span>
+                    ) : null}
                   </span>
                 </div>
               ) : null}

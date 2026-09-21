@@ -62,6 +62,11 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "catalog_draft_enabled", value: true },
   // "Chegou bem?": a lista tocável um dia depois da entrega.
   { key: "feedback_ask_enabled", value: true },
+  // Cupons automáticos: todos nascem desligados até a dona ligar em /admin/cupons.
+  { key: "late_delivery_coupon_enabled", value: false },
+  { key: "late_delivery_grace_minutes", value: 30 },
+  { key: "late_delivery_coupon_percent", value: 10 },
+  { key: "late_delivery_coupon_days", value: 30 },
   // "Quem já vestiu": foto da cliente com a peça vira cartão + consentimento.
   { key: "customer_looks_enabled", value: true },
   // A voz da curadora: a Lia manda a nota em áudio da peça pelo WhatsApp.
@@ -190,6 +195,16 @@ export const initialWaTemplates: Array<{
       "Se precisar de qualquer coisa com a peça, é só chamar.\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "pedido", "entrega", "recebido_por"],
+  },
+  {
+    key: "late_delivery_coupon",
+    label: "Desculpas pelo atraso do motoboy (cupom)",
+    bodyTemplate:
+      "{{nome}}, desculpa pelo atraso 🤎\n" +
+      "A entrega do pedido #{{pedido}} passou {{atraso}} da janela combinada — não é o nosso jeito.\n" +
+      "Para compensar, o cupom {{cupom}} vale {{valor}} na sua próxima compra, até {{validade}}: é só dizer o código por aqui ou usar em {{link}}.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "atraso", "cupom", "valor", "validade", "link"],
   },
   {
     key: "delivery_feedback_ask",

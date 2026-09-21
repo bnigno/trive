@@ -6,6 +6,7 @@ import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { ServiceError } from "@/services/orders";
 import { createCoupon, deleteCoupon, updateCoupon, type CreateCouponInput } from "@/services/coupons";
+import { updateSetting } from "@/services/settings";
 import { parseProductRefs, parseTimeToMinutes, parseWeekdays } from "@/lib/coupon-fields";
 import { parseBRLToCents } from "@/lib/money";
 
@@ -222,6 +223,40 @@ export async function deleteCouponAction(
     await deleteCoupon(getDb(), { couponId, userId: user.id });
     revalidatePath("/admin/cupons");
     return { success: "Cupom excluído." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+/** Inteiro dentro de [min, max]; o form manda sempre o valor. */
+function parseIntField(raw: string, label: string, min: number, max: number): number {
+  const trimmed = raw.trim();
+  const value = trimmed === "" ? Number.NaN : Number(trimmed);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new ServiceError("numero_invalido", `${label}: informe um número inteiro entre ${min} e ${max}.`);
+  }
+  return value;
+}
+
+/** Cupons automáticos — desculpas pelo atraso do motoboy. */
+export async function saveLateDeliverySettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("cupons");
+  try {
+    const db = getDb();
+    const values: Array<{ key: string; value: unknown }> = [
+      { key: "late_delivery_coupon_enabled", value: formData.get("enabled") === "on" },
+      { key: "late_delivery_grace_minutes", value: parseIntField(text(formData, "graceMinutes"), "Carência (minutos)", 0, 240) },
+      { key: "late_delivery_coupon_percent", value: parseIntField(text(formData, "percent"), "Desconto (%)", 1, 50) },
+      { key: "late_delivery_coupon_days", value: parseIntField(text(formData, "days"), "Vale por (dias)", 1, 180) },
+    ];
+    for (const { key, value } of values) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+    revalidatePath("/admin/cupons");
+    return { success: "Cupons automáticos salvos." };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }

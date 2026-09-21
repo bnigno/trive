@@ -434,6 +434,10 @@ describe("o motoboy na rua", () => {
     const order = await orderRow(paid.orderId);
     expect(order).toMatchObject({ status: "delivered", receivedBy: "Maria", deliveryConfirmedBy: "courier" });
     expect(order.deliveredAt).not.toBeNull();
+    // A hora real da entrega vira um evento (quem decide o atraso é o handler), um por parada.
+    const stopDelivered = (await outboxEvents()).filter((e) => e.eventType === "delivery.stop_delivered");
+    expect(stopDelivered).toHaveLength(1);
+    expect(stopDelivered[0].payload).toEqual({ orderId: paid.orderId, stopId: paidStop.id });
     expect((await outboxEvents()).some((e) => e.eventType === "order.delivered" && e.aggregateId === paid.orderId)).toBe(true);
     const history = await db.select().from(schema.orderStatusHistory).where(eq(schema.orderStatusHistory.orderId, paid.orderId));
     expect(history.some((h) => h.toStatus === "delivered" && h.reason?.includes(c.name))).toBe(true);
