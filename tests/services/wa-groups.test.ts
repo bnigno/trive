@@ -177,6 +177,30 @@ describe("registrar e sincronizar a sala", () => {
     expect(await db.select().from(schema.waGroupMembers)).toHaveLength(4);
   });
 
+  it("a mesma pessoa vindo hoje pelo telefone e amanhã pelo LID (ou o contrário) não vira saída nem entrada", async () => {
+    const group = await registered();
+    // Ana passa a vir só pelo LID; a do LID passa a vir com telefone + LID.
+    provider.setGroup(
+      metadata([
+        { phoneE164: "+5591981037536", lid: null, isAdmin: true },
+        { phoneE164: null, lid: "77777777777777@lid", isAdmin: false },
+        { phoneE164: BIA, lid: LID, isAdmin: false },
+      ]),
+    );
+    // Ana antes tinha o LID guardado à parte.
+    await db.update(schema.waGroupMembers).set({ lid: "77777777777777@lid" }).where(eq(schema.waGroupMembers.phoneE164, ANA));
+    const result = await syncGroupMembers(sdb, provider, { groupId: group.id, now: NOW });
+    expect(result).toMatchObject({ joined: 0, left: 0, total: 3 });
+    const rows = await listGroupMembers(sdb, { groupId: group.id, includeLeft: true });
+    expect(rows.map((m) => [m.phoneE164, m.leftAt]).sort()).toEqual([
+      ["+5591981037536", null],
+      [ANA, null],
+      // A linha que nasceu pelo LID subiu para o telefone.
+      [BIA, null],
+    ]);
+    expect(await db.select().from(schema.waGroupMembers)).toHaveLength(3);
+  });
+
   it("kill switch: saídas acima do % nas 24 h após um post pausam a sala e avisam a dona UMA vez", async () => {
     await db.insert(schema.settings).values({ key: "group_kill_switch_pct", value: 2 });
     const group = await registered();
@@ -322,20 +346,50 @@ describe("enviar pela fila", () => {
     expect(rows[0]).toMatchObject({ status: "sent", providerMessageId: provider.sentPolls[0]?.providerMessageId });
   });
 
-  it("fora da janela adia para as 9h com dedupe datado; Provador desligado, sala pausada ou post cancelado viram skipped com motivo", async () => {
+  it("a fila chegou tarde: até 30 min depois da janela ainda sai; horas depois, ou depois da folga, não sai NUNCA em outro dia — fica 'não saiu' e a dona é avisada", async () => {
+    const group = await registered();
+    const evening = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-22", 20), userId: FIXED_USER_ID, post: { kind: "livre", body: "x" } }, { now: NOW });
+    // 21:20 SP: folga da fila.
+    expect(await sendGroupPost(sdb, provider, { postId: evening.id, now: new Date("2026-09-23T00:20:00Z") })).toMatchObject({ sent: true });
+
+    const morning = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-24", 10), userId: FIXED_USER_ID, post: { kind: "livre", body: "y" } }, { now: NOW });
+    expect(await sendGroupPost(sdb, provider, { postId: morning.id, now: sp("2026-09-24", 17) })).toEqual({ skipped: "atrasado" });
+    expect((await db.select().from(schema.waGroupPosts).where(eq(schema.waGroupPosts.id, morning.id)))[0]).toMatchObject({ status: "skipped", skippedReason: "atrasado" });
+    // Nada foi adiado para o dia seguinte.
+    expect((await outbox("wa.group_post")).map((e) => e.dedupeKey).sort()).toEqual([`wa.group_post:${evening.id}`, `wa.group_post:${morning.id}`].sort());
+    const alerts = await outbox("wa.owner_forward");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.payload).toMatchObject({ raw: true, dedupeKey: `wa.group_post_skipped:${morning.id}` });
+    expect(String((alerts[0]?.payload as { body: string }).body)).toContain("não saiu: a fila só chegou horas depois da hora marcada");
+
+    const lateEvening = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-25", 20), userId: FIXED_USER_ID, post: { kind: "livre", body: "z" } }, { now: NOW });
+    // 21:45 SP: passou da folga.
+    expect(await sendGroupPost(sdb, provider, { postId: lateEvening.id, now: new Date("2026-09-26T00:45:00Z") })).toEqual({ skipped: "fora_da_janela" });
+    expect(await outbox("wa.owner_forward")).toHaveLength(2);
+    expect(provider.sentMessages).toHaveLength(1);
+  });
+
+  it("post agendado que a fila nunca alcançou não segura a cadência (a dona reagenda no mesmo dia)", async () => {
+    const group = await registered();
+    const stuck = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-22", 10), userId: FIXED_USER_ID, post: { kind: "livre", body: "x" } }, { now: NOW });
+    // 7 h depois, ainda 'scheduled' (provedor fora do ar): o mesmo dia aceita outro post.
+    const later = sp("2026-09-22", 17);
+    const again = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-22", 18), userId: FIXED_USER_ID, post: { kind: "livre", body: "de novo" } }, { now: later });
+    expect(again.status).toBe("scheduled");
+    expect((await db.select().from(schema.waGroupPosts).where(eq(schema.waGroupPosts.id, stuck.id)))[0]?.status).toBe("scheduled");
+    // Um post recém-agendado continua segurando o dia.
+    await expect(
+      scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-22", 19), userId: FIXED_USER_ID, post: { kind: "livre", body: "terceiro" } }, { now: later }),
+    ).rejects.toMatchObject({ code: "cadencia_mesmo_dia" });
+  });
+
+  it("Provador desligado, sala pausada ou post cancelado viram skipped com motivo (sem aviso à dona quando foi ela que pausou)", async () => {
     const group = await registered();
     const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-22", 10), userId: FIXED_USER_ID, post: { kind: "livre", body: "x" } }, { now: NOW });
-    const late = sp("2026-09-22", 22);
-    expect(await sendGroupPost(sdb, provider, { postId: post.id, now: late })).toEqual({ skipped: "fora_da_janela" });
-    const events = await outbox("wa.group_post");
-    expect(events.map((e) => e.dedupeKey).sort()).toEqual([`wa.group_post:${post.id}`, `wa.group_post:${post.id}:2026-09-22`]);
-    expect(events.find((e) => e.dedupeKey?.endsWith(":2026-09-22"))?.nextAttemptAt).toEqual(sp("2026-09-23", 9));
-    expect(provider.sentMessages).toHaveLength(0);
-    expect((await db.select().from(schema.waGroupPosts))[0]?.status).toBe("scheduled");
-
     await db.update(schema.waGroups).set({ pausedUntil: sp("2026-09-30", 0), pausedReason: "teste" });
-    expect(await sendGroupPost(sdb, provider, { postId: post.id, now: sp("2026-09-23", 9) })).toEqual({ skipped: "sala_pausada" });
+    expect(await sendGroupPost(sdb, provider, { postId: post.id, now: sp("2026-09-22", 10) })).toEqual({ skipped: "sala_pausada" });
     expect((await db.select().from(schema.waGroupPosts))[0]).toMatchObject({ status: "skipped", skippedReason: "sala_pausada" });
+    expect(await outbox("wa.owner_forward")).toHaveLength(0);
 
     await db.update(schema.waGroups).set({ pausedUntil: null });
     const other = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-24", 10), userId: FIXED_USER_ID, post: { kind: "livre", body: "y" } }, { now: NOW });
@@ -449,12 +503,15 @@ describe("sinais do grupo e apuração da enquete", () => {
     const before = provider.sentMessages.length;
     expect(await closeGroupPoll(sdb, provider, { postId: empty.id, now: sp("2026-10-01", 11) })).toEqual({ closed: true, winner: null, voters: 0, announced: false });
     expect(provider.sentMessages).toHaveLength(before);
-    // Fora da janela: adia com dedupe datado.
+    // Fora da janela: adia com dedupe datado para o próximo instante publicável — sábado 7h vira sábado 9h; domingo vira segunda 9h.
     const late = await scheduleGroupPost(sdb, { groupId: (await db.select().from(schema.waGroups))[0]!.id, scheduledAt: sp("2026-10-01", 19), userId: FIXED_USER_ID, post: { kind: "enquete", question: "?", options: ["A", "B"] } }, { now: NOW });
     await sendGroupPost(sdb, provider, { postId: late.id, now: sp("2026-10-01", 19) });
     expect(await closeGroupPoll(sdb, provider, { postId: late.id, now: sp("2026-10-03", 7) })).toEqual({ skipped: "fora_da_janela" });
     const deferred = await db.select().from(schema.outboxEvents).where(and(eq(schema.outboxEvents.eventType, "wa.group_poll_close"), eq(schema.outboxEvents.dedupeKey, `wa.group_poll_close:${late.id}:2026-10-03`)));
     expect(deferred[0]?.nextAttemptAt).toEqual(sp("2026-10-03", 9));
+    expect(await closeGroupPoll(sdb, provider, { postId: late.id, now: sp("2026-10-04", 12) })).toEqual({ skipped: "fora_da_janela" });
+    const sunday = await db.select().from(schema.outboxEvents).where(and(eq(schema.outboxEvents.eventType, "wa.group_poll_close"), eq(schema.outboxEvents.dedupeKey, `wa.group_poll_close:${late.id}:2026-10-04`)));
+    expect(sunday[0]?.nextAttemptAt).toEqual(sp("2026-10-05", 9));
     expect(await closeGroupPoll(sdb, provider, { postId: "00000000-0000-4000-8000-000000000000" })).toEqual({ skipped: "inexistente" });
   });
 

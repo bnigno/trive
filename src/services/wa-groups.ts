@@ -15,10 +15,13 @@ import { isProvadorCampaign, PROVADOR_CAMPAIGN_PREFIX } from "@/core/bot/site-br
 import { compareSizeLabels } from "@/core/catalog/measurements";
 import {
   CADENCE_REFUSAL_MESSAGES,
+  canPublishNow,
   canSchedulePost,
   DEFAULT_GROUP_CADENCE,
   type GroupCadencePolicy,
   type GroupPostKind,
+  isPostTooLate,
+  nextPublishableAt,
 } from "@/core/groups/cadence";
 import { DEFAULT_KILL_SWITCH_PCT, shouldTripKillSwitch } from "@/core/groups/health";
 import {
@@ -48,11 +51,11 @@ import {
   waGroups,
   waGroupSignals,
 } from "@/db/schema";
-import { toWaGroupId } from "@/lib/phone";
-import { spDayKey, spTimeLabel } from "@/lib/sp-day";
+import { isWaLid, toWaGroupId } from "@/lib/phone";
+import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { type DbOrTx, enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
-import { deferOutsideSendWindow, loadSendPolicy } from "@/services/wa-send-policy";
+import { loadSendPolicy } from "@/services/wa-send-policy";
 import { isWaEnabled, siteBaseUrl } from "@/services/wa-messaging";
 
 export class ServiceError extends Error {
@@ -308,6 +311,13 @@ function participantKey(participant: ParticipantLike): string | null {
   return participant.phoneE164 ?? participant.lid;
 }
 
+/**
+ * Casa a lista do metadata com as linhas da sala. A mesma pessoa pode vir
+ * hoje pelo telefone e amanhã pelo LID (o WhatsApp esconde o número quando
+ * quer): a linha é encontrada por QUALQUER um dos dois, e a que nasceu pelo
+ * LID sobe para o telefone quando ele aparece — senão cada troca viraria
+ * uma "saída" (e o kill switch pausaria a sala por engano).
+ */
 async function syncMembersFromMetadata(
   db: DbOrTx,
   groupId: string,
@@ -320,15 +330,27 @@ async function syncMembersFromMetadata(
     if (key) present.set(key, participant);
   }
   const rows = await db
-    .select({ id: waGroupMembers.id, phoneE164: waGroupMembers.phoneE164, leftAt: waGroupMembers.leftAt })
+    .select({ id: waGroupMembers.id, phoneE164: waGroupMembers.phoneE164, lid: waGroupMembers.lid, leftAt: waGroupMembers.leftAt })
     .from(waGroupMembers)
     .where(eq(waGroupMembers.groupId, groupId));
-  const known = new Map(rows.map((row) => [row.phoneE164, row]));
+  const knownByPhone = new Map(rows.map((row) => [row.phoneE164, row]));
+  const knownByLid = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    if (row.lid) knownByLid.set(row.lid, row);
+    if (isWaLid(row.phoneE164)) knownByLid.set(row.phoneE164, row);
+  }
+  const matched = new Set<string>();
 
   let joined = 0;
   let left = 0;
   for (const [key, participant] of present) {
-    const row = known.get(key);
+    let row = knownByPhone.get(key);
+    // Pelo LID: a linha que só tinha o LID e agora veio com telefone, ou a
+    // linha com telefone que hoje veio só pelo LID — a mesma pessoa.
+    if (!row && participant.lid) {
+      const byLid = knownByLid.get(participant.lid);
+      if (byLid && !matched.has(byLid.id)) row = byLid;
+    }
     if (!row) {
       const [customer] = participant.phoneE164
         ? await db
@@ -349,18 +371,27 @@ async function syncMembersFromMetadata(
       joined += 1;
       continue;
     }
+    matched.add(row.id);
+    // O telefone é o endereço melhor: a linha sobe do LID para ele, nunca o contrário.
+    const identity = participant.phoneE164
+      ? row.phoneE164 !== participant.phoneE164
+        ? { phoneE164: participant.phoneE164, lid: participant.lid }
+        : row.lid !== participant.lid && participant.lid
+          ? { lid: participant.lid }
+          : {}
+      : {};
     if (row.leftAt !== null) {
       await db
         .update(waGroupMembers)
-        .set({ leftAt: null, leftReason: null, joinedAt: now, isAdmin: participant.isAdmin, updatedAt: now })
+        .set({ ...identity, leftAt: null, leftReason: null, joinedAt: now, isAdmin: participant.isAdmin, updatedAt: now })
         .where(eq(waGroupMembers.id, row.id));
       joined += 1;
     } else {
-      await db.update(waGroupMembers).set({ isAdmin: participant.isAdmin, updatedAt: now }).where(eq(waGroupMembers.id, row.id));
+      await db.update(waGroupMembers).set({ ...identity, isAdmin: participant.isAdmin, updatedAt: now }).where(eq(waGroupMembers.id, row.id));
     }
   }
   for (const row of rows) {
-    if (row.leftAt === null && !present.has(row.phoneE164)) {
+    if (row.leftAt === null && !matched.has(row.id)) {
       await db
         .update(waGroupMembers)
         .set({ leftAt: now, leftReason: "saiu", updatedAt: now })
@@ -426,7 +457,7 @@ async function checkKillSwitch(db: DbOrTx, group: typeof waGroups.$inferSelect, 
     payload: {
       raw: true,
       dedupeKey: `wa.group_kill_switch:${lastPost.id}`,
-      body: `⏸️ Pausei o ${group.name}: ${reason}. Os próximos posts ficam parados por ${KILL_SWITCH_PAUSE_DAYS} dias — veja o que aconteceu e retome pelo painel quando quiser.`,
+      body: `⏸️ Pausei o ${group.name}: ${reason}. Os próximos posts ficam parados por ${KILL_SWITCH_PAUSE_DAYS} dias. Se foi você que removeu essas pessoas, é só retomar pelo painel; se saíram sozinhas, vale olhar o post antes de retomar.`,
     },
   });
   return true;
@@ -800,7 +831,12 @@ export async function scheduleGroupPost(db: DbOrTx, rawInput: ScheduleGroupPostI
     .select({ scheduledAt: waGroupPosts.scheduledAt, sentAt: waGroupPosts.sentAt })
     .from(waGroupPosts)
     .where(and(eq(waGroupPosts.groupId, group.id), inArray(waGroupPosts.status, ["scheduled", "sent"])));
-  const existing = others.map((row) => row.sentAt ?? row.scheduledAt).filter((date): date is Date => date !== null);
+  // Um post agendado que a fila nunca entregou (provedor fora do ar) não
+  // segura o dia nem a semana: a dona vê "não saiu" no painel e reagenda.
+  const existing = others
+    .map((row) => row.sentAt ?? row.scheduledAt)
+    .filter((date): date is Date => date !== null)
+    .filter((date, index) => others[index]!.sentAt !== null || !isPostTooLate(date, now));
   const verdict = canSchedulePost({ candidateAt: scheduledAt, existing, now, policy: policy.cadence });
   if (!verdict.ok) throw new ServiceError(`cadencia_${verdict.reason}`, CADENCE_REFUSAL_MESSAGES[verdict.reason]);
 
@@ -921,7 +957,15 @@ export type SendGroupPostSkip =
   | "desabilitado"
   | "sala_inativa"
   | "sala_pausada"
+  | "atrasado"
   | "fora_da_janela";
+
+const SKIP_OWNER_NOTICE: Partial<Record<SendGroupPostSkip, string>> = {
+  atrasado: "a fila só chegou horas depois da hora marcada",
+  fora_da_janela: "a fila só chegou depois do fim da janela de envio",
+  desabilitado: "o WhatsApp automático estava desligado",
+  provador_desligado: "o Provador estava desligado",
+};
 
 export type SendGroupPostResult = { sent: true; providerMessageId: string } | { skipped: SendGroupPostSkip };
 
@@ -944,9 +988,24 @@ export async function sendGroupPost(db: DbOrTx, provider: MessagingProvider, inp
   if (post.status === "canceled") return { skipped: "cancelado" };
 
   // Skip definitivo: o post fica 'skipped' com o motivo (a dona vê no painel
-  // e agenda de novo se quiser); o evento encerra sem lançar.
+  // e agenda de novo se quiser); o evento encerra sem lançar. Quando o post
+  // deveria ter saído e não saiu por causa da máquina, a dona é avisada.
   const skip = async (reason: SendGroupPostSkip): Promise<SendGroupPostResult> => {
     await db.update(waGroupPosts).set({ status: "skipped", skippedReason: reason, updatedAt: now }).where(eq(waGroupPosts.id, post.id));
+    const why = SKIP_OWNER_NOTICE[reason];
+    if (why && post.scheduledAt) {
+      await enqueueOutboxEvent(db, {
+        eventType: "wa.owner_forward",
+        dedupeKey: `wa.group_post_skipped:${post.id}`,
+        aggregateType: "wa_group_post",
+        aggregateId: post.id,
+        payload: {
+          raw: true,
+          dedupeKey: `wa.group_post_skipped:${post.id}`,
+          body: `⚠️ O post do ${group.name} marcado para ${spDayLabel(spDayKey(post.scheduledAt))} às ${spTimeLabel(post.scheduledAt)} não saiu: ${why}. Reagende pelo painel quando quiser.`,
+        },
+      });
+    }
     return { skipped: reason };
   };
 
@@ -955,16 +1014,11 @@ export async function sendGroupPost(db: DbOrTx, provider: MessagingProvider, inp
   if (!(await isWaEnabled(db))) return skip("desabilitado");
   if (!group.isActive) return skip("sala_inativa");
   if (isPaused(group, now)) return skip("sala_pausada");
-
-  const deferred = await deferOutsideSendWindow(db, { window: policy.cadence.window, intervalSeconds: 0 }, {
-    eventType: "wa.group_post",
-    dedupeBase: post.dedupeKey,
-    aggregateType: "wa_group_post",
-    aggregateId: post.id,
-    payload: { postId: post.id },
-    now,
-  });
-  if (deferred) return { skipped: "fora_da_janela" };
+  // A hora do ritual importa: post que a fila só alcança horas depois, ou
+  // depois da janela (mais a folga), não sai — nunca "amanhã às 9h" (seria
+  // outro dia, talvez domingo, talvez em cima de outro post).
+  if (post.scheduledAt && isPostTooLate(post.scheduledAt, now)) return skip("atrasado");
+  if (!canPublishNow(now, policy.cadence)) return skip("fora_da_janela");
 
   let providerMessageId: string;
   if (post.kind === "enquete" && post.pollOptions && post.pollOptions.length >= 2) {
@@ -1031,15 +1085,19 @@ export async function closeGroupPoll(db: DbOrTx, provider: MessagingProvider, in
   if (post.pollClosedAt) return { skipped: "ja_apurada" };
 
   const policy = await loadGroupPolicy(db);
-  const deferred = await deferOutsideSendWindow(db, { window: policy.cadence.window, intervalSeconds: 0 }, {
-    eventType: "wa.group_poll_close",
-    dedupeBase: `wa.group_poll_close:${post.id}`,
-    aggregateType: "wa_group_post",
-    aggregateId: post.id,
-    payload: { postId: post.id },
-    now,
-  });
-  if (deferred) return { skipped: "fora_da_janela" };
+  // O resultado não é post (não conta na cadência), mas também não sai de
+  // madrugada nem no domingo: adia para o próximo instante publicável.
+  if (!canPublishNow(now, policy.cadence)) {
+    await enqueueOutboxEvent(db, {
+      eventType: "wa.group_poll_close",
+      dedupeKey: `wa.group_poll_close:${post.id}:${spDayKey(now)}`,
+      aggregateType: "wa_group_post",
+      aggregateId: post.id,
+      payload: { postId: post.id },
+      nextAttemptAt: nextPublishableAt(now, policy.cadence),
+    });
+    return { skipped: "fora_da_janela" };
+  }
 
   const votes = await db
     .select({ value: waGroupSignals.value })

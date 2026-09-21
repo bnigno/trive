@@ -13,7 +13,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/form";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
-import { type GroupPostKind, nextRitualDay, ritualHour } from "@/core/groups/cadence";
+import { z } from "zod";
+
+import { type GroupPostKind, isPostTooLate, nextRitualDay, ritualHour } from "@/core/groups/cadence";
 import { getDb } from "@/db/client";
 import { maskPhone } from "@/lib/phone";
 import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
@@ -62,6 +64,8 @@ const SKIP_LABEL: Record<string, string> = {
   desabilitado: "WhatsApp desligado na hora",
   sala_inativa: "sala desligada",
   sala_pausada: "sala pausada",
+  atrasado: "a fila só chegou horas depois",
+  fora_da_janela: "a fila só chegou depois da janela",
 };
 
 type PageData = {
@@ -129,9 +133,22 @@ function whenLabel(post: GroupPostView): string {
   return `${spDayLabel(spDayKey(when))}, ${spTimeLabel(when)}`;
 }
 
-export default async function ProvadorRoomPage({ params }: { params: Promise<{ id: string }> }) {
+const NOTICES: Record<string, { text: string; tone: "ok" | "warn" }> = {
+  apurada: { text: "Enquete apurada e resultado anunciado no grupo.", tone: "ok" },
+  apurada_sem_votos: { text: "Enquete apurada: ninguém votou, então nada foi anunciado.", tone: "ok" },
+  apuracao_fora_da_janela: { text: "Fora da janela de envio agora: a apuração fica para a próxima abertura (nunca no domingo).", tone: "warn" },
+  apuracao_ja_apurada: { text: "Essa enquete já tinha sido apurada.", tone: "warn" },
+  apuracao_nao_enviada: { text: "A enquete ainda não saiu no grupo — não há o que apurar.", tone: "warn" },
+  cancelado: { text: "Post cancelado; o dia ficou livre.", tone: "ok" },
+  nao_cancelavel: { text: "Esse post já saiu (ou já estava cancelado).", tone: "warn" },
+};
+
+export default async function ProvadorRoomPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ aviso?: string }> }) {
   await requireOwner("whatsapp");
   const { id } = await params;
+  if (!z.uuid().safeParse(id).success) notFound();
+  const { aviso } = await searchParams;
+  const notice = aviso ? NOTICES[aviso] : undefined;
   const data = await loadData(id);
   if (!data) notFound();
   const { group, posts, members } = data;
@@ -158,6 +175,18 @@ export default async function ProvadorRoomPage({ params }: { params: Promise<{ i
         }
       />
 
+      {notice ? (
+        <p
+          role={notice.tone === "ok" ? "status" : "alert"}
+          className={
+            notice.tone === "ok"
+              ? "rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+              : "rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+          }
+        >
+          {notice.text}
+        </p>
+      ) : null}
       {!data.groupsEnabled ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
           O Provador está desligado: dá para agendar, mas nada sai e nada é lido até ligar em <Link href="/admin/whatsapp/provador" className="underline">Provador › Ligar e desligar</Link>.
@@ -204,7 +233,9 @@ export default async function ProvadorRoomPage({ params }: { params: Promise<{ i
           <div className="flex flex-col gap-4">
             <Table headers={["Quando", "Ritual", "Status", "Reações", "Votos", "Toques → conversas → pedidos", "Ações"]}>
               {posts.map((post) => {
-                const status = STATUS_LABEL[post.status] ?? { label: post.status, tone: "neutral" as const };
+                // Agendado há horas e nunca enviado: a fila não alcançou (provedor fora do ar) — não segura a cadência, mas a dona precisa ver.
+                const stuck = post.status === "scheduled" && post.scheduledAt !== null && isPostTooLate(post.scheduledAt, now);
+                const status = stuck ? { label: "Não saiu", tone: "warning" as const } : (STATUS_LABEL[post.status] ?? { label: post.status, tone: "neutral" as const });
                 return (
                   <Tr key={post.id}>
                     <Td className="whitespace-nowrap">{whenLabel(post)}</Td>

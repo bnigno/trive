@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { getMessagingProvider } from "@/adapters/zapi";
@@ -214,16 +215,26 @@ export async function composePostAction(_prev: FormState, formData: FormData): P
 
 const postIdSchema = z.object({ postId: z.uuid(), groupId: z.uuid() });
 
+/** Ações de botão (sem estado de form): o resultado volta pela URL (?aviso=) e a página mostra a frase. */
 export async function cancelPostAction(formData: FormData): Promise<void> {
   const user = await requireOwner("whatsapp");
   const { postId, groupId } = postIdSchema.parse({ postId: formData.get("postId"), groupId: formData.get("groupId") });
-  await cancelGroupPost(getDb(), { postId, userId: user.id });
+  let aviso = "cancelado";
+  try {
+    await cancelGroupPost(getDb(), { postId, userId: user.id });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ServiceError") aviso = "nao_cancelavel";
+    else throw error;
+  }
   revalidate(groupId);
+  redirect(`/admin/whatsapp/provador/${groupId}?aviso=${aviso}`);
 }
 
 export async function closePollAction(formData: FormData): Promise<void> {
   await requireOwner("whatsapp");
   const { postId, groupId } = postIdSchema.parse({ postId: formData.get("postId"), groupId: formData.get("groupId") });
-  await closeGroupPoll(getDb(), getMessagingProvider(), { postId });
+  const result = await closeGroupPoll(getDb(), getMessagingProvider(), { postId });
+  const aviso = "closed" in result ? (result.announced ? "apurada" : "apurada_sem_votos") : `apuracao_${result.skipped}`;
   revalidate(groupId);
+  redirect(`/admin/whatsapp/provador/${groupId}?aviso=${aviso}`);
 }

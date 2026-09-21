@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   CADENCE_REFUSAL_MESSAGES,
+  canPublishNow,
   canSchedulePost,
   DEFAULT_GROUP_CADENCE,
+  isPostTooLate,
+  nextPublishableAt,
   nextRitualDay,
   ritualHour,
   ritualWeekday,
@@ -96,5 +99,32 @@ describe("rituais no calendário", () => {
     expect(nextRitualDay("quem_vestiu", sp("2026-09-26", 12))).toBe("2026-10-03");
     // Sem dia fixo: o próximo dia que não é de silêncio (sábado 12h → domingo é silêncio → segunda).
     expect(nextRitualDay("livre", sp("2026-09-26", 12))).toBe("2026-09-28");
+  });
+});
+
+describe("hora de publicar (a fila atrasa)", () => {
+  it("isPostTooLate: até 6 h depois da hora marcada ainda vale; depois não", () => {
+    const at = sp("2026-09-22", 10);
+    expect(isPostTooLate(at, sp("2026-09-22", 15))).toBe(false);
+    expect(isPostTooLate(at, new Date(at.getTime() + 6 * 3_600_000))).toBe(false);
+    expect(isPostTooLate(at, new Date(at.getTime() + 6 * 3_600_000 + 1))).toBe(true);
+  });
+
+  it("canPublishNow: dentro da janela sim; até 30 min depois do fim ainda sim (folga da fila); 21h31 não; domingo nunca", () => {
+    expect(canPublishNow(sp("2026-09-22", 10))).toBe(true);
+    expect(canPublishNow(new Date("2026-09-23T00:20:00Z"))).toBe(true); // terça 21:20 SP
+    expect(canPublishNow(new Date("2026-09-23T00:31:00Z"))).toBe(false); // terça 21:31 SP
+    expect(canPublishNow(new Date("2026-09-22T11:59:00Z"))).toBe(false); // terça 08:59 SP
+    expect(canPublishNow(sp("2026-09-27", 10))).toBe(false); // domingo
+    expect(canPublishNow(sp("2026-09-27", 10), { ...DEFAULT_GROUP_CADENCE, quietWeekdays: [] })).toBe(true);
+  });
+
+  it("nextPublishableAt: agora se pode; senão a abertura da janela no próximo dia que não é de silêncio (sábado 22h → segunda 9h)", () => {
+    const tue10 = sp("2026-09-22", 10);
+    expect(nextPublishableAt(tue10)).toEqual(tue10);
+    expect(nextPublishableAt(sp("2026-09-22", 22))).toEqual(sp("2026-09-23", 9));
+    expect(nextPublishableAt(sp("2026-09-26", 22))).toEqual(sp("2026-09-28", 9)); // sábado à noite pula o domingo
+    expect(nextPublishableAt(sp("2026-09-27", 12))).toEqual(sp("2026-09-28", 9)); // domingo ao meio-dia
+    expect(nextPublishableAt(new Date("2026-09-22T11:30:00Z"))).toEqual(sp("2026-09-22", 9)); // 8h30 → 9h do mesmo dia
   });
 });
