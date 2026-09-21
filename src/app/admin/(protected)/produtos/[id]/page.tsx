@@ -10,6 +10,7 @@ import { isOwner, requireUser } from "@/services/auth";
 import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { getAtelierIntakeForProduct } from "@/services/atelier";
+import { listStudioBasePhotos, listStudioRequestsForProduct, loadStudioSettings } from "@/services/studio";
 import { countPublicLooksForProduct } from "@/services/customer-looks";
 import { getFitSignalsForProduct } from "@/services/delivery-feedback";
 import { FIT_SIGNAL_LABELS } from "@/core/catalog/fit-signal";
@@ -39,6 +40,7 @@ import { removeImageAction, setProductStatusAction } from "./actions";
 import { EditProductForm } from "./edit-product-form";
 import { ImageColorForm } from "./image-color-form";
 import { ImageUploadForm } from "./image-upload-form";
+import { StudioBlock } from "./studio-block";
 import { AddVariantForm, EditVariantForm } from "./variant-forms";
 import { MeasurementsForm } from "./measurements-form";
 import { readinessIssueHref } from "../readiness-badge";
@@ -118,6 +120,12 @@ export default async function ProdutoDetalhePage({
     getFitSignalsForProduct(db, id),
     countPublicLooksForProduct(db, id),
   ]);
+  // O ensaio (foto no corpo) é do dono: custo e vendor não viajam para a equipe.
+  const studio = owner
+    ? await Promise.all([loadStudioSettings(db), listStudioBasePhotos(db), listStudioRequestsForProduct(db, id)]).then(
+        ([settings, basePhotos, requests]) => ({ settings, basePhotos, requests }),
+      )
+    : null;
   // Vindo do selo "sem peso": abre e foca a primeira variação ativa sem peso.
   const focusWeightVariantId =
     foco === "weightGrams"
@@ -404,6 +412,9 @@ export default async function ProdutoDetalhePage({
                         className="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-700"
                       />
                     </a>
+                    {image.origin === "ai" ? (
+                      <Badge tone="info">IA · no corpo</Badge>
+                    ) : null}
                     {colorAxis ? (
                       owner ? (
                         <ImageColorForm
@@ -454,6 +465,19 @@ export default async function ProdutoDetalhePage({
           </OwnerOnly>
         </div>
       </Card>
+
+      {studio ? (
+        <StudioBlock
+          productId={detail.id}
+          pieceType={detail.pieceType}
+          colorOptions={colorOptions}
+          hasRealPhoto={detail.images.some((image) => image.origin === "upload")}
+          settings={studio.settings}
+          basePhotos={studio.basePhotos}
+          requests={studio.requests}
+          storage={storage}
+        />
+      ) : null}
 
       <OwnerOnly>
         <Card id="nota-da-curadora" title="Nota da curadora">

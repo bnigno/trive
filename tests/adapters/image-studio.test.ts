@@ -10,7 +10,7 @@ import { FASHN_MODELS, FashnImageStudio } from "@/adapters/image-studio/fashn";
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 const GARMENT = { data: Buffer.from("peca"), mimeType: "image/jpeg" as const };
-const MODEL = { data: Buffer.from("modela"), mimeType: "image/png" as const };
+const MODEL = { data: Buffer.from("modelo"), mimeType: "image/png" as const };
 
 type Call = { url: string; init: { method?: string; headers?: Record<string, string>; body?: string } | undefined };
 

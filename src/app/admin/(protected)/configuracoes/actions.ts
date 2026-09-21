@@ -422,3 +422,23 @@ export async function updateCityDatesAction(_prev: FormState, formData: FormData
     return { error: toErrorMessage(error) };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Foto no corpo — cota, qualidade e combinação padrão
+// ---------------------------------------------------------------------------
+
+export async function updateStudioSettingsAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("configuracoes");
+  try {
+    const dailyQuota = parseIntField(String(formData.get("dailyQuota") ?? ""), "Imagens por dia");
+    const db = getDb();
+    await updateSetting(db, { key: "ai_photos_daily_quota", value: dailyQuota, userId: user.id });
+    await updateSetting(db, { key: "ai_photos_quality", value: String(formData.get("quality") ?? ""), userId: user.id });
+    await updateSetting(db, { key: "ai_photos_default_scene", value: String(formData.get("defaultScene") ?? ""), userId: user.id });
+    await updateSetting(db, { key: "ai_photos_default_model", value: String(formData.get("defaultModel") ?? ""), userId: user.id });
+    revalidatePath("/admin/configuracoes");
+    return { success: "Foto no corpo salva." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}

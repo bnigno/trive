@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getAdapterMode } from "@/adapters/adapter-mode";
+import { isImageStudioConfigured } from "@/adapters/image-studio";
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
@@ -72,6 +73,8 @@ interface PageData {
   botEnabledSetting: boolean;
   catalogDraftEnabled: boolean;
   atelierEnabled: boolean;
+  aiPhotosEnabled: boolean;
+  aiPhotosInStore: boolean;
   feedbackAskEnabled: boolean;
   customerLooksEnabled: boolean;
   audioNotesEnabled: boolean;
@@ -139,6 +142,8 @@ async function loadPageData(): Promise<PageData | null> {
         "customer_looks_enabled",
         "bot_audio_notes_enabled",
         "lia_gift_enabled",
+        "ai_photos_enabled",
+        "ai_photos_in_store",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -180,6 +185,8 @@ async function loadPageData(): Promise<PageData | null> {
     botEnabledSetting: settingsMap["bot_enabled"] === true,
     catalogDraftEnabled: settingsMap["catalog_draft_enabled"] !== false,
     atelierEnabled: settingsMap["atelier_enabled"] !== false,
+    aiPhotosEnabled: settingsMap["ai_photos_enabled"] === true,
+    aiPhotosInStore: settingsMap["ai_photos_in_store"] === true,
     feedbackAskEnabled: settingsMap["feedback_ask_enabled"] !== false,
     customerLooksEnabled: settingsMap["customer_looks_enabled"] !== false,
     audioNotesEnabled: settingsMap["bot_audio_notes_enabled"] !== false,
@@ -437,6 +444,39 @@ export default async function WhatsappPage() {
             </Warning>
           </div>
         ) : null}
+      </Card>
+
+      {/* Foto no corpo (ensaio com modelos da casa) */}
+      <Card title="Foto no corpo">
+        <div className="flex flex-col gap-5">
+          <div className="grid gap-6 md:grid-cols-2">
+            <ToggleSwitch
+              settingKey="ai_photos_enabled"
+              checked={data.aiPhotosEnabled}
+              label="Gerar a peça no corpo de uma modelo da casa"
+              hint="Na peça, o bloco “Foto no corpo” gera 3 opções (a foto real esticada veste a modelo, numa cena de Belém); a inteligência confere estampa, cor e corte antes de você ver. Centavos por foto (a conta aparece no botão); cota diária em Configurações. Exige a chave da FASHN na hospedagem e uma foto-base escolhida em Modelos da casa."
+            />
+            <ToggleSwitch
+              settingKey="ai_photos_in_store"
+              checked={data.aiPhotosInStore}
+              label="Foto no corpo também na vitrine"
+              hint="Desligado, a foto gerada aparece só no post do Instagram e nos cartões da Lia; a loja segue com as fotos reais. Ligue quando gostar da qualidade."
+            />
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <Link href="/admin/produtos/modelos-da-casa" className="font-medium text-zinc-900 underline dark:text-zinc-100">
+              Modelos da casa (fotos-base)
+            </Link>
+            <Link href="/admin/configuracoes#foto-no-corpo" className="font-medium text-zinc-900 underline dark:text-zinc-100">
+              Cota, qualidade e cena padrão
+            </Link>
+          </div>
+          {data.aiPhotosEnabled && !isImageStudioConfigured() ? (
+            <Warning>
+              A foto no corpo está ligada, mas a chave da FASHN (FASHN_API_KEY) ainda não foi configurada na hospedagem — os pedidos vão para a fila e falham até ela existir.
+            </Warning>
+          ) : null}
+        </div>
       </Card>
 
       {/* Bom dia da maison */}

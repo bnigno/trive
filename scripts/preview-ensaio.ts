@@ -1,4 +1,4 @@
-// Prévia do ensaio "foto no corpo": foto real da peça → foto-base da modela
+// Prévia do ensaio "foto no corpo": foto real da peça → foto-base da modelo
 // da casa → try-on → portão de fidelidade → acabamento. Sem --real roda tudo
 // contra os fakes (sem banco, sem rede, sem custo). Com --real instancia os
 // clientes reais direto (FASHN e Anthropic; ignora ADAPTER_MODE), gera para
@@ -6,8 +6,8 @@
 // vai para a pasta de saída: fotos-base, opções brutas, julgamentos,
 // opções acabadas, custo.txt (a conta) e LEIA-ME.txt (o que olhar).
 //
-// Uso (fake):  npx tsx scripts/preview-ensaio.ts [--peca foto.jpg] [--cena sala_clara] [--modela modelo_a] [--tamanho M] [--tipo vestido] [--opcoes 3] [pasta-de-saida]
-// Uso (real):  npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --peca foto.jpg [--modela-foto base.jpg] [--qualidade economica|alta|ambas] [--teto-centavos 1000] [--sem-portao] [pasta-de-saida]
+// Uso (fake):  npx tsx scripts/preview-ensaio.ts [--peca foto.jpg] [--cena sala_clara] [--modelo modelo_a] [--tamanho M] [--tipo vestido] [--opcoes 3] [pasta-de-saida]
+// Uso (real):  npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --peca foto.jpg [--modelo-foto base.jpg] [--qualidade economica|alta|ambas] [--teto-centavos 1000] [--sem-portao] [pasta-de-saida]
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -42,7 +42,7 @@ function flag(name: string): boolean {
 }
 
 function positional(): string | undefined {
-  const withValue = new Set(["--peca", "--cena", "--modela", "--tamanho", "--tipo", "--opcoes", "--modela-foto", "--qualidade", "--teto-centavos"]);
+  const withValue = new Set(["--peca", "--cena", "--modelo", "--tamanho", "--tipo", "--opcoes", "--modelo-foto", "--qualidade", "--teto-centavos"]);
   const args = process.argv.slice(2);
   return args.find((value, index) => !value.startsWith("--") && !(index > 0 && withValue.has(args[index - 1] ?? "")));
 }
@@ -102,7 +102,7 @@ async function main() {
   mkdirSync(out, { recursive: true });
 
   const sceneKey = arg("--cena") ?? "sala_clara";
-  const modelKey = arg("--modela") ?? "modelo_a";
+  const modelKey = arg("--modelo") ?? "modelo_a";
   const sizeKey = arg("--tamanho") ?? "M";
   const options = Math.min(4, Math.max(1, Number(arg("--opcoes") ?? 3) || 3));
   const pieceType = parsePieceType(arg("--tipo") ?? "vestido");
@@ -112,7 +112,7 @@ async function main() {
   const withGate = !flag("--sem-portao");
   const tetoBrlCents = Number(arg("--teto-centavos") ?? 1000) || 1000;
   if (!sceneByKey(sceneKey) || !houseModelByKey(modelKey) || !bodySizeByKey(sizeKey)) {
-    throw new Error(`Preset desconhecido (cena ${sceneKey}, modela ${modelKey}, tamanho ${sizeKey}).`);
+    throw new Error(`Preset desconhecido (cena ${sceneKey}, modelo ${modelKey}, tamanho ${sizeKey}).`);
   }
   for (const quality of qualities) {
     if (quality !== "economica" && quality !== "alta") throw new Error(`--qualidade precisa ser economica, alta ou ambas (veio ${quality}).`);
@@ -128,11 +128,11 @@ async function main() {
   const studio: ImageStudio = real ? new FashnImageStudio() : new FakeImageStudio();
   const assistant: SalesAssistant = real ? new ClaudeSalesAssistant() : new FakeSalesAssistant();
   const ledger: Ledger = { lines: [], usdCents: 0, brlCents: 0, tetoBrlCents };
-  console.log(`${real ? "REAL (FASHN + Anthropic)" : "FAKE"} — cena ${sceneKey}, modela ${modelKey}, tamanho ${sizeKey}, tipo ${pieceType ?? "?"} (${category}), ${options} opções, qualidade ${qualities.join("+")}, teto ${formatCentsBRL(tetoBrlCents)} → ${out}`);
+  console.log(`${real ? "REAL (FASHN + Anthropic)" : "FAKE"} — cena ${sceneKey}, modelo ${modelKey}, tamanho ${sizeKey}, tipo ${pieceType ?? "?"} (${category}), ${options} opções, qualidade ${qualities.join("+")}, teto ${formatCentsBRL(tetoBrlCents)} → ${out}`);
 
-  // 1. Foto-base da modela: a que veio por --modela-foto, ou gerada agora.
+  // 1. Foto-base da modelo: a que veio por --modelo-foto, ou gerada agora.
   let modelPhoto: Buffer;
-  const modelPhotoPath = arg("--modela-foto");
+  const modelPhotoPath = arg("--modelo-foto");
   if (modelPhotoPath) {
     modelPhoto = readFileSync(modelPhotoPath);
     console.log(`foto-base: ${modelPhotoPath}`);
@@ -149,10 +149,10 @@ async function main() {
       quality: baseQuality,
       signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
-    photos.forEach((photo, index) => writeFileSync(join(out, `modela-${index + 1}.jpg`), photo.data));
+    photos.forEach((photo, index) => writeFileSync(join(out, `modelo-${index + 1}.jpg`), photo.data));
     charge(ledger, `foto-base ×${photos.length} (${photos[0]?.vendorModel}, ${baseCredits} créditos, ${Date.now() - started} ms)`, photos.reduce((sum, photo) => sum + photo.usdCents, 0));
     modelPhoto = photos[0]!.data;
-    console.log(`foto-base: ${photos.length} candidata(s) em ${Date.now() - started} ms — usando modela-1.jpg (rode de novo com --modela-foto para trocar)`);
+    console.log(`foto-base: ${photos.length} candidata(s) em ${Date.now() - started} ms — usando modelo-1.jpg (rode de novo com --modelo-foto para trocar)`);
   }
 
   // 2. Try-on por qualidade, 3. portão, 4. acabamento.
@@ -233,7 +233,7 @@ async function main() {
     join(out, "LEIA-ME.txt"),
     [
       "O que olhar, nesta ordem:",
-      "1. modela-*.jpg — a foto-base: parece foto de celular numa tarde em Belém? Pele real, luz natural, fundo com vida? Se não, é o prompt em src/core/studio/prompts.ts que muda, antes de qualquer peça.",
+      "1. modelo-*.jpg — a foto-base: parece foto de celular numa tarde em Belém? Pele real, luz natural, fundo com vida? Se não, é o prompt em src/core/studio/prompts.ts que muda, antes de qualquer peça.",
       "2. opcao-*-bruta.jpg ao lado de peca.jpg — a estampa, a cor e o corte são OS MESMOS? Mãos e rosto estão certos?",
       "3. julgamento-*.json — o portão concordou com o seu olho? Nota ≥ 7 e nenhum defeito listado = aprovada.",
       "4. opcao-*.jpg (acabada) — ao lado de uma foto real do feed, ela salta ou some no meio? É essa que iria para o Instagram.",

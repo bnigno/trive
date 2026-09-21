@@ -1,7 +1,7 @@
 // Ensaio "foto no corpo": a foto real da peça (esticada) vira foto dela no
-// corpo de uma modela da casa, numa cena de Belém. Casos de uso:
+// corpo de uma modelo da casa, numa cena de Belém. Casos de uso:
 //
-// - fotos-base das modelas (uma vez): pedir pela fila, escolher, descartar;
+// - fotos-base das modelos (uma vez): pedir pela fila, escolher, descartar;
 // - pedido de ensaio de uma peça: valida (peça elegível, foto real da cor,
 //   foto-base escolhida, cota do dia) e enfileira UM evento por opção — cada
 //   handler cabe no orçamento da varredura (try-on ~10 s + julgamento ~5 s);
@@ -38,7 +38,7 @@ import {
 } from "@/core/studio/fidelity";
 import { BODY_SIZE_KEYS, HOUSE_MODEL_KEYS, SCENE_KEYS, STUDIO_QUALITIES, type StudioQuality } from "@/core/studio/presets";
 import { buildModelPhotoPrompt, buildScenePrompt, garmentCategoryFor } from "@/core/studio/prompts";
-import { auditLog, productImages, products, studioBasePhotos, studioCandidates, studioRequests } from "@/db/schema";
+import { auditLog, outboxEvents, productImages, products, studioBasePhotos, studioCandidates, studioRequests } from "@/db/schema";
 import { spDayKey, spDayStart } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { addProductImage, mdPathFor, type ServiceDb } from "@/services/catalog";
@@ -159,7 +159,7 @@ export async function summarizeStudioCosts(db: DbOrTx, range: { from: Date; to: 
 }
 
 // ---------------------------------------------------------------------------
-// Fotos-base das modelas da casa
+// Fotos-base das modelos da casa
 // ---------------------------------------------------------------------------
 
 export type StudioBasePhoto = typeof studioBasePhotos.$inferSelect;
@@ -271,6 +271,24 @@ export async function generateStudioBasePhotos(
   return { outcome: "generated", ids };
 }
 
+/** Pedidos de foto-base ainda na fila, por modelo × cena × corpo — a tela mostra "gerando…". */
+export async function listPendingStudioBasePhotoJobs(db: DbOrTx): Promise<Set<string>> {
+  const rows = await db
+    .select({ payload: outboxEvents.payload })
+    .from(outboxEvents)
+    .where(and(eq(outboxEvents.eventType, STUDIO_BASE_PHOTO_EVENT), inArray(outboxEvents.status, ["pending", "processing", "failed"])));
+  const keys = new Set<string>();
+  for (const row of rows) {
+    const parsed = studioBasePhotoPayloadSchema.safeParse(row.payload);
+    if (parsed.success) keys.add(studioBaseKey(parsed.data));
+  }
+  return keys;
+}
+
+export function studioBaseKey(keys: { modelKey: string; sceneKey: string; sizeKey: string }): string {
+  return `${keys.modelKey}:${keys.sceneKey}:${keys.sizeKey}`;
+}
+
 export async function listStudioBasePhotos(db: DbOrTx): Promise<StudioBasePhoto[]> {
   return db
     .select()
@@ -298,7 +316,7 @@ export async function getChosenBasePhoto(
   return row ?? null;
 }
 
-/** A escolhida anterior da mesma modela × cena × corpo volta a candidata (dá para trocar de volta). */
+/** A escolhida anterior da mesma modelo × cena × corpo volta a candidata (dá para trocar de volta). */
 export async function chooseStudioBasePhoto(db: DbOrTx, input: { id: string; userId: string }, now = new Date()): Promise<void> {
   const { id, userId } = z.object({ id: z.uuid(), userId: z.uuid() }).parse(input);
   await db.transaction(async (tx) => {
@@ -425,7 +443,7 @@ export async function requestStudioPhotos(db: DbOrTx, input: RequestStudioPhotos
   }
   const base = await getChosenBasePhoto(db, parsed);
   if (!base) {
-    throw new ServiceError("sem_foto_base", "Escolha a foto-base desta modela nesta cena e neste corpo em Modelas da casa.");
+    throw new ServiceError("sem_foto_base", "Escolha a foto-base desta modelo nesta cena e neste corpo em Modelos da casa.");
   }
   const used = await countStudioImagesToday(db, now);
   if (used + parsed.options > settings.dailyQuota) {

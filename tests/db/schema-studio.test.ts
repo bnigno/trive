@@ -41,7 +41,7 @@ describe("schema do ensaio", () => {
     await db.execute(sql`update product_images set origin = 'ai' where id = ${image!.id}`);
   });
 
-  it("uma escolhida por modela × cena × corpo; candidata única por pedido × opção × tentativa", async () => {
+  it("uma escolhida por modelo × cena × corpo; candidata única por pedido × opção × tentativa", async () => {
     const base = { modelKey: "modelo_a", sceneKey: "sala_clara", sizeKey: "M", vendor: "fake", vendorModel: "fake" };
     await db.insert(schema.studioBasePhotos).values({ ...base, storagePath: "a.jpg", status: "chosen" });
     await db.insert(schema.studioBasePhotos).values({ ...base, storagePath: "b.jpg", status: "candidate" });

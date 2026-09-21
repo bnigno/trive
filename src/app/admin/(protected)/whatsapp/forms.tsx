@@ -55,7 +55,9 @@ export function ToggleSwitch({
     | "groups_enabled"
     | "bot_group_mentions_enabled"
     | "lia_gift_enabled"
-    | "provador_welcome_gift_enabled";
+    | "provador_welcome_gift_enabled"
+    | "ai_photos_enabled"
+    | "ai_photos_in_store";
   checked: boolean;
   label: string;
   hint: string;

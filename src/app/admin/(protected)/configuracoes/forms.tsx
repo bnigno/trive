@@ -22,6 +22,7 @@ import {
   updatePolicyAction,
   updateStockSettingsAction,
   updateStoreDataAction,
+  updateStudioSettingsAction,
   updateStoreFactsAction,
   updateStorefrontAction,
 } from "./actions";
@@ -685,6 +686,63 @@ export function CityDatesForm({ defaults }: { defaults: { name: string; date: st
       <FormSuccess message={state.success} />
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar datas da cidade</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Foto no corpo — cota, qualidade e combinação padrão
+// ---------------------------------------------------------------------------
+
+export function StudioSettingsForm({
+  defaults,
+  scenes,
+  models,
+}: {
+  defaults: { dailyQuota: number; quality: "economica" | "alta"; defaultScene: string; defaultModel: string };
+  scenes: { key: string; label: string }[];
+  models: { key: string; label: string }[];
+}) {
+  const [state, formAction] = useActionState(updateStudioSettingsAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Imagens por dia" hint="Conta cada imagem gerada (opções e fotos-base), não os pedidos. Chegou no teto, o botão da peça recusa até amanhã.">
+          <Input name="dailyQuota" type="number" min={1} max={200} step={1} required defaultValue={String(defaults.dailyQuota)} />
+        </Field>
+        <Field label="Qualidade padrão" hint="Econômica: 1 crédito por foto (≈ R$ 0,55 com a conferência). Alta: 3 créditos, em 2K (≈ R$ 1,40).">
+          <Select name="quality" defaultValue={defaults.quality}>
+            <option value="economica">Econômica</option>
+            <option value="alta">Alta (2K)</option>
+          </Select>
+        </Field>
+        <Field label="Cena padrão">
+          <Select name="defaultScene" defaultValue={defaults.defaultScene}>
+            {scenes.map((scene) => (
+              <option key={scene.key} value={scene.key}>
+                {scene.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Modelo padrão">
+          <Select name="defaultModel" defaultValue={defaults.defaultModel}>
+            {models.map((model) => (
+              <option key={model.key} value={model.key}>
+                {model.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar foto no corpo</SubmitButton>
       </div>
     </form>
   );

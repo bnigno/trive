@@ -1,5 +1,5 @@
 // O "prompt de fotografia" da casa é FIXO e vive aqui: realismo é regra, não
-// enfeite. A foto-base da modela nasce deste texto + cena + modela + corpo;
+// enfeite. A foto-base da modelo nasce deste texto + cena + modelo + corpo;
 // a peça entra depois, por try-on, sem redesenhar a estampa. PURO.
 import type { PieceType } from "@/core/catalog/piece-types";
 
@@ -7,7 +7,7 @@ import { bodySizeByKey, houseModelByKey, sceneByKey } from "./presets";
 
 /**
  * Como a foto tem de parecer: foto boa de celular numa tarde em Belém. A
- * modela veste básicos neutros e justos para o try-on poder trocar blusa,
+ * modelo veste básicos neutros e justos para o try-on poder trocar blusa,
  * parte de baixo ou peça inteira depois.
  */
 export const PHOTOGRAPHY_PROMPT =
@@ -32,7 +32,7 @@ export function buildModelPhotoPrompt(input: ModelPhotoPromptInput): string {
   const scene = sceneByKey(input.sceneKey);
   const size = bodySizeByKey(input.sizeKey);
   if (!model || !scene || !size) {
-    throw new Error(`Preset desconhecido: modela=${input.modelKey} cena=${input.sceneKey} tamanho=${input.sizeKey}`);
+    throw new Error(`Preset desconhecido: modelo=${input.modelKey} cena=${input.sceneKey} tamanho=${input.sizeKey}`);
   }
   return `${model.prompt}, ${size.prompt}, ${scene.prompt}. ${PHOTOGRAPHY_PROMPT} Avoid: ${NEGATIVE_PROMPT}.`;
 }
