@@ -7,10 +7,11 @@ import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import type { BotToolInputs } from "@/core/bot/tools";
 import { renderWelcomeCard } from "@/core/groups/rituals";
-import { auditLog, customers, waGroupMembers, waGroups } from "@/db/schema";
+import { auditLog, coupons, customers, waGroupMembers, waGroups } from "@/db/schema";
 import { spDayKey } from "@/lib/sp-day";
 import { type DbOrTx, enqueueOutboxEvent } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
+import { countCustomerPurchases } from "@/services/customer-lookup";
 import { issueCoupon } from "@/services/coupons";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import { loadGroupPolicy, loadWelcomeGiftSettings, PROVADOR_INVITE_ACTION } from "@/services/wa-groups";
@@ -114,11 +115,15 @@ export async function execEntrarNoProvador(
     windowEndHour: policy.cadence.window.endHour,
     postsPerWeek: policy.cadence.postsPerWeek,
   });
-  // Mimo de boas-vindas (ligado pela dona): cupom pessoal de primeira compra,
-  // UM por cliente para sempre (dedupe) — quem sai e volta não ganha outro.
+  // Mimo de boas-vindas (ligado pela dona): cupom pessoal, UM por cliente
+  // para sempre (dedupe) — quem sai e volta reencontra o mesmo, e só o vê no
+  // cartão se ele ainda vale. Quem já comprou não pode ter "primeira compra":
+  // o mimo dela vale na próxima.
   const gift = await loadWelcomeGiftSettings(db);
   let giftLine = "";
   if (gift.enabled) {
+    const purchases = await countCustomerPurchases(db, customerId);
+    const firstPurchaseOnly = purchases === 0;
     const issued = await issueCoupon(db, {
       dedupeKey: `provador_welcome:${customerId}`,
       customerId,
@@ -126,13 +131,26 @@ export async function execEntrarNoProvador(
       type: "percent",
       value: gift.percent,
       expiresAt: new Date(now.getTime() + gift.days * 86_400_000),
-      note: "Mimo de boas-vindas do Provador (entrou pela Lia)",
+      note: firstPurchaseOnly ? "Mimo de boas-vindas do Provador (entrou pela Lia, primeira compra)" : "Mimo de boas-vindas do Provador (entrou pela Lia, cliente da casa)",
       conversationId: ctx.conversationId,
-      firstPurchaseOnly: true,
+      firstPurchaseOnly,
       now,
     });
-    const until = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(issued.expiresAt);
-    giftLine = `\n\nSeu mimo de boas-vindas: ${issued.code} — ${gift.percent}% na primeira compra, até ${until}. É só me dizer o código na hora de fechar.`;
+    // O cartão fala do cupom como ele É (o de antes pode ter outro valor, ter vencido ou sido usado).
+    const [coupon] = await db
+      .select({ value: coupons.value, isActive: coupons.isActive, expiresAt: coupons.expiresAt, maxUses: coupons.maxUses, usedCount: coupons.usedCount, firstPurchaseOnly: coupons.firstPurchaseOnly })
+      .from(coupons)
+      .where(eq(coupons.id, issued.couponId))
+      .limit(1);
+    const alive =
+      coupon !== undefined &&
+      coupon.isActive &&
+      (coupon.expiresAt === null || coupon.expiresAt.getTime() > now.getTime()) &&
+      (coupon.maxUses === null || coupon.usedCount < coupon.maxUses);
+    if (alive) {
+      const until = coupon.expiresAt ? new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(coupon.expiresAt) : null;
+      giftLine = `\n\nSeu mimo de boas-vindas: ${issued.code} — ${coupon.value}% na ${coupon.firstPurchaseOnly ? "primeira" : "próxima"} compra${until ? `, até ${until}` : ""}. É só me dizer o código na hora de fechar.`;
+    }
   }
 
   const dedupeKey = `${PROVADOR_INVITE_ACTION}:${ctx.phoneE164}:${spDayKey(now)}`;

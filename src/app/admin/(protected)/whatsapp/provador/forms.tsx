@@ -328,7 +328,7 @@ export function ComposePostForm({
 
       {kind === "turma" ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Cupom da turma" hint="Um cupom coletivo criado em Cupons (sobe a cada amiga que usa). O post mostra o valor de hoje, quanto sobe e o teto, com o link que aplica sozinho.">
+          <Field label="Cupom da turma" hint="Um cupom coletivo criado em Cupons (sobe a cada amiga que usa). O post mostra o valor de hoje, quanto sobe e o teto, com o link que aplica sozinho — por isso só se agenda para as próximas 24 h.">
             <Select name="turmaCouponId" value={draft.turmaCouponId} onChange={(e) => set("turmaCouponId", e.target.value)}>
               <option value="">{coupons.length === 0 ? "Nenhum cupom da turma ativo" : "Escolha o cupom"}</option>
               {coupons.map((coupon) => (

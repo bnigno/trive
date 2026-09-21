@@ -241,13 +241,15 @@ export function renderTurmaPost(input: {
   redeemers: number;
   /** Link que aplica o cupom sozinho (/c/CÓDIGO). */
   link: string;
+  /** Link rastreável da Lia (o funil do post). */
+  liaLink: string;
 }): string {
   const who = input.redeemers === 0 ? "ninguém usou ainda — a primeira já sobe para todas" : input.redeemers === 1 ? "1 já usou" : `${input.redeemers} já usaram`;
   const cap = input.capLabel ? `, até ${input.capLabel}` : "";
   return [
-    `Vocês são uma turma. O cupom ${input.code} vale para todas daqui: hoje está em ${input.currentLabel} e sobe ${input.growthLabel} a cada uma de vocês que usar${cap}.`,
+    `Vocês são uma turma. O cupom ${input.code} vale para todas daqui: está em ${input.currentLabel} (e só sobe) — ${input.growthLabel} a mais a cada uma de vocês que usar${cap}.`,
     `${who[0]!.toUpperCase()}${who.slice(1)}. Pega o seu: ${input.link}`,
-    `Dúvida? Me chama no privado.`,
+    `Dúvida? Me chama no privado: ${input.liaLink}`,
   ].join("\n\n");
 }
 

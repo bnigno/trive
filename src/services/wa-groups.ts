@@ -61,6 +61,7 @@ import { type DbOrTx, enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { loadSendPolicy } from "@/services/wa-send-policy";
 import { couponValueLabel } from "@/services/coupon-notices";
+import { loadPriceProtectionSettings } from "@/services/price-protection";
 import { countDistinctRedeemers } from "@/services/coupons";
 import { loadLookCouponSettings } from "@/services/look-coupons";
 import { loadBridgeSettings } from "@/services/site-carts";
@@ -734,13 +735,14 @@ async function loadLooks(db: DbOrTx, lookIds: readonly string[]) {
   });
 }
 
-/** Dias da proteção de preço quando ela está ligada; null desligada (a promessa não entra no post). */
+/** Dias da proteção de preço quando ela está ligada (com o padrão da regra); null desligada — a promessa não entra no post. */
 async function loadPriceProtectionDays(db: DbOrTx): Promise<number | null> {
-  const map = await getSettingsMap(db, ["price_protection_enabled", "price_protection_days"]);
-  if (map["price_protection_enabled"] !== true) return null;
-  const days = Number(map["price_protection_days"]);
-  return Number.isFinite(days) && days > 0 ? days : null;
+  const settings = await loadPriceProtectionSettings(db);
+  return settings.enabled ? settings.days : null;
 }
+
+/** Um post da turma fala do valor de HOJE: agendar para muito à frente anunciaria número velho. */
+export const TURMA_MAX_AHEAD_MS = 24 * 3_600_000;
 
 export type CollectiveCouponOption = {
   id: string;
@@ -780,15 +782,30 @@ export async function listCollectiveCoupons(db: DbOrTx, now: Date = new Date()):
   return options;
 }
 
-async function loadCollectiveCoupon(db: DbOrTx, couponId: string) {
+/** O cupom da turma como vai ao grupo, conferido para o instante do POST (não o de agora). */
+async function loadCollectiveCoupon(db: DbOrTx, couponId: string, at: Date) {
   const [row] = await db
-    .select({ id: coupons.id, code: coupons.code, type: coupons.type, value: coupons.value, growthPerRedeemer: coupons.growthPerRedeemer, growthCap: coupons.growthCap, isActive: coupons.isActive, expiresAt: coupons.expiresAt })
+    .select({
+      id: coupons.id,
+      code: coupons.code,
+      type: coupons.type,
+      value: coupons.value,
+      growthPerRedeemer: coupons.growthPerRedeemer,
+      growthCap: coupons.growthCap,
+      isActive: coupons.isActive,
+      startsAt: coupons.startsAt,
+      expiresAt: coupons.expiresAt,
+      maxUses: coupons.maxUses,
+      usedCount: coupons.usedCount,
+    })
     .from(coupons)
     .where(eq(coupons.id, couponId))
     .limit(1);
   if (!row) throw new ServiceError("cupom_inexistente", "Esse cupom não existe mais.");
   if (!row.isActive || row.growthPerRedeemer <= 0) throw new ServiceError("cupom_nao_e_turma", "Esse cupom não é um cupom da turma ativo.");
-  if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) throw new ServiceError("cupom_vencido", "Esse cupom já venceu.");
+  if (row.expiresAt && row.expiresAt.getTime() <= at.getTime()) throw new ServiceError("cupom_vencido", "Esse cupom já terá vencido na hora do post.");
+  if (row.startsAt && row.startsAt.getTime() > at.getTime()) throw new ServiceError("cupom_ainda_nao_vale", "Esse cupom ainda não vale na hora do post.");
+  if (row.maxUses !== null && row.usedCount >= row.maxUses) throw new ServiceError("cupom_esgotado", "Esse cupom já esgotou os usos.");
   const redeemers = await countDistinctRedeemers(db, row.id);
   const type = row.type as "percent" | "fixed" | "free_shipping";
   const current = collectiveValue({ type, value: row.value, growthPerRedeemer: row.growthPerRedeemer, growthCap: row.growthCap }, redeemers);
@@ -810,7 +827,7 @@ async function loadCollectiveCoupon(db: DbOrTx, couponId: string) {
 export async function composeGroupPost(
   db: DbOrTx,
   rawInput: ComposeGroupPostInput,
-  opts: { day: string; holdHours?: number },
+  opts: { day: string; holdHours?: number; /** O instante do envio (validade do cupom da turma); ausente = agora. */ at?: Date },
 ): Promise<ComposedGroupPost> {
   const input = composePostSchema.parse(rawInput);
   // "turma" é um ritual do painel; no banco (e na cadência) é um post livre.
@@ -873,8 +890,12 @@ export async function composeGroupPost(
       };
     }
     case "turma": {
-      const turma = await loadCollectiveCoupon(db, input.couponId);
-      return { ...base, body: renderTurmaPost(turma) };
+      const at = opts.at ?? new Date();
+      if (at.getTime() - Date.now() > TURMA_MAX_AHEAD_MS) {
+        throw new ServiceError("turma_muito_a_frente", "O post da turma fala do valor de hoje: agende para as próximas 24 h.");
+      }
+      const turma = await loadCollectiveCoupon(db, input.couponId, at);
+      return { ...base, body: renderTurmaPost({ ...turma, liaLink: link }) };
     }
     case "cortina":
       return { ...base, body: input.body, dropId: input.dropId, imageUrl: input.imageUrl ?? null };
@@ -981,7 +1002,7 @@ export async function scheduleGroupPost(db: DbOrTx, rawInput: ScheduleGroupPostI
   const verdict = canSchedulePost({ candidateAt: scheduledAt, existing, now, policy: policy.cadence });
   if (!verdict.ok) throw new ServiceError(`cadencia_${verdict.reason}`, CADENCE_REFUSAL_MESSAGES[verdict.reason]);
 
-  const composed = await composeGroupPost(db, rawInput.post, { day: spDayKey(scheduledAt), holdHours: policy.holdHours });
+  const composed = await composeGroupPost(db, rawInput.post, { day: spDayKey(scheduledAt), holdHours: policy.holdHours, at: scheduledAt });
   const problem = groupPostProblem(composed.body);
   if (problem) throw new ServiceError("post_invalido", problem);
 

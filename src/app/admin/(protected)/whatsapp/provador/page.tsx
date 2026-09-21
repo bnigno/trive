@@ -168,7 +168,7 @@ export default async function ProvadorPage() {
               settingKey="provador_welcome_gift_enabled"
               checked={data.welcomeGift.enabled}
               label="Mimo de boas-vindas para quem entra pela Lia"
-              hint="Um cupom pessoal de primeira compra vai junto do cartão de boas-vindas (uma vez por cliente, para sempre). É o “mimo” prometido na mensagem da mudança de casa — ligue antes de mandá-la."
+              hint="Um cupom pessoal vai junto do cartão de boas-vindas — de primeira compra para quem nunca comprou, da próxima compra para quem já é de casa; uma vez por cliente, para sempre. É o “mimo” prometido na mensagem da mudança de casa — ligue antes de mandá-la."
             />
             <WelcomeGiftForm defaults={{ percent: data.welcomeGift.percent, days: data.welcomeGift.days }} />
           </div>
@@ -180,7 +180,7 @@ export default async function ProvadorPage() {
               `Para entrar, fala com a ${sellerName}: ${siteBaseUrl()}/provador — ela pergunta seu tamanho e suas cores (para só te avisar do que serve) e te manda o convite.`,
               ``,
               data.welcomeGift.enabled
-                ? `Este grupo fecha dia ___/___. Quem passar até lá ganha um mimo da ${sellerName} na primeira compra.`
+                ? `Este grupo fecha dia ___/___. Quem passar até lá ganha um mimo da ${sellerName} na próxima compra.`
                 : `Este grupo fecha dia ___/___.`,
             ].join("\n")}
             hint={

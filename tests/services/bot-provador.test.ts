@@ -191,23 +191,46 @@ describe("entrar_no_provador", () => {
     expect(body).toContain(`Seu mimo de boas-vindas: ${coupon.code} — 15% na primeira compra, até 12/10.`);
     expect(body.indexOf("Seu convite:")).toBeLessThan(body.indexOf("Seu mimo"));
 
-    // Saiu, voltou, pediu de novo dias depois: o mesmo cupom, nenhum novo.
+    // Saiu, voltou, pediu de novo dias depois: o mesmo cupom, nenhum novo — e o cartão fala do cupom como ele É.
     await db.delete(schema.outboxEvents);
     await db.update(schema.waGroupMembers).set({ leftAt: NOW, leftReason: "saiu" });
+    await db.update(schema.settings).set({ value: 40 }).where(eq(schema.settings.key, "provador_welcome_gift_percent"));
     const again = await buildToolExecutor(sdb, { conversationId: conv, phoneE164: ANA, customerId: null, lastInboundId: "in-2", now: new Date(NOW.getTime() + 2 * 86_400_000) })("entrar_no_provador", { cliente_autorizou: true });
     expect(again).toMatchObject({ ok: true });
     expect(await db.select().from(schema.coupons)).toHaveLength(1);
-    expect(((await wasend())[0]!.payload as { body: string }).body).toContain(coupon.code);
+    const bodyAgain = ((await wasend())[0]!.payload as { body: string }).body;
+    expect(bodyAgain).toContain(`${coupon.code} — 15% na primeira compra, até 12/10.`);
+
+    // Cupom morto (a dona desativou): o cartão não fala dele, e nenhum novo nasce.
+    await db.delete(schema.outboxEvents);
+    await db.update(schema.coupons).set({ isActive: false });
+    await db.update(schema.waGroupMembers).set({ leftAt: NOW, leftReason: "saiu" });
+    await buildToolExecutor(sdb, { conversationId: conv, phoneE164: ANA, customerId: null, lastInboundId: "in-3", now: new Date(NOW.getTime() + 3 * 86_400_000) })("entrar_no_provador", { cliente_autorizou: true });
+    expect(((await wasend())[0]!.payload as { body: string }).body).not.toContain("mimo");
+    expect(await db.select().from(schema.coupons)).toHaveLength(1);
+    await db.update(schema.coupons).set({ isActive: true });
+
+    // Cliente da casa (já comprou): o mimo vale na PRÓXIMA compra, não na "primeira".
+    const BIA = "+5591999990002";
+    await cartela(BIA);
+    const [bia] = await db.insert(schema.customers).values({ fullName: "Bia Lima", phoneE164: BIA, marketingOptIn: true }).returning({ id: schema.customers.id });
+    await db.insert(schema.orders).values({ orderNumber: 1001, customerId: bia.id, status: "paid", channel: "whatsapp", subtotalCents: 10000, discountCents: 0, shippingCents: 0, totalCents: 10000, paidAt: NOW });
+    await db.delete(schema.outboxEvents);
+    const convBia = await conversation(BIA, "Bia");
+    await executor(convBia, BIA, { customerId: bia.id })("entrar_no_provador", { cliente_autorizou: true });
+    const biaCoupon = (await db.select().from(schema.coupons).where(eq(schema.coupons.customerId, bia.id)))[0]!;
+    expect(biaCoupon.firstPurchaseOnly).toBe(false);
+    expect(((await wasend())[0]!.payload as { body: string }).body).toContain(`${biaCoupon.code} — 40% na próxima compra`);
 
     // Desligado: cartão sem mimo.
     await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "provador_welcome_gift_enabled"));
-    const BIA = "+5591999990002";
-    await cartela(BIA);
-    const convBia = await conversation(BIA, "Bia");
-    await executor(convBia, BIA)("entrar_no_provador", { cliente_autorizou: true });
-    const sends = await wasend();
-    expect(((sends.at(-1)!.payload) as { body: string }).body).not.toContain("mimo");
-    expect(await db.select().from(schema.coupons)).toHaveLength(1);
+    const CRIS = "+5591999990003";
+    await cartela(CRIS);
+    await db.delete(schema.outboxEvents);
+    const convCris = await conversation(CRIS, "Cris");
+    await executor(convCris, CRIS)("entrar_no_provador", { cliente_autorizou: true });
+    expect(((await wasend())[0]!.payload as { body: string }).body).not.toContain("mimo");
+    expect(await db.select().from(schema.coupons)).toHaveLength(2);
   });
 
   it("Provador desligado: recusa sem tocar em nada", async () => {

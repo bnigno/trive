@@ -180,18 +180,18 @@ describe("Quem vestiu (sábado) e boas-vindas", () => {
   });
 
   it("Monte sua turma: valor de hoje, quanto sobe, o teto, quem já usou e o link que aplica sozinho", () => {
-    const text = renderTurmaPost({ code: "PROVADOR", currentLabel: "5%", growthLabel: "1 ponto", capLabel: "15%", redeemers: 0, link: "https://trivemaison.com.br/c/PROVADOR" });
+    const text = renderTurmaPost({ code: "PROVADOR", currentLabel: "5%", growthLabel: "1 ponto", capLabel: "15%", redeemers: 0, link: "https://trivemaison.com.br/c/PROVADOR", liaLink: LINK });
     expect(text).toBe(
       [
-        "Vocês são uma turma. O cupom PROVADOR vale para todas daqui: hoje está em 5% e sobe 1 ponto a cada uma de vocês que usar, até 15%.",
+        "Vocês são uma turma. O cupom PROVADOR vale para todas daqui: está em 5% (e só sobe) — 1 ponto a mais a cada uma de vocês que usar, até 15%.",
         "",
         "Ninguém usou ainda — a primeira já sobe para todas. Pega o seu: https://trivemaison.com.br/c/PROVADOR",
         "",
-        "Dúvida? Me chama no privado.",
+        `Dúvida? Me chama no privado: ${LINK}`,
       ].join("\n"),
     );
-    expect(renderTurmaPost({ code: "X", currentLabel: "7%", growthLabel: "2 pontos", capLabel: null, redeemers: 1, link: "l" })).toContain("1 já usou. Pega o seu: l");
-    expect(renderTurmaPost({ code: "X", currentLabel: "9%", growthLabel: "2 pontos", capLabel: null, redeemers: 3, link: "l" })).toContain("sobe 2 pontos a cada uma de vocês que usar.\n\n3 já usaram.");
+    expect(renderTurmaPost({ code: "X", currentLabel: "7%", growthLabel: "2 pontos", capLabel: null, redeemers: 1, link: "l", liaLink: LINK })).toContain("1 já usou. Pega o seu: l");
+    expect(renderTurmaPost({ code: "X", currentLabel: "9%", growthLabel: "2 pontos", capLabel: null, redeemers: 3, link: "l", liaLink: LINK })).toContain("a cada uma de vocês que usar.\n\n3 já usaram.");
   });
 
   it("post vazio ou muro de texto é recusado antes de agendar", () => {

@@ -268,15 +268,23 @@ describe("compor e agendar rituais", () => {
     const composed = await composeGroupPost(sdb, { kind: "turma", couponId: turma.id }, { day: "2026-09-23" });
     expect(composed.kind).toBe("livre");
     expect(composed.slug).toBe("prov-20260923-post");
-    expect(composed.body).toContain("O cupom PROVADOR vale para todas daqui: hoje está em 5% e sobe 2 pontos a cada uma de vocês que usar, até 15%.");
+    expect(composed.body).toContain("O cupom PROVADOR vale para todas daqui: está em 5% (e só sobe) — 2 pontos a mais a cada uma de vocês que usar, até 15%.");
     expect(composed.body).toMatch(/\/c\/PROVADOR$/m);
+    // O link rastreável da Lia vai no post (o funil conta).
+    expect(composed.body).toContain(composed.link);
     await expect(composeGroupPost(sdb, { kind: "turma", couponId: comum.id }, { day: "2026-09-23" })).rejects.toMatchObject({ code: "cupom_nao_e_turma" });
     await expect(composeGroupPost(sdb, { kind: "turma", couponId: "00000000-0000-4000-8000-000000000000" }, { day: "2026-09-23" })).rejects.toMatchObject({ code: "cupom_inexistente" });
 
-    // Agendado, o post é livre (conta na cadência como qualquer post).
+    // Validade conferida na hora do POST: vencido lá, recusa; e mais de 24 h à frente também (o valor é de hoje).
+    const curto = await createCoupon(sdb, { code: "CURTO", type: "percent", value: 5, growthPerRedeemer: 1, growthCap: 10, expiresAt: new Date(Date.now() + 2 * 3_600_000), userId: FIXED_USER_ID });
+    await expect(composeGroupPost(sdb, { kind: "turma", couponId: curto.id }, { day: "2026-09-23", at: new Date(Date.now() + 3 * 3_600_000) })).rejects.toMatchObject({ code: "cupom_vencido" });
+    await expect(composeGroupPost(sdb, { kind: "turma", couponId: turma.id }, { day: "2026-09-30", at: new Date(Date.now() + 3 * 86_400_000) })).rejects.toMatchObject({ code: "turma_muito_a_frente" });
+
+    // Agendado para hoje mais tarde: o post é livre (conta na cadência como qualquer post).
     const group = await registered();
-    const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: sp("2026-09-23", 10), userId: FIXED_USER_ID, post: { kind: "turma", couponId: turma.id } }, { now: NOW });
-    expect(post).toMatchObject({ kind: "livre", status: "scheduled", campaignSlug: "prov-20260923-post" });
+    const soon = new Date(Date.now() + 3_600_000);
+    const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: soon, userId: FIXED_USER_ID, post: { kind: "turma", couponId: turma.id } }, { now: new Date() });
+    expect(post).toMatchObject({ kind: "livre", status: "scheduled" });
   });
 
   it("Quem vestiu só com look consentido e aprovado; enquete inválida diz o problema", async () => {
