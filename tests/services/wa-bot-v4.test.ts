@@ -326,7 +326,7 @@ describe("validar_cupom", () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain("[Cupom da turma — Cupom da turma: 5% hoje — você pode ser a primeira.");
     expect(result.text).toContain("/c/TURMA");
-    expect(result.text).toContain("o desconto sobe para as duas");
+    expect(result.text).toContain("sobe para quem fechar DEPOIS");
   });
 
   it("cupom pessoal: o do telefone da conversa vale (mesmo sem cadastro); o de outra cliente é recusado; frete grátis fala de frete", async () => {

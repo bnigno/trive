@@ -333,7 +333,8 @@ describe("cupom da turma", () => {
     expect((await listCoupons(sdb)).find((c) => c.id === turma.id)).toMatchObject({ distinctRedeemers: 2, redemptionsCount: 3 });
 
     await expect(makeCoupon({ code: "SEMTETO", value: 5, growthPerRedeemer: 2 })).rejects.toThrowError(/teto/);
-    await expect(makeCoupon({ code: "TETOBAIXO", value: 10, growthPerRedeemer: 2, growthCap: 5 })).rejects.toThrowError(/maior ou igual/);
+    await expect(makeCoupon({ code: "TETOBAIXO", value: 10, growthPerRedeemer: 2, growthCap: 5 })).rejects.toThrowError(/maior que o valor inicial/);
+    await expect(makeCoupon({ code: "TETOIGUAL", value: 10, growthPerRedeemer: 2, growthCap: 10 })).rejects.toThrowError(/maior que o valor inicial/);
     await expect(makeCoupon({ code: "DUAS", value: 5, growthPerRedeemer: 2, growthCap: 15, valueSchedule: [{ afterDays: 7, value: 10 }] })).rejects.toThrowError(/uma mecânica/);
   });
 });

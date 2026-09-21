@@ -348,6 +348,9 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     coupon.perCustomerLimit === null || identity === null
       ? null
       : await countActiveRedemptions(db, coupon.id, identity);
+  // Cupom da turma: a contagem é lida antes do lock do resgate — duas clientes
+  // fechando no mesmo segundo podem levar o mesmo valor (decisão: o valor só
+  // sobe, e o que a cliente viu é o que ela paga; não vale um lock a mais).
   const distinctRedeemers = isCollective(coupon) ? await countDistinctRedeemers(db, coupon.id) : undefined;
 
   const result = evaluateCoupon(coupon, {
@@ -798,7 +801,7 @@ function refineRuleFields(value: z.output<typeof ruleFieldsSchema>, ctx: z.Refin
     if (value.growthCap === null || value.growthCap === undefined) {
       ctx.addIssue({ code: "custom", path: ["growthCap"], message: "Cupom da turma precisa de um teto." });
     } else {
-      if (value.growthCap < value.value) ctx.addIssue({ code: "custom", path: ["growthCap"], message: "O teto precisa ser maior ou igual ao valor inicial." });
+      if (value.growthCap <= value.value) ctx.addIssue({ code: "custom", path: ["growthCap"], message: "O teto precisa ser maior que o valor inicial (senão o cupom nunca sobe)." });
       if (value.type === "percent" && value.growthCap > 100) ctx.addIssue({ code: "custom", path: ["growthCap"], message: "O teto de um cupom percentual fica entre 1 e 100." });
     }
     if (value.valueSchedule && value.valueSchedule.length > 0) {
