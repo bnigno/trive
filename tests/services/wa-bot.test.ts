@@ -529,7 +529,9 @@ describe("runBotTurn", () => {
 
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
 
-    expect(result).toEqual({ skipped: "desabilitado" });
+    // Com a Lia desligada a mensagem vai ao dono (como o webhook faria): o turno enfileira o encaminhamento.
+    expect(result).toMatchObject({ skipped: "desabilitado" });
+    expect((result as { forwarded?: string[] }).forwarded).toHaveLength(1);
     expect(provider.sentMessages).toHaveLength(0);
   });
 
