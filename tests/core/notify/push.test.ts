@@ -12,13 +12,17 @@ import {
 const CONV = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("pushDedupeKey", () => {
-  it("uma chave por conversa a cada 2 minutos: 30 s depois é a mesma, 2 min depois é outra", () => {
+  it("uma chave por conversa a cada 2 minutos: 30 s depois é a mesma, 2 min depois é outra; ler a conversa no meio muda a chave", () => {
     const t0 = new Date("2026-09-21T12:00:00.000Z");
-    const key = pushDedupeKey(CONV, t0);
-    expect(key).toMatch(new RegExp(`^push\\.new_message:${CONV}:\\d+$`));
-    expect(pushDedupeKey(CONV, new Date(t0.getTime() + 30_000))).toBe(key);
-    expect(pushDedupeKey(CONV, new Date(t0.getTime() + PUSH_BUCKET_MS))).not.toBe(key);
-    expect(pushDedupeKey("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", t0)).not.toBe(key);
+    const key = pushDedupeKey(CONV, t0, null);
+    expect(key).toMatch(new RegExp(`^push\\.new_message:${CONV}:\\d+:0$`));
+    expect(pushDedupeKey(CONV, new Date(t0.getTime() + 30_000), null)).toBe(key);
+    expect(pushDedupeKey(CONV, new Date(t0.getTime() + PUSH_BUCKET_MS), null)).not.toBe(key);
+    expect(pushDedupeKey("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", t0, null)).not.toBe(key);
+    // O dono leu aos 30 s: a resposta aos 60 s (mesma janela) merece aviso de novo.
+    const seen = new Date(t0.getTime() + 30_000);
+    expect(pushDedupeKey(CONV, new Date(t0.getTime() + 60_000), seen)).not.toBe(key);
+    expect(pushDedupeKey(CONV, new Date(t0.getTime() + 90_000), seen)).toBe(pushDedupeKey(CONV, new Date(t0.getTime() + 60_000), seen));
   });
 });
 
@@ -28,7 +32,8 @@ describe("pushPayloadFor", () => {
       title: "Nova mensagem de Ana",
       body: "tem em M?",
       url: `/admin/whatsapp/conversas?c=${CONV}`,
-      tag: `wa:${CONV}`,
+      // O mesmo tag do aviso da aba (use-notify): um substitui o outro no aparelho.
+      tag: CONV,
     });
     const awaiting = pushPayloadFor({ conversationId: CONV, label: "Ana", preview: null, awaitingOwner: true });
     expect(awaiting.title).toBe("Ana está esperando por você");

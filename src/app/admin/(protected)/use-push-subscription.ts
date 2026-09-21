@@ -17,7 +17,8 @@ export type PushState =
   | "ligado";
 
 const SW_URL = "/admin-sw.js";
-const SW_SCOPE = "/admin/";
+// "/admin" (sem barra) cobre /admin e /admin/…: é onde o app instalado abre (start_url).
+const SW_SCOPE = "/admin";
 const API_URL = "/admin/push/subscriptions";
 const WANTED_KEY = "trive.push";
 const SYNCED_KEY = "trive.push.synced";
@@ -61,6 +62,28 @@ async function registration(): Promise<ServiceWorkerRegistration> {
   return existing ?? (await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE }));
 }
 
+function bytesToBase64Url(buffer: ArrayBuffer | null): string | null {
+  if (!buffer) return null;
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** A inscrição foi feita com a chave de HOJE? Chave trocada no servidor = inscrição inútil (401/403 para sempre). */
+function subscribedWithKey(subscription: PushSubscription, publicKey: string): boolean {
+  const current = bytesToBase64Url(subscription.options.applicationServerKey);
+  return current === null || current === publicKey.replace(/=+$/, "");
+}
+
+async function currentSubscription(reg: ServiceWorkerRegistration, publicKey: string): Promise<PushSubscription | null> {
+  const subscription = await reg.pushManager.getSubscription();
+  if (subscription && !subscribedWithKey(subscription, publicKey)) {
+    await subscription.unsubscribe();
+    return null;
+  }
+  return subscription;
+}
+
 async function saveSubscription(subscription: PushSubscription): Promise<void> {
   const response = await fetch(API_URL, {
     method: "POST",
@@ -92,7 +115,7 @@ export function usePushSubscription(publicKey: string | null): {
       if (Notification.permission === "denied") return settle("bloqueado");
       try {
         const reg = await registration();
-        let subscription = await reg.pushManager.getSubscription();
+        let subscription = await currentSubscription(reg, publicKey);
         const wanted = readFlag(window.localStorage, WANTED_KEY);
         if (!subscription && wanted && Notification.permission === "granted") {
           subscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
@@ -126,7 +149,7 @@ export function usePushSubscription(publicKey: string | null): {
       }
       const reg = await registration();
       const subscription =
-        (await reg.pushManager.getSubscription()) ??
+        (await currentSubscription(reg, publicKey)) ??
         (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) }));
       await saveSubscription(subscription);
       writeFlag(window.localStorage, WANTED_KEY, true);

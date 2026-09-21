@@ -2,13 +2,14 @@
 // só carrega ids) e avisa cada aparelho inscrito. Quem já leu não recebe;
 // a conversa de avisos internos nunca; inscrição morta (404/410) é apagada;
 // falha transitória em qualquer aparelho lança para a fila tentar de novo —
-// o `tag` faz a repetição substituir o aviso no aparelho, não duplicar.
+// e a repetição pula os aparelhos que já receberam (o handler anota cada
+// sucesso em `payload.sentTo` do próprio evento), para ninguém vibrar duas vezes.
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import type { PushProvider } from "@/adapters/push";
 import { parseBotState } from "@/core/bot/memory";
 import { PUSH_TTL_SECONDS, type PushNewMessagePayload, pushPayloadFor } from "@/core/notify/push";
-import { customers, pushSubscriptions, waConversations, waMessages } from "@/db/schema";
+import { customers, outboxEvents, pushSubscriptions, waConversations, waMessages } from "@/db/schema";
 import { maskPhone } from "@/lib/phone";
 import { inboundPreview } from "@/lib/wa-preview";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -17,10 +18,15 @@ import { isBotEnabled } from "@/services/wa-bot";
 import { isOwnerPhone } from "@/services/wa-messaging";
 
 export type PushNotifyResult =
-  | { sent: number; removed: number; skipped?: undefined }
+  | { sent: number; removed: number; alreadySent: number; skipped?: undefined }
   | { skipped: "conversa_inexistente" | "mensagem_inexistente" | "ja_vista" | "avisos_internos" | "sem_inscricoes" | "encerrada" };
 
-export async function sendPushForConversation(db: DbOrTx, provider: PushProvider, input: PushNewMessagePayload): Promise<PushNotifyResult> {
+export async function sendPushForConversation(
+  db: DbOrTx,
+  provider: PushProvider,
+  input: PushNewMessagePayload,
+  opts: { outboxEventId?: string } = {},
+): Promise<PushNotifyResult> {
   const [conversation] = await db
     .select({
       id: waConversations.id,
@@ -68,12 +74,25 @@ export async function sendPushForConversation(db: DbOrTx, provider: PushProvider
 
   let sent = 0;
   let removed = 0;
+  let alreadySent = 0;
+  const sentTo = new Set(input.sentTo ?? []);
   const transient: string[] = [];
   for (const subscription of subscriptions) {
+    if (sentTo.has(subscription.id)) {
+      alreadySent += 1;
+      continue;
+    }
     const result = await provider.send({ subscription, payload, ttlSeconds: PUSH_TTL_SECONDS });
     if (result.ok) {
       sent += 1;
+      sentTo.add(subscription.id);
       await db.update(pushSubscriptions).set({ lastOkAt: sql`now()`, lastError: null }).where(eq(pushSubscriptions.id, subscription.id));
+      if (opts.outboxEventId) {
+        await db
+          .update(outboxEvents)
+          .set({ payload: sql`${outboxEvents.payload} || jsonb_build_object('sentTo', ${JSON.stringify([...sentTo])}::jsonb)` })
+          .where(eq(outboxEvents.id, opts.outboxEventId));
+      }
     } else if (result.gone) {
       removed += 1;
       await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, subscription.id));
@@ -85,5 +104,5 @@ export async function sendPushForConversation(db: DbOrTx, provider: PushProvider
   if (transient.length > 0) {
     throw new Error(`push.new_message: ${transient.length} de ${subscriptions.length} falharam — ${transient.join("; ")}`);
   }
-  return { sent, removed };
+  return { sent, removed, alreadySent };
 }

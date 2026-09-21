@@ -892,7 +892,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // aparelho inscrito; falha transitória lança (retry), inscrição morta some.
   "push.new_message": async (event) => {
     const payload = pushNewMessagePayloadSchema.parse(event.payload);
-    const result = await sendPushForConversation(getDb(), getPushProvider(), payload);
+    const result = await sendPushForConversation(getDb(), getPushProvider(), payload, { outboxEventId: event.id });
     console.info(`[push.new_message] ${payload.conversationId} → ${JSON.stringify(result)}`);
   },
   "wa.group_last_unit_notice": async (event) => {

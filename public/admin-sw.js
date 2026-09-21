@@ -1,7 +1,8 @@
-// Service worker do painel (escopo /admin/): recebe o Web Push e mostra o
-// aviso SÓ quando nenhuma janela do painel está visível — com o painel na
-// tela, o toast e o bipe dele já avisaram. JS puro, sem build: o navegador
-// carrega este arquivo direto.
+// Service worker do painel (escopo /admin): recebe o Web Push e mostra o
+// aviso. Com uma janela do painel visível, o toast e o bipe dela já avisaram:
+// a notificação sai SILENCIOSA (sem som nem vibração) — some navegador exige
+// que todo push vire notificação (Safari revoga a inscrição, Chrome mostra
+// um aviso genérico) e por isso nunca fica mudo de todo. JS puro, sem build.
 /* global self, clients */
 
 const ADMIN_PATH = "/admin";
@@ -49,11 +50,12 @@ self.addEventListener("push", (event) => {
   if (!payload) return;
   event.waitUntil(
     (async () => {
-      if (await adminWindowVisible()) return;
+      const quiet = await adminWindowVisible();
       await self.registration.showNotification(payload.title, {
         body: payload.body,
         tag: payload.tag,
-        renotify: true,
+        renotify: !quiet,
+        silent: quiet,
         icon: ICON,
         badge: ICON,
         data: { url: payload.url },
@@ -70,9 +72,14 @@ self.addEventListener("notificationclick", (event) => {
       const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
       const existing = windows.find(isAdminWindow);
       if (existing) {
-        await existing.focus();
-        if ("navigate" in existing) await existing.navigate(url);
-        return;
+        try {
+          const focused = await existing.focus();
+          // navigate() só vale para janela controlada por este SW; fora dela, abre outra.
+          await (focused || existing).navigate(url);
+          return;
+        } catch {
+          // segue para openWindow
+        }
       }
       await clients.openWindow(url);
     })(),

@@ -1,6 +1,7 @@
 // Aviso no celular com o painel fechado: a inbound da cliente enfileira
 // push.new_message NA MESMA transação (regra 5), uma vez por conversa a cada
 // 2 min, só quando alguém ligou o aviso, nunca para o WhatsApp do dono.
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/db/schema";
@@ -74,7 +75,7 @@ describe("processZapiInbound → push.new_message", () => {
       aggregateId: message.id,
       payload: { conversationId: conversation.id, waMessageId: message.id },
     });
-    expect(push.dedupeKey).toMatch(new RegExp(`^push\\.new_message:${conversation.id}:\\d+$`));
+    expect(push.dedupeKey).toMatch(new RegExp(`^push\\.new_message:${conversation.id}:\\d+:0$`));
     // Dois kicks depois do commit: o do turno (rede de segurança do inline) e o do push.
     expect(kicks.map((kick) => kick.data.outboxEventId)).toContain(push.id);
     expect(kicks).toHaveLength(2);
@@ -84,6 +85,11 @@ describe("processZapiInbound → push.new_message", () => {
     expect(await pushEvents()).toHaveLength(1);
     // Sem push novo, sem kick de push: só o do turno.
     expect(kicks).toHaveLength(1);
+
+    // O dono leu no meio da janela: a resposta seguinte avisa de novo.
+    await db.update(schema.waConversations).set({ ownerLastSeenAt: new Date() }).where(eq(schema.waConversations.id, conversation.id));
+    await processZapiInbound(sdb, { providedSecret: SECRET, body: receivedMessage("MSG-3", "e em G?") });
+    expect(await pushEvents()).toHaveLength(2);
   });
 
   it("mensagem do WhatsApp do dono não avisa o dono; duplicata do webhook não enfileira de novo", async () => {

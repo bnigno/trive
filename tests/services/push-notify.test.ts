@@ -55,13 +55,13 @@ describe("sendPushForConversation", () => {
     const ids = await conversation({ botState: { displayName: "Bia" } }, "  tem   em M? ");
 
     const result = await sendPushForConversation(sdb, provider, ids);
-    expect(result).toEqual({ sent: 2, removed: 0 });
+    expect(result).toEqual({ sent: 2, removed: 0, alreadySent: 0 });
     expect(provider.sent.map((item) => item.endpoint).sort()).toEqual(["https://push.example/owner", "https://push.example/staff"]);
     expect(provider.sent[0].payload).toEqual({
       title: "Nova mensagem de Bia",
       body: "tem em M?",
       url: `/admin/whatsapp/conversas?c=${ids.conversationId}`,
-      tag: `wa:${ids.conversationId}`,
+      tag: ids.conversationId,
     });
     const rows = await db.select().from(schema.pushSubscriptions);
     expect(rows.filter((row) => row.lastOkAt !== null)).toHaveLength(2);
@@ -105,7 +105,7 @@ describe("sendPushForConversation", () => {
     await upsertPushSubscription(sdb, { userId: FIXED_USER_ID, endpoint: "https://push.example/ok", keys: KEYS });
     await upsertPushSubscription(sdb, { userId: FIXED_USER_ID, endpoint: "https://push.example/gone", keys: KEYS });
     const ids = await conversation();
-    expect(await sendPushForConversation(sdb, provider, ids)).toEqual({ sent: 1, removed: 1 });
+    expect(await sendPushForConversation(sdb, provider, ids)).toEqual({ sent: 1, removed: 1, alreadySent: 0 });
     expect((await db.select().from(schema.pushSubscriptions)).map((row) => row.endpoint)).toEqual(["https://push.example/ok"]);
 
     await upsertPushSubscription(sdb, { userId: FIXED_USER_ID, endpoint: "https://push.example/fail", keys: KEYS });
@@ -113,7 +113,33 @@ describe("sendPushForConversation", () => {
     const rows = await db.select().from(schema.pushSubscriptions);
     expect(rows).toHaveLength(2);
     expect(rows.find((row) => row.endpoint.endsWith("fail"))?.lastError).toContain("503");
-    // O aparelho bom recebeu de novo (o tag substitui no aparelho, não duplica).
     expect(provider.sent.filter((item) => item.endpoint.endsWith("/ok"))).toHaveLength(2);
+  });
+
+  it("repetição da fila depois de falha transitória: quem já recebeu (payload.sentTo do evento) não vibra de novo", async () => {
+    await upsertPushSubscription(sdb, { userId: FIXED_USER_ID, endpoint: "https://push.example/ok", keys: KEYS });
+    await upsertPushSubscription(sdb, { userId: FIXED_USER_ID, endpoint: "https://push.example/fail", keys: KEYS });
+    const ids = await conversation();
+    const [event] = await db
+      .insert(schema.outboxEvents)
+      .values({ eventType: "push.new_message", dedupeKey: "push.new_message:teste", payload: ids })
+      .returning({ id: schema.outboxEvents.id });
+
+    // 1ª tentativa: o bom recebe, o outro falha → lança, e o evento guarda quem recebeu.
+    await expect(sendPushForConversation(sdb, provider, ids, { outboxEventId: event.id })).rejects.toThrow(/1 de 2 falharam/);
+    const [after] = await db.select({ payload: schema.outboxEvents.payload }).from(schema.outboxEvents).where((await import("drizzle-orm")).eq(schema.outboxEvents.id, event.id));
+    const okId = (await db.select().from(schema.pushSubscriptions)).find((row) => row.endpoint.endsWith("/ok"))!.id;
+    expect((after.payload as { sentTo: string[] }).sentTo).toEqual([okId]);
+
+    // 2ª tentativa (como a fila faz, com o payload atualizado): só o que faltava.
+    const retryPayload = { ...ids, sentTo: (after.payload as { sentTo: string[] }).sentTo };
+    await expect(sendPushForConversation(sdb, provider, retryPayload, { outboxEventId: event.id })).rejects.toThrow(/1 de 2 falharam/);
+    expect(provider.sent.filter((item) => item.endpoint.endsWith("/ok"))).toHaveLength(1);
+
+    // Outra conversa logo depois: o aparelho bom recebe (o marcador é por evento, não por aparelho).
+    await db.delete(schema.pushSubscriptions).where((await import("drizzle-orm")).like(schema.pushSubscriptions.endpoint, "%fail"));
+    const other = await conversation({ phoneE164: "+5511777770000" }, "outra cliente");
+    expect(await sendPushForConversation(sdb, provider, other)).toEqual({ sent: 1, removed: 0, alreadySent: 0 });
+    expect(provider.sent.at(-1)?.payload.body).toBe("outra cliente");
   });
 });

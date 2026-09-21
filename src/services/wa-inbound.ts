@@ -736,6 +736,7 @@ export async function processZapiInbound(
       status: waConversations.status,
       createdAt: waConversations.createdAt,
       botDisabledUntil: waConversations.botDisabledUntil,
+      ownerLastSeenAt: waConversations.ownerLastSeenAt,
     };
     const [created] = await tx
       .insert(waConversations)
@@ -827,14 +828,14 @@ export async function processZapiInbound(
         .where(eq(inboundEvents.id, inboundId));
       await touchConversationOrDefer(tx, touch);
       // Aviso no celular (painel fechado): só com alguém inscrito, uma vez por
-      // conversa a cada 2 min (o UNIQUE do dedupe é o árbitro); o WhatsApp do
-      // dono não avisa a si mesmo.
+      // conversa a cada 2 min salvo leitura no meio (o UNIQUE do dedupe é o
+      // árbitro); o WhatsApp do dono não avisa a si mesmo.
       if ((await hasAnyActivePushSubscription(tx)) && !(await isOwnerPhone(tx, identityPhone))) {
         pushEventId = await enqueueOutboxEvent(
           tx,
           {
             eventType: PUSH_EVENT_TYPE,
-            dedupeKey: pushDedupeKey(conversation.id, now),
+            dedupeKey: pushDedupeKey(conversation.id, now, conversation.ownerLastSeenAt),
             aggregateType: "wa_message",
             aggregateId: message.id,
             payload: { conversationId: conversation.id, waMessageId: message.id },
