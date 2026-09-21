@@ -1,13 +1,15 @@
 // Rótulos de exibição da área de usuários (puro, sem I/O).
 //
-// Os tipos são repetidos aqui de propósito, em vez de importados de
-// `@/services/users`: este módulo também é lido por componentes de tela, e
-// importar o service arrastaria banco e `node:crypto` para o navegador.
+// Os tipos vêm do core (puro), nunca de `@/services/users`: este módulo
+// também é lido por componentes de tela, e importar o service arrastaria
+// banco e `node:crypto` para o navegador.
 
+import type { AdminRole } from "@/core/auth/access";
+import type { UserStatus } from "@/core/auth/user-directory";
 import type { BadgeTone } from "@/components/ui/badge";
 
-export type UserRole = "owner" | "staff";
-export type UserStatus = "ativo" | "convite_pendente" | "desativado";
+export type UserRole = AdminRole;
+export type { UserStatus };
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   owner: "Proprietário",

@@ -19,6 +19,9 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  // Telemetria de "visto por último" (no máximo 1×/15 min, ver
+  // services/users.ts touchUserSeen). Nulo = nunca entrou depois da coluna.
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
 
 export const settings = pgTable("settings", {

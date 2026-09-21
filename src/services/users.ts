@@ -9,7 +9,7 @@
 // e o audit numa transação só → se a transação falhar, desfaz a conta.
 import { randomBytes } from "node:crypto";
 
-import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { EmailProvider } from "@/adapters/email";
@@ -19,6 +19,13 @@ import {
   type IdentityProvider,
   type IdentityUser,
 } from "@/adapters/identity";
+import {
+  filterUsers,
+  summarizeUsers,
+  USER_STATUSES,
+  type UserStatus,
+  type UsersSummary,
+} from "@/core/auth/user-directory";
 import { auditLog, users } from "@/db/schema";
 import {
   accessInviteEmail,
@@ -58,9 +65,8 @@ export type CreateUserMode = (typeof CREATE_USER_MODES)[number];
 export const RESET_MODES = ["link", "password"] as const;
 export type ResetMode = (typeof RESET_MODES)[number];
 
-/** Situação mostrada na lista: derivada de `is_active` + histórico do audit. */
-export const USER_STATUSES = ["ativo", "convite_pendente", "desativado"] as const;
-export type UserStatus = (typeof USER_STATUSES)[number];
+/** Situação mostrada na lista: derivada de `is_active` + histórico do audit (core/auth/user-directory). */
+export { USER_STATUSES, type UserStatus };
 
 export type UserSummary = {
   id: string;
@@ -69,6 +75,8 @@ export type UserSummary = {
   role: UserRole;
   isActive: boolean;
   createdAt: Date;
+  /** Última vez que a pessoa abriu o painel (granularidade de 15 min). */
+  lastSeenAt: Date | null;
 };
 
 export type UserListItem = UserSummary & { status: UserStatus };
@@ -187,6 +195,7 @@ function toUserSummary(row: UserRow): UserSummary {
     role: toRole(row.role),
     isActive: row.isActive,
     createdAt: row.createdAt,
+    lastSeenAt: row.lastSeenAt,
   };
 }
 
@@ -941,11 +950,15 @@ async function loadStatusAudits(
     );
 }
 
-export async function listUsers(db: ServiceDb): Promise<UserListItem[]> {
+/** Todo mundo, com a situação derivada: ativos primeiro, depois por nome. */
+async function loadUserDirectory(db: ServiceDb): Promise<UserListItem[]> {
   const rows = await db
     .select()
     .from(users)
-    .orderBy(sql`lower(coalesce(${users.fullName}, ${users.email}))`);
+    .orderBy(
+      desc(users.isActive),
+      sql`lower(coalesce(${users.fullName}, ${users.email}))`,
+    );
 
   const audits = await loadStatusAudits(
     db,
@@ -956,6 +969,86 @@ export async function listUsers(db: ServiceDb): Promise<UserListItem[]> {
     ...toUserSummary(row),
     status: deriveStatus(row, audits),
   }));
+}
+
+const listUsersSchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  role: z.enum(USER_ROLES).optional(),
+  status: z.enum(USER_STATUSES).optional(),
+});
+
+export type ListUsersInput = z.input<typeof listUsersSchema>;
+
+// A situação só existe depois de cruzar com o audit, então o filtro é em
+// memória — são poucas pessoas num painel.
+export async function listUsers(
+  db: ServiceDb,
+  input: ListUsersInput = {},
+): Promise<UserListItem[]> {
+  const filters = listUsersSchema.parse(input);
+  return filterUsers(await loadUserDirectory(db), filters);
+}
+
+const usersOverviewSchema = listUsersSchema.extend({
+  now: z.date().optional(),
+});
+
+export type UsersOverviewInput = z.input<typeof usersOverviewSchema>;
+
+export type UsersOverview = {
+  /** A lista, já filtrada. */
+  items: UserListItem[];
+  /** Os cards, sempre sobre todo mundo. */
+  summary: UsersSummary;
+  total: number;
+};
+
+/** A tela de usuários numa leitura só. */
+export async function getUsersOverview(
+  db: ServiceDb,
+  input: UsersOverviewInput = {},
+): Promise<UsersOverview> {
+  const { now = new Date(), ...filters } = usersOverviewSchema.parse(input);
+  const all = await loadUserDirectory(db);
+  return {
+    items: filterUsers(all, filters),
+    summary: summarizeUsers(all, { now }),
+    total: all.length,
+  };
+}
+
+export const USER_SEEN_THROTTLE_MS = 15 * 60_000;
+
+const touchUserSeenSchema = z.object({
+  userId: z.uuid(),
+  now: z.date().optional(),
+});
+
+export type TouchUserSeenInput = z.input<typeof touchUserSeenSchema>;
+
+/**
+ * Registra "visto agora" no máximo uma vez a cada 15 minutos. É telemetria,
+ * não ação do dono: sem audit. O predicado no SQL é a guarda contra dois
+ * requests simultâneos; devolve se gravou.
+ */
+export async function touchUserSeen(
+  db: ServiceDb,
+  input: TouchUserSeenInput,
+): Promise<boolean> {
+  const { userId, now = new Date() } = touchUserSeenSchema.parse(input);
+  const threshold = new Date(now.getTime() - USER_SEEN_THROTTLE_MS);
+  const rows = await db
+    .update(users)
+    .set({ lastSeenAt: now })
+    .where(
+      and(
+        eq(users.id, userId),
+        eq(users.isActive, true),
+        or(isNull(users.lastSeenAt), lt(users.lastSeenAt, threshold)),
+      ),
+    )
+    .returning({ id: users.id });
+  return rows.length > 0;
 }
 
 export type UserHistoryEntry = {

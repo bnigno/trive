@@ -4,6 +4,7 @@
 // limite) e leitura. Banco real (PGlite) + provedores fake.
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { FakeEmailProvider } from "@/adapters/email/fake";
 import { FakeIdentityProvider } from "@/adapters/identity/fake";
@@ -13,12 +14,15 @@ import {
   ServiceError,
   createUser,
   getUserDetail,
+  getUsersOverview,
   listUsers,
   recordPasswordChanged,
   requestPasswordReset,
   resetUserPassword,
   setUserActive,
+  touchUserSeen,
   updateUser,
+  USER_SEEN_THROTTLE_MS,
   type UsersDeps,
 } from "@/services/users";
 import {
@@ -854,12 +858,139 @@ describe("listUsers", () => {
     );
   });
 
-  it("ordena por nome, sem diferenciar maiúsculas", async () => {
+  it("ordena por nome, sem diferenciar maiúsculas, com os desativados por último", async () => {
     await createTestUser(db, { fullName: "ana" });
     await createTestUser(db, { fullName: "Bruno" });
+    await createTestUser(db, { fullName: "Aposentada", isActive: false });
 
     const names = (await listUsers(db)).map((item) => item.fullName);
-    expect(names).toEqual(["ana", "Bruno", "Testador"]);
+    expect(names).toEqual(["ana", "Bruno", "Testador", "Aposentada"]);
+  });
+
+  it("traz lastSeenAt (nulo para quem nunca entrou)", async () => {
+    const seenAt = new Date("2026-09-20T15:00:00Z");
+    const vista = await createTestUser(db, { fullName: "Vista", lastSeenAt: seenAt });
+    const nunca = await createTestUser(db, { fullName: "Nunca" });
+
+    const byId = new Map((await listUsers(db)).map((item) => [item.id, item]));
+    expect(byId.get(vista.id)?.lastSeenAt?.toISOString()).toBe(seenAt.toISOString());
+    expect(byId.get(nunca.id)?.lastSeenAt).toBeNull();
+  });
+
+  it("filtra por papel, situação e texto depois de derivar a situação", async () => {
+    const convidada = await createUser(db, deps, {
+      ...invite,
+      email: "convidada@loja.com",
+      fullName: "Convidada Silva",
+    });
+    await createTestUser(db, { fullName: "Bruno", role: "staff" });
+    await createTestUser(db, { fullName: "Desativada", isActive: false });
+
+    const pendentes = await listUsers(db, { status: "convite_pendente" });
+    expect(pendentes.map((item) => item.id)).toEqual([convidada.user.id]);
+
+    const donos = await listUsers(db, { role: "owner" });
+    expect(donos.map((item) => item.id)).toEqual([FIXED_USER_ID]);
+
+    const porTexto = await listUsers(db, { q: "SILVA" });
+    expect(porTexto.map((item) => item.fullName)).toEqual(["Convidada Silva"]);
+
+    const porEmail = await listUsers(db, { q: "convidada@" });
+    expect(porEmail).toHaveLength(1);
+
+    const combinado = await listUsers(db, { role: "staff", status: "desativado" });
+    expect(combinado.map((item) => item.fullName)).toEqual(["Desativada"]);
+  });
+
+  it("recusa filtro fora do vocabulário", async () => {
+    await expect(
+      listUsers(db, { status: "banido" as "ativo" }),
+    ).rejects.toBeInstanceOf(z.ZodError);
+  });
+});
+
+describe("getUsersOverview", () => {
+  it("resume todo mundo enquanto a lista respeita o filtro", async () => {
+    const now = new Date("2026-09-21T12:00:00Z");
+    await createUser(db, deps, { ...invite, email: "convidada@loja.com", fullName: "Convidada" });
+    await createTestUser(db, {
+      fullName: "Recente",
+      lastSeenAt: new Date(now.getTime() - 86_400_000),
+    });
+    await createTestUser(db, {
+      fullName: "Sumida",
+      lastSeenAt: new Date(now.getTime() - 30 * 86_400_000),
+    });
+    await createTestUser(db, { fullName: "Desativada", isActive: false });
+
+    const overview = await getUsersOverview(db, { status: "ativo", now });
+
+    expect(overview.total).toBe(5);
+    expect(overview.items.map((item) => item.fullName)).toEqual([
+      "Recente",
+      "Sumida",
+      "Testador",
+    ]);
+    expect(overview.summary).toEqual({
+      total: 5,
+      active: 3,
+      owners: 1,
+      staff: 2,
+      pendingInvites: 1,
+      deactivated: 1,
+      activeLast7Days: 1,
+    });
+  });
+});
+
+describe("touchUserSeen", () => {
+  const now = new Date("2026-09-21T12:00:00Z");
+
+  it("grava o primeiro acesso quando last_seen_at é nulo", async () => {
+    const user = await createTestUser(db);
+
+    expect(await touchUserSeen(db, { userId: user.id, now })).toBe(true);
+
+    const [row] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(row.lastSeenAt?.toISOString()).toBe(now.toISOString());
+  });
+
+  it("não regrava dentro de 15 minutos", async () => {
+    const user = await createTestUser(db);
+    await touchUserSeen(db, { userId: user.id, now });
+
+    const later = new Date(now.getTime() + 10 * 60_000);
+    expect(await touchUserSeen(db, { userId: user.id, now: later })).toBe(false);
+
+    const [row] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(row.lastSeenAt?.toISOString()).toBe(now.toISOString());
+  });
+
+  it("regrava depois de 15 minutos", async () => {
+    const user = await createTestUser(db);
+    await touchUserSeen(db, { userId: user.id, now });
+
+    const later = new Date(now.getTime() + USER_SEEN_THROTTLE_MS + 1000);
+    expect(await touchUserSeen(db, { userId: user.id, now: later })).toBe(true);
+
+    const [row] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(row.lastSeenAt?.toISOString()).toBe(later.toISOString());
+  });
+
+  it("não toca acesso desativado nem gera audit", async () => {
+    const user = await createTestUser(db, { isActive: false });
+
+    expect(await touchUserSeen(db, { userId: user.id, now })).toBe(false);
+
+    const [row] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+    expect(row.lastSeenAt).toBeNull();
+    expect(await auditsFor(user.id)).toHaveLength(0);
+  });
+
+  it("recusa id inválido", async () => {
+    await expect(touchUserSeen(db, { userId: "não-é-uuid" })).rejects.toBeInstanceOf(
+      z.ZodError,
+    );
   });
 });
 
