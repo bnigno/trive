@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  renderTurmaPost,
   CHEGADAS_MAX_ITEMS,
   formatPriceShort,
   formatStockLine,
@@ -134,7 +135,7 @@ describe("Quem vestiu (sábado) e boas-vindas", () => {
       looks: [{ firstName: "Ana", productName: "o Vestido Terracota", size: "M", occasion: "no casamento da irmã" }],
       liaLink: LINK,
       until: "21h",
-      photoCoupon: true,
+      photoCouponPercent: 10,
     });
     expect(text).toBe(
       [
@@ -142,7 +143,7 @@ describe("Quem vestiu (sábado) e boas-vindas", () => {
         "",
         `Tem ocasião chegando? Estou no privado até as 21h montando look com data marcada — me diz o dia e eu cuido do resto: ${LINK}`,
         "",
-        "Mandou foto vestindo a peça? Vira cupom na próxima compra.",
+        "Mandou foto vestindo a peça? Vira 10% na próxima compra — é só mandar no privado.",
       ].join("\n"),
     );
     const two = renderQuemVestiuPost({
@@ -176,6 +177,21 @@ describe("Quem vestiu (sábado) e boas-vindas", () => {
     const custom = renderWelcomeCard({ storeName: "TRIVÉ", sellerName: "Lia", windowStartHour: 10, windowEndHour: 20, postsPerWeek: 2 });
     expect(custom).toContain("Bem-vinda ao Provador TRIVÉ. ");
     expect(custom).toContain("duas mensagens por semana, entre 10h e 20h");
+  });
+
+  it("Monte sua turma: valor de hoje, quanto sobe, o teto, quem já usou e o link que aplica sozinho", () => {
+    const text = renderTurmaPost({ code: "PROVADOR", currentLabel: "5%", growthLabel: "1 ponto", capLabel: "15%", redeemers: 0, link: "https://trivemaison.com.br/c/PROVADOR" });
+    expect(text).toBe(
+      [
+        "Vocês são uma turma. O cupom PROVADOR vale para todas daqui: hoje está em 5% e sobe 1 ponto a cada uma de vocês que usar, até 15%.",
+        "",
+        "Ninguém usou ainda — a primeira já sobe para todas. Pega o seu: https://trivemaison.com.br/c/PROVADOR",
+        "",
+        "Dúvida? Me chama no privado.",
+      ].join("\n"),
+    );
+    expect(renderTurmaPost({ code: "X", currentLabel: "7%", growthLabel: "2 pontos", capLabel: null, redeemers: 1, link: "l" })).toContain("1 já usou. Pega o seu: l");
+    expect(renderTurmaPost({ code: "X", currentLabel: "9%", growthLabel: "2 pontos", capLabel: null, redeemers: 3, link: "l" })).toContain("sobe 2 pontos a cada uma de vocês que usar.\n\n3 já usaram.");
   });
 
   it("post vazio ou muro de texto é recusado antes de agendar", () => {

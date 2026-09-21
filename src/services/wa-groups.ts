@@ -33,13 +33,16 @@ import {
   renderPoll,
   renderPollResultPost,
   renderQuemVestiuPost,
+  renderTurmaPost,
   tallyPoll,
 } from "@/core/groups/rituals";
+import { collectiveValue } from "@/core/coupons/collective";
 import { groupSignalMemoryLines } from "@/core/groups/mention";
 import { decodePollVote, type GroupSignal, parseGroupInbound } from "@/core/groups/signals";
 import {
   auditLog,
   campaignLinks,
+  coupons,
   customerLooks,
   customers,
   priceVersions,
@@ -57,6 +60,9 @@ import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { type DbOrTx, enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { loadSendPolicy } from "@/services/wa-send-policy";
+import { couponValueLabel } from "@/services/coupon-notices";
+import { countDistinctRedeemers } from "@/services/coupons";
+import { loadLookCouponSettings } from "@/services/look-coupons";
 import { loadBridgeSettings } from "@/services/site-carts";
 import { isWaEnabled, siteBaseUrl } from "@/services/wa-messaging";
 
@@ -114,6 +120,15 @@ export async function loadGroupPolicy(db: DbOrTx): Promise<GroupPolicy> {
     killSwitchPct: Number.isFinite(pct) && pct >= 0 ? pct : DEFAULT_KILL_SWITCH_PCT,
     holdHours: Number.isFinite(hold) && hold > 0 ? hold : 24,
   };
+}
+
+export type WelcomeGiftSettings = { enabled: boolean; percent: number; days: number };
+
+/** Mimo de boas-vindas de quem entra pela Lia: ligado pela dona, com % e validade. */
+export async function loadWelcomeGiftSettings(db: DbOrTx): Promise<WelcomeGiftSettings> {
+  const map = await getSettingsMap(db, ["provador_welcome_gift_enabled", "provador_welcome_gift_percent", "provador_welcome_gift_days"]);
+  const num = (key: string, fallback: number) => (typeof map[key] === "number" && Number.isFinite(map[key]) ? (map[key] as number) : fallback);
+  return { enabled: map["provador_welcome_gift_enabled"] === true, percent: num("provador_welcome_gift_percent", 10), days: num("provador_welcome_gift_days", 30) };
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +604,11 @@ const composePostSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("quem_vestiu"),
     lookIds: z.array(z.uuid()).min(1, "Escolha pelo menos um look.").max(2, "No máximo 2 looks por post."),
-    photoCoupon: z.boolean().optional(),
+  }),
+  z.object({
+    /** "Monte sua turma": um cupom coletivo (sobe a cada amiga) apresentado ao grupo; persiste como post livre. */
+    kind: z.literal("turma"),
+    couponId: z.uuid(),
   }),
   z.object({
     kind: z.literal("cortina"),
@@ -604,6 +623,8 @@ const composePostSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type ComposeGroupPostInput = z.input<typeof composePostSchema>;
+
+export type ComposeKind = ComposeGroupPostInput["kind"];
 
 export type ComposedGroupPost = {
   kind: GroupPostKind;
@@ -713,6 +734,74 @@ async function loadLooks(db: DbOrTx, lookIds: readonly string[]) {
   });
 }
 
+/** Dias da proteção de preço quando ela está ligada; null desligada (a promessa não entra no post). */
+async function loadPriceProtectionDays(db: DbOrTx): Promise<number | null> {
+  const map = await getSettingsMap(db, ["price_protection_enabled", "price_protection_days"]);
+  if (map["price_protection_enabled"] !== true) return null;
+  const days = Number(map["price_protection_days"]);
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+
+export type CollectiveCouponOption = {
+  id: string;
+  code: string;
+  /** "5%" hoje. */
+  currentLabel: string;
+  capLabel: string | null;
+  redeemers: number;
+};
+
+/** Os cupons da turma que podem ir ao grupo: ativos, coletivos (sobem por amiga), dentro da validade. */
+export async function listCollectiveCoupons(db: DbOrTx, now: Date = new Date()): Promise<CollectiveCouponOption[]> {
+  const rows = await db
+    .select({ id: coupons.id, code: coupons.code, type: coupons.type, value: coupons.value, growthPerRedeemer: coupons.growthPerRedeemer, growthCap: coupons.growthCap })
+    .from(coupons)
+    .where(
+      and(
+        eq(coupons.isActive, true),
+        sql`${coupons.growthPerRedeemer} > 0`,
+        sql`(${coupons.expiresAt} IS NULL OR ${coupons.expiresAt} > ${now})`,
+        sql`(${coupons.startsAt} IS NULL OR ${coupons.startsAt} <= ${now})`,
+      ),
+    )
+    .orderBy(asc(coupons.code));
+  const options: CollectiveCouponOption[] = [];
+  for (const row of rows) {
+    const redeemers = await countDistinctRedeemers(db, row.id);
+    const current = collectiveValue({ type: row.type as "percent" | "fixed" | "free_shipping", value: row.value, growthPerRedeemer: row.growthPerRedeemer, growthCap: row.growthCap }, redeemers);
+    options.push({
+      id: row.id,
+      code: row.code,
+      currentLabel: couponValueLabel({ type: row.type, value: current }),
+      capLabel: row.growthCap === null ? null : couponValueLabel({ type: row.type, value: row.growthCap }),
+      redeemers,
+    });
+  }
+  return options;
+}
+
+async function loadCollectiveCoupon(db: DbOrTx, couponId: string) {
+  const [row] = await db
+    .select({ id: coupons.id, code: coupons.code, type: coupons.type, value: coupons.value, growthPerRedeemer: coupons.growthPerRedeemer, growthCap: coupons.growthCap, isActive: coupons.isActive, expiresAt: coupons.expiresAt })
+    .from(coupons)
+    .where(eq(coupons.id, couponId))
+    .limit(1);
+  if (!row) throw new ServiceError("cupom_inexistente", "Esse cupom não existe mais.");
+  if (!row.isActive || row.growthPerRedeemer <= 0) throw new ServiceError("cupom_nao_e_turma", "Esse cupom não é um cupom da turma ativo.");
+  if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) throw new ServiceError("cupom_vencido", "Esse cupom já venceu.");
+  const redeemers = await countDistinctRedeemers(db, row.id);
+  const type = row.type as "percent" | "fixed" | "free_shipping";
+  const current = collectiveValue({ type, value: row.value, growthPerRedeemer: row.growthPerRedeemer, growthCap: row.growthCap }, redeemers);
+  return {
+    code: row.code,
+    currentLabel: couponValueLabel({ type: row.type, value: current }),
+    growthLabel: type === "percent" ? `${row.growthPerRedeemer} ${row.growthPerRedeemer === 1 ? "ponto" : "pontos"}` : couponValueLabel({ type: "fixed", value: row.growthPerRedeemer }),
+    capLabel: row.growthCap === null ? null : couponValueLabel({ type: row.type, value: row.growthCap }),
+    redeemers,
+    link: `${siteBaseUrl()}/c/${row.code}`,
+  };
+}
+
 /**
  * Monta o post (o texto exato que vai sair) a partir dos dados — é a mesma
  * função da pré-visualização e do agendamento, para o painel mostrar o que
@@ -724,13 +813,15 @@ export async function composeGroupPost(
   opts: { day: string; holdHours?: number },
 ): Promise<ComposedGroupPost> {
   const input = composePostSchema.parse(rawInput);
-  const slug = provadorSlug(input.kind, opts.day);
+  // "turma" é um ritual do painel; no banco (e na cadência) é um post livre.
+  const kind: GroupPostKind = input.kind === "turma" ? "livre" : input.kind;
+  const slug = provadorSlug(kind, opts.day);
   const link = `${siteBaseUrl()}/ig/${slug}`;
   const base = {
-    kind: input.kind,
+    kind,
     slug,
     link,
-    linkLabel: provadorLinkLabel(input.kind, opts.day),
+    linkLabel: provadorLinkLabel(kind, opts.day),
     imageUrl: null,
     pollOptions: null,
     pollMaxOptions: null,
@@ -741,6 +832,7 @@ export async function composeGroupPost(
   switch (input.kind) {
     case "chegadas": {
       const items = await loadChegadasItems(db, input.productIds);
+      const protection = await loadPriceProtectionDays(db);
       return {
         ...base,
         productIds: [...input.productIds],
@@ -749,9 +841,8 @@ export async function composeGroupPost(
           liaLink: link,
           ...(input.vitrineWhen ? { vitrineWhen: input.vitrineWhen } : {}),
           holdHours: opts.holdHours ?? 24,
-          // A proteção de preço entra aqui quando a Onda 6 (cupons) ligar a regra;
-          // até lá o Provador não promete o que a loja ainda não cumpre.
-          priceProtectionDays: null,
+          // A promessa só entra quando a proteção de preço está ligada de verdade.
+          priceProtectionDays: protection,
         }),
       };
     }
@@ -768,11 +859,22 @@ export async function composeGroupPost(
     case "quem_vestiu": {
       const looks = await loadLooks(db, input.lookIds);
       const policy = await loadSendPolicy(db);
+      const lookCoupon = await loadLookCouponSettings(db);
       return {
         ...base,
         lookIds: [...input.lookIds],
-        body: renderQuemVestiuPost({ looks, liaLink: link, until: `${policy.window.endHour}h`, photoCoupon: input.photoCoupon === true }),
+        body: renderQuemVestiuPost({
+          looks,
+          liaLink: link,
+          until: `${policy.window.endHour}h`,
+          // "Vira cupom" só quando o mimo pela foto está ligado — e com o valor de verdade.
+          photoCouponPercent: lookCoupon.enabled ? lookCoupon.percent : null,
+        }),
       };
+    }
+    case "turma": {
+      const turma = await loadCollectiveCoupon(db, input.couponId);
+      return { ...base, body: renderTurmaPost(turma) };
     }
     case "cortina":
       return { ...base, body: input.body, dropId: input.dropId, imageUrl: input.imageUrl ?? null };

@@ -95,6 +95,9 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "bot_group_mentions_enabled", value: false },
   { key: "group_posts_per_week", value: 3 },
   { key: "group_kill_switch_pct", value: 2 },
+  { key: "provador_welcome_gift_enabled", value: false },
+  { key: "provador_welcome_gift_percent", value: 10 },
+  { key: "provador_welcome_gift_days", value: 30 },
   // A voz da curadora: a Lia manda a nota em áudio da peça pelo WhatsApp.
   { key: "bot_audio_notes_enabled", value: true },
   // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.

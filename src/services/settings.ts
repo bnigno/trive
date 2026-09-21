@@ -643,6 +643,10 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .int()
     .min(0, "A pausa automática vai de 0 (desligada) a 50%.")
     .max(50, "A pausa automática vai de 0 (desligada) a 50%."),
+  /** Mimo de boas-vindas: cupom pessoal de primeira compra para quem entra no Provador pela Lia. */
+  provador_welcome_gift_enabled: z.boolean(),
+  provador_welcome_gift_percent: z.number().int().min(1, "Entre 1% e 50%.").max(50, "Entre 1% e 50%."),
+  provador_welcome_gift_days: z.number().int().min(1, "Entre 1 e 90 dias.").max(90, "Entre 1 e 90 dias."),
   /** Nome da edição em cartaz (ex.: "Edição Círio"): entra no post e na legenda. */
   edition_name: z
     .string()

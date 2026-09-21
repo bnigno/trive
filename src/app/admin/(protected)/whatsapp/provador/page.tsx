@@ -16,12 +16,12 @@ import { spDayLabel, spDayKey } from "@/lib/sp-day";
 import { requireOwner } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
 import { isWaEnabled } from "@/services/wa-messaging";
-import { type GroupView, listGroups, listProviderGroups, loadGroupPolicy, provadorEntryUrl } from "@/services/wa-groups";
+import { type GroupView, listGroups, listProviderGroups, loadGroupPolicy, loadWelcomeGiftSettings, provadorEntryUrl, type WelcomeGiftSettings } from "@/services/wa-groups";
 import { siteBaseUrl } from "@/services/wa-messaging";
 
 import { ToggleSwitch } from "../forms";
 import { houseRulesAction, pauseGroupAction, resumeGroupAction, setGroupActiveAction, syncGroupAction } from "./actions";
-import { CopyBlock, type ProviderGroupOption, RegisterGroupForm } from "./forms";
+import { CopyBlock, type ProviderGroupOption, RegisterGroupForm, WelcomeGiftForm } from "./forms";
 
 export const dynamic = "force-dynamic";
 
@@ -40,17 +40,19 @@ type PageData = {
   windowLabel: string;
   /** trivemaison.com.br/provador → wa.me da Lia; null sem o número da loja. */
   entryUrl: string | null;
+  welcomeGift: WelcomeGiftSettings;
 };
 
 async function loadData(): Promise<PageData | null> {
   try {
     const db = getDb();
-    const [groups, policy, waEnabled, settings, entryUrl] = await Promise.all([
+    const [groups, policy, waEnabled, settings, entryUrl, welcomeGift] = await Promise.all([
       listGroups(db),
       loadGroupPolicy(db),
       isWaEnabled(db),
       getSettingsMap(db, ["bot_seller_name"]),
       provadorEntryUrl(db),
+      loadWelcomeGiftSettings(db),
     ]);
     let providerGroups: ProviderGroupOption[] | null = null;
     if (waEnabled) {
@@ -71,6 +73,7 @@ async function loadData(): Promise<PageData | null> {
       postsPerWeek: policy.cadence.postsPerWeek,
       windowLabel: `${policy.cadence.window.startHour}h às ${policy.cadence.window.endHour}h`,
       entryUrl,
+      welcomeGift,
     };
   } catch {
     return null;
@@ -160,6 +163,15 @@ export default async function ProvadorPage() {
             value={`${siteBaseUrl()}/provador`}
             hint={data.entryUrl ? `Abre o WhatsApp da loja com "quero entrar no Provador" já escrito.` : "Sem o número do WhatsApp da loja em Configurações, o link leva à home."}
           />
+          <div className="flex flex-col gap-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+            <ToggleSwitch
+              settingKey="provador_welcome_gift_enabled"
+              checked={data.welcomeGift.enabled}
+              label="Mimo de boas-vindas para quem entra pela Lia"
+              hint="Um cupom pessoal de primeira compra vai junto do cartão de boas-vindas (uma vez por cliente, para sempre). É o “mimo” prometido na mensagem da mudança de casa — ligue antes de mandá-la."
+            />
+            <WelcomeGiftForm defaults={{ percent: data.welcomeGift.percent, days: data.welcomeGift.days }} />
+          </div>
           <CopyBlock
             label="Mensagem para o grupo antigo (cole no grupo pelo seu celular)"
             value={[
@@ -167,9 +179,15 @@ export default async function ProvadorPage() {
               ``,
               `Para entrar, fala com a ${sellerName}: ${siteBaseUrl()}/provador — ela pergunta seu tamanho e suas cores (para só te avisar do que serve) e te manda o convite.`,
               ``,
-              `Este grupo fecha dia ___/___. Quem passar até lá ganha um mimo da ${sellerName} na primeira compra.`,
+              data.welcomeGift.enabled
+                ? `Este grupo fecha dia ___/___. Quem passar até lá ganha um mimo da ${sellerName} na primeira compra.`
+                : `Este grupo fecha dia ___/___.`,
             ].join("\n")}
-            hint="Preencha a data (14 dias é um bom prazo). Mande de novo no 7º e no 12º dia; feche o grupo antigo na data. O mimo da primeira compra depende dos cupons da Lia (Onda 6)."
+            hint={
+              data.welcomeGift.enabled
+                ? "Preencha a data (14 dias é um bom prazo). Mande de novo no 7º e no 12º dia; feche o grupo antigo na data."
+                : "Preencha a data (14 dias é um bom prazo). Sem o mimo ligado, a mensagem não promete cupom — ligue acima se quiser prometer."
+            }
           />
         </div>
       </Card>
