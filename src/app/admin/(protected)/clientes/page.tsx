@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/form";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { formatPhoneBR } from "./format";
+import { buttonClassName } from "@/components/ui/button-styles";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,7 @@ export const metadata: Metadata = {
   title: "Clientes",
 };
 
-const newCustomerButtonClasses =
-  "inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500";
+const newCustomerButtonClasses = buttonClassName({ variant: "primary" });
 
 export default async function CustomersPage({
   searchParams,
