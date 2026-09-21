@@ -57,3 +57,25 @@ export const DEFAULT_BRL_PER_USD_CENTS = 550;
 export function usdCentsToBrlCents(usdCents: number, brlPerUsdCents = DEFAULT_BRL_PER_USD_CENTS): number {
   return Math.ceil((usdCents * brlPerUsdCents) / 100);
 }
+
+export type StudioCostLine = { label: string; usdCents: number; brlCents: number };
+
+/**
+ * A conta que a dona pediu, para a tela e para o script de prévia: por foto,
+ * por peça (3 cores × 3 opções) e por mês (40 peças novas), nas duas
+ * qualidades — já com a retentativa média do portão e o julgamento.
+ */
+export function studioCostTable(input: { quality: StudioQuality; brlPerUsdCents?: number }): StudioCostLine[] {
+  const rate = input.brlPerUsdCents ?? DEFAULT_BRL_PER_USD_CENTS;
+  const perPhoto = creditsToUsdCents(creditsFor("tryon", input.quality, 1)) + JUDGE_USD_CENTS_PER_IMAGE;
+  const perColor = estimateRequestUsdCents({ options: 3, quality: input.quality }).totalUsdCents;
+  const perPiece = perColor * 3;
+  const perMonth = perPiece * 40;
+  const line = (label: string, usdCents: number): StudioCostLine => ({ label, usdCents, brlCents: usdCentsToBrlCents(usdCents, rate) });
+  return [
+    line("1 foto (geração + julgamento)", perPhoto),
+    line("1 cor, 3 opções (com a retentativa do portão)", perColor),
+    line("1 peça, 3 cores × 3 opções", perPiece),
+    line("1 mês, 40 peças novas", perMonth),
+  ];
+}
