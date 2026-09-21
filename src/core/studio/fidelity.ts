@@ -31,7 +31,9 @@ export const FIDELITY_JSON_SCHEMA: Record<string, unknown> = {
     estampa_ok: { type: "boolean" },
     corte_ok: { type: "boolean" },
     artefatos: { type: "array", items: { type: "string" } },
-    nota: { type: "integer", minimum: 0, maximum: 10 },
+    // A API de saída estruturada não aceita minimum/maximum em inteiro: o
+    // intervalo 0–10 fica no prompt e no Zod (fidelityJudgmentSchema).
+    nota: { type: "integer", description: "De 0 a 10." },
   },
   required: ["mesma_peca", "cor_ok", "estampa_ok", "corte_ok", "artefatos", "nota"],
   additionalProperties: false,
