@@ -4,6 +4,8 @@
 // o "vai me servir?" da cartela.
 import { z } from "zod";
 
+import { compareSizeLabels, findSizeAxis } from "./sizes";
+
 export const MEASUREMENT_KEYS = [
   "bust",
   "waist",
@@ -62,25 +64,9 @@ export function parseMeasurements(raw: unknown): Measurements | null {
   return isMeasurementsEmpty(compact) ? null : compact;
 }
 
-const SIZE_ORDER = ["PP", "P", "M", "G", "GG", "XG", "XGG"];
-
-/** PP < P < M < G < GG < XG < XGG, depois numérico crescente, depois alfabético. */
-export function compareSizeLabels(a: string, b: string): number {
-  const ia = SIZE_ORDER.indexOf(a.toUpperCase());
-  const ib = SIZE_ORDER.indexOf(b.toUpperCase());
-  if (ia !== -1 && ib !== -1) return ia - ib;
-  if (ia !== -1) return -1;
-  if (ib !== -1) return 1;
-  const na = Number(a);
-  const nb = Number(b);
-  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-  return a.localeCompare(b, "pt-BR");
-}
-
-/** O eixo de tamanho do produto, sem diferenciar caixa ("Tamanho" também vale). */
-export function findSizeAxis(axes: readonly string[]): string | null {
-  return axes.find((axis) => axis.trim().toLowerCase() === "tamanho") ?? null;
-}
+// A ordem de tamanhos e o eixo moram em ./sizes (sem zod); re-exportados
+// aqui para quem já usa a fita métrica.
+export { compareSizeLabels, findSizeAxis };
 
 export type SizeChartRow = { size: string; measurements: Measurements };
 

@@ -4,11 +4,16 @@
 // Recebe as variantes já serializadas por props do Server Component da página.
 // A escolha atual e a variante casada vivem no componente de cima
 // (product-detail-client): galeria, barra fixa e seletor precisam concordar.
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { AddToCartButton } from "@/components/store/cart/add-to-cart";
 import { cx } from "@/components/ui/cx";
 import { findColorAxis } from "@/core/catalog/product-images";
+import { compareSizeLabels, findSizeAxis } from "@/core/catalog/sizes";
+import {
+  findMatchedVariant,
+  selectAxisValue,
+} from "@/core/catalog/variant-selection";
 import { formatCentsBRL } from "@/lib/money";
 import type { PublicVariant } from "@/services/store-catalog";
 
@@ -48,11 +53,21 @@ export function VariantPicker({
   variants: PublicVariant[];
   selected: Record<string, string>;
   matched: PublicVariant | undefined;
-  onSelect: (axis: string, value: string) => void;
+  onSelect: (next: Record<string, string>) => void;
 }) {
   const colorAxis = findColorAxis(axes);
+  const sizeAxis = findSizeAxis(axes);
+  // Eixo que mudou sozinho no último toque (grade esparsa): a cliente tocou
+  // em "Céu", que não veio no 40, e o tamanho foi para o 38. Ela precisa saber.
+  const [adjustment, setAdjustment] = useState<{
+    value: string;
+    axis: string;
+    from: string | undefined;
+    to: string;
+  } | null>(null);
 
-  // Valores únicos por eixo, na ordem em que aparecem nas variantes.
+  // Valores únicos por eixo, na ordem em que aparecem nas variantes; tamanhos
+  // na ordem da fita métrica (PP…GG, depois numéricos), não na do cadastro.
   const valuesByAxis = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const axis of axes) {
@@ -61,40 +76,42 @@ export function VariantPicker({
         const value = variant.attributes[axis];
         if (value && !values.includes(value)) values.push(value);
       }
-      map.set(axis, values);
+      map.set(axis, axis === sizeAxis ? values.sort(compareSizeLabels) : values);
     }
     return map;
-  }, [axes, variants]);
+  }, [axes, sizeAxis, variants]);
 
-  // Um valor é escolhível se existe variante COM ESTOQUE que o combine com os
-  // demais eixos já selecionados.
-  function isValueEnabled(axis: string, value: string): boolean {
-    return variants.some(
-      (variant) =>
-        variant.attributes[axis] === value &&
-        variant.availableQty > 0 &&
-        axes.every(
-          (other) =>
-            other === axis ||
-            !selected[other] ||
-            variant.attributes[other] === selected[other],
-        ),
+  // Todo chip leva a uma peça de verdade (a regra pura escolhe qual). Riscado
+  // significa só "onde este toque te leva está esgotado" — e continua
+  // clicável: é assim que a cliente chega ao "me avisa quando voltar".
+  function leadsToStock(axis: string, value: string): boolean {
+    const target = findMatchedVariant(
+      axes,
+      variants,
+      selectAxisValue(axes, variants, selected, axis, value),
     );
+    return target != null && target.availableQty > 0;
   }
 
-  // Combinação que EXISTE (mesmo esgotada) continua clicável: é assim que a
-  // cliente chega ao "me avisa quando voltar". Só o que não existe trava.
-  function isValueOffered(axis: string, value: string): boolean {
-    return variants.some(
-      (variant) =>
-        variant.attributes[axis] === value &&
-        axes.every(
-          (other) =>
-            other === axis ||
-            !selected[other] ||
-            variant.attributes[other] === selected[other],
-        ),
+  function pick(axis: string, value: string) {
+    const next = selectAxisValue(axes, variants, selected, axis, value);
+    const changed = axes.find((other) => other !== axis && next[other] !== selected[other]);
+    setAdjustment(
+      changed
+        ? { value, axis: changed, from: selected[changed], to: next[changed] ?? "" }
+        : null,
     );
+    onSelect(next);
+  }
+
+  // Sempre verdadeiro: a combinação tocada não existe (por isso ajustou).
+  // "Só veio em X" mentiria quando o valor existe em mais de uma peça.
+  function adjustmentNotice(a: NonNullable<typeof adjustment>): string {
+    const label = a.axis === colorAxis ? "a cor" : a.axis === sizeAxis ? "o tamanho" : a.axis;
+    if (!a.from) return `Ajustamos ${label} para ${a.to}.`;
+    if (a.axis === sizeAxis) return `${a.value} não veio em ${a.from} — ajustamos o tamanho para ${a.to}.`;
+    if (a.axis === colorAxis) return `${a.from} não veio em ${a.value} — ajustamos a cor para ${a.to}.`;
+    return `${a.value} não combina com ${a.from} — ajustamos ${label} para ${a.to}.`;
   }
 
   const soldOut = matched ? matched.availableQty <= 0 : false;
@@ -143,16 +160,14 @@ export function VariantPicker({
             <div className="flex flex-wrap gap-2">
               {(valuesByAxis.get(axis) ?? []).map((value) => {
                 const isSelected = selected[axis] === value;
-                const enabled = isValueEnabled(axis, value);
-                const offered = isValueOffered(axis, value);
+                const inStock = leadsToStock(axis, value);
                 return (
                   <button
                     key={value}
                     type="button"
-                    disabled={!offered && !isSelected}
-                    title={offered && !enabled ? "Esgotado — toque para pedir aviso" : undefined}
+                    title={inStock ? undefined : "Esgotado — toque para pedir aviso"}
                     aria-pressed={isSelected}
-                    onClick={() => onSelect(axis, value)}
+                    onClick={() => pick(axis, value)}
                     className={cx(
                       "inline-flex min-h-11 items-center gap-1.5 border px-4 py-2 font-store text-sm transition-colors duration-300 ease-silk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600",
                       isColor ? "rounded-full" : "rounded-(--radius-hair)",
@@ -161,11 +176,9 @@ export function VariantPicker({
                         ? isColor
                           ? "border-2 border-espresso-900 bg-rose-300 text-espresso-900"
                           : "border-ink-950 bg-ink-950 text-ivory-50"
-                        : enabled
+                        : inStock
                           ? "border-ivory-400 bg-ivory-50 text-ink-700 hover:border-ink-900"
-                          : offered
-                            ? "border-ivory-300 bg-transparent text-ink-400 line-through hover:border-ink-500"
-                            : "cursor-not-allowed border-ivory-300 bg-transparent text-ink-300 line-through",
+                          : "border-ivory-300 bg-transparent text-ink-400 line-through hover:border-ink-500",
                     )}
                   >
                     {isSelected && isColor ? <Check /> : null}
@@ -177,6 +190,12 @@ export function VariantPicker({
           </fieldset>
         );
       })}
+
+      {adjustment ? (
+        <p role="status" aria-live="polite" className="font-store text-[13px] text-ink-500">
+          {adjustmentNotice(adjustment)}
+        </p>
+      ) : null}
 
       {matched && soldOut ? (
         <div>
