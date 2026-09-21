@@ -299,6 +299,16 @@ describe("cupom que muda com o tempo", () => {
     // Degraus são regra: não mudam depois do uso.
     await expect(updateCoupon(sdb, { couponId: created.id, valueSchedule: null, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "COUPON_IN_USE" });
   });
+
+  it("degraus postos depois num cupom antigo sem vigência contam a partir de hoje", async () => {
+    const old = await makeCoupon({ code: "ANTIGO", value: 5 });
+    await db.update(schema.coupons).set({ createdAt: new Date(Date.now() - 60 * 86_400_000) }).where(eq(schema.coupons.id, old.id));
+    const before = Date.now();
+    const updated = await updateCoupon(sdb, { couponId: old.id, valueSchedule: [{ afterDays: 7, value: 15 }], userId: FIXED_USER_ID });
+    expect(updated.startsAt?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    const item = await sellable(10_000);
+    expect((await quoteCoupon(sdb, { code: "ANTIGO", items: [item] })).appliedValue).toBe(5);
+  });
 });
 
 describe("redeemCouponInTx", () => {

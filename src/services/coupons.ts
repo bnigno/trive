@@ -1001,6 +1001,11 @@ export async function updateCoupon(db: DbOrTx, input: UpdateCouponInput): Promis
       set.validFromMinute = rule.validFromMinute ?? null;
       set.validToMinute = rule.validToMinute ?? null;
       set.valueSchedule = rule.valueSchedule && rule.valueSchedule.length > 0 ? rule.valueSchedule : null;
+      // Degraus postos AGORA num cupom antigo sem vigência: a contagem começa
+      // hoje (senão os dias desde a criação já pulariam para o último degrau).
+      if (set.valueSchedule && before.valueSchedule === null && set.startsAt === null) {
+        set.startsAt = new Date();
+      }
       // Vínculo pessoal: só muda quando o telefone muda de verdade. Telefone
       // igual ao de antes não re-resolve (não perde o cadastro); vazio só
       // solta o vínculo quando ele era por telefone — um cupom preso ao
