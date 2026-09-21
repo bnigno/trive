@@ -95,7 +95,7 @@ describe("issueLateDeliveryCoupon", () => {
       maxUses: 1,
       perCustomerLimit: 1,
       dedupeKey: `late_delivery:${orderId}`,
-      expiresAt: sp("2026-10-19T21:45:00"),
+      expiresAt: sp("2026-10-19T23:59:59"),
     });
     expect(coupon.note).toBe("Entrega 45 min depois da janela (sábado, 19 de setembro, 19h–21h)");
 
@@ -151,6 +151,7 @@ describe("sendCouponIssuedWa (coupon.issued)", () => {
     expect(body).toContain("Maria, desculpa pelo atraso");
     expect(body).toContain(`pedido #${orderNumber} passou 45 min da janela`);
     expect(body).toContain(`o cupom ${issued.code} vale 10% na sua próxima compra, até 19/10`);
+    expect(body).toContain(`/c/${issued.code}`);
     expect(body).toContain("responda SAIR");
 
     // Segundo envio (retry): o dedupe de wa_messages segura.

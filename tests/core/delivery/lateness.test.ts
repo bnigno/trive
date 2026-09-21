@@ -40,7 +40,9 @@ describe("rótulos e validade", () => {
     expect(lateDeliveryNote({ minutesLate: 42, window: WINDOW })).toBe("Entrega 42 min depois da janela (sábado, 19 de setembro, 19h–21h)");
   });
 
-  it("cupom vale N dias a partir da entrega", () => {
-    expect(lateDeliveryCouponExpiry(sp("2026-09-19T21:42:00"), 30)).toEqual(sp("2026-10-19T21:42:00"));
+  it("cupom vale N dias a partir da entrega, até o fim do último dia (a mensagem diz 'até dd/mm')", () => {
+    expect(lateDeliveryCouponExpiry(sp("2026-09-19T21:42:00"), 30)).toEqual(sp("2026-10-19T23:59:59"));
+    // Entrega 23h50 de SP (02h50Z do dia seguinte): o dia é o de SP.
+    expect(lateDeliveryCouponExpiry(sp("2026-09-19T23:50:00"), 1)).toEqual(sp("2026-09-20T23:59:59"));
   });
 });

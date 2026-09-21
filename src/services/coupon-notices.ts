@@ -114,7 +114,8 @@ export async function sendCouponIssuedWa(
       valor: couponValueLabel(row),
       validade: row.expiresAt ? dateFormatter.format(row.expiresAt) : "",
       pedido: row.orderNumber !== null ? String(row.orderNumber) : "",
-      link: siteBaseUrl(),
+      // O link já aplica o cupom na sacola (PR do painel: /c/CÓDIGO).
+      link: `${siteBaseUrl()}/c/${row.code}`,
       loja: storeName,
       ...(vars ?? {}),
     },

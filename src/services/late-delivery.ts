@@ -8,7 +8,7 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { assessLateness, lateDeliveryCouponExpiry, lateDeliveryNote, type Lateness } from "@/core/delivery/lateness";
+import { assessLateness, lateDeliveryCouponExpiry, lateDeliveryNote, minutesLateLabel, type Lateness } from "@/core/delivery/lateness";
 import { auditLog, coupons, customers, deliveryStops, orders } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { enqueueCouponIssued } from "@/services/coupon-notices";
@@ -102,7 +102,7 @@ export async function issueLateDeliveryCoupon(db: DbOrTx, input: { stopId: strin
       now: input.now,
     });
     if (issued.created) {
-      await enqueueCouponIssued(tx, { couponId: issued.couponId, vars: { atraso: `${lateness.minutesLate} min` } });
+      await enqueueCouponIssued(tx, { couponId: issued.couponId, vars: { atraso: minutesLateLabel(lateness.minutesLate) } });
       await tx.insert(auditLog).values({
         actorType: "system",
         actorId: null,

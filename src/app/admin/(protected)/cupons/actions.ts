@@ -230,7 +230,8 @@ export async function deleteCouponAction(
 
 /** Inteiro dentro de [min, max]; o form manda sempre o valor. */
 function parseIntField(raw: string, label: string, min: number, max: number): number {
-  const value = Number(raw.trim());
+  const trimmed = raw.trim();
+  const value = trimmed === "" ? Number.NaN : Number(trimmed);
   if (!Number.isInteger(value) || value < min || value > max) {
     throw new ServiceError("numero_invalido", `${label}: informe um número inteiro entre ${min} e ${max}.`);
   }

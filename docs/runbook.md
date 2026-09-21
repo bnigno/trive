@@ -1017,6 +1017,33 @@ Aprovação em lote: em **/admin/precos/pendencias**, as propostas de um mesmo
 recálculo aparecem agrupadas; use **Aprovar lote** / **Rejeitar lote** (com
 motivo).
 
+## Cupons: regras, quem usou e os cupons automáticos
+
+Um cupom pode ser **percentual**, **valor fixo** ou **frete grátis** (qualquer
+entrega, só motoboy ou só Correios). Regras opcionais em `/admin/cupons`:
+limite por cliente (CPF/telefone), só para a primeira compra (pedido pago ou
+aguardando Pix já conta), cupom pessoal (telefone), só para algumas peças ou
+categorias (o desconto incide só nelas), dias da semana e horário de Belém
+("a chuva das duas" = 14:00 a 15:00). A sacola sem CPF mostra "Confirmamos no
+fechamento…"; o checkout confirma com CPF + telefone. **Quem usou (N)** lista
+cada resgate (pedido, cliente, desconto, frete perdoado, "devolvido" quando o
+pedido cancelou sem pagar — o uso volta para a cliente). Tipo, valor e regras
+só mudam enquanto ninguém usou; depois, crie outro cupom e desative este. O
+link `trivemaison.com.br/c/CÓDIGO` (story) aplica o cupom sozinho na sacola.
+
+**Cupons automáticos** (card em `/admin/cupons`, tudo nasce desligado): a
+casa emite um cupom pessoal, uso único, com a nota do motivo, e avisa pelo
+WhatsApp (só com opt-in, dentro da janela 9–21). Cada um aparece na lista com
+a origem ("Desculpas pelo atraso") e pode ser desativado.
+
+- **Desculpas pelo atraso do motoboy** — quando o motoboy toca "Entregue"
+  depois do fim da janela combinada mais a carência (padrão 30 min), a
+  cliente ganha `DESCULPA-XXXXX` (padrão 10%, 30 dias) e a mensagem
+  `late_delivery_coupon`. A ficha do pedido mostra "atrasou 45 min da janela
+  · cupom …". Sem cupom mesmo com atraso: recurso desligado na hora, evento
+  ainda na fila (`/admin/fila`, `delivery.stop_delivered`) ou cupom apagado.
+  Produção: `scripts/sync-seed.ts --settings late_delivery_coupon_enabled,late_delivery_grace_minutes,late_delivery_coupon_percent,late_delivery_coupon_days --templates late_delivery_coupon`.
+
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")
 
 Na Vercel, cada requisição aceita no máximo **4,5 MB** — o `bodySizeLimit` do

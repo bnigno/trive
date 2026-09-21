@@ -341,7 +341,7 @@ export default async function PedidoDetalhePage({
                         {late.coupon
                           ? ` · cupom ${late.coupon.code} (${late.coupon.value}%${late.coupon.expiresAt ? `, até ${formatDateTimeSP(late.coupon.expiresAt).slice(0, 5)}` : ""}${late.coupon.isActive ? "" : ", desativado"})`
                           : late.lateness.late
-                            ? " · sem cupom de desculpas (recurso desligado)"
+                            ? " · sem cupom de desculpas"
                             : " · dentro da carência"}
                       </span>
                     ) : null}
