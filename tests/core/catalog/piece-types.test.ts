@@ -63,8 +63,12 @@ describe("tipos de peça", () => {
     expect(parsePieceType("longos")).toBe("vestido");
     expect(pieceTypeTerms("vestido")).not.toContain("longo");
     expect(suggestPieceType("Longo Dunas")).toBe("vestido");
+    expect(suggestPieceType("MIDI FLORAL")).toBe("vestido");
     expect(suggestPieceType("KIMONO LONGO SOL")).toBe("kimono");
     expect(suggestPieceType("LONGO KIMONO SOL")).toBe("kimono");
+    // A dica só decide abrindo o nome (o jeito da casa): "Sobretudo Longo" não é vestido.
+    expect(suggestPieceType("Sobretudo Longo")).toBeNull();
+    expect(suggestPieceType("Xale Midi Lua")).toBeNull();
   });
 
   it("nameHasPieceTerm: substantivo do tipo como palavra inteira no nome — nunca a dica, nunca pedaço de palavra", () => {
@@ -76,6 +80,12 @@ describe("tipos de peça", () => {
     expect(nameHasPieceTerm("BABY LOOKS DUO", "blusa")).toBe(true);
     expect(nameHasPieceTerm("Colete Lua", "casaco")).toBe(true);
     expect(nameHasPieceTerm("", "vestido")).toBe(false);
+    // Hífen é fronteira de palavra, como no banco: "vestido-camisa" tem vestido; "t-shirt" continua inteira.
+    expect(nameHasPieceTerm("VESTIDO-CAMISA ALBA", "vestido")).toBe(true);
+    expect(nameHasPieceTerm("VESTIDO-CAMISA ALBA", "camisa")).toBe(true);
+    expect(nameHasPieceTerm("T-SHIRT LUA", "blusa")).toBe(true);
+    expect(suggestPieceType("VESTIDO-CAMISA ALBA")).toBe("vestido");
+    expect(suggestPieceType("SAIA-CALÇA LUNA")).toBe("saia");
   });
 
   it("tipo vizinho: bermuda ↔ short; os outros não têm", () => {

@@ -197,26 +197,32 @@ export async function execListarProdutos(
     limit: 200,
   } as const;
   const hints = pieceType ? pieceTypeHints(pieceType) : [];
-  let items: PublicProductListItem[] = await listPublicProducts(db, {
-    ...base,
-    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType).concat(hints), untypedByName: true } : {}),
-  });
-  if (pieceType && hints.length > 0) {
-    items = items.filter((item) => item.pieceType !== null || nameHasPieceTerm(item.name, pieceType) || suggestPieceType(item.name) === pieceType);
-  }
+  const doTipo = (list: PublicProductListItem[]) =>
+    pieceType && hints.length > 0
+      ? list.filter((item) => item.pieceType !== null || nameHasPieceTerm(item.name, pieceType) || suggestPieceType(item.name) === pieceType)
+      : list;
+  const filtroDoTipo = pieceType ? ({ pieceType, nameAny: pieceTypeTerms(pieceType).concat(hints), untypedByName: true } as const) : {};
+  let items: PublicProductListItem[] = doTipo(await listPublicProducts(db, { ...base, ...filtroDoTipo }));
 
-  // Nenhuma do tipo na loja inteira (sem busca nem edição no meio — com elas, o
-  // vazio é da busca, não do tipo): antes de negar, o nome de TODAS as peças
-  // (uma "SHORT BERMUDA" que a dona marcou como short) e o tipo vizinho
-  // (bermuda ↔ short). Cada linha leva o tipo real da peça.
+  // Nenhuma do tipo na LOJA INTEIRA (com busca ou edição no meio, o vazio pode
+  // ser delas — uma sondagem sem as duas decide): antes de negar, o nome de
+  // TODAS as peças (uma "SHORT BERMUDA" que a dona marcou como short) e o tipo
+  // vizinho (bermuda ↔ short), com a busca e a edição pedidas. Cada linha leva
+  // o tipo real da peça.
   const vizinho = pieceType ? pieceTypeNear(pieceType) : null;
-  const procurouEmTodas = pieceType !== undefined && items.length === 0 && !busca && !editionSlug;
+  const tipoSemPecaNaLoja =
+    pieceType !== undefined &&
+    items.length === 0 &&
+    (!busca && !editionSlug ? true : doTipo(await listPublicProducts(db, { ...filtroDoTipo, viewer: base.viewer, limit: 20 })).length === 0);
+  const procurouEmTodas = tipoSemPecaNaLoja;
   const peloNomeIds = new Set<string>();
+  let parecidasAntesDosFiltros = 0;
   if (pieceType && procurouEmTodas) {
     const peloNome = await listPublicProducts(db, { ...base, nameAny: pieceTypeTerms(pieceType) });
     for (const item of peloNome) peloNomeIds.add(item.id);
     const doVizinho = vizinho ? await listPublicProducts(db, { ...base, pieceType: vizinho, nameAny: pieceTypeTerms(vizinho), untypedByName: true }) : [];
     items = peloNome.concat(doVizinho.filter((item) => !peloNomeIds.has(item.id)));
+    parecidasAntesDosFiltros = items.length;
   }
 
   const byAttribute = await listProductIdsWithVariant(db, {
@@ -257,13 +263,22 @@ export async function execListarProdutos(
     if (tipoIndex >= 0) filtros.splice(tipoIndex, 1, rotulo);
     else filtros.push(rotulo);
   }
-  // O que a CLIENTE lê no cartão: só o nome do filtro (o plural do tipo), nunca a anotação para o modelo.
-  const filtrosDaCliente = pieceType ? filtros.map((f) => (f.startsWith("tipo ") ? pieceTypePlural(pieceType) : f)) : filtros;
+  // O que a CLIENTE lê no cartão: só o nome do filtro, nunca a anotação para o
+  // modelo — o plural do tipo; nas parecidas, o do vizinho se for só ele.
+  const tipoParaCliente = (() => {
+    if (!pieceType) return "";
+    if (!parecidas) return pieceTypePlural(pieceType);
+    if (vizinho && items.every((item) => item.pieceType === vizinho)) return pieceTypePlural(vizinho);
+    return `parecidas com ${pieceTypePlural(pieceType).toLowerCase()}`;
+  })();
+  const filtrosDaCliente = pieceType ? filtros.map((f) => (f.startsWith("tipo ") ? tipoParaCliente : f)) : filtros;
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
     const jaProcurei = pieceType
       ? procurouEmTodas
-        ? ` (já procurei ${termoDe(pieceType)} no nome de todas as peças${vizinho ? ` e no tipo ${pieceTypeLabel(vizinho)}` : ""} também)`
+        ? parecidasAntesDosFiltros > 0
+          ? ` (nenhuma ${pieceTypePlural(pieceType).toLowerCase()} na loja; achei ${parecidasAntesDosFiltros} parecida(s) — pelo nome${vizinho ? ` ou do tipo ${pieceTypeLabel(vizinho)}` : ""} — mas nenhuma passou no filtro de cor, tamanho ou preço: ofereça sem ele)`
+          : ` (nenhuma ${pieceTypePlural(pieceType).toLowerCase()} na loja; já procurei ${termoDe(pieceType)} no nome de todas as peças${vizinho ? ` e no tipo ${pieceTypeLabel(vizinho)}` : ""}${busca || editionSlug ? ", dentro dessa busca," : ""} também)`
         : ` (já procurei ${termoDe(pieceType)} no nome das peças sem tipo também)`
       : "";
     return {

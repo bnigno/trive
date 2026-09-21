@@ -131,9 +131,16 @@ export function pieceTypePlural(slug: PieceType): string {
   return PIECE_TYPES.find((type) => type.slug === slug)?.plural ?? slug;
 }
 
-/** Palavras do nome, na mesma régua de suggestPieceType (sem acento, minúsculas, hífen preservado). */
+/**
+ * Palavras do nome (sem acento, minúsculas). A palavra com hífen entra inteira
+ * ("t-shirt") E em partes ("vestido-camisa" → vestido, camisa) — a mesma
+ * fronteira de palavra que a busca no banco usa.
+ */
 function wordsOf(normalizedName: string): string[] {
-  return normalizedName.split(/[^a-z0-9-]+/u).filter((word) => word !== "");
+  return normalizedName
+    .split(/[^a-z0-9-]+/u)
+    .flatMap((word) => (word.includes("-") ? [word, ...word.split("-")] : [word]))
+    .filter((word) => word !== "");
 }
 
 /** O NOME tem um substantivo do tipo (rótulo, plural, slug, sinônimo ou plural dele) como palavra inteira — "SHORT BERMUDA" tem bermuda; "KIMONO LONGO" não tem vestido. */
@@ -154,10 +161,11 @@ export function parsePieceType(term: string): PieceType | null {
 /**
  * Sugere o tipo pelo NOME da peça ("CORSET DOMINIQUE" → corset; "Longo Dunas"
  * → vestido; "CONJUNTO SAIA E TOP" → conjunto). Conjunto ganha de qualquer
- * outra palavra do nome; fora isso, vale o primeiro substantivo reconhecido, e
- * uma dica ("longo") só decide quando nenhum substantivo bate ("KIMONO LONGO"
- * é kimono). Nunca sugere "outro" — isso é decisão da dona. Null quando nada
- * bate ("Aurora").
+ * outra palavra do nome; fora isso, vale o primeiro substantivo reconhecido.
+ * Uma dica ("longo") só decide quando nenhum substantivo bate E ela abre o
+ * nome, o jeito da casa ("Longo Dunas", "Midi Floral") — "KIMONO LONGO" é
+ * kimono e "Sobretudo Longo" não é nada. Nunca sugere "outro" — isso é
+ * decisão da dona. Null quando nada bate ("Aurora").
  */
 export function suggestPieceType(name: string): PieceType | null {
   const normalized = normalizePieceTerm(name);
@@ -166,13 +174,11 @@ export function suggestPieceType(name: string): PieceType | null {
   // Termos compostos ("baby look") antes das palavras soltas.
   const compound = [...BY_TERM.entries()].find(([term, slug]) => term.includes(" ") && slug !== "outro" && normalized.includes(term));
   const hits: PieceType[] = compound ? [compound[1]] : [];
-  const hintHits: PieceType[] = [];
   for (const word of words) {
     const hit = BY_TERM.get(word);
-    if (!hit || hit === "outro") continue;
-    const bucket = HINT_TERMS.has(word) ? hintHits : hits;
-    if (!bucket.includes(hit)) bucket.push(hit);
+    if (hit && hit !== "outro" && !HINT_TERMS.has(word) && !hits.includes(hit)) hits.push(hit);
   }
-  if (hits.length === 0) return hintHits[0] ?? null;
-  return hits.includes("conjunto") ? "conjunto" : hits[0];
+  if (hits.length > 0) return hits.includes("conjunto") ? "conjunto" : hits[0];
+  const first = words[0];
+  return first !== undefined && HINT_TERMS.has(first) ? (BY_TERM.get(first) ?? null) : null;
 }

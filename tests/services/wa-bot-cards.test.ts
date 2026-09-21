@@ -165,7 +165,13 @@ describe("listar_produtos + cartão editorial", () => {
     const porTipo = executor();
     const bermudas = await porTipo.executeTool("listar_produtos", { categoria: "bermuda" });
     expect(bermudas.text).toContain("tipo Bermuda — nenhuma com esse tipo; parecidas:");
-    expect(render.mock.calls[1][0].eyebrow).toBe("BERMUDAS");
+    // As duas são shorts (uma achada pelo nome, a outra pelo vizinho): o cartão diz o que mostra — SHORTS.
+    expect(render.mock.calls[1][0].eyebrow).toBe("SHORTS");
+    // Mistura de tipos (a do nome é "outro"): "parecidas com bermudas".
+    await db.update(schema.products).set({ pieceType: "outro" }).where(eq(schema.products.id, shortA));
+    const mistura = executor();
+    await mistura.executeTool("listar_produtos", { categoria: "bermuda" });
+    expect(render.mock.calls[2][0].eyebrow).toBe("PARECIDAS COM BERMUDAS");
 
     // 13 peças com foto → a página 2 existe (2 peças com foto) e não manda cartão.
     for (let index = 1; index <= 10; index += 1) {
