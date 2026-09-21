@@ -1223,7 +1223,7 @@ describe("listar_produtos 2.0", () => {
     const bolsas = await executor("listar_produtos", { categoria: "bolsas" });
     expect(bolsas.ok).toBe(true);
     expect(bolsas.text).toContain("Nenhuma peça encontrada (tipo Bolsa)");
-    expect(bolsas.text).toContain('já procurei "bolsa" no nome de todas as peças também');
+    expect(bolsas.text).toContain('já procurei "bolsa" e sinônimos no nome de todas as peças também');
 
     const preto = await executor("listar_produtos", { cor: "preto" });
     expect(preto.text).toContain("1 peça encontrada (cor preto)");
@@ -1266,30 +1266,56 @@ describe("listar_produtos 2.0", () => {
     // "longo" é dica de vestido, não substantivo: o kimono não vira vestido pelo nome.
     const vestidos = await executor("listar_produtos", { categoria: "vestido" });
     expect(vestidos.text).toContain("Nenhuma peça encontrada (tipo Vestido)");
+    expect(vestidos.text).toContain('já procurei "vestido" no nome de todas as peças também');
     expect(vestidos.text).not.toContain("KIMONO");
+    // …mas a peça sem tipo batizada só pelo adjetivo ("Longo Dunas", o nome da casa) entra, junto das marcadas.
+    await createSimpleProduct("DUNAS-L", "Longo Dunas", 30900, { categoryId: vestuario });
+    const aurora = await createSimpleProduct("AURORA", "Aurora", 25900, { categoryId: vestuario });
+    await db.update(schema.products).set({ pieceType: "vestido" }).where(eq(schema.products.id, aurora.productId));
+    const comDica = await executor("listar_produtos", { categoria: "vestido" });
+    expect(comDica.text).toContain("2 peças encontradas (tipo Vestido — 1 sem tipo marcado, achada(s) pelo nome)");
+    expect(comDica.text).toContain("Longo Dunas");
+    expect(comDica.text).toContain("Aurora");
+    expect(comDica.text).not.toContain("KIMONO");
 
-    // Sem nenhuma bermuda (a única foi marcada como short): o nome de TODAS as peças e o tipo vizinho,
-    // com o rótulo dizendo de onde veio cada uma — e a linha leva o tipo real.
+    // Tipo que TEM peças, mas nenhuma bate na busca: o vazio é da busca — nada de "nenhuma com esse tipo".
+    const shortVeludo = await executor("listar_produtos", { categoria: "short", busca: "veludo" });
+    expect(shortVeludo.text).toContain('Nenhuma peça encontrada (tipo Short, "veludo")');
+    expect(shortVeludo.text).toContain('já procurei "short" no nome das peças sem tipo também');
+    expect(shortVeludo.text).not.toContain("nenhuma com esse tipo");
+    expect(shortVeludo.text).not.toContain("BERMUDAS JEANS");
+
+    // Sem nenhuma bermuda (a única foi marcada como short): o nome de TODAS as peças e o tipo vizinho —
+    // marcadas e sem tipo contadas em separado — e a linha leva o tipo real.
     await db.update(schema.products).set({ pieceType: "short" }).where(eq(schema.products.id, bermudas.productId));
+    await createSimpleProduct("SHORT-3", "SHORTS SOL", 8900, { categoryId: vestuario });
     const parecidas = await executor("listar_produtos", { categoria: "bermudas" });
     expect(parecidas.ok).toBe(true);
     expect(parecidas.text).toContain(
-      '3 peças encontradas (tipo Bermuda — nenhuma com esse tipo; parecidas: 2 com "bermuda" no nome, marcada(s) com outro tipo e 1 do tipo Short, o mais parecido)',
+      "4 peças encontradas (tipo Bermuda — nenhuma com esse tipo; parecidas: 2 com nome de bermuda, marcada(s) com outro tipo e 1 do tipo Short, o mais parecido e 1 sem tipo marcado, com nome de short)",
     );
     expect(parecidas.text).toContain(`• BERMUDAS JEANS · Short — ${formatCentsBRL(15900)}`);
     expect(parecidas.text).toContain(`• Short Lua · Short — ${formatCentsBRL(9900)}`);
+    expect(parecidas.text).toContain(`• SHORTS SOL · Vestuário — ${formatCentsBRL(8900)}`);
     // O filtro de preço vale sobre as parecidas, e o rótulo conta o que sobrou.
-    const baratas = await executor("listar_produtos", { categoria: "bermuda", preco_maximo_reais: 130 });
+    const baratas = await executor("listar_produtos", { categoria: "bermuda", preco_maximo_reais: 100 });
     expect(baratas.text).toContain(
-      '2 peças encontradas (tipo Bermuda — nenhuma com esse tipo; parecidas: 1 com "bermuda" no nome, marcada(s) com outro tipo e 1 do tipo Short, o mais parecido',
+      "2 peças encontradas (tipo Bermuda — nenhuma com esse tipo; parecidas: 1 do tipo Short, o mais parecido e 1 sem tipo marcado, com nome de short",
     );
     expect(baratas.text).not.toContain("BERMUDAS JEANS");
 
-    // Nem pelo nome nem pelo vizinho: a mensagem de vazio diz exatamente onde procurou.
-    const nada = await executor("listar_produtos", { categoria: "bermuda", busca: "veludo" });
+    // Sinônimo: a peça achada por "colete" não recebe a etiqueta falsa de ter "casaco" no nome.
+    const colete = await createSimpleProduct("COLETE-1", "Colete Lua", 17900, { categoryId: vestuario });
+    await db.update(schema.products).set({ pieceType: "outro" }).where(eq(schema.products.id, colete.productId));
+    const casacos = await executor("listar_produtos", { categoria: "casaco" });
+    expect(casacos.text).toContain("1 peça encontrada (tipo Casaco — nenhuma com esse tipo; parecidas: 1 com nome de casaco (ou sinônimo), marcada(s) com outro tipo)");
+
+    // Nem pelo nome nem pelo vizinho, sem busca no meio: a mensagem de vazio diz exatamente onde procurou.
+    await db.update(schema.products).set({ pieceType: "outro" }).where(eq(schema.products.id, colete.productId));
+    const nada = await executor("listar_produtos", { categoria: "bolsa" });
     expect(nada.ok).toBe(true);
-    expect(nada.text).toContain('Nenhuma peça encontrada (tipo Bermuda, "veludo")');
-    expect(nada.text).toContain('já procurei "bermuda" no nome de todas as peças e no tipo Short também');
+    expect(nada.text).toContain("Nenhuma peça encontrada (tipo Bolsa)");
+    expect(nada.text).toContain('já procurei "bolsa" e sinônimos no nome de todas as peças também');
   });
 
   it("busca também na descrição", async () => {

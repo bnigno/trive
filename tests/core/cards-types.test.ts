@@ -26,6 +26,11 @@ describe("cartão editorial — títulos e molduras", () => {
       "VESTIDOS · PRETO · ATÉ R$ 300,00 · LINHO",
     );
     expect(catalogCardEyebrow(["categoria " + "x".repeat(80)])).toHaveLength(60);
+    // O filtro também fala com o modelo; para a cliente fica só o nome, sem a anotação depois do travessão.
+    expect(catalogCardEyebrow(['tipo Bermuda — nenhuma com esse tipo; parecidas: 2 com nome de bermuda, marcada(s) com outro tipo', "cor Preto"])).toBe(
+      "BERMUDA · PRETO",
+    );
+    expect(catalogCardEyebrow(["tipo Vestido — 1 sem tipo marcado, achada(s) pelo nome"])).toBe("VESTIDO");
   });
 
   it("look ganha título com a peça", () => {

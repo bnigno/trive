@@ -131,6 +131,19 @@ export function pieceTypePlural(slug: PieceType): string {
   return PIECE_TYPES.find((type) => type.slug === slug)?.plural ?? slug;
 }
 
+/** Palavras do nome, na mesma régua de suggestPieceType (sem acento, minúsculas, hífen preservado). */
+function wordsOf(normalizedName: string): string[] {
+  return normalizedName.split(/[^a-z0-9-]+/u).filter((word) => word !== "");
+}
+
+/** O NOME tem um substantivo do tipo (rótulo, plural, slug, sinônimo ou plural dele) como palavra inteira — "SHORT BERMUDA" tem bermuda; "KIMONO LONGO" não tem vestido. */
+export function nameHasPieceTerm(name: string, slug: PieceType): boolean {
+  const normalized = normalizePieceTerm(name);
+  if (normalized === "") return false;
+  const words = new Set(wordsOf(normalized));
+  return pieceTypeTerms(slug).some((term) => (term.includes(" ") ? ` ${normalized} `.includes(` ${term} `) : words.has(term)));
+}
+
 /** "Vestidos", "corselet", "ÓCULOS" → o tipo; null quando o termo não é um tipo de peça. */
 export function parsePieceType(term: string): PieceType | null {
   const normalized = normalizePieceTerm(term);
@@ -149,7 +162,7 @@ export function parsePieceType(term: string): PieceType | null {
 export function suggestPieceType(name: string): PieceType | null {
   const normalized = normalizePieceTerm(name);
   if (normalized === "") return null;
-  const words = normalized.split(/[^a-z0-9-]+/u).filter((word) => word !== "");
+  const words = wordsOf(normalized);
   // Termos compostos ("baby look") antes das palavras soltas.
   const compound = [...BY_TERM.entries()].find(([term, slug]) => term.includes(" ") && slug !== "outro" && normalized.includes(term));
   const hits: PieceType[] = compound ? [compound[1]] : [];

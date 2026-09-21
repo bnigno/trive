@@ -20,7 +20,7 @@ import {
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
 import { formatCatalogLine } from "@/core/bot/catalog-line";
-import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, pieceTypeNear, pieceTypeTerms, type PieceType } from "@/core/catalog/piece-types";
+import { nameHasPieceTerm, parsePieceType, PIECE_TYPE_SLUGS, pieceTypeHints, pieceTypeLabel, pieceTypeNear, pieceTypePlural, pieceTypeTerms, suggestPieceType, type PieceType } from "@/core/catalog/piece-types";
 import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
@@ -185,8 +185,10 @@ export async function execListarProdutos(
   if (busca) filtros.push(`"${busca}"`);
 
   // Tipo: as peças marcadas com ele E as ainda sem tipo cujo NOME tem um termo
-  // do tipo (rótulo, plural, sinônimos — a régua da sugestão): a dona pode não
-  // ter tipado tudo, e uma peça nova nasce sem tipo; negar o que existe não é opção.
+  // do tipo (rótulo, plural, sinônimos — substantivos): a dona pode não ter
+  // tipado tudo, e uma peça nova nasce sem tipo; negar o que existe não é opção.
+  // As dicas (adjetivos: "Longo Dunas") só valem para a peça sem tipo cujo nome
+  // não tem substantivo de outro tipo — "KIMONO LONGO" continua kimono.
   const base = {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
@@ -194,16 +196,21 @@ export async function execListarProdutos(
     viewer: { customerId: ctx.customerId },
     limit: 200,
   } as const;
+  const hints = pieceType ? pieceTypeHints(pieceType) : [];
   let items: PublicProductListItem[] = await listPublicProducts(db, {
     ...base,
-    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true } : {}),
+    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType).concat(hints), untypedByName: true } : {}),
   });
+  if (pieceType && hints.length > 0) {
+    items = items.filter((item) => item.pieceType !== null || nameHasPieceTerm(item.name, pieceType) || suggestPieceType(item.name) === pieceType);
+  }
 
-  // Nenhuma do tipo: antes de negar, o nome de TODAS as peças (uma "SHORT
-  // BERMUDA" que a dona marcou como short) e o tipo vizinho (bermuda ↔ short).
-  // Cada linha leva o tipo real da peça, então a Lia sabe o que está mostrando.
+  // Nenhuma do tipo na loja inteira (sem busca nem edição no meio — com elas, o
+  // vazio é da busca, não do tipo): antes de negar, o nome de TODAS as peças
+  // (uma "SHORT BERMUDA" que a dona marcou como short) e o tipo vizinho
+  // (bermuda ↔ short). Cada linha leva o tipo real da peça.
   const vizinho = pieceType ? pieceTypeNear(pieceType) : null;
-  const procurouEmTodas = pieceType !== undefined && items.length === 0;
+  const procurouEmTodas = pieceType !== undefined && items.length === 0 && !busca && !editionSlug;
   const peloNomeIds = new Set<string>();
   if (pieceType && procurouEmTodas) {
     const peloNome = await listPublicProducts(db, { ...base, nameAny: pieceTypeTerms(pieceType) });
@@ -228,13 +235,20 @@ export async function execListarProdutos(
   }
 
   // O rótulo do tipo conta o que SOBROU depois dos filtros de cor, tamanho e preço.
+  // "nome de X" cobre rótulo, plural e sinônimos — a linha mostra o nome real.
+  const temSinonimo = (slug: PieceType) => pieceTypeTerms(slug).length > 2;
+  const nomeDe = (slug: PieceType) => `nome de ${pieceTypeLabel(slug).toLowerCase()}${temSinonimo(slug) ? " (ou sinônimo)" : ""}`;
+  const termoDe = (slug: PieceType) => `"${pieceTypeLabel(slug).toLowerCase()}"${temSinonimo(slug) ? " e sinônimos" : ""}`;
   const semTipoPeloNome = pieceType && !procurouEmTodas ? items.filter((item) => item.pieceType === null).length : 0;
   const parecidas = (() => {
     if (!pieceType || !procurouEmTodas || items.length === 0) return null;
     const peloNome = items.filter((item) => peloNomeIds.has(item.id)).length;
+    const doVizinho = vizinho ? items.filter((item) => !peloNomeIds.has(item.id) && item.pieceType === vizinho).length : 0;
+    const semTipoDoVizinho = items.length - peloNome - doVizinho;
     const partes: string[] = [];
-    if (peloNome > 0) partes.push(`${peloNome} com "${pieceTypeLabel(pieceType).toLowerCase()}" no nome, marcada(s) com outro tipo`);
-    if (vizinho && items.length > peloNome) partes.push(`${items.length - peloNome} do tipo ${pieceTypeLabel(vizinho)}, o mais parecido`);
+    if (peloNome > 0) partes.push(`${peloNome} com ${nomeDe(pieceType)}, marcada(s) com outro tipo`);
+    if (vizinho && doVizinho > 0) partes.push(`${doVizinho} do tipo ${pieceTypeLabel(vizinho)}, o mais parecido`);
+    if (vizinho && semTipoDoVizinho > 0) partes.push(`${semTipoDoVizinho} sem tipo marcado, com ${nomeDe(vizinho)}`);
     return `tipo ${pieceTypeLabel(pieceType)} — nenhuma com esse tipo; parecidas: ${partes.join(" e ")}`;
   })();
   if (pieceType && (parecidas || semTipoPeloNome > 0)) {
@@ -243,10 +257,14 @@ export async function execListarProdutos(
     if (tipoIndex >= 0) filtros.splice(tipoIndex, 1, rotulo);
     else filtros.push(rotulo);
   }
+  // O que a CLIENTE lê no cartão: só o nome do filtro (o plural do tipo), nunca a anotação para o modelo.
+  const filtrosDaCliente = pieceType ? filtros.map((f) => (f.startsWith("tipo ") ? pieceTypePlural(pieceType) : f)) : filtros;
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
-    const jaProcurei = pieceType && procurouEmTodas
-      ? ` (já procurei "${pieceTypeLabel(pieceType).toLowerCase()}" no nome de todas as peças${vizinho ? ` e no tipo ${pieceTypeLabel(vizinho)}` : ""} também)`
+    const jaProcurei = pieceType
+      ? procurouEmTodas
+        ? ` (já procurei ${termoDe(pieceType)} no nome de todas as peças${vizinho ? ` e no tipo ${pieceTypeLabel(vizinho)}` : ""} também)`
+        : ` (já procurei ${termoDe(pieceType)} no nome das peças sem tipo também)`
       : "";
     return {
       ok: true,
@@ -389,7 +407,7 @@ export async function execListarProdutos(
       const sent = await ctx.emitCard({
         kind: "catalog",
         title: catalogCardTitle(withPhoto.length),
-        eyebrow: catalogCardEyebrow(filtros),
+        eyebrow: catalogCardEyebrow(filtrosDaCliente),
         items: withPhoto.map((item) => ({
           slug: item.slug,
           name: item.name,

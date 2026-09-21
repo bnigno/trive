@@ -157,6 +157,16 @@ describe("listar_produtos + cartão editorial", () => {
     expect(attachments.filter((attachment) => attachment.kind === "image")).toHaveLength(1);
     expect(render).toHaveBeenCalledTimes(1);
 
+    // Tipo de peça: a cliente lê só o plural do tipo — a anotação para o modelo
+    // ("nenhuma com esse tipo; parecidas: …") nunca vai para o cartão.
+    const shortA = await createProduct("SHORT-A", "SHORT BERMUDA LINHO", 12900);
+    const shortB = await createProduct("SHORT-B", "Short Lua", 9900);
+    for (const id of [shortA, shortB]) await db.update(schema.products).set({ pieceType: "short" }).where(eq(schema.products.id, id));
+    const porTipo = executor();
+    const bermudas = await porTipo.executeTool("listar_produtos", { categoria: "bermuda" });
+    expect(bermudas.text).toContain("tipo Bermuda — nenhuma com esse tipo; parecidas:");
+    expect(render.mock.calls[1][0].eyebrow).toBe("BERMUDAS");
+
     // 13 peças com foto → a página 2 existe (2 peças com foto) e não manda cartão.
     for (let index = 1; index <= 10; index += 1) {
       await createProduct(`EXTRA${index}`, `Peça Extra ${index}`, 9900);

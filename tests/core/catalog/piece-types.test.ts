@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeHints, pieceTypeLabel, pieceTypeNear, pieceTypePlural, pieceTypeTerms, pluralizePieceTerm, suggestPieceType } from "@/core/catalog/piece-types";
+import { nameHasPieceTerm, PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeHints, pieceTypeLabel, pieceTypeNear, pieceTypePlural, pieceTypeTerms, pluralizePieceTerm, suggestPieceType } from "@/core/catalog/piece-types";
 
 describe("tipos de peça", () => {
   it("a lista é fechada, sem slug repetido, e todo slug tem rótulo e plural", () => {
@@ -65,6 +65,17 @@ describe("tipos de peça", () => {
     expect(suggestPieceType("Longo Dunas")).toBe("vestido");
     expect(suggestPieceType("KIMONO LONGO SOL")).toBe("kimono");
     expect(suggestPieceType("LONGO KIMONO SOL")).toBe("kimono");
+  });
+
+  it("nameHasPieceTerm: substantivo do tipo como palavra inteira no nome — nunca a dica, nunca pedaço de palavra", () => {
+    expect(nameHasPieceTerm("SHORT BERMUDA JEANS", "bermuda")).toBe(true);
+    expect(nameHasPieceTerm("BERMUDAS JEANS", "bermuda")).toBe(true);
+    expect(nameHasPieceTerm("Corset Rosalie", "conjunto")).toBe(false);
+    expect(nameHasPieceTerm("KIMONO LONGO SOL", "vestido")).toBe(false);
+    expect(nameHasPieceTerm("Longo Dunas", "vestido")).toBe(false);
+    expect(nameHasPieceTerm("BABY LOOKS DUO", "blusa")).toBe(true);
+    expect(nameHasPieceTerm("Colete Lua", "casaco")).toBe(true);
+    expect(nameHasPieceTerm("", "vestido")).toBe(false);
   });
 
   it("tipo vizinho: bermuda ↔ short; os outros não têm", () => {
