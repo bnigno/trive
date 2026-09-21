@@ -18,7 +18,7 @@ export function niceMax(max: number): number {
   return 10 * magnitude;
 }
 
-const TICKS = [0, 1 / 3, 2 / 3, 1];
+const TICKS = [0, 0.5, 1];
 
 /**
  * Gráfico de colunas de uma série: colunas finas (≤ 24 px) com o topo
