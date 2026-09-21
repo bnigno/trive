@@ -41,7 +41,7 @@ import { writeStoredCep } from "@/lib/cep-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
 import { pickDefaultOptionKey } from "@/lib/checkout-options";
 
-import { readStoredCoupon, writeStoredCoupon } from "@/lib/coupon-storage";
+import { readStoredCoupon, takeLinkCoupon, writeStoredCoupon } from "@/lib/coupon-storage";
 
 import { quoteCouponAction, quoteShippingAction } from "./actions";
 import { CartBar } from "./cart-bar";
@@ -133,13 +133,13 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     [startCouponTransition],
   );
 
-  // Cupom que chegou pelo link /c/CÓDIGO (ou aplicado numa visita anterior):
-  // entra sozinho assim que a sacola hidrata com peças.
+  // Cupom que chegou pelo link /c/CÓDIGO (tentado uma vez) ou aplicado numa
+  // visita anterior: entra sozinho assim que a sacola hidrata com peças.
   const storedTriedRef = useRef(false);
   useEffect(() => {
     if (!mounted || storedTriedRef.current || items.length === 0) return;
     storedTriedRef.current = true;
-    const stored = readStoredCoupon();
+    const stored = takeLinkCoupon() ?? readStoredCoupon();
     if (!stored || coupon.status !== "idle") return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- preenche o campo com o código guardado (pós-hidratação)
     setCouponInput(stored);

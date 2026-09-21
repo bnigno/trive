@@ -364,6 +364,29 @@ describe("createCoupon", () => {
     expect(pessoal.phoneE164).toBe("+5591999990000");
     await expect(makeCoupon({ code: "X3", customerPhone: "123" })).rejects.toMatchObject({ code: "COUPON_PHONE_INVALID" });
   });
+
+  it("editar: telefone igual não re-resolve; vazio só solta o vínculo por telefone; preso ao cadastro fica preso", async () => {
+    const dona = await createTestCustomer(db, "Maria Dona");
+    const [row] = await db.select({ phone: schema.customers.phoneE164 }).from(schema.customers).where(eq(schema.customers.id, dona));
+    const porTelefone = await makeCoupon({ code: "PORTEL", customerPhone: row.phone });
+    expect(porTelefone.customerId).toBe(dona);
+
+    // Mesmo telefone (formatado diferente) + só a nota: vínculo intacto.
+    const same = await updateCoupon(sdb, { couponId: porTelefone.id, customerPhone: row.phone, note: "x", userId: FIXED_USER_ID });
+    expect(same).toMatchObject({ customerId: dona, phoneE164: row.phone });
+    // Vazio: solta.
+    const solto = await updateCoupon(sdb, { couponId: porTelefone.id, customerPhone: null, userId: FIXED_USER_ID });
+    expect(solto).toMatchObject({ customerId: null, phoneE164: null });
+
+    // Preso só ao cadastro (como os emitidos pela casa): o form vazio não abre o cupom.
+    const [semTelefone] = await db.insert(schema.customers).values({ fullName: "Sem Telefone" }).returning({ id: schema.customers.id });
+    const [preso] = await db
+      .insert(schema.coupons)
+      .values({ code: "PRESO", type: "percent", value: 10, customerId: semTelefone.id })
+      .returning({ id: schema.coupons.id });
+    const ainda = await updateCoupon(sdb, { couponId: preso.id, customerPhone: null, note: "y", userId: FIXED_USER_ID });
+    expect(ainda.customerId).toBe(semTelefone.id);
+  });
 });
 
 describe("updateCoupon", () => {
@@ -422,7 +445,13 @@ describe("listCoupons", () => {
     const list = await listCoupons(sdb);
     expect(list).toHaveLength(2);
     expect(list.map((c) => c.code).sort()).toEqual(["PRIMEIRO", "SEGUNDO"]);
-    expect(list.find((c) => c.id === a.id)).toMatchObject({ usedCount: 1, redemptionsCount: 1 });
-    expect(list.find((c) => c.id === b.id)).toMatchObject({ usedCount: 0, redemptionsCount: 0 });
+    expect(list.find((c) => c.id === a.id)).toMatchObject({ usedCount: 1, redemptionsCount: 1, everRedeemed: true });
+    expect(list.find((c) => c.id === b.id)).toMatchObject({ usedCount: 0, redemptionsCount: 0, everRedeemed: false });
+
+    // Resgate devolvido: some de "quem usou", mas o cupom continua "já usado" (regras travadas).
+    const [redemption] = await db.select({ orderId: schema.couponRedemptions.orderId }).from(schema.couponRedemptions);
+    await db.update(schema.couponRedemptions).set({ releasedAt: new Date() }).where(eq(schema.couponRedemptions.orderId, redemption.orderId));
+    const after = await listCoupons(sdb);
+    expect(after.find((c) => c.id === a.id)).toMatchObject({ redemptionsCount: 0, everRedeemed: true });
   });
 });

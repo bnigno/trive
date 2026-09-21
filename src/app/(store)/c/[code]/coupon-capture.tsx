@@ -5,12 +5,12 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-import { writeStoredCoupon } from "@/lib/coupon-storage";
+import { writeLinkCoupon } from "@/lib/coupon-storage";
 
 export function CouponCapture({ code, to }: { code: string; to: string }) {
   const router = useRouter();
   useEffect(() => {
-    writeStoredCoupon(code);
+    writeLinkCoupon(code);
     router.replace(to);
   }, [code, to, router]);
   return null;

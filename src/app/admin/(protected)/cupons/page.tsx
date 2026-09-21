@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc, inArray } from "drizzle-orm";
+import { and, asc, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { categories, products } from "@/db/schema";
 import { requireOwner } from "@/services/auth";
@@ -55,7 +55,7 @@ function ruleChips(coupon: Coupon): string[] {
   const chips: string[] = [];
   if (coupon.perCustomerLimit !== null) chips.push(coupon.perCustomerLimit === 1 ? "1 por cliente" : `${coupon.perCustomerLimit} por cliente`);
   if (coupon.firstPurchaseOnly) chips.push("1ª compra");
-  if (coupon.customerId !== null || coupon.phoneE164 !== null) chips.push(`pessoal${coupon.phoneE164 ? ` · ${coupon.phoneE164}` : ""}`);
+  if (coupon.customerId !== null || coupon.phoneE164 !== null) chips.push(`pessoal · ${coupon.phoneE164 ?? "cadastro"}`);
   const schedule = scheduleLabel(coupon);
   if (schedule) chips.push(schedule);
   if (coupon.productIds.length > 0) chips.push(coupon.productIds.length === 1 ? "1 peça" : `${coupon.productIds.length} peças`);
@@ -106,7 +106,10 @@ async function loadPage(): Promise<{
     const productIds = [...new Set(coupons.flatMap((coupon) => coupon.productIds))];
     const slugRows =
       productIds.length > 0
-        ? await db.select({ id: products.id, slug: products.slug }).from(products).where(inArray(products.id, productIds))
+        ? await db
+            .select({ id: products.id, slug: products.slug })
+            .from(products)
+            .where(and(inArray(products.id, productIds), isNull(products.deletedAt)))
         : [];
     return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])) };
   } catch {
@@ -238,7 +241,7 @@ export default async function CuponsPage() {
                         >
                           Quem usou ({coupon.redemptionsCount})
                         </Link>
-                        {coupon.usedCount === 0 && coupon.redemptionsCount === 0 ? (
+                        {coupon.usedCount === 0 && !coupon.everRedeemed ? (
                           <CouponDeleteForm couponId={coupon.id} code={coupon.code} />
                         ) : null}
                       </div>
@@ -252,7 +255,7 @@ export default async function CuponsPage() {
           {coupons.length > 0 ? (
             <div className="flex flex-col gap-3">
               {coupons.map((coupon) => {
-                const locked = coupon.usedCount > 0 || coupon.redemptionsCount > 0;
+                const locked = coupon.usedCount > 0 || coupon.everRedeemed;
                 return (
                   <details
                     key={coupon.id}
@@ -275,7 +278,8 @@ export default async function CuponsPage() {
                         categories={categoryOptions}
                         defaults={toFormDefaults(
                           coupon,
-                          coupon.productIds.map((id) => slugById.get(id) ?? id),
+                          // Peça apagada do catálogo sai do form (o serviço não a acharia ao salvar).
+                          coupon.productIds.flatMap((id) => slugById.get(id) ?? []),
                         )}
                       />
                     </div>
