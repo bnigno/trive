@@ -416,4 +416,22 @@ describe("createStoreOrder com cupom", () => {
     // 50% só sobre 2 × 4990 = 4990; a caneca verde inteira.
     expect(result.totalCents).toBe(9980 + 3000 - 4990 + 1990);
   });
+
+  it("cupom da turma: o 1º pedido paga 5%, o 2º (outra cliente) 7%, e o resgate guarda o valor aplicado", async () => {
+    const { variantId, rateId } = await setupStore();
+    await makeCoupon({ code: "TURMA", value: 5, growthPerRedeemer: 2, growthCap: 15 });
+
+    const first = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "TURMA" }));
+    expect(first.totalCents).toBe(9980 - 499 + 1990);
+    const second = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rateId, {
+        customer: { fullName: "José Pereira", document: VALID_CPF_2, phone: "(21) 97777-6666", marketingOptIn: false },
+        couponCode: "TURMA",
+      }),
+    );
+    expect(second.totalCents).toBe(9980 - 698 + 1990);
+    const redemptions = await db.select().from(schema.couponRedemptions).orderBy(schema.couponRedemptions.createdAt);
+    expect(redemptions.map((r) => r.appliedValue)).toEqual([5, 7]);
+  });
 });

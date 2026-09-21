@@ -21,6 +21,7 @@ import {
   type ShippingKind,
 } from "@/core/coupons/evaluate";
 import { couponErrorMessage } from "@/core/coupons/messages";
+import { collectiveCustomerHint, collectiveShareText, collectiveValue, isCollective } from "@/core/coupons/collective";
 import { scheduleCustomerHint, valueScheduleSchema, type ValueStep } from "@/core/coupons/schedule";
 import {
   auditLog,
@@ -35,9 +36,13 @@ import {
   productVariants,
   products,
 } from "@/db/schema";
+import { STORE_NAME_DEFAULT } from "@/lib/brand";
+import { formatCentsBRL } from "@/lib/money";
 import { toE164BR } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { countCustomerPurchases, findCustomerByDocumentOrPhone } from "@/services/customer-lookup";
+import { getSettingsMap } from "@/services/settings";
+import { siteUrl } from "@/lib/site-url";
 
 export type { CouponType, FreeShippingScope, PendingCheck, ShippingKind };
 
@@ -122,6 +127,8 @@ function toCoupon(row: CouponRow, productIds: string[], categoryIds: string[]): 
     productIds,
     categoryIds,
     valueSchedule: parseValueSchedule(row.valueSchedule),
+    growthPerRedeemer: row.growthPerRedeemer,
+    growthCap: row.growthCap,
     origin: row.origin as CouponOrigin,
     note: row.note,
     dedupeKey: row.dedupeKey,
@@ -228,8 +235,10 @@ export interface CouponQuote {
   shippingDiscountCents: number;
   /** O que só o fechamento confirma (sacola anônima ou sem entrega escolhida). */
   pending: PendingCheck[];
-  /** Cupom que muda com o tempo: "Hoje vale 10%. Em 9 dias (20/10) passa a 15%…"; null nos demais. */
+  /** Cupom que muda com o tempo ou da turma: "Hoje vale 10%. Em 9 dias…" / "Cupom da turma: 9% hoje…"; null nos demais. */
   hint: string | null;
+  /** Cupom da turma: texto pronto para mandar a uma amiga (com o link /c/CÓDIGO); null nos demais. */
+  shareText: string | null;
 }
 
 /** Preço ATIVO, produto e categoria de cada linha — nunca o que veio do navegador. */
@@ -259,6 +268,15 @@ async function loadCouponItems(
     if (!row) return [];
     return [{ productId: row.productId, categoryId: row.categoryId, unitPriceCents: row.priceCents, quantity: item.quantity }];
   });
+}
+
+/** Clientes distintas que já resgataram (ativos): a régua do cupom da turma. */
+export async function countDistinctRedeemers(db: DbOrTx, couponId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(distinct coalesce(${couponRedemptions.customerId}::text, ${couponRedemptions.phoneE164}))::int` })
+    .from(couponRedemptions)
+    .where(and(eq(couponRedemptions.couponId, couponId), isNull(couponRedemptions.releasedAt)));
+  return row?.count ?? 0;
 }
 
 async function countActiveRedemptions(
@@ -330,6 +348,10 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     coupon.perCustomerLimit === null || identity === null
       ? null
       : await countActiveRedemptions(db, coupon.id, identity);
+  // Cupom da turma: a contagem é lida antes do lock do resgate — duas clientes
+  // fechando no mesmo segundo podem levar o mesmo valor (decisão: o valor só
+  // sobe, e o que a cliente viu é o que ela paga; não vale um lock a mais).
+  const distinctRedeemers = isCollective(coupon) ? await countDistinctRedeemers(db, coupon.id) : undefined;
 
   const result = evaluateCoupon(coupon, {
     now,
@@ -338,8 +360,10 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     identity,
     priorPurchases,
     priorRedemptionsByThisCustomer,
+    distinctRedeemers,
   });
   if (!result.ok) throw couponError(result.code, coupon);
+  const collective = distinctRedeemers !== undefined;
 
   return {
     couponId: coupon.id,
@@ -350,8 +374,21 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     freeShipping: result.freeShipping,
     shippingDiscountCents: result.shippingDiscountCents,
     pending: result.pending,
-    hint: scheduleCustomerHint(coupon, now),
+    hint: collective ? collectiveCustomerHint(coupon, distinctRedeemers) : scheduleCustomerHint(coupon, now),
+    shareText: collective ? await shareTextFor(db, coupon, distinctRedeemers) : null,
   };
+}
+
+async function shareTextFor(db: DbOrTx, coupon: Coupon, distinctRedeemers: number): Promise<string> {
+  const settingsMap = await getSettingsMap(db, ["store_name"]);
+  const storeName = typeof settingsMap["store_name"] === "string" && settingsMap["store_name"].trim() !== "" ? settingsMap["store_name"].trim() : STORE_NAME_DEFAULT;
+  const current = collectiveValue(coupon, distinctRedeemers);
+  return collectiveShareText({
+    code: coupon.code,
+    currentValueLabel: coupon.type === "percent" ? `${current}%` : formatCentsBRL(current),
+    storeName,
+    siteUrl: siteUrl(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +630,8 @@ export async function issueCoupon(tx: DbOrTx, input: IssueCouponInput): Promise<
 export interface CouponListItem extends Coupon {
   /** Resgates ativos (não devolvidos) — "quem usou". */
   redemptionsCount: number;
+  /** Clientes distintas (cupom da turma). */
+  distinctRedeemers: number;
   /** Já passou por algum pedido (mesmo devolvido): tipo, valor e regras ficam travados. */
   everRedeemed: boolean;
 }
@@ -605,6 +644,7 @@ export async function listCoupons(db: DbOrTx): Promise<CouponListItem[]> {
     .select({
       couponId: couponRedemptions.couponId,
       active: sql<number>`count(*) filter (where ${couponRedemptions.releasedAt} is null)::int`,
+      distinct: sql<number>`count(distinct coalesce(${couponRedemptions.customerId}::text, ${couponRedemptions.phoneE164})) filter (where ${couponRedemptions.releasedAt} is null)::int`,
       total: sql<number>`count(*)::int`,
     })
     .from(couponRedemptions)
@@ -613,6 +653,7 @@ export async function listCoupons(db: DbOrTx): Promise<CouponListItem[]> {
   return list.map((coupon) => ({
     ...coupon,
     redemptionsCount: countById.get(coupon.id)?.active ?? 0,
+    distinctRedeemers: countById.get(coupon.id)?.distinct ?? 0,
     everRedeemed: (countById.get(coupon.id)?.total ?? 0) > 0,
   }));
 }
@@ -737,6 +778,9 @@ const ruleFieldsSchema = z.object({
   note: z.string().trim().max(500, "A nota interna deve ter no máximo 500 caracteres.").nullable().optional(),
   /** Degraus do cupom que muda com o tempo; null/ausente = valor fixo. */
   valueSchedule: valueScheduleSchema.nullable().optional(),
+  /** Cupom da turma: quanto cada cliente distinta acrescenta (pontos ou centavos) e o teto. */
+  growthPerRedeemer: z.number().int().min(0).optional(),
+  growthCap: z.number().int().positive().nullable().optional(),
 });
 
 function refineRuleFields(value: z.output<typeof ruleFieldsSchema>, ctx: z.RefinementCtx): void {
@@ -748,6 +792,21 @@ function refineRuleFields(value: z.output<typeof ruleFieldsSchema>, ctx: z.Refin
   }
   if (value.type === "free_shipping" && value.value !== 0) {
     ctx.addIssue({ code: "custom", path: ["value"], message: "Cupom de frete grátis não tem valor." });
+  }
+  const growth = value.growthPerRedeemer ?? 0;
+  if (growth > 0) {
+    if (value.type === "free_shipping") {
+      ctx.addIssue({ code: "custom", path: ["growthPerRedeemer"], message: "Frete grátis não vira cupom da turma." });
+    }
+    if (value.growthCap === null || value.growthCap === undefined) {
+      ctx.addIssue({ code: "custom", path: ["growthCap"], message: "Cupom da turma precisa de um teto." });
+    } else {
+      if (value.growthCap <= value.value) ctx.addIssue({ code: "custom", path: ["growthCap"], message: "O teto precisa ser maior que o valor inicial (senão o cupom nunca sobe)." });
+      if (value.type === "percent" && value.growthCap > 100) ctx.addIssue({ code: "custom", path: ["growthCap"], message: "O teto de um cupom percentual fica entre 1 e 100." });
+    }
+    if (value.valueSchedule && value.valueSchedule.length > 0) {
+      ctx.addIssue({ code: "custom", path: ["growthPerRedeemer"], message: "Escolha uma mecânica: degraus por tempo OU cupom da turma." });
+    }
   }
   if (value.valueSchedule && value.valueSchedule.length > 0) {
     if (value.type === "free_shipping") {
@@ -840,6 +899,8 @@ function ruleSnapshot(coupon: Coupon): Record<string, unknown> {
     productIds: coupon.productIds,
     categoryIds: coupon.categoryIds,
     valueSchedule: coupon.valueSchedule,
+    growthPerRedeemer: coupon.growthPerRedeemer,
+    growthCap: coupon.growthCap,
     isActive: coupon.isActive,
     note: coupon.note,
   };
@@ -883,6 +944,8 @@ export async function createCoupon(db: DbOrTx, input: CreateCouponInput): Promis
           validFromMinute: parsed.validFromMinute ?? null,
           validToMinute: parsed.validToMinute ?? null,
           valueSchedule: parsed.valueSchedule && parsed.valueSchedule.length > 0 ? parsed.valueSchedule : null,
+          growthPerRedeemer: parsed.growthPerRedeemer ?? 0,
+          growthCap: (parsed.growthPerRedeemer ?? 0) > 0 ? (parsed.growthCap ?? null) : null,
           note: parsed.note || null,
         })
         .returning();
@@ -937,6 +1000,8 @@ const LOCKED_AFTER_USE = [
   "productRefs",
   "categoryIds",
   "valueSchedule",
+  "growthPerRedeemer",
+  "growthCap",
 ] as const;
 
 /**
@@ -982,6 +1047,8 @@ export async function updateCoupon(db: DbOrTx, input: UpdateCouponInput): Promis
       validToMinute: parsed.validToMinute === undefined ? before.validToMinute : parsed.validToMinute,
       note: parsed.note === undefined ? before.note : parsed.note,
       valueSchedule: parsed.valueSchedule === undefined ? before.valueSchedule : parsed.valueSchedule,
+      growthPerRedeemer: parsed.growthPerRedeemer ?? before.growthPerRedeemer,
+      growthCap: parsed.growthCap === undefined ? before.growthCap : parsed.growthCap,
     });
 
     const set: Partial<typeof coupons.$inferInsert> = { updatedAt: new Date() };
@@ -1001,6 +1068,8 @@ export async function updateCoupon(db: DbOrTx, input: UpdateCouponInput): Promis
       set.validFromMinute = rule.validFromMinute ?? null;
       set.validToMinute = rule.validToMinute ?? null;
       set.valueSchedule = rule.valueSchedule && rule.valueSchedule.length > 0 ? rule.valueSchedule : null;
+      set.growthPerRedeemer = rule.growthPerRedeemer ?? 0;
+      set.growthCap = (rule.growthPerRedeemer ?? 0) > 0 ? (rule.growthCap ?? null) : null;
       // Degraus postos AGORA num cupom antigo sem vigência: a contagem começa
       // hoje (senão os dias desde a criação já pulariam para o último degrau).
       if (set.valueSchedule && before.valueSchedule === null && set.startsAt === null) {

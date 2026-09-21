@@ -81,6 +81,10 @@ export const coupons = pgTable(
     // início da vigência (ou da criação); `value` é o do dia 0. Subindo
     // amadurece, descendo derrete. A forma é conferida aqui; o conteúdo, no core.
     valueSchedule: jsonb("value_schedule").$type<{ afterDays: number; value: number }[]>(),
+    // Cupom da turma: cada cliente distinta que usa sobe o valor para as
+    // próximas (pontos ou centavos), até o teto. 0 = cupom comum.
+    growthPerRedeemer: integer("growth_per_redeemer").notNull().default(0),
+    growthCap: integer("growth_cap"),
     // Emissão automática: uma chave por evento ("late_delivery:<orderId>") —
     // a UNIQUE é quem garante que a rotina não emite duas vezes.
     dedupeKey: text("dedupe_key"),
@@ -146,6 +150,19 @@ export const coupons = pgTable(
     check(
       "coupons_value_schedule_check",
       sql`${table.valueSchedule} IS NULL OR (jsonb_typeof(${table.valueSchedule}) = 'array' AND jsonb_array_length(${table.valueSchedule}) BETWEEN 1 AND 3)`,
+    ),
+    check(
+      "coupons_growth_check",
+      sql`${table.growthPerRedeemer} >= 0 AND (${table.growthPerRedeemer} = 0 OR ${table.growthCap} IS NOT NULL)`,
+    ),
+    check(
+      "coupons_growth_cap_check",
+      sql`${table.growthCap} IS NULL OR (${table.growthCap} >= ${table.value} AND (${table.type} <> 'percent' OR ${table.growthCap} <= 100))`,
+    ),
+    // Um cupom tem UMA mecânica: degraus por tempo OU turma (a dona explica em uma frase).
+    check(
+      "coupons_one_mechanic_check",
+      sql`${table.valueSchedule} IS NULL OR ${table.growthPerRedeemer} = 0`,
     ),
     check(
       "coupons_valid_minutes_check",

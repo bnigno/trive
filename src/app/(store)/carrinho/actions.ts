@@ -146,8 +146,10 @@ export type QuoteCouponActionResult =
       shippingDiscountCents: number;
       /** "Confirmamos no fechamento…" quando algo depende de CPF/telefone/entrega; null quando não. */
       pendingNotice: string | null;
-      /** Cupom que muda com o tempo: "Hoje vale 10%. Em 9 dias (20/10) passa a 15%…"; null nos demais. */
+      /** Cupom que muda com o tempo ou da turma: "Hoje vale 10%…" / "Cupom da turma: 9% hoje…"; null nos demais. */
       hint: string | null;
+      /** Cupom da turma: o texto para mandar a uma amiga (com o link /c/CÓDIGO); null nos demais. */
+      shareText: string | null;
     }
   | { ok: false; error: string; errorCode?: string };
 
@@ -179,6 +181,7 @@ export async function quoteCouponAction(
       shippingDiscountCents: quote.shippingDiscountCents,
       pendingNotice: pendingNotice(quote.pending),
       hint: quote.hint,
+      shareText: quote.shareText,
     };
   } catch (error) {
     if (error instanceof CouponServiceError) {

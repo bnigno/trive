@@ -358,7 +358,11 @@ export async function execValidarCupom(
     ok: true,
     text: [
       `Cupom ${quote.code} válido: ${quoteSummary(quote, subtotalCents)}.`,
-      ...(quote.hint ? [`[Este cupom muda com o tempo — ${quote.hint} Conte isso para ela em 1 frase, com leveza e sem pressionar: é uma surpresa boa, não uma ameaça.]`] : []),
+      ...(quote.shareText
+        ? [`[Cupom da turma — ${quote.hint} Conte em 1 frase. Se ela quiser chamar uma amiga, mande este texto pronto (sem mudar o link): "${quote.shareText}" — quando a amiga usar, o cupom sobe para quem fechar DEPOIS (o pedido dela mesma fica com o valor de hoje; nunca prometa que o dela sobe).]`]
+        : quote.hint
+          ? [`[Este cupom muda com o tempo — ${quote.hint} Conte isso para ela em 1 frase, com leveza e sem pressionar: é uma surpresa boa, não uma ameaça.]`]
+          : []),
       ...(notice ? [`[${notice}]`] : []),
       `Passe cupom: "${quote.code}" em criar_pedido — o desconto só é aplicado ao fechar o pedido, e o resumo oficial virá com o valor final.`,
     ].join("\n"),

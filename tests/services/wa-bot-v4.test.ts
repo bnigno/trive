@@ -317,6 +317,18 @@ describe("validar_cupom", () => {
     expect(((await botState()).coupon as { hint?: string }).hint).toMatch(/^Hoje vale 5%/);
   });
 
+  it("cupom da turma: a Lia recebe a dica e o texto pronto para a amiga", async () => {
+    await setupStore();
+    await createCoupon(sdb, { code: "TURMA", type: "percent", value: 5, growthPerRedeemer: 2, growthCap: 15, userId: FIXED_USER_ID });
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    const result = await execute("validar_cupom", { cupom: "TURMA" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toContain("[Cupom da turma — Cupom da turma: 5% hoje — você pode ser a primeira.");
+    expect(result.text).toContain("/c/TURMA");
+    expect(result.text).toContain("sobe para quem fechar DEPOIS");
+  });
+
   it("cupom pessoal: o do telefone da conversa vale (mesmo sem cadastro); o de outra cliente é recusado; frete grátis fala de frete", async () => {
     await setupStore();
     await createCoupon(sdb, { code: "MEU", type: "percent", value: 10, userId: FIXED_USER_ID, customerPhone: PHONE });

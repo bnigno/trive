@@ -7,6 +7,7 @@ import { requireOwner } from "@/services/auth";
 import { listCoupons, type Coupon, type CouponListItem } from "@/services/coupons";
 import { scheduleLabel } from "@/core/coupons/messages";
 import { scheduleAdminLabel } from "@/core/coupons/schedule";
+import { collectiveAdminLabel } from "@/core/coupons/collective";
 import { minutesToTime } from "@/lib/coupon-fields";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -95,7 +96,14 @@ function toFormDefaults(coupon: Coupon, productRefs: string[]): CouponFormDefaul
       afterDays: String(step.afterDays),
       value: coupon.type === "percent" ? String(step.value) : (step.value / 100).toFixed(2).replace(".", ","),
     })),
+    growthPerRedeemer: coupon.growthPerRedeemer > 0 ? money(coupon.type, coupon.growthPerRedeemer) : "",
+    growthCap: coupon.growthCap !== null ? money(coupon.type, coupon.growthCap) : "",
   };
+}
+
+/** Valor como a dona digita: "10" (percent) ou "24,90" (fixed). */
+function money(type: Coupon["type"], value: number): string {
+  return type === "percent" ? String(value) : (value / 100).toFixed(2).replace(".", ",");
 }
 
 async function loadPage(): Promise<{
@@ -201,6 +209,9 @@ export default async function CuponsPage() {
                         <span>{formatCouponValue(coupon)}</span>
                         {coupon.valueSchedule ? (
                           <span className="text-xs text-amber-700 dark:text-amber-400">{scheduleAdminLabel(coupon, now)}</span>
+                        ) : null}
+                        {coupon.growthPerRedeemer > 0 ? (
+                          <span className="text-xs text-amber-700 dark:text-amber-400">{collectiveAdminLabel(coupon, coupon.distinctRedeemers)}</span>
                         ) : null}
                         {coupon.minOrderCents > 0 ? (
                           <span className="text-xs text-zinc-500 dark:text-zinc-400">

@@ -47,6 +47,9 @@ export type CouponFormDefaults = {
   note: string;
   /** Degraus do cupom que muda com o tempo: até 3 pares (dia, valor como a dona digita). */
   steps: { afterDays: string; value: string }[];
+  /** Cupom da turma: quanto sobe por amiga e o teto (como a dona digita). */
+  growthPerRedeemer: string;
+  growthCap: string;
 };
 
 export const EMPTY_COUPON_DEFAULTS: CouponFormDefaults = {
@@ -67,6 +70,8 @@ export const EMPTY_COUPON_DEFAULTS: CouponFormDefaults = {
   categoryIds: [],
   note: "",
   steps: [],
+  growthPerRedeemer: "",
+  growthCap: "",
 };
 
 const checkboxClasses =
@@ -282,6 +287,29 @@ function CouponRuleFields({
           </Field>
         </div>
       </details>
+
+      {type !== "free_shipping" ? (
+        <details className="rounded-lg border border-zinc-200 dark:border-zinc-800" open={defaults.growthPerRedeemer !== ""}>
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            Cupom da turma (opcional)
+          </summary>
+          <div className="flex flex-col gap-4 border-t border-zinc-200 p-4 dark:border-zinc-800">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              O valor acima é o inicial. Cada cliente distinta (CPF/telefone) que usar sobe o desconto para as próximas, até o
+              teto — feito para circular no grupo de WhatsApp: quem compartilha melhora o cupom de todo mundo. A sacola ganha o
+              botão “Mandar para uma amiga”. Não combina com os degraus por tempo.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label={type === "percent" ? "Sobe por amiga (pontos)" : "Sobe por amiga (R$)"} hint="Vazio = cupom comum.">
+                <Input name="growthPerRedeemer" inputMode="decimal" defaultValue={defaults.growthPerRedeemer} placeholder={type === "percent" ? "2" : "5,00"} />
+              </Field>
+              <Field label={type === "percent" ? "Teto (%)" : "Teto (R$)"} hint="Obrigatório quando sobe.">
+                <Input name="growthCap" inputMode="decimal" defaultValue={defaults.growthCap} placeholder={type === "percent" ? "15" : "30,00"} />
+              </Field>
+            </div>
+          </div>
+        </details>
+      ) : null}
 
       {type !== "free_shipping" ? (
         <details className="rounded-lg border border-zinc-200 dark:border-zinc-800" open={defaults.steps.length > 0}>

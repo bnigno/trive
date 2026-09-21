@@ -8,6 +8,7 @@
 // fechamento do pedido é quem confirma.
 import { spDayKey, spMinutesOfDay, weekdayIndexSP } from "@/lib/sp-day";
 
+import { collectiveValue, isCollective } from "./collective";
 import { effectiveValue, type ValueStep } from "./schedule";
 
 export type CouponType = "percent" | "fixed" | "free_shipping";
@@ -41,6 +42,9 @@ export interface CouponRule {
   categoryIds: string[];
   /** Degraus do cupom que muda com o tempo (core/coupons/schedule); null = valor fixo. */
   valueSchedule: ValueStep[] | null;
+  /** Cupom da turma (core/coupons/collective): 0 = comum. */
+  growthPerRedeemer: number;
+  growthCap: number | null;
   createdAt: Date;
 }
 
@@ -215,8 +219,9 @@ export function evaluateCoupon(rule: CouponRule, ctx: CouponContext): CouponEval
     };
   }
 
-  // O valor de HOJE (degraus por tempo); sem degraus é o da coluna.
-  const value = effectiveValue(rule, ctx.now);
+  // O valor de HOJE: cupom da turma cresce com as amigas; degraus por tempo
+  // com o calendário; sem mecânica é o da coluna.
+  const value = isCollective(rule) ? collectiveValue(rule, ctx.distinctRedeemers ?? 0) : effectiveValue(rule, ctx.now);
   const discountCents =
     rule.type === "percent"
       ? Math.floor((eligible * value) / 100)
