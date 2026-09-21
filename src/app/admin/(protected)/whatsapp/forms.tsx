@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/form";
 import { renderTemplate } from "@/core/whatsapp/render";
 import {
+  saveLiaGiftSettingsAction,
   saveBotSettingsAction,
   saveWaSettingsAction,
   sendDigestNowAction,
@@ -52,7 +53,8 @@ export function ToggleSwitch({
     | "customer_looks_enabled"
     | "bot_audio_notes_enabled"
     | "groups_enabled"
-    | "bot_group_mentions_enabled";
+    | "bot_group_mentions_enabled"
+    | "lia_gift_enabled";
   checked: boolean;
   label: string;
   hint: string;
@@ -483,5 +485,53 @@ export function TemplateEditForm({
         </div>
       </div>
     </details>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gentilezas da Lia: a cota e as condições do cupom de bolso
+// ---------------------------------------------------------------------------
+
+export type LiaGiftFormDefaults = {
+  percent: number;
+  dailyQuota: number;
+  minPurchases: number;
+  /** "150,00" como a dona digita. */
+  minCart: string;
+  validDays: number;
+  cooldownDays: number;
+};
+
+export function LiaGiftSettingsForm({ defaults }: { defaults: LiaGiftFormDefaults }) {
+  const [state, formAction] = useActionState(saveLiaGiftSettingsAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Field label="Desconto (%)" hint="Da gentileza. Ex.: 10.">
+          <Input name="percent" type="number" min={1} max={50} step={1} defaultValue={String(defaults.percent)} />
+        </Field>
+        <Field label="Gentilezas por dia" hint="A cota, somando todas as conversas. 0 = nenhuma.">
+          <Input name="dailyQuota" type="number" min={0} max={20} step={1} defaultValue={String(defaults.dailyQuota)} />
+        </Field>
+        <Field label="Só para quem já comprou pelo menos (compras)" hint="0 = qualquer cliente com cadastro.">
+          <Input name="minPurchases" type="number" min={0} max={10} step={1} defaultValue={String(defaults.minPurchases)} />
+        </Field>
+        <Field label="Sacola mínima (R$)" hint="Abaixo disso a Lia não oferece.">
+          <Input name="minCart" inputMode="decimal" defaultValue={defaults.minCart} placeholder="150,00" />
+        </Field>
+        <Field label="Vale por (dias)" hint="Cupom curto, para fechar agora. Ex.: 2.">
+          <Input name="validDays" type="number" min={1} max={30} step={1} defaultValue={String(defaults.validDays)} />
+        </Field>
+        <Field label="Mesma cliente de novo só depois de (dias)" hint="0 = sem espera.">
+          <Input name="cooldownDays" type="number" min={0} max={365} step={1} defaultValue={String(defaults.cooldownDays)} />
+        </Field>
+      </div>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar gentilezas</SubmitButton>
+      </div>
+    </form>
   );
 }

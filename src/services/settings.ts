@@ -599,6 +599,14 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   late_delivery_grace_minutes: z.number().int().min(0).max(240, { error: "No máximo 240 minutos (4 horas)." }),
   late_delivery_coupon_percent: z.number().int().min(1).max(50, { error: "Entre 1% e 50%." }),
   late_delivery_coupon_days: z.number().int().min(1).max(180, { error: "Entre 1 e 180 dias." }),
+  /** Gentilezas da Lia: cota diária de cupons pessoais que a vendedora pode oferecer. */
+  lia_gift_enabled: z.boolean(),
+  lia_gift_percent: z.number().int().min(1).max(50, { error: "Entre 1% e 50%." }),
+  lia_gift_daily_quota: z.number().int().min(0).max(20, { error: "No máximo 20 por dia." }),
+  lia_gift_min_purchases: z.number().int().min(0).max(10),
+  lia_gift_min_cart_cents: z.number().int().min(0),
+  lia_gift_days: z.number().int().min(1).max(30, { error: "Entre 1 e 30 dias." }),
+  lia_gift_cooldown_days: z.number().int().min(0).max(365),
   /** "Quem já vestiu": a Lia guarda a foto da cliente com a peça e pede consentimento. */
   customer_looks_enabled: z.boolean(),
   /** A Lia manda a nota em áudio da curadora como mensagem de voz (ausente = ligado). */

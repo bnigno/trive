@@ -37,9 +37,12 @@ import {
   listWaTemplates,
   type WaTemplate,
 } from "@/services/wa-templates";
+import type { LiaGiftPolicy } from "@/core/coupons/lia-gift";
+import { countLiaGiftsToday, loadLiaGiftPolicy } from "@/services/lia-gifts";
 import { maskPhone } from "./conversas/format";
 import {
   BotSettingsForm,
+  LiaGiftSettingsForm,
   SendDigestNowForm,
   SendTestMessageForm,
   TemplateEditForm,
@@ -93,6 +96,8 @@ interface PageData {
   lastDigest: { date: string; url: string; at: Date } | null;
   /** Resumo dos links de story (a lista completa fica em /whatsapp/links). */
   campaignLinks: { total: number; taps: number; conversations: number; orders: number };
+  /** Gentilezas da Lia: a política e quantas saíram hoje. */
+  liaGift: { enabled: boolean; policy: LiaGiftPolicy; today: number };
 }
 
 async function loadPageData(): Promise<PageData | null> {
@@ -106,6 +111,8 @@ async function loadPageData(): Promise<PageData | null> {
   let awaitingOwner: number;
   let lastDigestRow: Awaited<ReturnType<typeof getLastDigest>>;
   let campaignLinks: CampaignLink[];
+  let liaGiftPolicy: LiaGiftPolicy;
+  let liaGiftsToday: number;
   try {
     [settingsMap, templates, summary, responseTimes, activity, awaitingOwner, lastDigestRow, campaignLinks] = await Promise.all([
       getSettingsMap(db, [
@@ -131,6 +138,7 @@ async function loadPageData(): Promise<PageData | null> {
         "feedback_ask_enabled",
         "customer_looks_enabled",
         "bot_audio_notes_enabled",
+        "lia_gift_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -140,6 +148,7 @@ async function loadPageData(): Promise<PageData | null> {
       getLastDigest(db),
       listCampaignLinks(db),
     ]);
+    [liaGiftPolicy, liaGiftsToday] = await Promise.all([loadLiaGiftPolicy(db), countLiaGiftsToday(db, new Date())]);
   } catch {
     return null;
   }
@@ -205,6 +214,7 @@ async function loadPageData(): Promise<PageData | null> {
           at: lastDigestRow.at,
         }
       : null,
+    liaGift: { enabled: settingsMap["lia_gift_enabled"] === true, policy: liaGiftPolicy, today: liaGiftsToday },
   };
 }
 
@@ -264,6 +274,7 @@ export default async function WhatsappPage() {
     mediaEnabled,
     cardsEnabled,
     lastDigest,
+    liaGift,
   } = data;
 
   // O interruptor sozinho não liga a vendedora em produção: sem a chave da
@@ -452,6 +463,31 @@ export default async function WhatsappPage() {
               <p className="text-xs text-zinc-500 dark:text-zinc-400">Nenhum resumo enviado ainda.</p>
             )}
           </div>
+        </div>
+      </Card>
+
+      <Card title={`Gentilezas da ${sellerName}`}>
+        <div className="flex flex-col gap-5">
+          <ToggleSwitch
+            settingKey="lia_gift_enabled"
+            checked={liaGift.enabled}
+            label={`A ${sellerName} pode oferecer uma gentileza`}
+            hint={`Um cupom pessoal, de poucos dias, para a cliente que hesitou no preço, é de casa ou está de aniversário — dentro da cota do dia. A ${sellerName} nunca oferece na abertura nem duas vezes na mesma conversa; cada gentileza fica registrada em Cupons com o motivo.`}
+          />
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Hoje: <span className="font-medium">{liaGift.today} de {liaGift.policy.dailyQuota}</span>
+            {liaGift.enabled ? "" : " · desligado"}
+          </p>
+          <LiaGiftSettingsForm
+            defaults={{
+              percent: liaGift.policy.percent,
+              dailyQuota: liaGift.policy.dailyQuota,
+              minPurchases: liaGift.policy.minPurchases,
+              minCart: (liaGift.policy.minCartCents / 100).toFixed(2).replace(".", ","),
+              validDays: liaGift.policy.validDays,
+              cooldownDays: liaGift.policy.cooldownDays,
+            }}
+          />
         </div>
       </Card>
 

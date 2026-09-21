@@ -18,6 +18,7 @@ import { sql } from "drizzle-orm";
 import { categories, products } from "./catalog";
 import { customers } from "./customers";
 import { orders } from "./orders";
+import { waConversations } from "./whatsapp";
 
 // Cupons de desconto da loja. O código é armazenado SEMPRE em UPPERCASE
 // (normalização no serviço) e é único. `value` depende do tipo:
@@ -96,6 +97,10 @@ export const coupons = pgTable(
     referrerCustomerId: uuid("referrer_customer_id").references(() => customers.id, {
       onDelete: "set null",
     }),
+    // Gentileza da Lia: a conversa em que foi oferecida (o painel liga os dois).
+    conversationId: uuid("conversation_id").references(() => waConversations.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -109,6 +114,9 @@ export const coupons = pgTable(
       .where(sql`${table.dedupeKey} IS NOT NULL`),
     index("coupons_customer_id_idx").on(table.customerId),
     index("coupons_order_id_idx").on(table.orderId),
+    // A cota do dia das gentilezas e o cooldown por cliente.
+    index("coupons_origin_created_at_idx").on(table.origin, table.createdAt),
+    index("coupons_customer_origin_idx").on(table.customerId, table.origin),
     check(
       "coupons_type_check",
       sql`${table.type} IN ('percent', 'fixed', 'free_shipping')`,

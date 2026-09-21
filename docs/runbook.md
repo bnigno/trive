@@ -1052,6 +1052,17 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   · cupom …". Sem cupom mesmo com atraso: recurso desligado na hora, evento
   ainda na fila (`/admin/fila`, `delivery.stop_delivered`) ou cupom apagado.
   Produção: `scripts/sync-seed.ts --settings late_delivery_coupon_enabled,late_delivery_grace_minutes,late_delivery_coupon_percent,late_delivery_coupon_days --templates late_delivery_coupon`.
+- **Gentilezas da Lia** (card em `/admin/whatsapp`) — o cupom de bolso da
+  vendedora: uma cota pequena por dia (padrão 3) de cupons pessoais `NOME-CARINHO`
+  (padrão 10%, 2 dias, sacola ≥ R$ 150, só cliente com cadastro e ≥ 1 compra,
+  a mesma cliente de novo só depois de 60 dias). A Lia chama
+  `oferecer_gentileza` quando a cliente hesita no preço com peça na sacola, é
+  de casa e elogia, volta a uma sacola parada ou fala do aniversário — nunca na
+  abertura nem duas vezes na conversa; o **servidor** decide e, se recusa, ela
+  não menciona desconto. O motivo fica na nota do cupom (lista com "Ver
+  conversa"). No ensaio nada é emitido (`ENSAIO-CARINHO`). Produção:
+  `scripts/sync-seed.ts --settings lia_gift_enabled,lia_gift_percent,lia_gift_daily_quota,lia_gift_min_purchases,lia_gift_min_cart_cents,lia_gift_days,lia_gift_cooldown_days`
+  e a migração 0052.
 
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")
 

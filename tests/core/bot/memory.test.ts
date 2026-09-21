@@ -317,6 +317,9 @@ describe("renderContextNote", () => {
     expect(frete).toContain("• Cupom validado nesta conversa: FRETE (frete grátis no fechamento)");
     const amadurece = renderContextNote(parseBotState({ coupon: { code: "AMADURECE", discountCents: 500, hint: "Hoje vale 5%. Em 7 dias (18/09) passa a 10%, se a peça ainda estiver aqui.", at: "2026-09-11T12:00:00.000Z" } }));
     expect(amadurece).toContain(`(desconto de ${formatCentsBRL(500)} nesta sacola · Hoje vale 5%. Em 7 dias (18/09) passa a 10%, se a peça ainda estiver aqui.)`);
+    // Gentileza já oferecida: sobrevive ao fechamento do pedido e avisa para não oferecer outra.
+    const gift = renderContextNote(parseBotState({ liaGift: { code: "MARIA-CARINHO", motivo: "hesitou no preço", at: "2026-09-21T18:00:00.000Z", expiresAt: "2026-09-24T02:59:59.000Z" } }));
+    expect(gift).toContain("• Gentileza já oferecida nesta conversa: cupom MARIA-CARINHO (motivo: hesitou no preço) — não ofereça outra");
   });
 
   it("guarda quando a cotação foi feita", () => {

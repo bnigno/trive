@@ -107,6 +107,7 @@ import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, res
 import { catalogHighlightLines } from "./bot/highlights";
 import { getStoreFacts } from "./store-facts";
 import { execAnotar, execAtualizarCartela, execSugerirTamanho, loadMemoryLines } from "./bot/style";
+import { execOferecerGentileza } from "./bot/gifts";
 
 // Superfície pública: quem importa de @/services/wa-bot continua igual; os
 // executores moram em src/services/bot/* por família.
@@ -318,6 +319,8 @@ export function buildToolExecutor(
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
+      case "oferecer_gentileza":
+        return execOferecerGentileza(db, ctx, parsed.data as BotToolInputs["oferecer_gentileza"]);
       case "sugerir_tamanho":
         return execSugerirTamanho(db, ctx, parsed.data as BotToolInputs["sugerir_tamanho"]);
       case "enviar_nota_da_curadora":
@@ -364,7 +367,7 @@ export type BotPromptBundle = {
 };
 
 export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle> {
-  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name"]);
+  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name", "lia_gift_enabled"]);
   const text = (key: string): string =>
     typeof map[key] === "string" ? (map[key] as string).trim() : "";
   const storeName = text("store_name") || DEFAULT_STORE_NAME;
@@ -380,6 +383,7 @@ export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle>
     siteUrl: siteBaseUrl(),
     ...(storeMap ? { storeMap } : {}),
     storeFacts,
+    liaGiftEnabled: map["lia_gift_enabled"] === true,
   });
   return { system, model, sellerName };
 }
