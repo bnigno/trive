@@ -3,7 +3,8 @@
 // motoboy tocou "Entregue". Passou do fim da janela mais a carência da dona,
 // atrasou — e a casa pede desculpas com um cupom.
 import { hourLabel, minutesOf } from "@/core/shipping/delivery-windows";
-import { isSpDayKey, spDateTime, spDayEnd, spDayKey, spDayLabel } from "@/lib/sp-day";
+import { couponExpiryAfterDays } from "@/core/coupons/expiry";
+import { isSpDayKey, spDateTime, spDayLabel } from "@/lib/sp-day";
 
 export interface LatenessInput {
   /** A janela prometida (orders.delivery_window); null = pedido sem janela (Correios). */
@@ -48,6 +49,5 @@ export function lateDeliveryNote(input: { minutesLate: number; window: { dayKey:
 
 /** O cupom de desculpas vale N dias a partir da entrega — até o FIM do último dia (a mensagem diz "até dd/mm"). */
 export function lateDeliveryCouponExpiry(deliveredAt: Date, days: number): Date {
-  const lastDay = spDayKey(new Date(deliveredAt.getTime() + days * 86_400_000));
-  return new Date(spDayEnd(lastDay).getTime() - 1000);
+  return couponExpiryAfterDays(deliveredAt, days);
 }

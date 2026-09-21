@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { lookCouponCaptionLine, lookCouponDedupeKey, lookCouponEligibility, lookCouponRefusalHint, lookCouponToolHint } from "@/core/looks/coupon";
+import { distancesToProductPhotos, lookCouponCaptionLine, lookCouponDedupeKey, lookCouponEligibility, lookCouponRefusalHint, lookCouponToolHint, looksLikeCatalogPhoto } from "@/core/looks/coupon";
 
 const sp = (iso: string) => new Date(`${iso}-03:00`);
 
@@ -26,5 +26,16 @@ describe("textos", () => {
     expect(lookCouponToolHint({ code: "MARIA-K7X2M", percent: 10, expiresAt: sp("2026-11-19T23:59:59"), created: false })).toBe("Ela já tinha ganhado o cupom MARIA-K7X2M por essa peça: não prometa outro.");
     expect(lookCouponRefusalHint("foto_de_catalogo")).toContain("sem cupom");
     expect(lookCouponRefusalHint("sem_compra_entregue")).toBeNull();
+  });
+});
+
+describe("anti-print", () => {
+  it("distâncias às fotos da peça (hashes tortos ignorados) e o limiar de 'é o catálogo'", () => {
+    expect(distancesToProductPhotos("0000000000000000", ["0000000000000001", "ffffffffffffffff", null, "zz"])).toEqual([1, 64]);
+    expect(distancesToProductPhotos("zz", ["0000000000000000"])).toBeNull();
+    expect(looksLikeCatalogPhoto([9, 30])).toBe(false);
+    expect(looksLikeCatalogPhoto([8, 30])).toBe(true);
+    expect(looksLikeCatalogPhoto(null)).toBe(false);
+    expect(looksLikeCatalogPhoto([])).toBe(false);
   });
 });

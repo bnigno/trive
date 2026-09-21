@@ -168,6 +168,8 @@ export async function renderAndSendCustomerLookCard(
       couponValue: coupons.value,
       couponExpiresAt: coupons.expiresAt,
       couponActive: coupons.isActive,
+      couponUsedCount: coupons.usedCount,
+      couponMaxUses: coupons.maxUses,
     })
     .from(customerLooks)
     .innerJoin(products, eq(products.id, customerLooks.productId))
@@ -219,8 +221,12 @@ export async function renderAndSendCustomerLookCard(
     body: lookCardCaption(
       look.displayName,
       look.productName,
-      // O mimo, repetido pelo cartão (a Lia pode errar o código; a legenda não).
-      look.couponCode && look.couponActive && look.couponExpiresAt
+      // O mimo, repetido pelo cartão (a Lia pode errar o código; a legenda não) — só se ainda vale.
+      look.couponCode &&
+        look.couponActive &&
+        look.couponExpiresAt &&
+        look.couponExpiresAt.getTime() > now().getTime() &&
+        (look.couponMaxUses === null || (look.couponUsedCount ?? 0) < look.couponMaxUses)
         ? lookCouponCaptionLine({ code: look.couponCode, percent: look.couponValue ?? 0, expiresAt: look.couponExpiresAt })
         : null,
     ),

@@ -5,14 +5,15 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 
 import type { BotToolInputs } from "@/core/bot/tools";
 import { lookCardTitle, lookDisplayName } from "@/core/looks/consent";
-import { lookCouponDedupeKey, lookCouponEligibility, lookCouponRefusalHint, lookCouponToolHint } from "@/core/looks/coupon";
-import { customerLooks, customers, orderItems, orders, productVariants } from "@/db/schema";
+import { couponExpiryAfterDays } from "@/core/coupons/expiry";
+import { distancesToProductPhotos, lookCouponDedupeKey, lookCouponEligibility, lookCouponToolHint, looksLikeCatalogPhoto } from "@/core/looks/coupon";
+import { customerLooks, customers, orderItems, orders, productImages, productVariants } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
 import { issueCoupon } from "@/services/coupons";
 import { isCustomerLooksEnabled, registerCustomerLook, revokeCustomerLooksByPhone } from "@/services/customer-looks";
+import { imagePhash } from "@/services/image-fingerprint";
 import { loadLookCouponSettings } from "@/services/look-coupons";
-import { findProductsByPhotoHash } from "@/services/photo-match";
 
 import { DRY_RUN_TEXT, resolveConversationCustomerId, type BotExecutorContext, type ToolResult } from "./shared";
 
@@ -43,6 +44,15 @@ export async function execRegistrarFotoComAPeca(
           : `Não achei a peça "${input.produto}" no catálogo. Confira o nome com detalhar_produto ou listar_produtos.`,
     };
   }
+  // Print/foto do catálogo da própria peça não é "ela com a peça": nem cartão,
+  // nem pergunta, nem mimo — a Lia trata como foto de catálogo.
+  const catalogDistances = await distancesToPieceLook(db, resolved.detail.id, photo);
+  if (looksLikeCatalogPhoto(catalogDistances)) {
+    return {
+      ok: false,
+      text: "Essa foto parece ser do catálogo (print ou foto da loja), não dela usando a peça: não registrei. Responda sobre a peça com detalhar_produto; se ela quiser aparecer, peça uma foto dela mesma vestindo.",
+    };
+  }
   const customerId = await resolveConversationCustomerId(db, ctx);
   const [customer] = customerId
     ? await db.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, customerId)).limit(1)
@@ -53,19 +63,20 @@ export async function execRegistrarFotoComAPeca(
   let productVariantId: string | null = null;
   let deliveredOrderId: string | null = null;
   if (customerId) {
-    const [item] = await db
+    const items = await db
       .select({ orderId: orders.id, productVariantId: orderItems.productVariantId, status: orders.status })
       .from(orderItems)
       .innerJoin(orders, eq(orders.id, orderItems.orderId))
       .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
       .where(and(eq(orders.customerId, customerId), eq(productVariants.productId, resolved.detail.id), inArray(orders.status, ["delivered", "shipped", "paid", "preparing"])))
-      .orderBy(desc(orders.createdAt))
-      .limit(1);
-    if (item) {
-      orderId = item.orderId;
-      productVariantId = item.productVariantId;
-      if (item.status === "delivered") deliveredOrderId = item.orderId;
+      .orderBy(desc(orders.createdAt));
+    const latest = items[0];
+    if (latest) {
+      orderId = latest.orderId;
+      productVariantId = latest.productVariantId;
     }
+    // O mimo exige pedido ENTREGUE — o mais recente entregue, mesmo com outro em andamento.
+    deliveredOrderId = items.find((item) => item.status === "delivered")?.orderId ?? null;
   }
   const displayName = lookDisplayName(customer?.fullName);
   const registered = await registerCustomerLook(db, {
@@ -87,7 +98,7 @@ export async function execRegistrarFotoComAPeca(
     productId: resolved.detail.id,
     productName: resolved.detail.name,
     deliveredOrderId,
-    phash: photo.phash ?? null,
+    catalogDistances,
   });
   const more = photos.length > 1 ? ` (registrei a ${input.foto ?? photos.length}ª das ${photos.length} fotos recentes)` : "";
   return {
@@ -97,23 +108,34 @@ export async function execRegistrarFotoComAPeca(
 }
 
 /**
+ * Distâncias da foto dela às fotos DESTA peça (publicadas ou não). O hash vem
+ * do turno; faltando, é calculado da própria imagem; sem imagem, null.
+ */
+async function distancesToPieceLook(db: DbOrTx, productId: string, photo: { phash?: string | null; image?: { base64: string } }): Promise<number[] | null> {
+  let phash = photo.phash ?? null;
+  if (!phash && photo.image) phash = await imagePhash(Buffer.from(photo.image.base64, "base64"));
+  if (!phash) return null;
+  const rows = await db.select({ phash: productImages.phash }).from(productImages).where(eq(productImages.productId, productId));
+  return distancesToProductPhotos(phash, rows.map((row) => row.phash));
+}
+
+/**
  * O mimo pela foto: cupom pessoal, uma vez por peça, só com pedido ENTREGUE
- * e foto que não é do catálogo. Devolve a dica para a Lia (ou null = silêncio).
+ * (o print já foi barrado antes). Devolve a dica para a Lia (ou null = silêncio).
  */
 async function lookCouponFor(
   db: DbOrTx,
   ctx: BotExecutorContext,
-  input: { lookId: string; customerId: string | null; productId: string; productName: string; deliveredOrderId: string | null; phash: string | null },
+  input: { lookId: string; customerId: string | null; productId: string; productName: string; deliveredOrderId: string | null; catalogDistances: number[] | null },
 ): Promise<string | null> {
   const settings = await loadLookCouponSettings(db);
-  const catalogDistances = input.phash ? (await findProductsByPhotoHash(db, input.phash)).map((match) => match.distance) : null;
   const eligibility = lookCouponEligibility({
     enabled: settings.enabled,
     customerId: input.customerId,
     deliveredOrderId: input.deliveredOrderId,
-    catalogDistances,
+    catalogDistances: input.catalogDistances,
   });
-  if (!eligibility.ok) return lookCouponRefusalHint(eligibility.reason);
+  if (!eligibility.ok) return null;
   const customerId = input.customerId as string;
   const now = ctx.now ?? new Date();
   const issued = await issueCoupon(db, {
@@ -122,7 +144,7 @@ async function lookCouponFor(
     origin: "look_photo",
     type: "percent",
     value: settings.percent,
-    expiresAt: new Date(now.getTime() + settings.days * 86_400_000),
+    expiresAt: couponExpiryAfterDays(now, settings.days),
     note: `Foto dela com ${input.productName}`,
     orderId: input.deliveredOrderId,
     now,

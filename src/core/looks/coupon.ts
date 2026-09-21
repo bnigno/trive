@@ -2,9 +2,10 @@
 // peça que comprou (e chegou), a casa agradece com um cupom pessoal. Nasce
 // no registro da foto (a Lia está no turno e fala com naturalidade), não no
 // "sim" de publicar — o consentimento continua livre, o cupom agradece a
-// foto. Anti-print: foto a menos de PHOTO_MATCH_MAX_DISTANCE de uma foto do
-// catálogo é o próprio catálogo, não ela.
+// foto. Anti-print: foto a menos de PHOTO_MATCH_MAX_DISTANCE de uma foto DA
+// PEÇA (qualquer uma, publicada ou não) é o próprio catálogo, não ela.
 import { PHOTO_MATCH_MAX_DISTANCE } from "@/core/bot/photo-match";
+import { hammingDistance, hexToPhash } from "@/core/images/phash";
 
 export type LookCouponRefusal = "desligado" | "sem_cadastro" | "sem_compra_entregue" | "foto_de_catalogo";
 
@@ -13,17 +14,32 @@ export interface LookCouponEligibilityInput {
   customerId: string | null;
   /** O pedido ENTREGUE com a peça; null = não há. */
   deliveredOrderId: string | null;
-  /** Distâncias (hamming) da foto às fotos do catálogo; null = sem hash (reconhecimento desligado). */
+  /** Distâncias (hamming) da foto às fotos da peça; null = sem hash (não deu para calcular). */
   catalogDistances: number[] | null;
+}
+
+/** Distâncias da foto dela a cada foto da peça (hashes em hex); hashes tortos são ignorados. */
+export function distancesToProductPhotos(photoHash: string, productHashes: readonly (string | null)[]): number[] | null {
+  const mine = hexToPhash(photoHash);
+  if (mine === null) return null;
+  const distances: number[] = [];
+  for (const hex of productHashes) {
+    const theirs = hex ? hexToPhash(hex) : null;
+    if (theirs !== null) distances.push(hammingDistance(mine, theirs));
+  }
+  return distances;
+}
+
+/** É print/foto do catálogo (não é ela com a peça)? */
+export function looksLikeCatalogPhoto(distances: number[] | null): boolean {
+  return distances !== null && distances.some((distance) => distance <= PHOTO_MATCH_MAX_DISTANCE);
 }
 
 export function lookCouponEligibility(input: LookCouponEligibilityInput): { ok: true } | { ok: false; reason: LookCouponRefusal } {
   if (!input.enabled) return { ok: false, reason: "desligado" };
   if (input.customerId === null) return { ok: false, reason: "sem_cadastro" };
   if (input.deliveredOrderId === null) return { ok: false, reason: "sem_compra_entregue" };
-  if (input.catalogDistances !== null && input.catalogDistances.some((distance) => distance <= PHOTO_MATCH_MAX_DISTANCE)) {
-    return { ok: false, reason: "foto_de_catalogo" };
-  }
+  if (looksLikeCatalogPhoto(input.catalogDistances)) return { ok: false, reason: "foto_de_catalogo" };
   return { ok: true };
 }
 

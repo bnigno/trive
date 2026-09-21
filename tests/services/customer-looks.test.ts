@@ -215,10 +215,12 @@ describe("mimo pela foto (cupom no registro)", () => {
       .insert(schema.waMessages)
       .values({ conversationId: paid.conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: PHOTO_URL, status: "delivered", zapiMessageId: "IMG-P" })
       .returning({ id: schema.waMessages.id });
+    // Print do catálogo (hash a 1 bit da foto da peça): nem registra, nem cartão, nem mimo.
     const doCatalogo = await executorFor({ conversationId: paid.conversationId, customerId: paid.customerId, photoWaMessageId: print.id, phash: "0000000000000001" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
-    expect(doCatalogo.ok).toBe(true);
-    expect(doCatalogo.text).toContain("parece ser do catálogo/print");
+    expect(doCatalogo.ok).toBe(false);
+    expect(doCatalogo.text).toContain("parece ser do catálogo");
     expect(await db.select().from(schema.coupons)).toHaveLength(0);
+    expect(await db.select().from(schema.customerLooks)).toHaveLength(1);
 
     await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "look_coupon_enabled"));
     const [third] = await db
@@ -228,8 +230,24 @@ describe("mimo pela foto (cupom no registro)", () => {
     const off = await executorFor({ conversationId: paid.conversationId, customerId: paid.customerId, photoWaMessageId: third.id, phash: "ffffffffffffffff" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
     expect(off.ok).toBe(true);
     expect(off.text).not.toContain("cupom");
-    expect(await db.select().from(schema.customerLooks)).toHaveLength(3);
+    expect(await db.select().from(schema.customerLooks)).toHaveLength(2);
     expect(await db.select().from(schema.coupons)).toHaveLength(0);
+  });
+
+  it("validade até o fim do dia anunciado; foto usada de novo com o cupom já gasto não repete o mimo na legenda", async () => {
+    await enableLookCoupon();
+    const { productId, variantId } = await seedProduct();
+    const { customerId, conversationId, photoWaMessageId } = await seedConversationWithPhoto({ productId, variantId, delivered: true });
+    await executorFor({ conversationId, customerId, photoWaMessageId, phash: "ffffffffffffffff" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    const [coupon] = await db.select().from(schema.coupons);
+    // NOW = 14/09 11h SP; +60 dias = 13/11, até 23:59:59 SP (02:59:59Z de 14/11).
+    expect(coupon.expiresAt).toEqual(new Date("2026-11-14T02:59:59.000Z"));
+
+    await db.update(schema.coupons).set({ usedCount: 1 }).where(eq(schema.coupons.id, coupon.id));
+    const [look] = await db.select().from(schema.customerLooks);
+    provider.setMediaFixture(PHOTO_URL, await photoJpeg(), "image/jpeg");
+    await renderAndSendCustomerLookCard(sdb, provider, storage, render, { lookId: look.id }, { now: () => NOW });
+    expect(provider.sentImages[0].caption).not.toContain("Seu mimo");
   });
 });
 
