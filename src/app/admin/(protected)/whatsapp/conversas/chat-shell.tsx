@@ -136,7 +136,6 @@ export function ChatShell({
   );
   const pendingSeenRef = useRef(false);
   const sendTimersRef = useRef(new Map<string, number>());
-  const baseTitleRef = useRef<string | null>(null);
   const announceSeqRef = useRef(0);
 
   const announce = useCallback((text: string) => {
@@ -359,21 +358,11 @@ export function ChatShell({
       suggestionCount: conversations.filter((c) => c.pendingSuggestion && c.status !== "closed").length,
     };
   }, [conversations]);
-  // Nesta página o avisador do layout descansa: quem alimenta o crachá é o chat.
+  // Nesta página o avisador do layout descansa: quem alimenta o crachá do
+  // menu e o "(N)" do título da aba é o chat, pelo mesmo store.
   useEffect(() => {
     publishWaUnseen(unseen);
   }, [unseen]);
-
-  // Título da aba: "(N) Conversas"; restaura ao sair.
-  const unreadTotal = unseen.withNewMessages;
-  useEffect(() => {
-    baseTitleRef.current ??= document.title;
-    const base = baseTitleRef.current;
-    document.title = unreadTotal > 0 ? `(${unreadTotal}) Conversas` : base;
-    return () => {
-      document.title = base;
-    };
-  }, [unreadTotal]);
 
   // Limpeza dos timeouts de envio pendentes ao desmontar.
   useEffect(() => {
@@ -551,7 +540,9 @@ export function ChatShell({
       if (c.status === "closed") result.closed += 1;
       else if (badge.attendant === "you") result.you += 1;
       else if (badge.attendant === "seller") result.seller += 1;
-      if (c.unreadCount > 0) result.unread += 1;
+      // "Não lidas" é exatamente o que o crachá do menu conta: aberta, com
+      // mensagem não vista, sem a de avisos internos.
+      if (c.unreadCount > 0 && c.status !== "closed") result.unread += 1;
     }
     return result;
   }, [conversations, botEnabled, sellerName]);
@@ -567,7 +558,7 @@ export function ChatShell({
       }
       if (filter === "all") return c.status !== "closed" || c.id === selectedId;
       if (filter === "closed") return c.status === "closed";
-      if (filter === "unread") return c.unreadCount > 0;
+      if (filter === "unread") return c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed";
       const badge = attendantBadge(
         c.status,
         c.botDisabledUntil ? new Date(c.botDisabledUntil) : null,

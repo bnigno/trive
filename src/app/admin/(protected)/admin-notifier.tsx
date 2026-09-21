@@ -144,12 +144,11 @@ export function AdminNotifier() {
     };
   }, [onChatPage, notify, pushToast]);
 
-  // "(N) Pedidos | TRIVÉ" em qualquer página. O Next reescreve o <title> a
-  // cada navegação: o observer reaplica o prefixo sem brigar (só escreve
-  // quando o texto está diferente, então não realimenta a si mesmo). Na
-  // página de conversas o chat cuida do próprio "(N) Conversas".
+  // "(N) Pedidos | TRIVÉ" em qualquer página (em Conversas o número vem do
+  // chat, pelo store). O Next reescreve o <title> a cada navegação e depois
+  // da hidratação: o observer reaplica o prefixo sem brigar — só escreve
+  // quando o texto está diferente, então não realimenta a si mesmo.
   useEffect(() => {
-    if (onChatPage) return;
     const apply = () => {
       const next = withUnreadPrefix(document.title, withNewMessages);
       if (document.title !== next) document.title = next;
@@ -162,7 +161,7 @@ export function AdminNotifier() {
       const bare = withUnreadPrefix(document.title, 0);
       if (document.title !== bare) document.title = bare;
     };
-  }, [onChatPage, withNewMessages]);
+  }, [withNewMessages]);
 
   return <HandoffToastViewport toasts={toasts} onDismiss={dismissToast} />;
 }
