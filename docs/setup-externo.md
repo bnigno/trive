@@ -145,3 +145,17 @@ Fora da área do motoboy, a sacola e a Lia cotam **PAC e SEDEX** na hora pela Su
 6. Ligue o toggle e salve. Confira: sacola com um CEP fora de Belém (ex.: 01310-100) deve mostrar PAC e SEDEX com valor e prazo em dias úteis; no ensaio da Lia, "meu CEP é 01310100" faz o mesmo.
 
 Sem token ou sem CEP de origem, nada muda: os CEPs sem faixa continuam com "frete calculado pela equipe". Uma faixa de Correios **ativa** em /admin/frete vale na frente da cotação automática (a cotação só entra onde nenhuma faixa cobre o CEP). A postagem segue manual: a dona gera a etiqueta no painel da SuperFrete e marca o pedido como enviado.
+
+## 10. FASHN — a peça no corpo (ensaio com modelas da casa)
+
+A foto real da peça (esticada ou em cabide) vira, em segundos, uma foto dela no corpo de uma das três modelas da casa, numa cena de Belém. O vendor é a FASHN, especializada em **try-on**: a peça é transferida para a foto-base da modela sem redesenhar a estampa — por isso a cor, a estampa e o corte ficam fiéis. Antes de a dona ver, a visão da Anthropic compara a foto real com a gerada (portão de fidelidade) e descarta o que não passar.
+
+Custo: créditos pré-pagos, sem mensalidade. 1 foto econômica = 1 crédito (US$ 0,075); 1 foto em qualidade alta (2K) = 3 créditos. Uma peça com 3 cores × 3 opções sai por volta de R$ 5; 40 peças novas por mês, cerca de R$ 220 (câmbio de referência R$ 5,50). As fotos-base das modelas são feitas uma vez (≈ R$ 40).
+
+1. Crie a conta em <https://app.fashn.ai>, vá em **API** e compre o pacote mínimo (100 créditos = US$ 7,50; os créditos valem 365 dias).
+2. Gere uma **API key** e cadastre `FASHN_API_KEY` na Vercel em **Production** (e Preview, se quiser testar antes). A chave nunca vai para o navegador (o CI bloqueia).
+3. Antes de ligar qualquer tela, o smoke com UMA peça e teto de custo: `npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --peca <caminho-da-foto.jpg> --teto-centavos 1000`. Ele grava as opções em `.preview/ensaio/` com o custo de cada uma — é aí que se decide se a qualidade serve.
+4. Em **/admin/produtos/modelas-da-casa**, gere e escolha a foto-base de cada modela em cada cena (uma vez). Depois, na peça, o bloco **"Foto no corpo"** gera 3 opções e você escolhe a que entra.
+5. Os interruptores ficam na Central "Vendedora & WhatsApp": **"Foto no corpo"** (liga a geração) e **"Foto no corpo na vitrine"** (desligado, a foto de IA aparece só no post do Instagram e nos cartões da Lia). A cota diária e a qualidade padrão ficam em /admin/configuracoes.
+
+Sem a chave, o bloco avisa e nada é gerado; dev e testes usam o gerador fake (devolve a própria foto com a faixa "FAKE"). Toda geração, julgamento e escolha fica registrada com custo em `audit_log`; a foto gerada tem `origin = 'ai'` em `product_images` e nunca entra em "Quem já vestiu".

@@ -11,7 +11,7 @@ const ROOT = process.cwd();
 const SRC_DIR = join(ROOT, "src");
 const DB_DIR = join(ROOT, "src", "db");
 const CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-const SERVICE_ROLE_PATTERN = /SUPABASE_SERVICE_ROLE_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|SUPERFRETE_TOKEN/;
+const SERVICE_ROLE_PATTERN = /SUPABASE_SERVICE_ROLE_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|SUPERFRETE_TOKEN|FASHN_API_KEY/;
 const IMPORT_SPECIFIER_PATTERN =
   /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["']([^"']+)["']/g;
 
