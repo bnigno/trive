@@ -8,12 +8,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cx } from "@/components/ui/cx";
 import { useNotify } from "../../use-notify";
+import { publishWaUnseen } from "../../wa-unseen-store";
 import {
   closeConversationAction,
+  markAllConversationsSeenAction,
   markConversationSeenAction,
   sendManualReplyAction,
 } from "./actions";
-import { ConversationList, type ConversationFilter } from "./conversation-list";
+import { ConversationList, filterFromParam, type ConversationFilter } from "./conversation-list";
 import { attendantBadge, conversationLabel } from "./format";
 import type { OptimisticDisplay } from "./message-list";
 import { ThreadPanel } from "./thread-panel";
@@ -102,7 +104,8 @@ export function ChatShell({
   const [pollFailures, setPollFailures] = useState(0);
   const [scrollSignal, setScrollSignal] = useState(0);
   const [announcement, setAnnouncement] = useState("");
-  const [filter, setFilter] = useState<ConversationFilter>("all");
+  // "?f=nao-lidas" (o Atenção agora e o toast apontam para cá) abre já filtrado.
+  const [filter, setFilter] = useState<ConversationFilter>(() => filterFromParam(searchParams.get("f")));
   const [query, setQuery] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
 
@@ -133,7 +136,6 @@ export function ChatShell({
   );
   const pendingSeenRef = useRef(false);
   const sendTimersRef = useRef(new Map<string, number>());
-  const baseTitleRef = useRef<string | null>(null);
   const announceSeqRef = useRef(0);
 
   const announce = useCallback((text: string) => {
@@ -155,6 +157,17 @@ export function ChatShell({
       })
       .catch(() => {
         // "Visto" é telemetria: falhar não pode atrapalhar o atendimento.
+      });
+  }, []);
+
+  const markAllSeen = useCallback(() => {
+    void markAllConversationsSeenAction()
+      .then((result) => {
+        if (!result.ok) return;
+        setConversations((prev) => prev.map((c) => (c.unreadCount > 0 ? { ...c, unreadCount: 0 } : c)));
+      })
+      .catch(() => {
+        // Idem: o poll seguinte mostra o estado real.
       });
   }, []);
 
@@ -335,19 +348,27 @@ export function ChatShell({
       document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [markSeen]);
 
-  // Título da aba: "(N) Conversas" com a soma de não-lidas; restaura ao sair.
-  const unreadTotal = useMemo(
-    () => conversations.reduce((sum, c) => sum + c.unreadCount, 0),
-    [conversations],
-  );
-  useEffect(() => {
-    baseTitleRef.current ??= document.title;
-    const base = baseTitleRef.current;
-    document.title = unreadTotal > 0 ? `(${unreadTotal}) Conversas` : base;
-    return () => {
-      document.title = base;
+  // Os mesmos números do crachá do menu e do início: CONVERSAS com mensagem
+  // não vista (não mensagens), sem a de avisos internos e sem as encerradas;
+  // "esperando você" pela mesma régua do badge da lista (transferida,
+  // vendedora em pausa ou desligada).
+  const unseen = useMemo(() => {
+    const withNew = conversations.filter((c) => c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed");
+    const awaitingOwner = withNew.filter(
+      (c) =>
+        attendantBadge(c.status, c.botDisabledUntil ? new Date(c.botDisabledUntil) : null, { botEnabled, sellerName }).attendant === "you",
+    ).length;
+    return {
+      awaitingOwner,
+      withNewMessages: withNew.length,
+      suggestionCount: conversations.filter((c) => c.pendingSuggestion && c.status !== "closed").length,
     };
-  }, [unreadTotal]);
+  }, [conversations, botEnabled, sellerName]);
+  // Nesta página o avisador do layout descansa: quem alimenta o crachá do
+  // menu e o "(N)" do título da aba é o chat, pelo mesmo store.
+  useEffect(() => {
+    publishWaUnseen(unseen);
+  }, [unseen]);
 
   // Limpeza dos timeouts de envio pendentes ao desmontar.
   useEffect(() => {
@@ -525,7 +546,9 @@ export function ChatShell({
       if (c.status === "closed") result.closed += 1;
       else if (badge.attendant === "you") result.you += 1;
       else if (badge.attendant === "seller") result.seller += 1;
-      if (c.unreadCount > 0) result.unread += 1;
+      // "Não lidas" é exatamente o que o crachá do menu conta: aberta, com
+      // mensagem não vista, sem a de avisos internos.
+      if (c.unreadCount > 0 && c.status !== "closed") result.unread += 1;
     }
     return result;
   }, [conversations, botEnabled, sellerName]);
@@ -541,7 +564,8 @@ export function ChatShell({
       }
       if (filter === "all") return c.status !== "closed" || c.id === selectedId;
       if (filter === "closed") return c.status === "closed";
-      if (filter === "unread") return c.unreadCount > 0;
+      // A aberta continua na lista depois de lida (senão some do lado enquanto você responde).
+      if (filter === "unread") return (c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed") || c.id === selectedId;
       const badge = attendantBadge(
         c.status,
         c.botDisabledUntil ? new Date(c.botDisabledUntil) : null,
@@ -608,6 +632,7 @@ export function ChatShell({
             counts={counts}
             filter={filter}
             onFilterChange={setFilter}
+            onMarkAllSeen={markAllSeen}
             query={query}
             onQueryChange={setQuery}
             selectedId={selectedId}

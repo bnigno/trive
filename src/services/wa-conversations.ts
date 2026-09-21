@@ -25,7 +25,7 @@ import {
   lastActivityAt,
 } from "@/core/whatsapp/handoff";
 import { auditLog, customers, orders, waConversations, waMessages, waFollowups } from "@/db/schema";
-import { sameE164 } from "@/lib/phone";
+import { sameE164, toE164BR } from "@/lib/phone";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { isBotEnabled } from "@/services/wa-bot";
 import { getSettingsMap, ServiceError } from "@/services/settings";
@@ -634,50 +634,152 @@ function existsUnseenInbound(db: DbOrTx) {
   );
 }
 
-/**
- * Badge da sidebar: conversas transferidas para o dono ('human') que ainda
- * têm inbound não vista — apaga ao ler e reacende com mensagem nova.
- */
-export async function countConversationsAwaitingOwner(
-  db: DbOrTx,
-): Promise<number> {
-  const [row] = await db
-    .select({ value: count() })
-    .from(waConversations)
-    .where(
-      and(eq(waConversations.status, "human"), existsUnseenInbound(db)),
-    );
-  return row?.value ?? 0;
+// ---------------------------------------------------------------------------
+// Mensagem nova em qualquer status — crachá do menu, título da aba, início.
+// "Nova" = inbound que o dono ainda não viu; fechada não conta (fechar é
+// resolver: mensagem depois disso nasce em conversa nova). A conversa de
+// avisos internos (o WhatsApp do dono) fica de fora de todas as contagens.
+// ---------------------------------------------------------------------------
+
+async function loadOwnerNoticesPhone(db: DbOrTx): Promise<string | null> {
+  const settings = await getSettingsMap(db, ["owner_whatsapp_phone"]);
+  const raw = typeof settings["owner_whatsapp_phone"] === "string" ? settings["owner_whatsapp_phone"].trim() : "";
+  if (!raw) return null;
+  // Mesma normalização de sameE164, que rotula a conversa na lista.
+  const e164 = toE164BR(raw) ?? `+${raw.replace(/\D/g, "")}`;
+  return e164.length > 1 ? e164 : null;
 }
 
-export interface WaAwaitingConversation {
+function unseenConversationWhere(db: DbOrTx, ownerPhone: string | null) {
+  return and(
+    sql`${waConversations.status} <> 'closed'`,
+    ownerPhone ? sql`${waConversations.phoneE164} <> ${ownerPhone}` : undefined,
+    existsUnseenInbound(db),
+  );
+}
+
+// "Esperando o dono" é a mesma régua do painel (attendantBadge → "Com você"):
+// transferida ('human'), vendedora em pausa depois da transferência
+// (bot_disabled_until no futuro) ou vendedora desligada na loja inteira —
+// nesse caso ninguém automático responde e TODA mensagem nova é com o dono.
+const awaitingOwnerFilter = sql`(${waConversations.status} = 'human' or ${waConversations.botDisabledUntil} > now())`;
+
+export interface WaUnseenCounts {
+  /** Conversas abertas (com a vendedora ou com o dono) com mensagem recebida que o dono ainda não viu. */
+  withNewMessages: number;
+  /** Dessas, as que esperam uma pessoa (transferidas, vendedora em pausa ou desligada) — a parte urgente. */
+  awaitingOwner: number;
+}
+
+export async function countUnseenConversations(db: DbOrTx): Promise<WaUnseenCounts> {
+  const [ownerPhone, botEnabled] = await Promise.all([loadOwnerNoticesPhone(db), isBotEnabled(db)]);
+  const [row] = await db
+    .select({
+      withNewMessages: count(),
+      awaitingOwner: sql<number>`count(*) filter (where ${awaitingOwnerFilter})`.mapWith(Number),
+    })
+    .from(waConversations)
+    .where(unseenConversationWhere(db, ownerPhone));
+  const withNewMessages = row?.withNewMessages ?? 0;
+  return {
+    withNewMessages,
+    awaitingOwner: botEnabled ? (row?.awaitingOwner ?? 0) : withNewMessages,
+  };
+}
+
+export interface WaUnseenConversation {
   id: string;
   phoneE164: string;
   customerName: string | null;
+  /** Nome do perfil do WhatsApp (caderninho), quando não há cadastro. */
+  displayName: string | null;
+  status: string;
+  /** Espera uma pessoa (mesma régua de countUnseenConversations). */
+  awaitingOwner: boolean;
+  /** A última mensagem recebida — corpo (ou marcador de mídia) para a prévia do aviso. */
+  lastInbound: { id: string; body: string; createdAt: Date } | null;
 }
 
+// A última inbound de cada conversa, pela mensagem (não por last_inbound_at,
+// que o "toque" pode adiar quando a linha está presa pelo turno da vendedora).
+const lastInboundAtSql = sql<Date | null>`(select max(${waMessages.createdAt}) from ${waMessages} where ${waMessages.conversationId} = ${waConversations.id} and ${waMessages.direction} = 'inbound')`;
+
 /**
- * Versão com identidade (nome do cliente, se houver) das conversas que
- * aguardam o dono — alimenta o toast/notificação do poll light.
+ * As conversas com mensagem não vista, da mensagem mais recente para a mais
+ * antiga — alimenta o toast/aviso de qualquer página do painel. A janela é
+ * cortada por essa mesma chave: uma conversa só sai dela quando `limit`
+ * outras receberam mensagem depois — nunca porque a vendedora respondeu.
  */
-export async function listConversationsAwaitingOwner(
+export async function listUnseenConversations(
   db: DbOrTx,
   options: { limit?: number } = {},
-): Promise<WaAwaitingConversation[]> {
-  const limit = options.limit ?? 10;
-  return await db
+): Promise<WaUnseenConversation[]> {
+  const limit = options.limit ?? 50;
+  const [ownerPhone, botEnabled] = await Promise.all([loadOwnerNoticesPhone(db), isBotEnabled(db)]);
+  const rows = await db
     .select({
       id: waConversations.id,
       phoneE164: waConversations.phoneE164,
       customerName: customers.fullName,
+      status: waConversations.status,
+      awaitingOwner: sql<boolean>`${awaitingOwnerFilter}`,
+      botState: waConversations.botState,
     })
     .from(waConversations)
     .leftJoin(customers, eq(customers.id, waConversations.customerId))
-    .where(
-      and(eq(waConversations.status, "human"), existsUnseenInbound(db)),
-    )
-    .orderBy(desc(waConversations.updatedAt))
+    .where(unseenConversationWhere(db, ownerPhone))
+    .orderBy(sql`${lastInboundAtSql} desc`)
     .limit(limit);
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((row) => row.id);
+  const lastInbound = await db
+    .selectDistinctOn([waMessages.conversationId], {
+      conversationId: waMessages.conversationId,
+      id: waMessages.id,
+      body: waMessages.body,
+      createdAt: waMessages.createdAt,
+    })
+    .from(waMessages)
+    .where(and(inArray(waMessages.conversationId, ids), eq(waMessages.direction, "inbound")))
+    .orderBy(waMessages.conversationId, desc(waMessages.createdAt));
+  const byConversation = new Map(lastInbound.map((message) => [message.conversationId, message]));
+
+  return rows.map((row) => {
+    const last = byConversation.get(row.id) ?? null;
+    return {
+      id: row.id,
+      phoneE164: row.phoneE164,
+      customerName: row.customerName,
+      displayName: parseBotState(row.botState).displayName?.trim() || null,
+      status: row.status,
+      awaitingOwner: !botEnabled || row.awaitingOwner === true,
+      lastInbound: last ? { id: last.id, body: last.body, createdAt: last.createdAt } : null,
+    };
+  });
+}
+
+/**
+ * "Marcar todas como lidas": um UPDATE nas conversas com mensagem não vista.
+ * Mensagem que chegar entre a tela e o clique também é marcada — é o mesmo
+ * que abrir a conversa e ela chegar na hora. A linha presa por um turno da
+ * vendedora (FOR NO KEY UPDATE) fica de fora (SKIP LOCKED): o clique nunca
+ * espera um turno nem segura as outras linhas enquanto espera.
+ */
+export async function markAllConversationsSeen(db: DbOrTx): Promise<{ count: number; seenAt: Date }> {
+  const ownerPhone = await loadOwnerNoticesPhone(db);
+  const seenAt = new Date();
+  const free = db
+    .select({ id: waConversations.id })
+    .from(waConversations)
+    .where(unseenConversationWhere(db, ownerPhone))
+    .for("no key update", { skipLocked: true });
+  const updated = await db
+    .update(waConversations)
+    .set({ ownerLastSeenAt: seenAt })
+    .where(inArray(waConversations.id, free))
+    .returning({ id: waConversations.id });
+  return { count: updated.length, seenAt };
 }
 
 // ---------------------------------------------------------------------------

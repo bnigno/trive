@@ -14,7 +14,7 @@ function shared(overrides: Partial<DashboardShared> = {}): DashboardShared {
     staleShipmentsCount: 0,
     lowStockCount: 0,
     readiness: { ready: 0, total: 0, allReady: false },
-    attention: { conversationsAwaiting: 0, emailThreadsAwaiting: 0, pendingSuggestions: 0 },
+    attention: { conversationsAwaiting: 0, conversationsWithNewMessages: 0, emailThreadsAwaiting: 0, pendingSuggestions: 0 },
     newCustomers: { current: 0, previous: 0 },
     recentOrders: [],
     ...overrides,
@@ -77,19 +77,42 @@ describe("buildAttentionRows", () => {
     expect(rows.find((row) => row.key === "to-deliver")?.hint).toContain("1 enviado há 7+ dias");
   });
 
-  it("linhas do dono não aparecem para a equipe; e-mails só entram para o dono", () => {
+  it("linhas do dono não aparecem para a equipe; e-mails só entram para o dono; WhatsApp entra para todos", () => {
     const base = shared({
-      attention: { conversationsAwaiting: 1, emailThreadsAwaiting: 2, pendingSuggestions: 0 },
+      attention: { conversationsAwaiting: 1, conversationsWithNewMessages: 1, emailThreadsAwaiting: 2, pendingSuggestions: 0 },
     });
 
     const staffRows = buildAttentionRows({ shared: base, owner: null });
-    expect(staffRows).toEqual([]);
+    expect(staffRows.map((row) => row.key)).toEqual(["wa-awaiting"]);
 
     const ownerRows = buildAttentionRows({
       shared: base,
       owner: owner({ pendingApprovals: 1, atelierFailed: 1 }),
     });
-    expect(ownerRows.map((row) => row.key)).toEqual(["pending-approvals", "atelier-failed", "emails"]);
+    expect(ownerRows.map((row) => row.key)).toEqual(["pending-approvals", "atelier-failed", "wa-awaiting", "emails"]);
+  });
+
+  it("WhatsApp: 'esperando por você' cobra (warning); mensagem nova com a vendedora só informa (neutral); os dois abrem Não lidas", () => {
+    const rows = buildAttentionRows({
+      shared: shared({
+        attention: { conversationsAwaiting: 2, conversationsWithNewMessages: 5, emailThreadsAwaiting: 0, pendingSuggestions: 0 },
+      }),
+      owner: null,
+    });
+    expect(rows.map((row) => [row.key, row.count, row.severity, row.href])).toEqual([
+      ["wa-awaiting", 2, "warning", "/admin/whatsapp/conversas?f=nao-lidas"],
+      ["wa-new", 3, "neutral", "/admin/whatsapp/conversas?f=nao-lidas"],
+    ]);
+    expect(rows[0].hint).toBe("Conversas transferidas com mensagem que você ainda não viu.");
+
+    // Só a vendedora cuidando: nada de cobrança.
+    const calm = buildAttentionRows({
+      shared: shared({
+        attention: { conversationsAwaiting: 0, conversationsWithNewMessages: 1, emailThreadsAwaiting: 0, pendingSuggestions: 0 },
+      }),
+      owner: null,
+    });
+    expect(calm.map((row) => [row.key, row.count, row.severity])).toEqual([["wa-new", 1, "neutral"]]);
   });
 
   it("rota do motoboy: só com atraso vira aviso", () => {

@@ -1,12 +1,29 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 
 import { cx } from "@/components/ui/cx";
 import { ConversationItem } from "./conversation-item";
 import type { ChatConversation } from "./use-chat-poll";
 
 export type ConversationFilter = "all" | "you" | "seller" | "unread" | "closed";
+
+/** "?f=nao-lidas" etc. → filtro; valor desconhecido cai em "Todas". */
+export function filterFromParam(value: string | null): ConversationFilter {
+  switch (value) {
+    case "com-voce":
+      return "you";
+    case "com-a-vendedora":
+      return "seller";
+    case "nao-lidas":
+      return "unread";
+    case "encerradas":
+      return "closed";
+    default:
+      return "all";
+  }
+}
 
 function GearIcon() {
   return (
@@ -45,6 +62,7 @@ export function ConversationList({
   counts,
   filter,
   onFilterChange,
+  onMarkAllSeen,
   query,
   onQueryChange,
   selectedId,
@@ -57,6 +75,7 @@ export function ConversationList({
   counts: Record<ConversationFilter, number>;
   filter: ConversationFilter;
   onFilterChange: (filter: ConversationFilter) => void;
+  onMarkAllSeen: () => void;
   query: string;
   onQueryChange: (query: string) => void;
   selectedId: string | null;
@@ -65,6 +84,15 @@ export function ConversationList({
   sellerName: string;
 }) {
   const searching = query.trim() !== "";
+
+  // A fileira de filtros rola de lado na coluna de 340 px: o filtro ativo
+  // (vindo da URL, por exemplo) aparece em vez de ficar escondido à direita.
+  const filtersRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    filtersRef.current
+      ?.querySelector<HTMLButtonElement>("[aria-pressed=true]")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [filter]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-ivory-50 dark:bg-ink-950">
@@ -94,6 +122,7 @@ export function ConversationList({
           />
         </label>
         <div
+          ref={filtersRef}
           role="group"
           aria-label="Filtrar conversas"
           className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]"
@@ -133,6 +162,17 @@ export function ConversationList({
             );
           })}
         </div>
+        {filter === "unread" && counts.unread > 0 ? (
+          <div className="mt-2 flex justify-end px-1">
+            <button
+              type="button"
+              onClick={onMarkAllSeen}
+              className="text-xs font-medium text-ink-600 underline-offset-2 hover:text-ink-900 hover:underline dark:text-ink-300 dark:hover:text-ivory-100"
+            >
+              Marcar todas como lidas
+            </button>
+          </div>
+        ) : null}
       </header>
       {conversations.length === 0 ? (
         <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">

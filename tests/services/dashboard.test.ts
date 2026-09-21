@@ -79,6 +79,7 @@ describe("getAdminDashboard", () => {
     expect(dashboard.shared.lowStockCount).toBe(0);
     expect(dashboard.shared.attention).toEqual({
       conversationsAwaiting: 0,
+      conversationsWithNewMessages: 0,
       emailThreadsAwaiting: 0,
       pendingSuggestions: 0,
     });
