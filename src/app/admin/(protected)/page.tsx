@@ -1,31 +1,50 @@
+import {
+  Bot,
+  Boxes,
+  ChartColumn,
+  ChevronRight,
+  CircleCheck,
+  ListChecks,
+  type LucideIcon,
+  Mail,
+  MessageCircle,
+  Package,
+  Plus,
+  ShoppingBag,
+  Sparkles,
+  Tags,
+  Truck,
+  Camera,
+  CalendarClock,
+  Users,
+  Wallet,
+} from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { count, eq, gte, sql } from "drizzle-orm";
+import { Suspense } from "react";
+
+import { ORDER_STATUS_LABELS } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
-import { orders, outboxEvents, priceVersions } from "@/db/schema";
-import { isOwner, requireUser } from "@/services/auth";
-import { listOrders } from "@/services/orders";
-import { countRouteOfDay } from "@/services/delivery-routes";
-import { countOrdersMustShipToday } from "@/services/needed-by";
-import { countAtelierIntakesFailed } from "@/services/atelier";
-import { countPendingLooks } from "@/services/customer-looks";
-import { countOrdersAwaitingPacking } from "@/services/packing";
-import { countOrdersAwaitingDelivery, listStaleShipments } from "@/services/delivery";
-import { getReadinessSummary } from "@/services/catalog-readiness";
-import { monthOverview } from "@/services/financial";
-import { getStockOverview } from "@/services/stock";
-import {
-  marginSummary,
-  recoveryStats,
-  salesSeries,
-  topProducts,
-} from "@/services/reports";
-import { Card, StatCard } from "@/components/ui/card";
-import { Money } from "@/components/ui/money";
 import { formatCentsBRL } from "@/lib/money";
+import { spDayLabel } from "@/lib/sp-day";
+import { formatDateTimeSP, formatRelativeTimePtBR } from "@/lib/sp-format";
+import type { AdminRole } from "@/core/auth/access";
+import { requireUser } from "@/services/auth";
+import { getAdminDashboard, type AdminDashboard } from "@/services/dashboard";
+import { Badge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button-link";
+import { BarChart, type BarChartPoint } from "@/components/ui/bar-chart";
+import { Card, StatCard } from "@/components/ui/card";
+import { cx } from "@/components/ui/cx";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Meter } from "@/components/ui/meter";
+import { Money } from "@/components/ui/money";
+import { SectionHeading } from "@/components/ui/section-heading";
+import { CardSkeleton } from "@/components/ui/skeleton";
 import { StatusPill, orderStatusTone } from "@/components/ui/status-pill";
 import { Table, Td, Tr } from "@/components/ui/table";
-import { EmptyState } from "@/components/ui/empty-state";
+import { TrendBadge } from "@/components/ui/trend";
+import { buildAttentionRows, type AttentionSeverity } from "./dashboard-attention";
 
 export const dynamic = "force-dynamic";
 
@@ -33,42 +52,9 @@ export const metadata: Metadata = {
   title: "Dashboard",
 };
 
-const ORDER_STATUS_LABELS: Record<string, string> = {
-  draft: "Rascunho",
-  pending_payment: "Aguardando pagamento",
-  paid: "Pago",
-  preparing: "Em preparação",
-  shipped: "Enviado",
-  delivered: "Entregue",
-  canceled: "Cancelado",
-  refunded: "Reembolsado",
-};
-
-const whenFormatter = new Intl.DateTimeFormat("pt-BR", {
-  timeZone: "America/Sao_Paulo",
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-/** Meia-noite de hoje em America/Sao_Paulo (UTC-3, sem horário de verão). */
-function startOfTodaySaoPaulo(): Date {
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-  }).format(new Date());
-  return new Date(`${today}T00:00:00-03:00`);
-}
-
-function saoPauloYearMonth(): { year: number; month: number } {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-  })
-    .format(new Date())
-    .split("-");
-  return { year: Number(parts[0]), month: Number(parts[1]) };
-}
+// ---------------------------------------------------------------------------
+// Formatação (só borda de exibição)
+// ---------------------------------------------------------------------------
 
 /** 'YYYY-MM-DD' → 'dd/mm'. */
 function shortDay(date: string): string {
@@ -76,50 +62,402 @@ function shortDay(date: string): string {
   return `${day}/${month}`;
 }
 
-/** Percentual pt-BR com 1 casa ('32,5%'); '—' quando a base é zero. */
-function formatPercent(partCents: number, wholeCents: number): string {
-  if (wholeCents <= 0) return "—";
-  return `${((partCents / wholeCents) * 100).toFixed(1).replace(".", ",")}%`;
-}
-
-/** Cada bloco falha isolado: sem banco o dashboard mostra "—", nunca quebra. */
-async function safe<T>(load: () => Promise<T>): Promise<T | null> {
-  try {
-    return await load();
-  } catch {
-    return null;
+/** Eixo do gráfico: "R$ 1,2 mil" a partir de mil reais; abaixo, inteiro. */
+function compactBRL(cents: number): string {
+  if (cents >= 100_000) {
+    const thousands = cents / 100_000;
+    const text = thousands >= 10 ? Math.round(thousands).toString() : thousands.toFixed(1).replace(".", ",");
+    return `R$ ${text} mil`;
   }
+  return `R$ ${Math.round(cents / 100)}`;
 }
 
-type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
-
-/** O que a equipe também vê: operação do dia, sem valor de faturamento. */
-async function loadSharedDashboard() {
-  const [ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount, staleShipments] =
-    await Promise.all([
-      safe(async () => {
-        const db = getDb();
-        const [row] = await db
-          .select({ total: count() })
-          .from(orders)
-          .where(gte(orders.createdAt, startOfTodaySaoPaulo()));
-        return row.total;
-      }),
-      safe(async () => {
-        const overview = await getStockOverview(getDb());
-        return overview.filter((row) => row.low).length;
-      }),
-      safe((): Promise<RecentOrder[]> => listOrders(getDb(), { limit: 5 })),
-      safe(() => countOrdersAwaitingPacking(getDb())),
-      safe(() => getReadinessSummary(getDb())),
-      safe(() => countRouteOfDay(getDb())),
-      safe(() => countOrdersMustShipToday(getDb())),
-      safe(() => countOrdersAwaitingDelivery(getDb())),
-      safe(async () => (await listStaleShipments(getDb())).length),
-    ]);
-
-  return { ordersTodayCount, lowStockCount, recentOrders, toPackCount, readiness, route, mustShipToday, toDeliverCount, staleShipments };
+/** Percentual pt-BR com 1 casa ('32,5%'); '—' quando a base é zero. */
+function formatPercent(part: number, whole: number): string {
+  if (whole <= 0) return "—";
+  return `${((part / whole) * 100).toFixed(1).replace(".", ",")}%`;
 }
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function count(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : String(value);
+}
+
+const icon = (Icon: LucideIcon) => (
+  <Icon aria-hidden="true" className="size-4" strokeWidth={1.75} />
+);
+
+// ---------------------------------------------------------------------------
+// Página
+// ---------------------------------------------------------------------------
+
+export default async function AdminDashboardPage() {
+  const user = await requireUser();
+  const todayLabel = capitalize(spDayLabel(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())));
+
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+            {todayLabel}
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+            Olá, {user.fullName ?? user.email}
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Visão geral da operação.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <ButtonLink href="/admin/pedidos" variant="outline">
+            Pedidos
+          </ButtonLink>
+          {user.role === "owner" ? (
+            <ButtonLink href="/admin/relatorios" variant="outline">
+              Relatórios
+            </ButtonLink>
+          ) : null}
+          <ButtonLink href="/admin/pedidos/novo" icon={icon(Plus)}>
+            Novo pedido
+          </ButtonLink>
+        </div>
+      </div>
+
+      <Suspense fallback={<DashboardSkeleton owner={user.role === "owner"} />}>
+        <DashboardContent role={user.role} />
+      </Suspense>
+    </div>
+  );
+}
+
+function DashboardSkeleton({ owner }: { owner: boolean }) {
+  return (
+    <div className="flex flex-col gap-8" aria-busy="true" aria-label="Carregando o painel">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <CardSkeleton key={index} lines={1} />
+        ))}
+      </div>
+      <div className="grid gap-6 xl:grid-cols-3">
+        <CardSkeleton lines={5} />
+        <CardSkeleton lines={5} className="xl:col-span-2" />
+      </div>
+      {owner ? (
+        <div className="grid gap-6 xl:grid-cols-3">
+          <CardSkeleton lines={4} />
+          <CardSkeleton lines={4} />
+          <CardSkeleton lines={4} />
+        </div>
+      ) : null}
+      <CardSkeleton lines={4} />
+    </div>
+  );
+}
+
+/** A única leitura de dados da página: um service, um objeto. */
+async function DashboardContent({ role }: { role: AdminRole }) {
+  const dashboard = await getAdminDashboard(getDb(), { role });
+  const { shared, owner } = dashboard;
+  const now = new Date();
+
+  return (
+    <>
+      <KpiRow dashboard={dashboard} />
+
+      <div className="grid items-start gap-6 xl:grid-cols-3">
+        <AttentionCard dashboard={dashboard} />
+        <div className="flex flex-col gap-6 xl:col-span-2">
+          {owner ? <SalesCard owner={owner} todayKey={shared.todayKey} /> : null}
+          <ReadinessCard summary={shared.readiness} owner={owner !== null} />
+        </div>
+      </div>
+
+      {owner ? (
+        <div className="grid items-start gap-6 xl:grid-cols-3">
+          <TopProductsCard owner={owner} />
+          <MarginCard owner={owner} />
+          <LiaCard owner={owner} shared={shared} />
+        </div>
+      ) : null}
+
+      <RecentOrdersCard dashboard={dashboard} now={now} />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hoje — KPIs
+// ---------------------------------------------------------------------------
+
+function KpiRow({ dashboard }: { dashboard: AdminDashboard }) {
+  const { shared, owner } = dashboard;
+  const created = shared.ordersCreated;
+  const attention = shared.attention;
+  const conversationsHint = attention
+    ? attention.pendingSuggestions > 0
+      ? `${attention.pendingSuggestions} ${attention.pendingSuggestions === 1 ? "sugestão" : "sugestões"} da Lia para revisar.`
+      : "Clientes esperando uma pessoa responder."
+    : "Banco indisponível no momento.";
+
+  const ordersCard = (
+    <StatCard
+      label="Pedidos hoje"
+      value={count(created?.today)}
+      icon={icon(ShoppingBag)}
+      delta={created ? <TrendBadge today={created.today} yesterday={created.yesterday} /> : undefined}
+      trend={owner?.series?.map((point) => point.ordersCount)}
+      hint={created ? "Criados hoje, no fuso de São Paulo." : "Banco indisponível no momento."}
+      href="/admin/pedidos"
+    />
+  );
+  const conversationsCard = (
+    <StatCard
+      label="Conversas esperando"
+      value={count(attention?.conversationsAwaiting)}
+      tone={attention?.conversationsAwaiting ? "warning" : "neutral"}
+      icon={icon(MessageCircle)}
+      hint={conversationsHint}
+      href="/admin/whatsapp/conversas"
+    />
+  );
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      {ordersCard}
+      {owner ? (
+        <>
+          <StatCard
+            label="Vendas hoje"
+            value={owner.paidSales ? <Money cents={owner.paidSales.today.revenueCents} /> : "—"}
+            icon={icon(Wallet)}
+            delta={
+              owner.paidSales ? (
+                <TrendBadge
+                  today={owner.paidSales.today.revenueCents}
+                  yesterday={owner.paidSales.yesterday.revenueCents}
+                  format={formatCentsBRL}
+                />
+              ) : undefined
+            }
+            trend={owner.series?.map((point) => point.revenueCents)}
+            hint={
+              owner.paidSales?.today.averageTicketCents
+                ? `${owner.paidSales.today.count} ${owner.paidSales.today.count === 1 ? "venda paga" : "vendas pagas"} · ticket médio ${formatCentsBRL(owner.paidSales.today.averageTicketCents)}`
+                : "Nenhuma venda paga ainda hoje."
+            }
+            href="/admin/financeiro"
+          />
+          <StatCard
+            label="Recebido no mês"
+            value={owner.month ? <Money cents={owner.month.receivedCents} /> : "—"}
+            icon={icon(ChartColumn)}
+            hint={owner.month ? `A receber: ${formatCentsBRL(owner.month.receivableCents)}` : "Banco indisponível no momento."}
+            href="/admin/financeiro"
+          />
+          {conversationsCard}
+        </>
+      ) : (
+        <>
+          {conversationsCard}
+          <StatCard
+            label="Clientes novos"
+            value={count(shared.newCustomers?.current)}
+            icon={icon(Users)}
+            delta={
+              shared.newCustomers ? (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {shared.newCustomers.previous} na semana anterior
+                </span>
+              ) : undefined
+            }
+            hint="Cadastrados nos últimos 7 dias."
+            href="/admin/clientes"
+          />
+          <StatCard
+            label="E-mails aguardando"
+            value={count(attention?.emailThreadsAwaiting)}
+            tone={attention?.emailThreadsAwaiting ? "warning" : "neutral"}
+            icon={icon(Mail)}
+            hint="Conversas por e-mail que ninguém abriu ainda."
+            href="/admin/emails"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Atenção agora
+// ---------------------------------------------------------------------------
+
+const ATTENTION_ICONS: Record<string, LucideIcon> = {
+  "must-ship-today": CalendarClock,
+  "dead-outbox": ListChecks,
+  route: Truck,
+  "to-deliver": Truck,
+  "to-pack": Package,
+  "pending-approvals": Tags,
+  "atelier-failed": Camera,
+  "pending-looks": Camera,
+  "low-stock": Boxes,
+  emails: Mail,
+};
+
+const SEVERITY_PILL: Record<AttentionSeverity, string> = {
+  danger: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  warning: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  neutral: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+};
+
+const SEVERITY_ICON: Record<AttentionSeverity, string> = {
+  danger: "bg-red-50 text-red-600 dark:bg-red-950/60 dark:text-red-400",
+  warning: "bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400",
+  neutral: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+};
+
+function AttentionCard({ dashboard }: { dashboard: AdminDashboard }) {
+  const rows = buildAttentionRows(dashboard);
+  return (
+    <Card
+      title="Atenção agora"
+      description="O que está esperando alguém, do mais urgente para o mais tranquilo."
+      padding="none"
+    >
+      {rows.length === 0 ? (
+        <div className="p-5">
+          <EmptyState
+            icon={<CircleCheck aria-hidden="true" className="size-5" strokeWidth={1.75} />}
+            title="Tudo em dia"
+            hint="Nenhum pedido preso, nenhuma pendência esperando você."
+          />
+        </div>
+      ) : (
+        <ul className="flex flex-col">
+          {rows.map((row) => {
+            const Icon = ATTENTION_ICONS[row.key] ?? ListChecks;
+            return (
+              <li key={row.key} className="border-b border-zinc-100 last:border-b-0 dark:border-zinc-800">
+                <Link
+                  href={row.href}
+                  className="group flex items-center gap-3 px-5 py-3 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500/40 dark:hover:bg-zinc-800/50"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cx("inline-grid size-9 shrink-0 place-items-center rounded-lg", SEVERITY_ICON[row.severity])}
+                  >
+                    <Icon className="size-4" strokeWidth={1.75} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                        {row.label}
+                      </span>
+                      <span
+                        className={cx(
+                          "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums",
+                          SEVERITY_PILL[row.severity],
+                        )}
+                      >
+                        {row.count}
+                      </span>
+                    </span>
+                    <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">
+                      {row.hint}
+                    </span>
+                  </span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-zinc-300 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none dark:text-zinc-600"
+                  />
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vendas pagas — 14 dias (dono)
+// ---------------------------------------------------------------------------
+
+function SalesCard({
+  owner,
+  todayKey,
+}: {
+  owner: NonNullable<AdminDashboard["owner"]>;
+  todayKey: string;
+}) {
+  const series = owner.series;
+  if (!series) {
+    return (
+      <Card title="Vendas pagas — últimos 14 dias">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Banco indisponível no momento.</p>
+      </Card>
+    );
+  }
+  const totalCents = series.reduce((sum, point) => sum + point.revenueCents, 0);
+  const totalOrders = series.reduce((sum, point) => sum + point.ordersCount, 0);
+  const best = series.reduce((top, point) => (point.revenueCents > top.revenueCents ? point : top), series[0]);
+  const points: BarChartPoint[] = series.map((point) => ({
+    label: shortDay(point.date),
+    value: point.revenueCents,
+    detail: `${shortDay(point.date)}${point.date === todayKey ? " (hoje)" : ""} · ${point.ordersCount} ${point.ordersCount === 1 ? "pedido" : "pedidos"} · ${formatCentsBRL(point.revenueCents)}`,
+  }));
+
+  return (
+    <Card
+      title="Vendas pagas — últimos 14 dias"
+      description="Receita de pedidos pagos por dia, no fuso de São Paulo."
+      action={
+        <Link href="/admin/relatorios" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          Ver relatórios
+        </Link>
+      }
+    >
+      {totalOrders === 0 ? (
+        <EmptyState
+          icon={<ChartColumn aria-hidden="true" className="size-5" strokeWidth={1.75} />}
+          title="Nenhuma venda paga nas últimas duas semanas"
+          hint="Quando as vendas entrarem, o gráfico aparece aqui."
+        />
+      ) : (
+        <div className="flex flex-col gap-5">
+          <dl className="grid grid-cols-3 gap-3">
+            <MiniStat label="Total no período" value={formatCentsBRL(totalCents)} />
+            <MiniStat label="Média por dia" value={formatCentsBRL(Math.round(totalCents / series.length))} />
+            <MiniStat label="Melhor dia" value={`${shortDay(best.date)} · ${formatCentsBRL(best.revenueCents)}`} />
+          </dl>
+          <BarChart
+            points={points}
+            formatTick={compactBRL}
+            ariaLabel="Receita de pedidos pagos por dia nos últimos 14 dias"
+          />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate text-xs text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dd className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{value}</dd>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pronta para abrir
+// ---------------------------------------------------------------------------
 
 /**
  * O termômetro da estreia: quantas peças estão prontas para vender de verdade
@@ -130,581 +468,308 @@ function ReadinessCard({
   summary,
   owner,
 }: {
-  summary: { ready: number; total: number; allReady: boolean } | null;
+  summary: AdminDashboard["shared"]["readiness"];
   owner: boolean;
 }) {
-  if (summary === null) return null;
-  const percent = summary.total === 0 ? 0 : Math.round((summary.ready / summary.total) * 100);
+  if (!summary) {
+    return (
+      <Card title="Pronta para abrir">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Banco indisponível no momento.</p>
+      </Card>
+    );
+  }
+  const missing = summary.total - summary.ready;
+  const tone = summary.total === 0 ? "accent" : summary.allReady ? "success" : "warning";
+
   return (
-    <Card title="Pronta para abrir">
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+    <Card
+      title="Pronta para abrir"
+      description="Peças ativas com foto, preço, estoque, descrição e sala com capa."
+      action={
+        <Link
+          href="/admin/produtos?prontidao=faltando"
+          className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+        >
+          Ver o que falta
+        </Link>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <p className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             {summary.total === 0 ? (
               "Nenhuma peça cadastrada"
             ) : (
               <>
                 {summary.ready} de {summary.total}{" "}
-                <span className="text-base font-medium text-zinc-500 dark:text-zinc-400">
+                <span className="text-base font-normal text-zinc-500 dark:text-zinc-400">
                   {summary.total === 1 ? "peça pronta" : "peças prontas"}
                 </span>
               </>
             )}
           </p>
-          {summary.total > 0 && !summary.allReady ? (
-            <Link
-              href="/admin/produtos?prontidao=faltando"
-              className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-            >
-              Ver o que falta
-            </Link>
+          {summary.allReady && summary.total > 0 ? (
+            <Badge tone="success" dot>
+              Tudo pronto
+            </Badge>
+          ) : missing > 0 ? (
+            <Badge tone="warning" dot>
+              {missing} {missing === 1 ? "falta" : "faltam"}
+            </Badge>
           ) : null}
         </div>
-        <div
-          role="progressbar"
-          aria-label="Peças prontas para a loja"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-          className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
-        >
-          <div
-            className={
-              summary.allReady
-                ? "h-full rounded-full bg-emerald-500"
-                : "h-full rounded-full bg-amber-500"
-            }
-            style={{ width: `${percent}%` }}
-          />
-        </div>
-        {summary.allReady ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-emerald-700 dark:text-emerald-400">
-              Tudo pronto — cada peça tem foto, preço, estoque, descrição e sala com capa.
-            </p>
-            {owner ? (
-              <Link
-                href="/admin/lancamentos"
-                className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-              >
-                Agendar lançamento
-              </Link>
-            ) : null}
+        <Meter value={summary.ready} max={summary.total} tone={tone} label="Peças prontas para vender" />
+        {owner && summary.total > 0 ? (
+          <div>
+            <ButtonLink href="/admin/lancamentos" size="sm" variant="outline" icon={icon(Sparkles)}>
+              Agendar lançamento
+            </ButtonLink>
           </div>
-        ) : (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Uma peça está pronta quando está ativa, com ao menos 2 fotos, preço aprovado,
-            estoque, descrição de 200 caracteres, peso e sala com capa. Toque no selo de
-            cada peça para ir direto ao que falta.
-          </p>
-        )}
+        ) : null}
       </div>
     </Card>
   );
 }
 
-/**
- * Só o dono: faturamento, margem, gráfico de vendas, campeões de venda,
- * aprovações de preço e saúde da fila. Esta função nem é chamada para a
- * equipe — o corte é na carga, não na renderização.
- */
-async function loadOwnerDashboard() {
-  const [
-    ordersTodaySumCents,
-    month,
-    pendingApprovals,
-    deadCount,
-    series,
-    top,
-    margin,
-    recovery,
-    atelierFailed,
-    pendingLooks,
-  ] = await Promise.all([
-    safe(async () => {
-      const db = getDb();
-      const [row] = await db
-        .select({
-          sumCents: sql<string>`coalesce(sum(${orders.totalCents}), 0)`,
-        })
-        .from(orders)
-        .where(gte(orders.createdAt, startOfTodaySaoPaulo()));
-      return Number(row.sumCents);
-    }),
-    safe(() => monthOverview(getDb(), saoPauloYearMonth())),
-    safe(async () => {
-      const db = getDb();
-      const [row] = await db
-        .select({ total: count() })
-        .from(priceVersions)
-        .where(eq(priceVersions.status, "pending_approval"));
-      return row.total;
-    }),
-    safe(async () => {
-      const db = getDb();
-      const [row] = await db
-        .select({ total: count() })
-        .from(outboxEvents)
-        .where(eq(outboxEvents.status, "dead"));
-      return row.total;
-    }),
-    safe(() => salesSeries(getDb(), { days: 14 })),
-    safe(() => topProducts(getDb(), { days: 30, limit: 5 })),
-    safe(() => marginSummary(getDb(), { days: 30 })),
-    safe(() => recoveryStats(getDb())),
-    safe(() => countAtelierIntakesFailed(getDb())),
-    safe(() => countPendingLooks(getDb())),
-  ]);
+// ---------------------------------------------------------------------------
+// Top 5, margem e Lia (dono)
+// ---------------------------------------------------------------------------
 
-  return {
-    atelierFailed,
-    pendingLooks,
-    ordersTodaySumCents,
-    month,
-    pendingApprovals,
-    deadCount,
-    series,
-    top,
-    margin,
-    recovery,
-  };
+function TopProductsCard({ owner }: { owner: NonNullable<AdminDashboard["owner"]> }) {
+  const top = owner.topProducts;
+  const maxRevenue = top ? Math.max(...top.map((row) => row.revenueCents), 0) : 0;
+  return (
+    <Card
+      title="Top 5 produtos"
+      description="Mais vendidas em receita nos últimos 30 dias."
+      action={
+        <Link href="/admin/produtos" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          Ver produtos
+        </Link>
+      }
+    >
+      {!top ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Banco indisponível no momento.</p>
+      ) : top.length === 0 ? (
+        <EmptyState
+          title="Nenhuma venda paga nos últimos 30 dias"
+          hint="Quando as vendas entrarem, as campeãs aparecem aqui."
+        />
+      ) : (
+        <ol className="flex flex-col gap-3">
+          {top.map((row, index) => (
+            <li key={row.variantId} className="flex items-center gap-3">
+              <span className="w-5 shrink-0 text-xs font-semibold tabular-nums text-zinc-400 dark:text-zinc-500">
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <Link
+                    href={`/admin/estoque/${row.variantId}`}
+                    className="truncate text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+                  >
+                    {row.name}
+                  </Link>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {formatCentsBRL(row.revenueCents)}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <Meter value={row.revenueCents} max={maxRevenue} size="sm" label={`Receita de ${row.name}`} />
+                  <span className="shrink-0 text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                    {row.quantity} un.
+                  </span>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </Card>
+  );
 }
 
-export default async function AdminDashboardPage() {
-  const user = await requireUser();
-  const owner = await isOwner();
-  const [data, ownerData] = await Promise.all([
-    loadSharedDashboard(),
-    owner ? loadOwnerDashboard() : null,
-  ]);
-
-  const maxRevenue = ownerData?.series
-    ? Math.max(...ownerData.series.map((point) => point.revenueCents), 1)
-    : 1;
-
-  const ordersTodayHint =
-    data.ordersTodayCount === null
-      ? "Banco indisponível no momento."
-      : ownerData && ownerData.ordersTodaySumCents !== null
-        ? `Somando ${formatCentsBRL(ownerData.ordersTodaySumCents)}`
-        : "Pedidos criados hoje, no fuso de São Paulo.";
+function MarginCard({ owner }: { owner: NonNullable<AdminDashboard["owner"]> }) {
+  const margin = owner.margin;
+  const revenue = margin?.revenueCents ?? 0;
+  const segments = margin
+    ? [
+        { key: "cost", label: "Custo das peças", cents: margin.costCents, className: "bg-zinc-300 dark:bg-zinc-600" },
+        { key: "fees", label: "Taxas Mercado Pago", cents: margin.realFeeCents, className: "bg-zinc-400 dark:bg-zinc-500" },
+        { key: "margin", label: "Margem real", cents: Math.max(margin.realMarginCents, 0), className: "bg-indigo-500 dark:bg-indigo-400" },
+      ]
+    : [];
 
   return (
-    <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-          Olá, {user.fullName ?? user.email}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Visão geral da operação.
-        </p>
-      </div>
-
-      <div
-        className={
-          ownerData
-            ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6"
-            : "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
-        }
-      >
-        <Link href="/admin/pedidos" className="block">
-          <StatCard
-            label="Pedidos hoje"
-            value={
-              data.ordersTodayCount === null
-                ? "—"
-                : String(data.ordersTodayCount)
-            }
-            hint={ordersTodayHint}
-          />
-        </Link>
-        {ownerData ? (
-          <>
-            <Link href="/admin/financeiro" className="block">
-              <StatCard
-                label="Recebido no mês"
-                value={
-                  ownerData.month ? (
-                    <Money cents={ownerData.month.receivedCents} />
-                  ) : (
-                    "—"
-                  )
-                }
-                hint={
-                  ownerData.month
-                    ? `A receber: ${formatCentsBRL(ownerData.month.receivableCents)}`
-                    : "Banco indisponível no momento."
-                }
-              />
-            </Link>
-            <Link href="/admin/precos/pendencias" className="block">
-              <StatCard
-                label="Aprovações pendentes"
-                value={
-                  ownerData.pendingApprovals === null
-                    ? "—"
-                    : String(ownerData.pendingApprovals)
-                }
-                tone={ownerData.pendingApprovals ? "warning" : "neutral"}
-                hint="Preços aguardando a sua aprovação."
-              />
-            </Link>
-          </>
-        ) : null}
-        {ownerData?.atelierFailed ? (
-          <Link href="/admin/produtos/chegadas" className="block">
-            <StatCard
-              label="Chegadas com problema"
-              value={String(ownerData.atelierFailed)}
-              tone="warning"
-              hint="Fotos + recado pelo WhatsApp que não viraram rascunho. Abra e refaça."
-            />
-          </Link>
-        ) : null}
-        {ownerData?.pendingLooks ? (
-          <Link href="/admin/produtos/quem-vestiu" className="block">
-            <StatCard
-              label="Fotos aguardando aprovação"
-              value={String(ownerData.pendingLooks)}
-              tone="warning"
-              hint="Clientes que autorizaram a foto delas na página da peça. Aprove ou recuse."
-            />
-          </Link>
-        ) : null}
-        {data.mustShipToday ? (
-          <Link href="/admin/pedidos/data-marcada" className="block">
-            <StatCard
-              label="Precisam sair hoje"
-              value={String(data.mustShipToday)}
-              tone="warning"
-              hint="Pedidos com data marcada no limite. Abra a lista."
-            />
-          </Link>
-        ) : null}
-        {data.route && (data.route.today > 0 || data.route.late > 0) ? (
-          <Link href="/admin/pedidos/rota" className="block">
-            <StatCard
-              label="Saem hoje (motoboy)"
-              value={String(data.route.today)}
-              tone={data.route.late ? "warning" : "neutral"}
-              hint={data.route.late ? `${data.route.late} atrasado${data.route.late > 1 ? "s" : ""} — abra a rota.` : "Pedidos com janela de entrega hoje."}
-            />
-          </Link>
-        ) : null}
-        {data.toDeliverCount ? (
-          <Link href="/admin/pedidos/entregar" className="block">
-            <StatCard
-              label="Para entregar"
-              value={String(data.toDeliverCount)}
-              tone={data.staleShipments ? "warning" : "neutral"}
-              hint={
-                data.staleShipments
-                  ? `${data.staleShipments} enviado${data.staleShipments > 1 ? "s" : ""} há 7+ dias sem confirmação — confira.`
-                  : "A caminho da cliente — registre a entrega com a foto."
-              }
-            />
-          </Link>
-        ) : null}
-        <Link href="/admin/pedidos/embalar" className="block">
-          <StatCard
-            label="A embalar"
-            value={data.toPackCount === null ? "—" : String(data.toPackCount)}
-            tone={data.toPackCount ? "warning" : "neutral"}
-            hint="Pedidos pagos esperando a foto do pacote."
-          />
-        </Link>
-        <Link href="/admin/estoque" className="block">
-          <StatCard
-            label="Estoque baixo"
-            value={
-              data.lowStockCount === null ? "—" : String(data.lowStockCount)
-            }
-            tone={data.lowStockCount ? "warning" : "neutral"}
-            hint="Variações no limiar de alerta ou abaixo."
-          />
-        </Link>
-        {ownerData ? (
-          <Link href="/admin/fila" className="block">
-            <StatCard
-              label="Fila com problemas"
-              value={
-                ownerData.deadCount === null ? "—" : String(ownerData.deadCount)
-              }
-              tone={ownerData.deadCount ? "danger" : "neutral"}
-              hint={
-                ownerData.deadCount
-                  ? "Eventos que falharam e precisam da sua atenção."
-                  : "Tudo certo com as integrações."
-              }
-            />
-          </Link>
-        ) : null}
-      </div>
-
-      <ReadinessCard summary={data.readiness} owner={owner} />
-
-      {ownerData ? (
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              Vendas pagas — últimos 14 dias
-            </h2>
-            <Link
-              href="/admin/relatorios"
-              className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-            >
-              Ver relatórios
-            </Link>
-          </div>
-          {ownerData.series === null ? (
-            <EmptyState
-              title="Não foi possível carregar o gráfico"
-              hint="O banco de dados está indisponível no momento. Tente recarregar a página."
-            />
-          ) : (
-            <Card>
-              <div
-                role="img"
-                aria-label="Gráfico de barras da receita paga por dia nos últimos 14 dias"
-                className="flex h-36 items-end gap-1.5 sm:gap-2"
-              >
-                {ownerData.series.map((point) => {
-                  const label = `${shortDay(point.date)}: ${point.ordersCount} ${
-                    point.ordersCount === 1 ? "pedido" : "pedidos"
-                  }, ${formatCentsBRL(point.revenueCents)}`;
-                  const heightPct =
-                    point.revenueCents > 0
-                      ? Math.max((point.revenueCents / maxRevenue) * 100, 4)
-                      : 0;
-                  return (
-                    <div
-                      key={point.date}
-                      title={label}
-                      className="flex h-full flex-1 flex-col justify-end"
-                    >
-                      <div
-                        className={
-                          point.revenueCents > 0
-                            ? "w-full rounded-t bg-indigo-500 dark:bg-indigo-400"
-                            : "h-0.5 w-full rounded bg-zinc-200 dark:bg-zinc-700"
-                        }
-                        style={
-                          point.revenueCents > 0
-                            ? { height: `${heightPct}%` }
-                            : undefined
-                        }
-                      />
-                      <span className="mt-1 hidden text-center text-[10px] text-zinc-500 sm:block dark:text-zinc-400">
-                        {shortDay(point.date).slice(0, 2)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-                Receita de pedidos pagos por dia (fuso de São Paulo). Passe o
-                mouse sobre uma barra para ver o detalhe.
-              </p>
-            </Card>
-          )}
-        </section>
-      ) : null}
-
-      {ownerData ? (
-        <div className="grid items-start gap-6 xl:grid-cols-2">
-          <section className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                Top 5 produtos — 30 dias
-              </h2>
-              <Link
-                href="/admin/produtos"
-                className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-              >
-                Ver produtos
-              </Link>
-            </div>
-            {ownerData.top === null ? (
-              <EmptyState
-                title="Não foi possível carregar os produtos"
-                hint="O banco de dados está indisponível no momento."
-              />
-            ) : ownerData.top.length === 0 ? (
-              <EmptyState
-                title="Nenhuma venda paga nos últimos 30 dias"
-                hint="Quando as vendas entrarem, os campeões aparecem aqui."
-              />
-            ) : (
-              <Table headers={["Produto", "SKU", "Qtde", "Receita"]}>
-                {ownerData.top.map((product) => (
-                  <Tr key={product.variantId}>
-                    <Td className="font-medium text-zinc-900 dark:text-zinc-100">
-                      {product.name}
-                    </Td>
-                    <Td className="whitespace-nowrap">{product.sku}</Td>
-                    <Td>{product.quantity}</Td>
-                    <Td className="whitespace-nowrap">
-                      <Money cents={product.revenueCents} />
-                    </Td>
-                  </Tr>
-                ))}
-              </Table>
-            )}
-          </section>
-
-          <div className="flex flex-col gap-6">
-            <Card title="Margem — últimos 30 dias">
-              {ownerData.margin === null ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Banco indisponível no momento.
-                </p>
-              ) : (
-                <dl className="flex flex-col gap-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <dt className="text-zinc-500 dark:text-zinc-400">Receita</dt>
-                    <dd className="font-medium text-zinc-900 dark:text-zinc-100">
-                      <Money cents={ownerData.margin.revenueCents} />
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-zinc-500 dark:text-zinc-400">
-                      Custo dos produtos
-                    </dt>
-                    <dd className="font-medium text-zinc-900 dark:text-zinc-100">
-                      − <Money cents={ownerData.margin.costCents} />
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-zinc-500 dark:text-zinc-400">
-                      Taxas reais (Mercado Pago)
-                    </dt>
-                    <dd className="font-medium text-zinc-900 dark:text-zinc-100">
-                      − <Money cents={ownerData.margin.realFeeCents} />
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
-                    <dt className="font-medium text-zinc-900 dark:text-zinc-100">
-                      Margem real
-                    </dt>
-                    <dd
-                      className={
-                        "font-semibold " +
-                        (ownerData.margin.realMarginCents >= 0
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-red-600 dark:text-red-400")
-                      }
-                    >
-                      <Money cents={ownerData.margin.realMarginCents} /> (
-                      {formatPercent(
-                        ownerData.margin.realMarginCents,
-                        ownerData.margin.revenueCents,
-                      )}
-                      )
-                    </dd>
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Margem real = receita − custo dos produtos − taxas cobradas
-                    pelo Mercado Pago nos pedidos pagos dos últimos 30 dias.
-                  </p>
-                </dl>
+    <Card title="Margem" description="Receita − custo das peças − taxas, nos pedidos pagos dos últimos 30 dias.">
+      {!margin ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Banco indisponível no momento.</p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Margem real</p>
+            <p
+              className={cx(
+                "text-2xl font-semibold tracking-tight",
+                margin.realMarginCents >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
               )}
-            </Card>
+            >
+              {formatCentsBRL(margin.realMarginCents)}
+              <span className="ml-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                {formatPercent(margin.realMarginCents, revenue)}
+              </span>
+            </p>
+          </div>
+          {revenue > 0 ? (
+            <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full" role="img" aria-label="Composição da receita">
+              {segments.map((segment) => (
+                <div
+                  key={segment.key}
+                  className={cx("h-full rounded-sm", segment.className)}
+                  style={{ width: `${((Math.min(segment.cents, revenue) / revenue) * 100).toFixed(1)}%` }}
+                />
+              ))}
+            </div>
+          ) : null}
+          <dl className="flex flex-col gap-2 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-zinc-600 dark:text-zinc-400">Receita</dt>
+              <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{formatCentsBRL(revenue)}</dd>
+            </div>
+            {segments.map((segment) => (
+              <div key={segment.key} className="flex items-center justify-between gap-3">
+                <dt className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                  <span aria-hidden="true" className={cx("size-2.5 rounded-sm", segment.className)} />
+                  {segment.label}
+                </dt>
+                <dd className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {segment.key === "margin" ? formatCentsBRL(margin.realMarginCents) : `− ${formatCentsBRL(segment.cents)}`}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </Card>
+  );
+}
 
-            {ownerData.recovery !== null &&
-            ownerData.recovery.remindersSent > 0 ? (
-              <Card title="Recuperação por WhatsApp">
-                <div className="flex items-center gap-8">
-                  <div>
-                    <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-                      {ownerData.recovery.remindersSent}
-                    </p>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                      lembretes enviados
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-semibold text-emerald-600 dark:text-emerald-400">
-                      {ownerData.recovery.recoveredOrders}
-                    </p>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                      pedidos recuperados
-                    </p>
-                  </div>
-                </div>
-                <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-                  Pedidos que receberam lembrete de pagamento e acabaram pagos.{" "}
-                  <Link
-                    href="/admin/whatsapp"
-                    className="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-                  >
-                    Ver WhatsApp
-                  </Link>
-                </p>
-              </Card>
+function LiaCard({
+  owner,
+  shared,
+}: {
+  owner: NonNullable<AdminDashboard["owner"]>;
+  shared: AdminDashboard["shared"];
+}) {
+  const bot = owner.bot;
+  const bridge = owner.siteBridge30d;
+  const recovery = owner.recovery;
+  return (
+    <Card
+      title="Lia & WhatsApp"
+      description="A vendedora nos últimos 7 dias."
+      action={
+        <Link href="/admin/whatsapp" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          Central
+        </Link>
+      }
+    >
+      {!bot ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Banco indisponível no momento.</p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <dl className="grid grid-cols-2 gap-3">
+            <MiniStat label="Conversas hoje" value={String(bot.conversationsToday)} />
+            <MiniStat label="Esperando você" value={String(shared.attention?.conversationsAwaiting ?? "—")} />
+            <MiniStat label="Pedidos pela Lia" value={String(bot.ordersByBot)} />
+            <MiniStat label="Vendido pela Lia" value={formatCentsBRL(bot.ordersByBotCents)} />
+          </dl>
+          <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+            <p className="flex items-center gap-2">
+              <Bot aria-hidden="true" className="size-3.5 shrink-0 text-zinc-400" strokeWidth={1.75} />
+              {bridge
+                ? bridge.taps === 0
+                  ? "Pontes do site (30 dias): sem toques ainda."
+                  : `Pontes do site (30 dias): ${bridge.taps} ${bridge.taps === 1 ? "toque" : "toques"} → ${bridge.conversations} ${bridge.conversations === 1 ? "conversa" : "conversas"} → ${bridge.paidOrders} ${bridge.paidOrders === 1 ? "venda paga" : "vendas pagas"} (${formatPercent(bridge.paidOrders, bridge.taps)})`
+                : "Pontes do site: indisponível."}
+            </p>
+            {recovery && recovery.remindersSent > 0 ? (
+              <p className="flex items-center gap-2">
+                <MessageCircle aria-hidden="true" className="size-3.5 shrink-0 text-zinc-400" strokeWidth={1.75} />
+                Recuperação: {recovery.remindersSent} {recovery.remindersSent === 1 ? "lembrete" : "lembretes"} →{" "}
+                {recovery.recoveredOrders} {recovery.recoveredOrders === 1 ? "pedido pago" : "pedidos pagos"}.
+              </p>
             ) : null}
           </div>
         </div>
-      ) : null}
+      )}
+    </Card>
+  );
+}
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-            Últimos pedidos
-          </h2>
-          <Link
-            href="/admin/pedidos"
-            className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-          >
+// ---------------------------------------------------------------------------
+// Últimos pedidos
+// ---------------------------------------------------------------------------
+
+function RecentOrdersCard({ dashboard, now }: { dashboard: AdminDashboard; now: Date }) {
+  const orders = dashboard.shared.recentOrders;
+  return (
+    <section className="flex flex-col gap-3">
+      <SectionHeading
+        title="Últimos pedidos"
+        action={
+          <Link href="/admin/pedidos" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
             Ver todos
           </Link>
-        </div>
-
-        {data.recentOrders === null ? (
-          <EmptyState
-            title="Não foi possível carregar os pedidos"
-            hint="O banco de dados está indisponível no momento. Tente recarregar a página."
-          />
-        ) : data.recentOrders.length === 0 ? (
-          <EmptyState
-            title="Nenhum pedido ainda"
-            hint="Quando você registrar o primeiro pedido, ele aparece aqui."
-            action={
-              <Link
-                href="/admin/pedidos/novo"
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-              >
-                Criar pedido
-              </Link>
-            }
-          />
-        ) : (
-          <Table headers={["Pedido", "Cliente", "Situação", "Total", "Quando"]}>
-            {data.recentOrders.map((order) => (
-              <Tr key={order.id}>
-                <Td>
-                  <Link
-                    href={`/admin/pedidos/${order.id}`}
-                    className="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-                  >
-                    #{order.orderNumber}
-                  </Link>
-                </Td>
-                <Td>{order.customerName}</Td>
-                <Td>
-                  <StatusPill
-                    label={ORDER_STATUS_LABELS[order.status] ?? order.status}
-                    tone={orderStatusTone(order.status)}
-                  />
-                </Td>
-                <Td>
-                  <Money cents={order.totalCents} />
-                </Td>
-                <Td>{whenFormatter.format(order.createdAt)}</Td>
-              </Tr>
-            ))}
-          </Table>
-        )}
-      </section>
-    </div>
+        }
+      />
+      {!orders ? (
+        <EmptyState title="Banco indisponível no momento" hint="Os pedidos aparecem quando a conexão voltar." />
+      ) : orders.length === 0 ? (
+        <EmptyState
+          icon={<ShoppingBag aria-hidden="true" className="size-5" strokeWidth={1.75} />}
+          title="Nenhum pedido ainda"
+          hint="Quando você registrar o primeiro pedido, ele aparece aqui."
+          action={
+            <ButtonLink href="/admin/pedidos/novo" size="sm" icon={icon(Plus)}>
+              Criar pedido
+            </ButtonLink>
+          }
+        />
+      ) : (
+        <Table
+          headers={["Pedido", "Cliente", "Situação", { label: "Total", align: "right" }, "Quando"]}
+        >
+          {orders.map((order) => (
+            <Tr key={order.id}>
+              <Td>
+                <Link
+                  href={`/admin/pedidos/${order.id}`}
+                  className="font-mono text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                >
+                  #{order.orderNumber}
+                </Link>
+              </Td>
+              <Td className="max-w-56 truncate">{order.customerName ?? "—"}</Td>
+              <Td>
+                <StatusPill
+                  dot
+                  label={ORDER_STATUS_LABELS[order.status as keyof typeof ORDER_STATUS_LABELS] ?? order.status}
+                  tone={orderStatusTone(order.status)}
+                />
+              </Td>
+              <Td align="right">
+                <Money cents={order.totalCents} />
+              </Td>
+              <Td className="whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                <time dateTime={order.createdAt.toISOString()} title={formatDateTimeSP(order.createdAt)}>
+                  {formatRelativeTimePtBR(order.createdAt, now)}
+                </time>
+              </Td>
+            </Tr>
+          ))}
+        </Table>
+      )}
+    </section>
   );
 }
