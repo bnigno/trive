@@ -2,6 +2,11 @@
 
 import type { ComponentProps, ReactNode } from "react";
 import { useFormStatus } from "react-dom";
+import {
+  buttonClassName,
+  type ButtonSize,
+  type ButtonVariant,
+} from "./button-styles";
 import { cx } from "./cx";
 
 export function Field({
@@ -60,22 +65,7 @@ export function TextArea({ className, ...props }: ComponentProps<"textarea">) {
   );
 }
 
-export type ButtonVariant = "primary" | "danger" | "ghost" | "outline";
-export type ButtonSize = "sm" | "md";
-
-const variantClasses: Record<ButtonVariant, string> = {
-  primary: "bg-indigo-600 text-white hover:bg-indigo-500",
-  danger: "bg-red-600 text-white hover:bg-red-500",
-  ghost:
-    "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800",
-  outline:
-    "border border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800",
-};
-
-const sizeClasses: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-xs",
-  md: "px-4 py-2 text-sm",
-};
+export type { ButtonSize, ButtonVariant } from "./button-styles";
 
 export type ButtonProps = ComponentProps<"button"> & {
   variant?: ButtonVariant;
@@ -93,12 +83,7 @@ export function Button({
     <button
       {...props}
       type={type}
-      className={cx(
-        "inline-flex items-center justify-center rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-        variantClasses[variant],
-        sizeClasses[size],
-        className,
-      )}
+      className={buttonClassName({ variant, size, className })}
     />
   );
 }
