@@ -84,6 +84,7 @@ export interface Coupon extends CouponRule {
   dedupeKey: string | null;
   orderId: string | null;
   referrerCustomerId: string | null;
+  conversationId: string | null;
   updatedAt: Date;
 }
 
@@ -134,6 +135,7 @@ function toCoupon(row: CouponRow, productIds: string[], categoryIds: string[]): 
     dedupeKey: row.dedupeKey,
     orderId: row.orderId,
     referrerCustomerId: row.referrerCustomerId,
+    conversationId: row.conversationId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -483,6 +485,7 @@ const issueCouponSchema = z.object({
   note: z.string().trim().max(500),
   orderId: z.uuid().nullable().optional(),
   referrerCustomerId: z.uuid().nullable().optional(),
+  conversationId: z.uuid().nullable().optional(),
   maxUses: z.number().int().positive().nullable().optional(),
   perCustomerLimit: z.number().int().positive().nullable().optional(),
   firstPurchaseOnly: z.boolean().optional(),
@@ -491,6 +494,8 @@ const issueCouponSchema = z.object({
   freeShippingScope: z.enum(["any", "motoboy", "correios"]).optional(),
   /** Prefixo do código; ausente = primeiro nome da cliente ("AMIGA" sem cliente). */
   codePrefix: z.string().trim().min(1).max(12).optional(),
+  /** Código inteiro, fixo (gentileza: "MARIA-CARINHO"); colidindo, ganha um sufixo. */
+  code: z.string().trim().min(2).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/).optional(),
   now: z.date().optional(),
   random: z.custom<() => number>((value) => typeof value === "function").optional(),
 }).superRefine((value, ctx) => {
@@ -574,6 +579,7 @@ export async function issueCoupon(tx: DbOrTx, input: IssueCouponInput): Promise<
     dedupeKey: parsed.dedupeKey,
     orderId: parsed.orderId ?? null,
     referrerCustomerId: parsed.referrerCustomerId ?? null,
+    conversationId: parsed.conversationId ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -583,7 +589,12 @@ export async function issueCoupon(tx: DbOrTx, input: IssueCouponInput): Promise<
   // rotina gravou antes — devolve o dela) ou o código (raríssimo com 5 letras
   // — sorteia outro).
   for (let attempt = 0; attempt < 5; attempt++) {
-    const code = buildCouponCode(prefix, couponCodeSuffix(random));
+    // Código fixo pedido: a 1ª tentativa é ele mesmo; colidiu, ganha sufixo.
+    const code = parsed.code
+      ? attempt === 0
+        ? parsed.code.toUpperCase()
+        : buildCouponCode(parsed.code.toUpperCase(), couponCodeSuffix(random, 2))
+      : buildCouponCode(prefix, couponCodeSuffix(random));
     const [row] = await tx
       .insert(coupons)
       .values({ ...values, code })

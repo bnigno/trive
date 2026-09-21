@@ -28,6 +28,7 @@ export const BOT_TOOL_NAMES = [
   "sugerir_tamanho",
   "enviar_nota_da_curadora",
   "montar_look",
+  "oferecer_gentileza",
   "anotar",
   "registrar_foto_com_a_peca",
   "identificar_peca_na_foto",
@@ -122,6 +123,7 @@ export type BotToolInputs = {
   enviar_nota_da_curadora: { produto: string; reenviar?: true };
   montar_look: { produto: string; orcamento_reais?: number };
   anotar: { nota: string };
+  oferecer_gentileza: { motivo: string };
   /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
   /** `foto` = qual das fotos recentes dela (1 = a primeira, 2 = a segunda…); omitida = a última. */
   registrar_foto_com_a_peca: { produto: string; foto?: number };
@@ -652,6 +654,24 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "oferecer_gentileza",
+    description:
+      "Pede à loja uma GENTILEZA para esta cliente: um cupom pessoal, de poucos dias, sobre a sacola atual, dentro da cota diária da dona. Chame SÓ nas situações da seção GENTILEZAS do prompt — nunca na abertura, nunca sem peça na sacola, uma vez por conversa. A ferramenta confere tudo no servidor (cota do dia, compras anteriores, valor da sacola, tempo desde a última gentileza) e decide. ok: true devolve código, valor e validade — ofereça exatamente isso, ligado ao motivo. ok: false = não há gentileza hoje: NÃO mencione desconto, cupom nem que tentou. Nunca prometa antes de chamar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        motivo: {
+          type: "string",
+          minLength: 3,
+          maxLength: 140,
+          description: "Por que agora, em poucas palavras (ex.: 'hesitou no preço do Longo Dunas'). Fica registrado para a dona.",
+        },
+      },
+      required: ["motivo"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "anotar",
     description:
       "Escreve no caderninho da vendedora um fato curto e útil para as próximas compras desta cliente: tamanho que usa, cores que ama ou evita, ocasião, para quem compra, peça esgotada que quer ser avisada. NUNCA anote CPF, endereço ou dado de pagamento. Uma frase por chamada.",
@@ -966,6 +986,9 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   montar_look: z.strictObject({
     produto: z.string().min(1),
     orcamento_reais: z.number().int().min(1).optional(),
+  }),
+  oferecer_gentileza: z.strictObject({
+    motivo: z.string().trim().min(3, "Diga o motivo em poucas palavras.").max(140),
   }),
   anotar: z.strictObject({
     nota: z.string().trim().min(3).max(140),

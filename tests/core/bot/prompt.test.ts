@@ -212,6 +212,17 @@ describe("tamanho do prompt (teto contra o inchaço)", () => {
 });
 
 describe("rótulos das listas tocáveis", () => {
+  it("GENTILEZAS só entra com o recurso ligado; a regra 3 sempre cita a exceção", () => {
+    const off = buildBotSystemPrompt(OPCOES);
+    expect(off).not.toContain("GENTILEZAS (o cupom de bolso");
+    expect(off).toContain("gentileza que oferecer_gentileza confirmou (ok: true)");
+    expect(off).toContain('nem desconto, nem cupom, nem "tentei"');
+    const on = buildBotSystemPrompt({ ...OPCOES, liaGiftEnabled: true });
+    expect(on).toContain("GENTILEZAS (o cupom de bolso");
+    expect(on).toContain("Nunca: na abertura da conversa");
+    expect(on).toContain("Chame ANTES de falar");
+  });
+
   it("botão da lista de variações cabe no teto do WhatsApp", () => {
     expect(VARIANT_MENU_BUTTON_LABEL.length).toBeLessThanOrEqual(OPTION_BUTTON_MAX_CHARS);
     expect(VARIANT_MENU_BUTTON_LABEL).not.toMatch(PALAVRAS_PROIBIDAS);

@@ -67,6 +67,14 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "late_delivery_grace_minutes", value: 30 },
   { key: "late_delivery_coupon_percent", value: 10 },
   { key: "late_delivery_coupon_days", value: 30 },
+  // Gentilezas da Lia (cupom de bolso): desligado até a dona ligar em /admin/whatsapp.
+  { key: "lia_gift_enabled", value: false },
+  { key: "lia_gift_percent", value: 10 },
+  { key: "lia_gift_daily_quota", value: 3 },
+  { key: "lia_gift_min_purchases", value: 1 },
+  { key: "lia_gift_min_cart_cents", value: 15000 },
+  { key: "lia_gift_days", value: 2 },
+  { key: "lia_gift_cooldown_days", value: 60 },
   // "Quem já vestiu": foto da cliente com a peça vira cartão + consentimento.
   { key: "customer_looks_enabled", value: true },
   // Provador (grupos): nasce desligado — a dona liga quando registrar a primeira sala.

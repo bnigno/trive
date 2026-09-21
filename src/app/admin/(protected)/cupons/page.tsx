@@ -202,6 +202,11 @@ export default async function CuponsPage() {
                         {coupon.note ? (
                           <span className="text-xs text-zinc-500 dark:text-zinc-400">{coupon.note}</span>
                         ) : null}
+                        {coupon.conversationId ? (
+                          <Link href={`/admin/whatsapp/conversas/${coupon.conversationId}`} className="text-xs text-indigo-600 hover:underline dark:text-indigo-400">
+                            Ver conversa
+                          </Link>
+                        ) : null}
                       </div>
                     </Td>
                     <Td className="whitespace-nowrap">

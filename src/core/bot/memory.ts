@@ -116,6 +116,15 @@ export const botStateSchema = z
         at: z.string(),
       })
       .optional(),
+    /** Gentileza já oferecida nesta conversa (uma só): o cupom, o motivo e a validade. */
+    liaGift: z
+      .object({
+        code: z.string(),
+        motivo: z.string(),
+        at: z.string(),
+        expiresAt: z.string(),
+      })
+      .optional(),
     /** Última transferência para a equipe: motivo e resumo para o painel. */
     handoff: z
       .object({
@@ -427,6 +436,11 @@ export function renderContextNote(
       : `desconto de ${formatCentsBRL(state.coupon.discountCents)} nesta sacola`;
     linhas.push(
       `• Cupom validado nesta conversa: ${state.coupon.code} (${efeito}${state.coupon.hint ? ` · ${state.coupon.hint}` : ""}) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
+    );
+  }
+  if (state.liaGift) {
+    linhas.push(
+      `• Gentileza já oferecida nesta conversa: cupom ${state.liaGift.code} (motivo: ${state.liaGift.motivo}) — não ofereça outra`,
     );
   }
   if (state.lastOrderNumber !== undefined) {

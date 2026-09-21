@@ -7,6 +7,7 @@ import { getSalesAssistant } from "@/adapters/assistant";
 import { AssistantUnavailableError } from "@/adapters/assistant";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
+import { parseBRLToCents } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
 import { ServiceError, updateSetting } from "@/services/settings";
 import { cancelScheduledIdleCartFollowups } from "@/services/wa-followups";
@@ -48,6 +49,7 @@ const toggleKeySchema = z.enum([
   "bot_audio_notes_enabled",
   "groups_enabled",
   "bot_group_mentions_enabled",
+  "lia_gift_enabled",
 ]);
 
 export async function setToggleAction(
@@ -305,6 +307,50 @@ export async function sendDigestNowAction(
     return {
       error: `Não foi enviado. ${DIGEST_SKIP_MESSAGES[result.skipped] ?? result.skipped}`,
     };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+/** Inteiro dentro de [min, max]; vazio é erro (nunca vira 0 em silêncio). */
+function parseGiftIntField(raw: string, label: string, min: number, max: number): number {
+  const trimmed = raw.trim();
+  const value = trimmed === "" ? Number.NaN : Number(trimmed);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new ServiceError("numero_invalido", `${label}: informe um número inteiro entre ${min} e ${max}.`);
+  }
+  return value;
+}
+
+/** Gentilezas da Lia: a cota e as condições do cupom de bolso. */
+export async function saveLiaGiftSettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("whatsapp");
+  try {
+    const db = getDb();
+    const text = (name: string) => String(formData.get(name) ?? "");
+    let minCartCents: number;
+    try {
+      minCartCents = parseBRLToCents(text("minCart").trim() || "0");
+      if (minCartCents < 0) throw new RangeError("negativo");
+    } catch {
+      throw new ServiceError("valor_invalido", "Sacola mínima (R$): informe um valor em reais, ex.: 150,00.");
+    }
+    const values: Array<{ key: string; value: unknown }> = [
+      { key: "lia_gift_percent", value: parseGiftIntField(text("percent"), "Desconto (%)", 1, 50) },
+      { key: "lia_gift_daily_quota", value: parseGiftIntField(text("dailyQuota"), "Gentilezas por dia", 0, 20) },
+      { key: "lia_gift_min_purchases", value: parseGiftIntField(text("minPurchases"), "Compras anteriores", 0, 10) },
+      { key: "lia_gift_min_cart_cents", value: minCartCents },
+      { key: "lia_gift_days", value: parseGiftIntField(text("validDays"), "Vale por (dias)", 1, 30) },
+      { key: "lia_gift_cooldown_days", value: parseGiftIntField(text("cooldownDays"), "Mesma cliente de novo só depois de (dias)", 0, 365) },
+    ];
+    for (const { key, value } of values) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+    revalidatePath("/admin/whatsapp");
+    return { success: "Gentilezas salvas." };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }
