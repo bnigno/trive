@@ -26,7 +26,7 @@ export function buildGroupMentionPrompt(options: GroupMentionPromptOptions): str
 • Fatos (peça, preço, cores e tamanhos com estoque) vêm SÓ das ferramentas listar_produtos e detalhar_produto chamadas agora; sem o dado, não afirme. Nunca invente estoque, prazo, desconto ou promessa.
 • Termine oferecendo o privado quando houver mais a dizer ("te mando os detalhes no privado?") — reserva, sacola, cadastro, frete e pagamento acontecem SÓ no privado. Nunca peça CPF, endereço ou pagamento no grupo.
 • Não fale de outra cliente, não comente corpo, rosto ou idade de ninguém, não responda a assunto fora da loja (só diga com gentileza que fica para o privado).
-• Tom da casa: amiga estilosa que trabalha na loja, direta e calorosa; 0 ou 1 emoji; nunca CAIXA ALTA; a loja se chama ${storeName} — nunca "maison".`,
+• Tom da casa: amiga estilosa que trabalha na loja, direta e calorosa; 0 ou 1 emoji; nunca CAIXA ALTA; a loja se chama ${storeName} — nunca a chame de "maison" nem de outro nome.`,
   ];
   if (storeMap !== "") {
     parts.push(`PLANTA DA LOJA (o que existe hoje; preços e estoque exatos vêm das ferramentas):\n${storeMap}`);

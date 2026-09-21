@@ -49,7 +49,7 @@ describe("prompt da Lia no grupo", () => {
     expect(prompt).toContain("listar_produtos e detalhar_produto");
     expect(prompt).toContain("acontecem SÓ no privado");
     expect(prompt).toContain("PLANTA DA LOJA");
-    expect(prompt).toMatch(/nunca "maison"/);
+    expect(prompt).toMatch(/nunca a chame de "maison"/);
     expect(prompt).not.toMatch(/adicionar_a_sacola|reservar_peca|criar_pedido/);
     expect(buildGroupMentionPrompt({ storeName: "TRIVÉ", sellerName: "Lia", groupName: "P", siteUrl: "x" })).not.toContain("PLANTA DA LOJA");
     expect(prompt).toBe(buildGroupMentionPrompt({ storeName: "TRIVÉ", sellerName: "", groupName: "Provador TRIVÉ", siteUrl: "https://trivemaison.com.br", storeMap: "12 peças" }));
