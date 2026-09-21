@@ -2,6 +2,7 @@ export { inboundEvents, outboxEvents } from "./integration";
 export { auditLog, settings, users } from "./governance";
 export {
   categories,
+  PRODUCT_IMAGE_ORIGINS,
   productImages,
   products,
   productVariants,
@@ -34,3 +35,4 @@ export { waFollowups } from "./followups";
 export { waSuggestions } from "./suggestions";
 export { couriers, deliveryPositions, deliveryRuns, deliveryStops } from "./delivery";
 export { waGroupMembers, waGroupPosts, waGroups, waGroupSignals } from "./groups";
+export { studioBasePhotos, studioCandidates, studioRequests } from "./studio";
