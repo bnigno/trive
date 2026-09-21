@@ -27,10 +27,13 @@ import {
   isEditionCardStale,
   parseEditionFingerprints,
   type EditionFingerprints,
+  isVoucherStale,
 } from "@/core/edition/fingerprint";
 import { editionLayout } from "@/core/edition/layout";
 import { editionTexts } from "@/core/edition/text";
 import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
+import { VOUCHER_FINGERPRINT_KEYS, type VoucherCardData, type VoucherKind } from "@/core/edition/voucher";
+import { ensureOrderVouchers, existingOrderVouchers, existingVouchersByOrder, plannedVoucherKinds } from "@/services/paper-vouchers";
 import { categories, customers, orderItems, orders, products, productVariants, settings } from "@/db/schema";
 import { siteUrl } from "@/lib/site-url";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
@@ -47,13 +50,18 @@ export class ServiceError extends Error {
 
 export type EditionCardRenderer = (data: EditionCardData) => Promise<Buffer>;
 export type DebutLetterRenderer = (data: DebutLetterData) => Promise<Buffer>;
-export type EditionRenderers = { card: EditionCardRenderer; letter: DebutLetterRenderer };
+export type VoucherRenderer = (data: VoucherCardData) => Promise<Buffer>;
+export type EditionRenderers = { card: EditionCardRenderer; letter: DebutLetterRenderer; voucher?: VoucherRenderer };
 export const EDITION_CARD_JPEG_QUALITY = 88;
 
 const orderIdSchema = z.object({ orderId: z.uuid() });
 
 export function editionCardStoragePath(orderId: string, productId: string): string {
   return `editions/${orderId}/${productId}.jpg`;
+}
+
+export function voucherStoragePath(orderId: string, kind: VoucherKind): string {
+  return `editions/${orderId}/${kind === "para_voce" ? "vale-para-voce" : "vale-para-uma-amiga"}.jpg`;
 }
 
 export function debutLetterStoragePath(orderId: string): string {
@@ -107,6 +115,9 @@ export type EditionCardsBasis = {
   isFirstPurchase: boolean;
   /** A carta de estreia: só na primeira compra e só se a dona escreveu o texto. */
   letter: DebutLetterData | null;
+  /** Os vales JÁ emitidos deste pedido (nascem ao gerar; antes disso, `plannedVouchers` diz quais sairiam). */
+  vouchers: VoucherCardData[];
+  plannedVouchers: VoucherKind[];
   cards: EditionCardPlan[];
   skipped: EditionCardSkip[];
 };
@@ -305,10 +316,12 @@ export function editionCardsStale(basis: {
   editionCardsFingerprint: EditionFingerprints | null;
   cards: EditionCardPlan[];
   letter: DebutLetterData | null;
+  vouchers?: VoucherCardData[];
 }): boolean {
   return (
     basis.cards.some((card) => isEditionCardStale(basis.editionCardsFingerprint, card.productId, card.data)) ||
-    isDebutLetterStale(basis.editionCardsFingerprint, basis.letter)
+    isDebutLetterStale(basis.editionCardsFingerprint, basis.letter) ||
+    (basis.vouchers ?? []).some((voucher) => isVoucherStale(basis.editionCardsFingerprint, voucher))
   );
 }
 
@@ -336,6 +349,7 @@ export async function editionCardsStatusByOrder(
   const plans = await planEditionCardsByOrder(db, targets);
   const prior = await countPriorCountedOrdersByOrder(db, targets);
   const texts = await editionSettings(db);
+  const vouchersByOrder = await existingVouchersByOrder(db, targets);
   for (const target of targets) {
     const plan = plans.get(target.id) ?? { cards: [], skipped: [] };
     const { isFirstPurchase: first, letter } = debutLetterFor(target, prior.get(target.id) ?? 0, texts);
@@ -344,7 +358,7 @@ export async function editionCardsStatusByOrder(
       cards: plan.cards.length,
       isFirstPurchase: first,
       letter: letter !== null,
-      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards, letter }),
+      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards, letter, vouchers: vouchersByOrder.get(target.id) ?? [] }),
     });
   }
   return status;
@@ -357,6 +371,7 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
     .select({
       id: orders.id,
       orderNumber: orders.orderNumber,
+      status: orders.status,
       editionCardsAt: orders.editionCardsAt,
       editionCardsFingerprint: orders.editionCardsFingerprint,
       isGift: orders.isGift,
@@ -372,6 +387,8 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
   const plan = (await planEditionCardsByOrder(db, [order])).get(order.id) ?? { cards: [], skipped: [] };
   const prior = (await countPriorCountedOrdersByOrder(db, [order])).get(order.id) ?? 0;
   const { isFirstPurchase: first, letter } = debutLetterFor(order, prior, await editionSettings(db));
+  const vouchers = await existingOrderVouchers(db, order.id);
+  const plannedVouchers = await plannedVoucherKinds(db, { isGift: order.isGift, status: order.status });
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
@@ -380,6 +397,8 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
     isGift: order.isGift,
     isFirstPurchase: first,
     letter,
+    vouchers,
+    plannedVouchers,
     cards: plan.cards,
     skipped: plan.skipped,
   };
@@ -405,20 +424,23 @@ export async function publishEditionCards(
   storage: FileStorage,
   render: EditionRenderers,
   input: { orderId: string },
-): Promise<{ at: Date; letterPath: string | null; cards: PublishedEditionCard[]; skipped: EditionCardSkip[] }> {
+): Promise<{ at: Date; letterPath: string | null; voucherPaths: string[]; cards: PublishedEditionCard[]; skipped: EditionCardSkip[] }> {
   const { orderId } = orderIdSchema.parse(input);
   const at = new Date();
-  const basis = await buildEditionCardsBasis(db, orderId);
-  // Sem cartão e sem carta não há o que desenhar; só a carta (primeira compra
-  // de uma caneca, por exemplo) ainda sai.
-  if (basis.cards.length === 0 && !basis.letter) {
+  const preview = await buildEditionCardsBasis(db, orderId);
+  // Sem cartão, sem carta e sem vale não há o que desenhar; só a carta (ou só
+  // os vales — primeira compra de uma caneca, por exemplo) ainda sai.
+  if (preview.cards.length === 0 && !preview.letter && preview.plannedVouchers.length === 0 && preview.vouchers.length === 0) {
     throw new ServiceError(
       "pedido_sem_pecas",
-      basis.skipped.length > 0
+      preview.skipped.length > 0
         ? "Este pedido só tem itens que não são roupa: não há cartão da edição para ele."
         : "Este pedido não tem peças para o cartão.",
     );
   }
+  // Os vales nascem ANTES do desenho (o código vai na imagem); gerar de novo reaproveita.
+  await ensureOrderVouchers(db, { orderId, now: at });
+  const basis = await buildEditionCardsBasis(db, orderId);
   let letterJpeg: Buffer | null = null;
   if (basis.letter) {
     try {
@@ -430,6 +452,17 @@ export async function publishEditionCards(
         "cartao_falhou",
         "Não consegui desenhar a carta de estreia. Tente de novo; se continuar, avise quem cuida do sistema.",
       );
+    }
+  }
+  const voucherJpegs: { voucher: VoucherCardData; jpeg: Buffer }[] = [];
+  for (const voucher of basis.vouchers) {
+    if (!render.voucher) break;
+    try {
+      const png = await render.voucher(voucher);
+      voucherJpegs.push({ voucher, jpeg: await sharp(png).jpeg({ quality: EDITION_CARD_JPEG_QUALITY }).toBuffer() });
+    } catch (error) {
+      console.error(`[edition-cards] vale ${voucher.kind} do pedido ${basis.orderId} falhou`, error);
+      throw new ServiceError("cartao_falhou", "Não consegui desenhar o vale da caixa. Tente de novo; se continuar, avise quem cuida do sistema.");
     }
   }
   const drawn: { card: EditionCardPlan; jpeg: Buffer }[] = [];
@@ -450,6 +483,12 @@ export async function publishEditionCards(
     letterPath = debutLetterStoragePath(basis.orderId);
     await storage.upload({ path: letterPath, data: letterJpeg, contentType: "image/jpeg" });
   }
+  const voucherPaths: string[] = [];
+  for (const { voucher, jpeg } of voucherJpegs) {
+    const path = voucherStoragePath(basis.orderId, voucher.kind);
+    await storage.upload({ path, data: jpeg, contentType: "image/jpeg" });
+    voucherPaths.push(path);
+  }
   const published: PublishedEditionCard[] = [];
   for (const { card, jpeg } of drawn) {
     const path = editionCardStoragePath(basis.orderId, card.productId);
@@ -464,9 +503,9 @@ export async function publishEditionCards(
   }
   await db
     .update(orders)
-    .set({ editionCardsAt: at, editionCardsFingerprint: editionFingerprintsOf(basis.cards, basis.letter), updatedAt: at })
+    .set({ editionCardsAt: at, editionCardsFingerprint: editionFingerprintsOf(basis.cards, basis.letter, voucherJpegs.map((v) => v.voucher)), updatedAt: at })
     .where(eq(orders.id, basis.orderId));
-  return { at, letterPath, cards: published, skipped: basis.skipped };
+  return { at, letterPath, voucherPaths, cards: published, skipped: basis.skipped };
 }
 
 export type EditionCardView = {
@@ -495,6 +534,9 @@ export type EditionCardsView = {
   isFirstPurchase: boolean;
   /** null = não é primeira compra ou a carta ainda não foi escrita nas configurações. */
   letter: { recipientName: string; url: string | null; stale: boolean } | null;
+  /** Os vales da caixa: os já emitidos (com imagem, se gerada) e os que ainda sairão ao gerar. */
+  vouchers: { kind: VoucherKind; code: string; url: string | null; stale: boolean }[];
+  plannedVouchers: VoucherKind[];
   /** Algum cartão (ou a carta) ficou velho: a tela pede "Gerar de novo". */
   stale: boolean;
   cards: EditionCardView[];
@@ -525,11 +567,22 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
         : null,
   }));
   const letterStale = isDebutLetterStale(basis.editionCardsFingerprint, basis.letter);
+  const vouchers = basis.vouchers.map((voucher) => ({
+    kind: voucher.kind,
+    code: voucher.code,
+    url:
+      at && basis.editionCardsFingerprint?.[VOUCHER_FINGERPRINT_KEYS[voucher.kind]] !== undefined
+        ? editionCardUrl(storage, voucherStoragePath(basis.orderId, voucher.kind), at)
+        : null,
+    stale: isVoucherStale(basis.editionCardsFingerprint, voucher),
+  }));
   return {
     orderNumber: basis.orderNumber,
     at,
     isGift: basis.isGift,
     isFirstPurchase: basis.isFirstPurchase,
+    vouchers,
+    plannedVouchers: basis.plannedVouchers,
     letter: basis.letter
       ? {
           recipientName: basis.letter.recipientName,
@@ -538,7 +591,12 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
           stale: letterStale,
         }
       : null,
-    stale: cards.some((card) => card.stale) || letterStale,
+    // Vale planejado que ainda não existe (recurso ligado depois da geração) também pede "gerar de novo".
+    stale:
+      cards.some((card) => card.stale) ||
+      letterStale ||
+      vouchers.some((voucher) => voucher.stale) ||
+      (at !== null && basis.plannedVouchers.some((kind) => !basis.vouchers.some((voucher) => voucher.kind === kind))),
     cards,
     skipped: basis.skipped,
   };

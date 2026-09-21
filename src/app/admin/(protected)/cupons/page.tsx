@@ -19,8 +19,9 @@ import { Button } from "@/components/ui/form";
 import { toggleCouponAction } from "./actions";
 import { CouponCreateForm, CouponDeleteForm, CouponEditForm, type CouponCategoryOption, type CouponFormDefaults } from "./forms";
 import { formatCouponValue, ORIGIN_LABELS } from "./labels";
-import { LateDeliverySettingsForm, LookCouponSettingsForm, PriceProtectionSettingsForm } from "./automatic-forms";
+import { LateDeliverySettingsForm, LookCouponSettingsForm, PaperVoucherSettingsForm, PriceProtectionSettingsForm } from "./automatic-forms";
 import { loadPriceProtectionSettings, type PriceProtectionSettings } from "@/services/price-protection";
+import { loadPaperVoucherSettings, type PaperVoucherSettings } from "@/services/paper-vouchers";
 import { loadLateDeliverySettings, type LateDeliverySettings } from "@/services/late-delivery";
 import { loadLookCouponSettings, type LookCouponSettings } from "@/services/look-coupons";
 
@@ -115,6 +116,7 @@ async function loadPage(): Promise<{
   lateDelivery: LateDeliverySettings;
   lookCoupon: LookCouponSettings;
   priceProtection: PriceProtectionSettings;
+  paperVoucher: PaperVoucherSettings;
 } | null> {
   try {
     const db = getDb();
@@ -122,6 +124,7 @@ async function loadPage(): Promise<{
     const lateDelivery = await loadLateDeliverySettings(db);
     const lookCoupon = await loadLookCouponSettings(db);
     const priceProtection = await loadPriceProtectionSettings(db);
+    const paperVoucher = await loadPaperVoucherSettings(db);
     const categoryRows = await db
       .select({ id: categories.id, name: categories.name })
       .from(categories)
@@ -134,7 +137,7 @@ async function loadPage(): Promise<{
             .from(products)
             .where(and(inArray(products.id, productIds), isNull(products.deletedAt)))
         : [];
-    return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])), lateDelivery, lookCoupon, priceProtection };
+    return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])), lateDelivery, lookCoupon, priceProtection, paperVoucher };
   } catch {
     return null;
   }
@@ -158,7 +161,7 @@ export default async function CuponsPage() {
       </div>
     );
   }
-  const { coupons, categories: categoryOptions, slugById, lateDelivery, lookCoupon, priceProtection } = page;
+  const { coupons, categories: categoryOptions, slugById, lateDelivery, lookCoupon, priceProtection, paperVoucher } = page;
   const now = new Date();
 
   return (
@@ -337,6 +340,8 @@ export default async function CuponsPage() {
           <LookCouponSettingsForm defaults={lookCoupon} />
           <hr className="border-zinc-200 dark:border-zinc-800" />
           <PriceProtectionSettingsForm defaults={priceProtection} />
+          <hr className="border-zinc-200 dark:border-zinc-800" />
+          <PaperVoucherSettingsForm defaults={paperVoucher} />
         </div>
       </Card>
 

@@ -1081,6 +1081,19 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   emitir um cupom por cliente recente — ligue sabendo disso. A ficha do
   pedido mostra o card **Cupons deste pedido**. Produção:
   `scripts/sync-seed.ts --settings price_protection_enabled,price_protection_days --templates price_protection_coupon`.
+- **Vales de papel na caixa** (card em `/admin/cupons`) — ao gerar os
+  cartões da edição de um pedido pago, saem dois cartões de 15 × 10 cm (o
+  papel da carta de estreia) com o QR do WhatsApp da Lia: **para você**
+  (cupom pessoal da compradora, padrão 10%) e **para uma amiga** (vale
+  aberto, primeira compra, uma vez por cliente, até 3 usos, padrão 10%);
+  validade contada da geração (padrão 45 dias). Pedido presente sai só com o
+  da amiga; sem `store_whatsapp` cadastrado, nenhum. Quando a amiga **paga**
+  um pedido com o vale, quem indicou ganha o prêmio (padrão 10%) e a mensagem
+  `referral_reward_coupon`. Gerar os cartões de novo reaproveita os códigos.
+  Na folha A4 os vales vão de 2 em 2 na grade do adesivo da sacola (na
+  Silhouette o corte é o mesmo arquivo do adesivo). Pedido de origem cancelado
+  ou reembolsado desativa os vales não usados. Produção:
+  `scripts/sync-seed.ts --settings paper_voucher_enabled,paper_voucher_percent,referral_percent,referral_reward_percent,paper_voucher_days --templates referral_reward_coupon`.
 
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")
 
