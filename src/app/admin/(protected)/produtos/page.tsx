@@ -248,6 +248,15 @@ export default async function ProdutosPage({
       ) : null}
       </OwnerOnly>
 
+      {liaFilter ? (
+        <p className="text-xs text-zinc-600 dark:text-zinc-300" data-lia-filter="">
+          Filtro ativo: {LIA_ISSUES[liaFilter].label.replace(/ \(.*\)$/, "")} ·{" "}
+          <Link href={listUrl(q, statusParam, readinessFilter)} className="underline">
+            limpar
+          </Link>
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-3">
         <form
           method="get"

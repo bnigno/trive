@@ -51,6 +51,13 @@ const BY_TERM: ReadonlyMap<string, PieceType> = (() => {
   return map;
 })();
 
+/** Tudo o que pode aparecer no NOME de uma peça deste tipo: rótulo, plural, slug e sinônimos — a mesma régua de suggestPieceType. */
+export function pieceTypeTerms(slug: PieceType): string[] {
+  const type = PIECE_TYPES.find((entry) => entry.slug === slug);
+  if (!type) return [slug];
+  return [...new Set([type.label, type.plural, type.slug, ...type.synonyms].map((term) => normalizePieceTerm(term)))];
+}
+
 export function pieceTypeLabel(slug: PieceType): string {
   return PIECE_TYPES.find((type) => type.slug === slug)?.label ?? slug;
 }

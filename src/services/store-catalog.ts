@@ -123,6 +123,8 @@ const listPublicProductsSchema = z.object({
   includeHidden: z.boolean().default(false),
   viewer: z.object({ customerId: z.uuid().nullable().optional(), inviteToken: z.string().nullable().optional() }).optional(),
   q: z.string().trim().min(1).optional(),
+  /** Qualquer um destes termos no NOME (sem acento nem caixa): "vestido" acha "VESTIDO ALBA" e "Longo Dunas" pelo sinônimo. */
+  nameAny: z.array(z.string().trim().min(1)).min(1).optional(),
   /** Busca também na descrição (a vendedora do WhatsApp procura por "linho"). */
   includeDescription: z.boolean().default(false),
   /** Deixa um produto de fora (ex.: o próprio, na lista de relacionados). */
@@ -193,6 +195,11 @@ export async function listPublicProducts(
         ...(parsed.includeDescription ? [ilike(products.description, pattern)] : []),
       )!,
     );
+  }
+  if (parsed.nameAny) {
+    // Sem acento dos dois lados (unaccent não está garantido no PGlite): "calca" acha "CALÇA".
+    const unaccented = sql`translate(lower(${products.name}), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')`;
+    filters.push(or(...parsed.nameAny.map((term) => sql`${unaccented} like ${`%${term.toLowerCase()}%`}`))!);
   }
 
   const rows = await db

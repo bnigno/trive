@@ -2,7 +2,7 @@
 // motoboy, Correios automático e Mercado Pago — e entrega o bloco pronto
 // (core/bot/store-facts.ts) para o prompt da Lia e para a prévia do painel.
 import { renderStoreFacts, type StoreFactsInput } from "@/core/bot/store-facts";
-import { motoboyAreaLabel } from "@/core/shipping/delivery-windows";
+import { motoboyAreaLabel, type DeliveryWindow } from "@/core/shipping/delivery-windows";
 import { isCorreiosQuotesConfigured } from "@/adapters/superfrete";
 import { STORE_HERO_LINE_DEFAULT, STORE_INSTAGRAM_DEFAULT, STORE_NAME_DEFAULT } from "@/lib/brand";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -35,8 +35,14 @@ export async function getStoreFactsInput(db: DbOrTx, opts: { siteUrl: string }):
   const text = (key: (typeof STORE_FACTS_SETTING_KEYS)[number]): string => (typeof map[key] === "string" ? (map[key] as string).trim() : "");
 
   const motoboyRates = rates.filter((rate) => rate.kind === "motoboy" && rate.isActive);
-  // Janelas por cidade (cada faixa tem as suas): a ficha diz as de cada uma quando diferem.
-  const cities = motoboyRates.map((rate) => ({ city: motoboyAreaLabel([rate]) || rate.name, windows: rate.deliveryWindows }));
+  // Janelas por cidade (cada faixa tem as suas; duas faixas da mesma cidade —
+  // por peso ou CEP — somam as janelas): a ficha diz as de cada uma quando diferem.
+  const byCity = new Map<string, DeliveryWindow[]>();
+  for (const rate of motoboyRates) {
+    const city = motoboyAreaLabel([rate]) || rate.name;
+    byCity.set(city, [...(byCity.get(city) ?? []), ...rate.deliveryWindows]);
+  }
+  const cities = [...byCity.entries()].map(([city, windows]) => ({ city, windows }));
   const area = motoboyAreaLabel(motoboyRates);
   // Correios "cotado na hora" = SuperFrete ligada E com CEP E com token, OU
   // uma faixa fixa de Correios ativa (cotar_frete devolve valor e prazo dela).

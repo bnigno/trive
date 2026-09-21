@@ -20,7 +20,7 @@ import {
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
 import { formatCatalogLine } from "@/core/bot/catalog-line";
-import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, type PieceType } from "@/core/catalog/piece-types";
+import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, pieceTypeTerms, type PieceType } from "@/core/catalog/piece-types";
 import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
@@ -194,11 +194,13 @@ export async function execListarProdutos(
   });
   // Tipo sem nenhuma peça marcada (a dona ainda não tipou o catálogo, ou a
   // peça é um "Longo Aurora" que ninguém marcou): não negar o que existe —
-  // procura pelo nome com o termo que a Lia passou e avisa.
+  // procura no NOME por qualquer termo do tipo (rótulo, plural, sinônimos: a
+  // mesma régua da sugestão), mantendo a busca e a edição que vieram, e avisa.
   let tipoPeloNome = false;
-  if (pieceType && items.length === 0 && !busca) {
+  if (pieceType && items.length === 0) {
     items = await listPublicProducts(db, {
-      q: input.categoria!.trim(),
+      nameAny: pieceTypeTerms(pieceType),
+      ...(busca ? { q: busca, includeDescription: true } : {}),
       ...(categorySlug ? { categorySlug } : {}),
       ...(editionSlug ? { editionSlug } : {}),
       viewer: { customerId: ctx.customerId },
@@ -222,15 +224,18 @@ export async function execListarProdutos(
     filtros.push(`até ${formatCentsBRL(tetoCents)}`);
   }
 
-  if (tipoPeloNome) {
-    filtros.splice(filtros.findIndex((f) => f.startsWith("tipo ")), 1, `"${input.categoria!.trim()}" no nome — nenhuma peça tem o tipo marcado ainda`);
+  if (tipoPeloNome && pieceType) {
+    const tipoIndex = filtros.findIndex((f) => f.startsWith("tipo "));
+    const rotulo = `${pieceTypeLabel(pieceType)} pelo nome — nenhuma peça tem o tipo marcado ainda`;
+    if (tipoIndex >= 0) filtros.splice(tipoIndex, 1, rotulo);
+    else filtros.push(rotulo);
   }
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
     return {
       ok: true,
       text: filtros.length > 0
-        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${pieceType ? ` — o filtro por tipo só vê peças com o tipo marcado; tente busca: "${input.categoria!.trim()}"` : ""} — e diga isso à cliente com honestidade.`
+        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${pieceType ? ` (já procurei "${pieceTypeLabel(pieceType).toLowerCase()}" no nome das peças também)` : ""} — e diga isso à cliente com honestidade.`
         : "O catálogo está vazio no momento — em breve teremos novidades!",
     };
   }

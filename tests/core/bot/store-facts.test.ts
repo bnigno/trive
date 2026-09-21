@@ -13,6 +13,7 @@ describe("renderStoreFacts", () => {
     expect(texto).toContain("• Endereço: Belém — PA · Instagram: @trive_mfeminine · Site: https://www.trivemaison.com.br");
     expect(texto).toContain("• Atendimento: segunda a sábado, 9h às 19h");
     expect(texto).not.toContain("Retirada:");
+    expect(texto).toContain("criar_pedido não tem opção de retirada");
     expect(texto).toContain(
       "• Entrega por motoboy em Belém, Ananindeua, Marituba, Castanhal, Santa Izabel, Benevides e Santa Bárbara, nas janelas 9h–12h (pague até 8h) · 16h–19h (pague até 13h) · 19h–21h (pague até 17h).",
     );
@@ -28,7 +29,7 @@ describe("renderStoreFacts", () => {
 
   it("sem motoboy e com Correios pela equipe: uma linha de entrega só, sem prometer valor nem prazo", () => {
     const texto = renderStoreFacts({ ...FICHA_REAL, motoboy: null, correios: "pela_equipe" });
-    expect(texto).not.toContain("motoboy");
+    expect(texto).not.toContain("Entrega por motoboy");
     expect(texto).toContain("• Entrega: Correios com o frete calculado pela equipe — cotar_frete diz quando é o caso; não há valor nem prazo para prometer.");
   });
 
@@ -54,7 +55,9 @@ describe("renderStoreFacts", () => {
     // A política é a última linha: termina com um ponto só, mesmo quando a dona já pôs o dela.
     expect(renderStoreFacts({ ...FICHA_REAL, exchangePolicy: "Troca em 7 dias." }).endsWith("• Política de troca: Troca em 7 dias.")).toBe(true);
     expect(renderStoreFacts({ ...FICHA_REAL, exchangePolicy: "Troca em 7 dias." })).not.toContain("dias..");
-    expect(renderStoreFacts({ ...FICHA_REAL, pickup: "Sem loja aberta." })).toContain("• Retirada: Sem loja aberta. Quem quiser retirar combina com a equipe: monte a sacola e chame transferir_para_atendente — criar_pedido só fecha com entrega.");
+    const comRetirada = renderStoreFacts({ ...FICHA_REAL, pickup: "Não temos loja aberta ao público." });
+    expect(comRetirada).toContain("• Retirada: Não temos loja aberta ao público.\n");
+    expect(comRetirada).toContain("• Pedido pelo sistema é sempre com entrega (motoboy ou Correios): criar_pedido não tem opção de retirada");
   });
 
   it("é determinístico (prefixo cacheável do prompt)", () => {

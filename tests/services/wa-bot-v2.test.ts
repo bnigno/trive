@@ -1022,6 +1022,8 @@ describe("caderninho", () => {
     await db.insert(schema.shippingRates).values([
       { name: "Motoboy Belém", kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", priceCents: 1500, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
       { name: "Motoboy Ananindeua", kind: "motoboy", cepStart: "67000000", cepEnd: "67999999", priceCents: 2000, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
+      // Segunda faixa de Belém (outra faixa de CEP), mesma janela: a cidade não se repete na ficha.
+      { name: "Motoboy Belém", kind: "motoboy", cepStart: "66900000", cepEnd: "66999999", priceCents: 1800, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
       { name: "Motoboy antigo", kind: "motoboy", cepStart: "68000000", cepEnd: "68999999", priceCents: 2000, isActive: false, deliveryWindows: [{ start: "07:00", end: "08:00", cutoff: "06:00" }] },
     ]);
     const categoryId = await createCategory("Vestidos", "vestidos");
@@ -1197,17 +1199,22 @@ describe("listar_produtos 2.0", () => {
     expect(porTipo.text).toContain("1 peça encontrada (tipo Corset)");
     expect(porTipo.text).toContain(`• Corset Rosalie · Corset — ${formatCentsBRL(22900)}`);
     expect(porTipo.text).not.toContain("Blusa Linho");
-    // Tipo que NENHUMA peça tem marcado ainda ("vestido": os vestidos existem, sem tipo): não nega o que existe — procura pelo nome e avisa.
+    // Tipo que NENHUMA peça tem marcado ainda ("vestido"; "vestidos" aqui é o slug da categoria): não nega o que existe —
+    // procura no nome por rótulo/plural/sinônimos e avisa.
     const semTipoMarcado = await executor("listar_produtos", { categoria: "vestido" });
     expect(semTipoMarcado.ok).toBe(true);
-    expect(semTipoMarcado.text).toContain('2 peças encontradas ("vestido" no nome — nenhuma peça tem o tipo marcado ainda)');
+    expect(semTipoMarcado.text).toContain("2 peças encontradas (Vestido pelo nome — nenhuma peça tem o tipo marcado ainda)");
     expect(semTipoMarcado.text).toContain("Vestido Dunas");
     expect(semTipoMarcado.text).toContain("Vestido Brisa");
-    // Tipo marcado em outras peças, mas nenhuma com esse nome: aí a resposta é honesta, com a dica.
+    // Com busca junto, a busca continua valendo dentro do tipo pelo nome.
+    const comBusca = await executor("listar_produtos", { categoria: "vestido", busca: "brisa" });
+    expect(comBusca.text).toContain('1 peça encontrada (Vestido pelo nome — nenhuma peça tem o tipo marcado ainda, "brisa")');
+    expect(comBusca.text).not.toContain("Vestido Dunas");
+    // Tipo marcado em outras peças, mas nenhuma com esse nome nem esse tipo: aí a resposta é honesta.
     const bolsas = await executor("listar_produtos", { categoria: "bolsas" });
     expect(bolsas.ok).toBe(true);
     expect(bolsas.text).toContain("Nenhuma peça encontrada (tipo Bolsa)");
-    expect(bolsas.text).toContain('o filtro por tipo só vê peças com o tipo marcado; tente busca: "bolsas"');
+    expect(bolsas.text).toContain('já procurei "bolsa" no nome das peças também');
 
     const preto = await executor("listar_produtos", { cor: "preto" });
     expect(preto.text).toContain("1 peça encontrada (cor preto)");

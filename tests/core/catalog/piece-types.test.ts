@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeLabel, pieceTypePlural, suggestPieceType } from "@/core/catalog/piece-types";
+import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeLabel, pieceTypePlural, pieceTypeTerms, suggestPieceType } from "@/core/catalog/piece-types";
 
 describe("tipos de peça", () => {
   it("a lista é fechada, sem slug repetido, e todo slug tem rótulo e plural", () => {
@@ -22,6 +22,12 @@ describe("tipos de peça", () => {
     expect(parsePieceType("Sapatos")).toBeNull();
     expect(parsePieceType("vestuario")).toBeNull();
     expect(parsePieceType("")).toBeNull();
+  });
+
+  it("pieceTypeTerms lista rótulo, plural, slug e sinônimos normalizados — o que se procura no nome quando o tipo não está marcado", () => {
+    expect(pieceTypeTerms("vestido")).toEqual(["vestido", "vestidos", "longo", "midi", "curto"]);
+    expect(pieceTypeTerms("calca")).toEqual(["calca", "calcas", "pantalona", "legging"]);
+    expect(pieceTypeTerms("blusa")).toContain("baby look");
   });
 
   it("suggestPieceType lê o nome da peça: primeiro termo reconhecido, conjunto ganha, nunca 'outro'", () => {
