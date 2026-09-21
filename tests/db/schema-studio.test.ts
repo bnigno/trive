@@ -1,4 +1,4 @@
-// Migração 0055 (foto no corpo) no PGlite: origin em product_images com
+// Migração 0056 (foto no corpo) no PGlite: origin em product_images com
 // default 'upload' e CHECK; uma foto-base escolhida por modela × cena ×
 // corpo (índice parcial); candidata única por pedido × opção × tentativa;
 // settings do ensaio semeados desligados e dentro das chaves permitidas.

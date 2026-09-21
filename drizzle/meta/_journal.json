@@ -393,6 +393,13 @@
       "when": 1790007969867,
       "tag": "0055_provador_welcome",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1790033281708,
+      "tag": "0056_foto_no_corpo",
+      "breakpoints": true
     }
   ]
 }
