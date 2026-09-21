@@ -1309,17 +1309,25 @@ describe("listar_produtos 2.0", () => {
     );
     expect(baratas.text).not.toContain("BERMUDAS JEANS");
 
+    // Vestidos antigos "atrás" de muitas peças novas sem tipo com a dica no nome: a sondagem decide no banco,
+    // sem teto — com busca que não bate, o vazio continua sendo da busca, nunca "não há vestidos na loja".
+    for (let index = 1; index <= 25; index += 1) await createSimpleProduct(`KIM-L${index}`, `KIMONO LONGO ${index}`, 19900, { categoryId: vestuario });
+    const vestidoVeludo = await executor("listar_produtos", { categoria: "vestido", busca: "veludo" });
+    expect(vestidoVeludo.text).toContain('Nenhuma peça encontrada (tipo Vestido, "veludo")');
+    expect(vestidoVeludo.text).toContain('já procurei "vestido" no nome das peças sem tipo também');
+    expect(vestidoVeludo.text).not.toContain("na loja");
+
     // Tipo SEM peça na loja + busca: a busca não esconde as parecidas ("tem bermuda jeans?").
     const bermudaJeans = await executor("listar_produtos", { categoria: "bermuda", busca: "jeans" });
     expect(bermudaJeans.text).toContain('1 peça encontrada (tipo Bermuda — nenhuma com esse tipo; parecidas: 1 com nome de bermuda, marcada(s) com outro tipo, "jeans")');
     expect(bermudaJeans.text).toContain("BERMUDAS JEANS");
     const bermudaVeludo = await executor("listar_produtos", { categoria: "bermuda", busca: "veludo" });
     expect(bermudaVeludo.text).toContain('Nenhuma peça encontrada (tipo Bermuda, "veludo")');
-    expect(bermudaVeludo.text).toContain('nenhuma bermudas na loja; já procurei "bermuda" no nome de todas as peças e no tipo Short, dentro dessa busca, também');
+    expect(bermudaVeludo.text).toContain('não há bermudas na loja; já procurei "bermuda" no nome de todas as peças e no tipo Short, dentro dessa busca, também');
     // Cor que zera as parecidas: a frase diz que havia parecidas e que foi o filtro que cortou.
     const roxas = await executor("listar_produtos", { categoria: "bermuda", cor: "Roxo" });
     expect(roxas.text).toContain("Nenhuma peça encontrada (tipo Bermuda, cor Roxo)");
-    expect(roxas.text).toContain("nenhuma bermudas na loja; achei 4 parecida(s) — pelo nome ou do tipo Short — mas nenhuma passou no filtro de cor, tamanho ou preço: ofereça sem ele");
+    expect(roxas.text).toContain("não há bermudas na loja; achei 4 parecida(s) — pelo nome ou do tipo Short — mas nenhuma passou no filtro de cor, tamanho ou preço: ofereça sem ele");
 
     // Sinônimo: a peça achada por "colete" não recebe a etiqueta falsa de ter "casaco" no nome.
     const colete = await createSimpleProduct("COLETE-1", "Colete Lua", 17900, { categoryId: vestuario });
