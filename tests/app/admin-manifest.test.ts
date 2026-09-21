@@ -1,7 +1,7 @@
 // O manifest do painel: app instalável preso a /admin (é o que o iPhone exige para o Web Push).
 import { describe, expect, it } from "vitest";
 
-import { adminManifest } from "@/core/notify/manifest";
+import { adminManifest } from "@/core/pwa/manifests";
 import { GET } from "@/app/admin/manifest.webmanifest/route";
 
 describe("manifest do painel", () => {

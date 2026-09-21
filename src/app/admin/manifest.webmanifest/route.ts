@@ -1,8 +1,6 @@
-// Manifest do PAINEL (o da loja, em /manifest.webmanifest, abre a vitrine
-// em minimal-ui). Aqui é o app do dono: standalone e preso a /admin — no
-// iPhone o aviso com o app fechado só existe assim, adicionado à tela de
-// início. Formato definido em core/notify/manifest.ts para o teste conferir.
-import { adminManifest } from "@/core/notify/manifest";
+// Manifest do PAINEL (o da loja fica em /manifest.webmanifest). O layout do
+// admin aponta para cá em metadata.manifest; formato em core/pwa/manifests.ts.
+import { adminManifest } from "@/core/pwa/manifests";
 
 export const dynamic = "force-static";
 

@@ -25,6 +25,9 @@ export const metadata: Metadata = {
     default: "TRIVÉ — Maison Féminine",
     template: "%s | TRIVÉ",
   },
+  // A loja e o painel têm manifests diferentes (o painel é um app instalável
+  // preso a /admin); cada layout aponta para o seu.
+  manifest: "/manifest.webmanifest",
   description:
     "TRIVÉ — Maison Féminine. Peças escolhidas com calma, para a mulher que se veste de si. Envio para todo o Brasil.",
   twitter: { card: "summary_large_image" },
