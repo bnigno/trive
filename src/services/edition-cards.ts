@@ -33,7 +33,7 @@ import { editionLayout } from "@/core/edition/layout";
 import { editionTexts } from "@/core/edition/text";
 import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
 import { VOUCHER_FINGERPRINT_KEYS, type VoucherCardData, type VoucherKind } from "@/core/edition/voucher";
-import { ensureOrderVouchers, existingOrderVouchers, plannedVoucherKinds } from "@/services/paper-vouchers";
+import { ensureOrderVouchers, existingOrderVouchers, existingVouchersByOrder, plannedVoucherKinds } from "@/services/paper-vouchers";
 import { categories, customers, orderItems, orders, products, productVariants, settings } from "@/db/schema";
 import { siteUrl } from "@/lib/site-url";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
@@ -349,6 +349,7 @@ export async function editionCardsStatusByOrder(
   const plans = await planEditionCardsByOrder(db, targets);
   const prior = await countPriorCountedOrdersByOrder(db, targets);
   const texts = await editionSettings(db);
+  const vouchersByOrder = await existingVouchersByOrder(db, targets);
   for (const target of targets) {
     const plan = plans.get(target.id) ?? { cards: [], skipped: [] };
     const { isFirstPurchase: first, letter } = debutLetterFor(target, prior.get(target.id) ?? 0, texts);
@@ -357,7 +358,7 @@ export async function editionCardsStatusByOrder(
       cards: plan.cards.length,
       isFirstPurchase: first,
       letter: letter !== null,
-      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards, letter }),
+      stale: editionCardsStale({ editionCardsFingerprint: stored, cards: plan.cards, letter, vouchers: vouchersByOrder.get(target.id) ?? [] }),
     });
   }
   return status;
@@ -370,6 +371,7 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
     .select({
       id: orders.id,
       orderNumber: orders.orderNumber,
+      status: orders.status,
       editionCardsAt: orders.editionCardsAt,
       editionCardsFingerprint: orders.editionCardsFingerprint,
       isGift: orders.isGift,
@@ -386,7 +388,7 @@ export async function buildEditionCardsBasis(db: DbOrTx, orderId: string): Promi
   const prior = (await countPriorCountedOrdersByOrder(db, [order])).get(order.id) ?? 0;
   const { isFirstPurchase: first, letter } = debutLetterFor(order, prior, await editionSettings(db));
   const vouchers = await existingOrderVouchers(db, order.id);
-  const plannedVouchers = await plannedVoucherKinds(db, { isGift: order.isGift });
+  const plannedVouchers = await plannedVoucherKinds(db, { isGift: order.isGift, status: order.status });
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
@@ -425,19 +427,20 @@ export async function publishEditionCards(
 ): Promise<{ at: Date; letterPath: string | null; voucherPaths: string[]; cards: PublishedEditionCard[]; skipped: EditionCardSkip[] }> {
   const { orderId } = orderIdSchema.parse(input);
   const at = new Date();
-  // Os vales nascem ANTES do desenho (o código vai na imagem); gerar de novo reaproveita.
-  await ensureOrderVouchers(db, { orderId, now: at });
-  const basis = await buildEditionCardsBasis(db, orderId);
-  // Sem cartão e sem carta não há o que desenhar; só a carta (primeira compra
-  // de uma caneca, por exemplo) ainda sai.
-  if (basis.cards.length === 0 && !basis.letter) {
+  const preview = await buildEditionCardsBasis(db, orderId);
+  // Sem cartão, sem carta e sem vale não há o que desenhar; só a carta (ou só
+  // os vales — primeira compra de uma caneca, por exemplo) ainda sai.
+  if (preview.cards.length === 0 && !preview.letter && preview.plannedVouchers.length === 0 && preview.vouchers.length === 0) {
     throw new ServiceError(
       "pedido_sem_pecas",
-      basis.skipped.length > 0
+      preview.skipped.length > 0
         ? "Este pedido só tem itens que não são roupa: não há cartão da edição para ele."
         : "Este pedido não tem peças para o cartão.",
     );
   }
+  // Os vales nascem ANTES do desenho (o código vai na imagem); gerar de novo reaproveita.
+  await ensureOrderVouchers(db, { orderId, now: at });
+  const basis = await buildEditionCardsBasis(db, orderId);
   let letterJpeg: Buffer | null = null;
   if (basis.letter) {
     try {
@@ -588,7 +591,12 @@ export async function getEditionCards(db: DbOrTx, storage: FileStorage, orderId:
           stale: letterStale,
         }
       : null,
-    stale: cards.some((card) => card.stale) || letterStale || vouchers.some((voucher) => voucher.stale),
+    // Vale planejado que ainda não existe (recurso ligado depois da geração) também pede "gerar de novo".
+    stale:
+      cards.some((card) => card.stale) ||
+      letterStale ||
+      vouchers.some((voucher) => voucher.stale) ||
+      (at !== null && basis.plannedVouchers.some((kind) => !basis.vouchers.some((voucher) => voucher.kind === kind))),
     cards,
     skipped: basis.skipped,
   };

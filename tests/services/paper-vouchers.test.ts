@@ -205,11 +205,24 @@ describe("prêmio da indicação", () => {
     await expect(paidOrder({ variantId, rateId, customer: { fullName: "Bia Lima", document: FRIEND_CPF, phone: "(21) 97777-6666" }, couponCode: amiga.code })).rejects.toMatchObject({ code: "COUPON_FIRST_PURCHASE_ONLY" });
   });
 
-  it("pedido de origem cancelado: os vales não usados são desativados", async () => {
+  it("pedido de origem cancelado: os vales não usados são desativados e não voltam ao papel; recurso ligado depois da geração pede gerar de novo", async () => {
     const { variantId, rateId } = await setupStore();
     const { orderId } = await paidOrder({ variantId, rateId });
     await ensureOrderVouchers(sdb, { orderId });
     expect(await deactivateIssuedCouponsForOrder(sdb, { orderId, origins: ["price_protection", "paper_voucher", "referral"] })).toBe(2);
     expect((await db.select().from(schema.coupons)).every((c) => !c.isActive)).toBe(true);
+    // Desativados não são redesenhados.
+    expect((await getEditionCards(sdb, storage, orderId)).vouchers).toEqual([]);
+
+    // Outro pedido gerado com o recurso desligado: ao ligar, a tela sabe que falta gerar de novo.
+    await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "paper_voucher_enabled"));
+    const second = await paidOrder({ variantId, rateId, customer: { fullName: "Bia Lima", document: FRIEND_CPF, phone: "(21) 97777-6666" } });
+    await publishEditionCards(sdb, storage, renderers, { orderId: second.orderId });
+    expect((await getEditionCards(sdb, storage, second.orderId)).stale).toBe(false);
+    await db.update(schema.settings).set({ value: true }).where(eq(schema.settings.key, "paper_voucher_enabled"));
+    const view = await getEditionCards(sdb, storage, second.orderId);
+    expect(view.vouchers).toEqual([]);
+    expect(view.plannedVouchers).toEqual(["para_voce", "para_uma_amiga"]);
+    expect(view.stale).toBe(true);
   });
 });

@@ -128,13 +128,15 @@ export function planEditionSheets(input: {
   let rest = cards;
   let restLetters = letters;
 
-  if (restLetters.length > 0 && layout.letterPosition) {
+  // A folha mista (A4): a primeira 15×10 em cima e 2 cartões embaixo. Sem
+  // cartões para a linha de baixo (ou na Silhouette), as 15×10 vão de 2 em 2.
+  const onMixed = layout.mixedCardPositions.length > 0 ? rest.slice(0, layout.mixedCardPositions.length) : [];
+  if (restLetters.length > 0 && layout.letterPosition && onMixed.length > 0) {
     const first = restLetters[0];
     restLetters = restLetters.slice(1);
-    const onMixed = layout.mixedCardPositions.length > 0 ? rest.slice(0, layout.mixedCardPositions.length) : [];
     rest = rest.slice(onMixed.length);
     sheets.push({
-      kind: onMixed.length > 0 ? "mixed" : "letter",
+      kind: "mixed",
       items: [place(first, layout.letterPosition), ...onMixed.map((card, index) => place(card, layout.mixedCardPositions[index]))],
     });
   }

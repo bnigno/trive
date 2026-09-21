@@ -5,7 +5,7 @@
 // novo reaproveita). Quando a amiga PAGA um pedido com o vale, quem indicou
 // ganha o prêmio (referral_reward) e o aviso; cancelado/reembolsado o pedido
 // de origem, os vales não usados são desativados.
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { couponExpiryAfterDays } from "@/core/coupons/expiry";
 import { debutFirstName } from "@/core/edition/debut";
@@ -91,33 +91,57 @@ function toCardData(
 
 const ORIGIN_BY_KIND: Record<VoucherKind, "paper_voucher" | "referral"> = { para_voce: "paper_voucher", para_uma_amiga: "referral" };
 
-/** Os vales JÁ emitidos deste pedido, como cartões (para a tela e a impressão digital). */
+/**
+ * Os vales JÁ emitidos (e ativos — um vale que a dona desativou não volta ao
+ * papel) de vários pedidos, como cartões (para a tela, a mesa e a impressão
+ * digital). Uma consulta para N pedidos.
+ */
+export async function existingVouchersByOrder(
+  db: DbOrTx,
+  targets: readonly { id: string; customerName: string | null }[],
+): Promise<Map<string, VoucherCardData[]>> {
+  const out = new Map<string, VoucherCardData[]>();
+  if (targets.length === 0) return out;
+  const ctx = await voucherContext(db);
+  const rows = await db
+    .select({ orderId: coupons.orderId, code: coupons.code, value: coupons.value, expiresAt: coupons.expiresAt, origin: coupons.origin })
+    .from(coupons)
+    .where(
+      and(
+        inArray(coupons.orderId, targets.map((t) => t.id)),
+        inArray(coupons.origin, ["paper_voucher", "referral"]),
+        eq(coupons.isActive, true),
+      ),
+    );
+  for (const target of targets) {
+    const firstName = debutFirstName(target.customerName);
+    const list: VoucherCardData[] = [];
+    for (const kind of ["para_voce", "para_uma_amiga"] as const) {
+      const row = rows.find((r) => r.orderId === target.id && r.origin === ORIGIN_BY_KIND[kind]);
+      if (!row) continue;
+      const data = toCardData(kind, row, firstName, ctx);
+      if (data) list.push(data);
+    }
+    out.set(target.id, list);
+  }
+  return out;
+}
+
+/** Os vales JÁ emitidos deste pedido. */
 export async function existingOrderVouchers(db: DbOrTx, orderId: string): Promise<VoucherCardData[]> {
   const [order] = await db
-    .select({ customerName: customers.fullName })
+    .select({ id: orders.id, customerName: customers.fullName })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
     .where(eq(orders.id, orderId))
     .limit(1);
   if (!order) return [];
-  const ctx = await voucherContext(db);
-  const rows = await db
-    .select({ code: coupons.code, value: coupons.value, expiresAt: coupons.expiresAt, origin: coupons.origin })
-    .from(coupons)
-    .where(and(eq(coupons.orderId, orderId)));
-  const firstName = debutFirstName(order.customerName);
-  const out: VoucherCardData[] = [];
-  for (const kind of ["para_voce", "para_uma_amiga"] as const) {
-    const row = rows.find((r) => r.origin === ORIGIN_BY_KIND[kind]);
-    if (!row) continue;
-    const data = toCardData(kind, row, firstName, ctx);
-    if (data) out.push(data);
-  }
-  return out;
+  return (await existingVouchersByOrder(db, [order])).get(order.id) ?? [];
 }
 
-/** Que vales sairiam neste pedido hoje (mesmo antes de emitir): o plano. */
-export async function plannedVoucherKinds(db: DbOrTx, input: { isGift: boolean }): Promise<VoucherKind[]> {
+/** Que vales sairiam neste pedido ao gerar (só pedido pago e de pé ganha vale). */
+export async function plannedVoucherKinds(db: DbOrTx, input: { isGift: boolean; status: string }): Promise<VoucherKind[]> {
+  if (!VOUCHER_STATUSES.has(input.status)) return [];
   const settings = await loadPaperVoucherSettings(db);
   const ctx = await voucherContext(db);
   return voucherPlan({ enabled: settings.enabled, isGift: input.isGift, hasStoreWhatsapp: ctx.storeWhatsapp !== null });

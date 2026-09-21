@@ -331,9 +331,15 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "order.paid": async (event) => {
     const orderId = String(event.payload.orderId);
-    // A amiga pagou com o vale da caixa: quem indicou ganha o prêmio (idempotente).
-    const reward = await rewardReferrerForPaidOrder(getDb(), { orderId });
-    if (!("skipped" in reward) || reward.skipped !== "sem_cupom") console.info(`[order.paid] prêmio da indicação ${orderId} → ${JSON.stringify(reward)}`);
+    // A amiga pagou com o vale da caixa? O prêmio de quem indicou tem evento
+    // próprio (uma vez por pedido): uma falha ali nunca segura os avisos do pagamento.
+    await enqueueOutboxEvent(getDb(), {
+      eventType: "referral.reward",
+      dedupeKey: `referral.reward:${orderId}`,
+      aggregateType: "order",
+      aggregateId: orderId,
+      payload: { orderId },
+    });
     // Os cartões da edição (e a carta de estreia) ficam prontos antes de a
     // dona chegar à mesa de embalagem. Evento próprio, uma vez por pedido —
     // enfileirado ANTES dos avisos, para não ficar refém de uma sessão da
@@ -694,7 +700,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "order.refunded": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
     // O pedido caiu: o cupom que ele gerou (proteção de preço) e ainda não foi usado sai de cena.
-    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral"] });
+    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral", "referral_reward"] });
     const result = await sendOrderRefundedWa(getDb(), getMessagingProvider(), { orderId });
     console.info(`[order.refunded] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },
@@ -771,6 +777,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const result = await askDeliveryFeedback(getDb(), getMessagingProvider(), { orderId });
     console.info(`[wa.feedback_ask] ${orderId} → ${JSON.stringify(result)}`);
   },
+  // A amiga pagou um pedido com o vale da caixa: quem indicou ganha o prêmio (idempotente).
+  "referral.reward": async (event) => {
+    const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const result = await rewardReferrerForPaidOrder(getDb(), { orderId });
+    console.info(`[referral.reward] ${orderId} → ${JSON.stringify(result)}`);
+  },
   // O motoboy tocou "Entregue": passou da janela prometida + carência → cupom
   // de desculpas (idempotente por pedido) e o aviso abaixo.
   "delivery.stop_delivered": async (event) => {
@@ -789,7 +801,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // motivo em linguagem humana e o link do pedido (só com opt-in).
   "order.canceled": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
-    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral"] });
+    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral", "referral_reward"] });
     const result = await sendOrderCanceledWa(getDb(), getMessagingProvider(), { orderId });
     console.info(`[order.canceled] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },

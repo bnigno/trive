@@ -96,15 +96,17 @@ describe("planEditionSheets — vales (15×10 como a carta)", () => {
     ]);
   });
 
-  it("sem carta: o primeiro vale vai na mista (A4) ou sozinho (Silhouette); 3 vales na Silhouette = 1 + 2", () => {
+  it("sem carta: o primeiro vale vai na mista (A4); na Silhouette (e sem cartões) as 15×10 vão de 2 em 2", () => {
     expect(planEditionSheets({ letters: [vale("vale-voce"), vale("vale-amiga")], cards: cards(2), format: "a4" }).map((s) => [s.kind, s.items.map((i) => i.key)])).toEqual([
       ["mixed", ["vale-voce", "c1", "c2"]],
       ["letter", ["vale-amiga"]],
     ]);
+    // Silhouette (e A4 sem cartões para a linha de baixo): as 15×10 de 2 em 2 desde a primeira.
     expect(planEditionSheets({ letters: [vale("a"), vale("b"), vale("c")], cards: [], format: "silhouette" }).map((s) => [s.kind, s.items.map((i) => i.key)])).toEqual([
-      ["letter", ["a"]],
-      ["letter", ["b", "c"]],
+      ["letter", ["a", "b"]],
+      ["letter", ["c"]],
     ]);
+    expect(planEditionSheets({ letter: LETTER, letters: [vale("a")], cards: [], format: "a4" }).map((s) => [s.kind, s.items.map((i) => i.key)])).toEqual([["letter", ["carta", "a"]]]);
   });
 });
 

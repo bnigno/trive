@@ -55,7 +55,7 @@ export default async function EditionCardsPage({ params, searchParams }: { param
   const generated = cards.at !== null;
   const hasCards = cards.cards.length > 0;
   // Há o que gerar/imprimir: cartões, ou só a carta (primeira compra de uma caneca).
-  const hasPieces = hasCards || cards.letter !== null;
+  const hasPieces = hasCards || cards.letter !== null || cards.vouchers.length > 0 || cards.plannedVouchers.length > 0;
 
   const silhouette = format === "silhouette";
   const mode = silhouette ? "silhouette" : "scissors";
@@ -96,10 +96,13 @@ export default async function EditionCardsPage({ params, searchParams }: { param
   if (generated && (cardItems.some((item) => item.url === null) || (letterItem && letterItem.url === null) || voucherItems.some((item) => item.url === null))) {
     warnings.push({ key: "missing", text: "Há peça (ou a carta, ou um vale) sem imagem ainda: fica fora da folha até você gerar de novo." });
   }
-  if (!generated && cards.plannedVouchers.length > 0) {
+  const missingVouchers = cards.plannedVouchers.filter((kind) => !cards.vouchers.some((voucher) => voucher.kind === kind));
+  if (missingVouchers.length > 0) {
     warnings.push({
       key: "vouchers",
-      text: `Ao gerar, ${cards.plannedVouchers.length === 1 ? "sai o vale “para uma amiga” (pedido presente)" : "saem os vales “para você” e “para uma amiga”"} (15 × 10 cm, como a carta) — os códigos nascem na geração.`,
+      text: generated
+        ? "Os vales da caixa ainda não foram gerados para este pedido (o recurso foi ligado depois): gere de novo antes de imprimir."
+        : `Ao gerar, ${missingVouchers.length === 1 && missingVouchers[0] === "para_uma_amiga" ? "sai o vale “para uma amiga” (pedido presente)" : "saem os vales “para você” e “para uma amiga”"} (15 × 10 cm, como a carta) — os códigos nascem na geração.`,
     });
   }
   if (cards.isGift && hasCards) {
