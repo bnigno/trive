@@ -59,7 +59,21 @@ type QuoteState =
 type CouponState =
   | { status: "idle" }
   | { status: "error"; message: string }
-  | { status: "applied"; code: string; discountCents: number };
+  | {
+      status: "applied";
+      code: string;
+      discountCents: number;
+      freeShipping: boolean;
+      /** Frete perdoado com a entrega escolhida (0 sem entrega). */
+      shippingDiscountCents: number;
+      /** "Confirmamos no fechamento…" — o que depende de CPF/telefone/entrega. */
+      pendingNotice: string | null;
+    };
+
+/** A entrega escolhida como o cupom precisa dela (valor + tipo), ou null. */
+function shippingForCoupon(option: DeliveryOption | null): { cents: number; kind: "motoboy" | "correios" } | null {
+  return option ? { cents: option.priceCents, kind: option.kind } : null;
+}
 
 const smallLink =
   "inline-flex min-h-11 items-center font-store text-xs text-ink-500 underline underline-offset-4 transition-colors hover:text-gold-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-600";
@@ -84,7 +98,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
   const [couponPending, startCouponTransition] = useTransition();
 
   const applyCoupon = useCallback(
-    (code: string, lines: CartLine[]) => {
+    (code: string, lines: CartLine[], shipping: { cents: number; kind: "motoboy" | "correios" } | null) => {
       startCouponTransition(async () => {
         const result = await quoteCouponAction({
           code,
@@ -92,6 +106,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
             variantId: line.variantId,
             quantity: line.quantity,
           })),
+          shipping,
         });
         if (!result.ok) {
           setCoupon({ status: "error", message: result.error });
@@ -101,6 +116,9 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           status: "applied",
           code: result.code,
           discountCents: result.discountCents,
+          freeShipping: result.freeShipping,
+          shippingDiscountCents: result.shippingDiscountCents,
+          pendingNotice: result.pendingNotice,
         });
       });
     },
@@ -111,7 +129,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     event.preventDefault();
     const code = couponInput.trim();
     if (!code || items.length === 0) return;
-    applyCoupon(code, items);
+    applyCoupon(code, items, shippingForCoupon(selectedQuote));
   }
 
   function removeCoupon() {
@@ -193,8 +211,19 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemsKey, quote.status]);
 
+  const selectedQuote =
+    quote.status === "done"
+      ? (quote.options.find((o) => o.optionKey === selectedOptionKey) ?? null)
+      : null;
+
   // Mudou a sacola com cupom aplicado? O subtotal mudou — re-cota o cupom
   // (o desconto percentual muda e o pedido mínimo pode deixar de valer).
+  // Cupom de frete grátis também acompanha a entrega escolhida (o valor
+  // perdoado e o escopo motoboy/Correios dependem dela).
+  const couponKey =
+    coupon.status === "applied" && coupon.freeShipping
+      ? `${itemsKey}|${selectedQuote?.optionKey ?? ""}`
+      : itemsKey;
   const lastCouponKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (coupon.status !== "applied") {
@@ -202,19 +231,19 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
       return;
     }
     if (lastCouponKeyRef.current === null) {
-      lastCouponKeyRef.current = itemsKey;
+      lastCouponKeyRef.current = couponKey;
       return;
     }
-    if (lastCouponKeyRef.current === itemsKey) return;
-    lastCouponKeyRef.current = itemsKey;
+    if (lastCouponKeyRef.current === couponKey) return;
+    lastCouponKeyRef.current = couponKey;
     if (items.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset do cupom quando a sacola esvazia (pós-hidratação)
       setCoupon({ status: "idle" });
       return;
     }
-    applyCoupon(coupon.code, items);
+    applyCoupon(coupon.code, items, shippingForCoupon(selectedQuote));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsKey, coupon.status]);
+  }, [couponKey, coupon.status]);
 
   // Barra fixa do celular: visível sempre que a folha do resumo está fora da
   // tela (acima ou abaixo). O setState acontece só no callback do observer.
@@ -235,14 +264,12 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     return () => observer.disconnect();
   }, [mounted, hasItems]);
 
-  const selectedQuote =
-    quote.status === "done"
-      ? (quote.options.find((o) => o.optionKey === selectedOptionKey) ?? null)
-      : null;
   const appliedCoupon = coupon.status === "applied" ? coupon : null;
   const discountCents = appliedCoupon?.discountCents ?? 0;
-  const totalCents =
-    subtotalCents - discountCents + (selectedQuote?.priceCents ?? 0);
+  // Frete cobrado = preço da opção − o que o cupom de frete grátis perdoa.
+  const shippingDiscountCents = selectedQuote ? Math.min(appliedCoupon?.shippingDiscountCents ?? 0, selectedQuote.priceCents) : 0;
+  const chargedShippingCents = selectedQuote ? selectedQuote.priceCents - shippingDiscountCents : null;
+  const totalCents = subtotalCents - discountCents + (chargedShippingCents ?? 0);
   const checkoutHref =
     quote.status === "done" && selectedQuote
       ? `/checkout?cep=${quote.cepDigits}&frete=${encodeURIComponent(selectedQuote.optionKey)}${
@@ -398,17 +425,23 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
 
             <SheetSection title="Cupom">
               {appliedCoupon ? (
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-store text-sm font-medium text-laurel-700">
-                    {appliedCoupon.code} aplicado
-                  </span>
-                  <button
-                    type="button"
-                    onClick={removeCoupon}
-                    className={cx(smallLink, "hover:text-claret-700")}
-                  >
-                    remover cupom
-                  </button>
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-store text-sm font-medium text-laurel-700">
+                      {appliedCoupon.code} aplicado
+                      {appliedCoupon.freeShipping ? " · frete grátis" : ""}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={removeCoupon}
+                      className={cx(smallLink, "hover:text-claret-700")}
+                    >
+                      remover cupom
+                    </button>
+                  </div>
+                  {appliedCoupon.pendingNotice ? (
+                    <p className="mt-1 font-store text-xs text-ink-500">{appliedCoupon.pendingNotice}</p>
+                  ) : null}
                 </div>
               ) : (
                 <form onSubmit={handleCouponSubmit} className="flex items-end gap-3">
@@ -452,8 +485,9 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                 discountLabel={
                   appliedCoupon ? `Desconto (${appliedCoupon.code})` : "Desconto"
                 }
-                shippingCents={selectedQuote ? selectedQuote.priceCents : null}
+                shippingCents={chargedShippingCents}
                 shippingFallback="calcule acima"
+                shippingNote={shippingDiscountCents > 0 ? "Frete grátis pelo cupom" : undefined}
                 totalCents={totalCents}
               />
               <CheckoutCta href={checkoutHref} className="mt-5" />

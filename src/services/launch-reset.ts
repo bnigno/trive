@@ -664,11 +664,14 @@ export async function applyLaunchReset(db: Db, options: { userId: string; now?: 
     deleted.delivery_positions = await deleteAll(tx, schema.deliveryPositions);
     deleted.delivery_stops = await deleteAll(tx, schema.deliveryStops);
     deleted.delivery_runs = await deleteAll(tx, schema.deliveryRuns);
+    deleted.coupon_redemptions = await deleteAll(tx, schema.couponRedemptions);
     deleted.financial_entries = await deleteAll(tx, schema.financialEntries, isNotNull(schema.financialEntries.orderId));
     deleted.order_status_history = await deleteAll(tx, schema.orderStatusHistory);
     deleted.order_items = await deleteAll(tx, schema.orderItems);
     deleted.orders = await deleteAll(tx, schema.orders);
     deleted.customer_addresses = await deleteAll(tx, schema.customerAddresses);
+    // Cupons pessoais e os emitidos por rotina são de clientes de teste; os da dona ficam.
+    deleted.coupons = await deleteAll(tx, schema.coupons, or(isNotNull(schema.coupons.customerId), isNotNull(schema.coupons.dedupeKey)));
     deleted.customers = await deleteAll(tx, schema.customers);
     deleted.stock_movements = await deleteAll(tx, schema.stockMovements, inArray(schema.stockMovements.referenceType, [...LEDGER_REFERENCE_TYPES_TO_DROP]));
 

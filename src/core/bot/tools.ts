@@ -263,7 +263,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "validar_cupom",
     description:
-      "Valida um cupom de desconto que a cliente mencionou e calcula o desconto REAL sobre a sacola atual — o valor sai daqui, nunca de cabeça. Chame assim que ela citar um código, com as peças já na sacola. Se for válido, passe o MESMO código em criar_pedido.cupom (o desconto só é aplicado ao fechar o pedido). Se não for, diga o motivo devolvido e siga sem desconto: não existe outro desconto além do que esta ferramenta confirmar.",
+      "Valida um cupom de desconto que a cliente mencionou e calcula o desconto REAL sobre a sacola atual — o valor sai daqui, nunca de cabeça. Chame assim que ela citar um código, com as peças já na sacola. Se for válido, passe o MESMO código em criar_pedido.cupom (o desconto só é aplicado ao fechar o pedido). Alguns cupons são de frete grátis (motoboy, Correios ou qualquer entrega), pessoais (só desta cliente), só para a primeira compra, uma vez por cliente, para algumas peças ou com dia e horário — a ferramenta diz o que vale. Se não for válido, diga o motivo devolvido e siga sem desconto: não existe outro desconto além do que esta ferramenta confirmar.",
     input_schema: {
       type: "object",
       properties: {

@@ -23,6 +23,7 @@ import {
   productVariants,
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
+import { releaseCouponRedemptionInTx } from "@/services/coupons";
 import { applyStockEffectTx, ServiceError } from "@/services/stock";
 
 export { ServiceError };
@@ -376,6 +377,11 @@ export async function transitionOrder(
             eq(financialEntries.status, "pending"),
           ),
         );
+      // Pedido que nunca foi pago devolve o uso do cupom (a cliente não o
+      // gastou de verdade). Pago e depois cancelado/reembolsado não devolve.
+      if (order.paidAt === null && order.couponId !== null) {
+        await releaseCouponRedemptionInTx(tx, order.id);
+      }
     }
     if (to === "refunded" && order.totalCents > 0) {
       await tx.insert(financialEntries).values({

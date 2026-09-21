@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
+import { createCoupon, redeemCouponInTx } from "@/services/coupons";
 import {
   createManualOrder,
   getOrderDetail,
@@ -587,6 +588,37 @@ describe("transitionOrder — falhas e cancelamentos", () => {
       .where(eq(schema.orders.id, orderId));
     expect(order.status).toBe("canceled");
     expect(order.cancelReason).toBe("Pedido duplicado");
+  });
+
+  it("cupom: cancelar sem pagar devolve o uso; pago e depois cancelado NÃO devolve", async () => {
+    const { customerId, variantId } = await setupOrder({ onHand: 10 });
+    const coupon = await createCoupon(sdb, { code: "DEZ", type: "percent", value: 10, userId: FIXED_USER_ID });
+    const usedCount = async () =>
+      (await db.select({ usedCount: schema.coupons.usedCount }).from(schema.coupons).where(eq(schema.coupons.id, coupon.id)))[0].usedCount;
+    const redeem = async (orderId: string) => {
+      await db.update(schema.orders).set({ couponId: coupon.id, couponCode: "DEZ" }).where(eq(schema.orders.id, orderId));
+      await redeemCouponInTx(sdb, { couponId: coupon.id, orderId, customerId, phoneE164: null, code: "DEZ", discountCents: 100, shippingDiscountCents: 0, appliedValue: 10 });
+    };
+
+    // Nunca pago → cancelado: o uso volta.
+    const unpaid = await createManualOrder(sdb, { customerId, items: [{ variantId, quantity: 1 }], userId: FIXED_USER_ID });
+    await redeem(unpaid.orderId);
+    await transitionOrder(sdb, { orderId: unpaid.orderId, to: "pending_payment", userId: FIXED_USER_ID });
+    expect(await usedCount()).toBe(1);
+    await transitionOrder(sdb, { orderId: unpaid.orderId, to: "canceled", userId: FIXED_USER_ID });
+    expect(await usedCount()).toBe(0);
+    const [released] = await db.select().from(schema.couponRedemptions).where(eq(schema.couponRedemptions.orderId, unpaid.orderId));
+    expect(released.releasedAt).not.toBeNull();
+
+    // Pago → cancelado: a cliente gastou o cupom de verdade.
+    const paid = await createManualOrder(sdb, { customerId, items: [{ variantId, quantity: 1 }], userId: FIXED_USER_ID });
+    await redeem(paid.orderId);
+    await transitionOrder(sdb, { orderId: paid.orderId, to: "pending_payment", userId: FIXED_USER_ID });
+    await transitionOrder(sdb, { orderId: paid.orderId, to: "paid", userId: FIXED_USER_ID });
+    await transitionOrder(sdb, { orderId: paid.orderId, to: "canceled", userId: FIXED_USER_ID, reason: "Desistiu" });
+    expect(await usedCount()).toBe(1);
+    const [kept] = await db.select().from(schema.couponRedemptions).where(eq(schema.couponRedemptions.orderId, paid.orderId));
+    expect(kept.releasedAt).toBeNull();
   });
 
   it("reembolso cria payable pendente e com restock devolve estoque", async () => {

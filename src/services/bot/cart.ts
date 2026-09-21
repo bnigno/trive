@@ -1,15 +1,56 @@
 // Ferramentas da sacola da vendedora.
-import { cartAdd, cartIndexOf, cartRemoveAt, cartSubtotalCents, findCartItem, formatCartLines, mergeCartByVariant, sameProductName, type BotCartItem, type BotState } from "@/core/bot/memory";
+import { cartAdd, cartIndexOf, cartRemoveAt, cartSubtotalCents, findCartItem, formatCartLines, mergeCartByVariant, quoteKey, sameProductName, type BotCartItem, type BotState } from "@/core/bot/memory";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
-import { quoteCoupon, ServiceError as CouponServiceError } from "@/services/coupons";
+import { pendingNotice } from "@/core/coupons/messages";
+import { quoteCoupon, ServiceError as CouponServiceError, type CouponQuote } from "@/services/coupons";
 import { computeTotalWeightGrams, getSellableVariantById, getSellableVariantBySku } from "@/services/store-catalog";
 
 import { availableQtyOf, resolveVariantBySku } from "./catalog";
-import { readBotState, updateBotState } from "./shared";
+import { readBotState, resolveConversationCustomerId, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
+
+/** As linhas da sacola como o cupom precisa (variante + quantidade); linha sem variante resolvida não entra. */
+async function cartCouponItems(db: DbOrTx, cart: readonly BotCartItem[]): Promise<{ variantId: string; quantity: number }[]> {
+  const items: { variantId: string; quantity: number }[] = [];
+  for (const item of cart) {
+    const variantId = item.variantId ?? (item.sku.trim() === "" ? null : (await getSellableVariantBySku(db, item.sku, { includeHidden: true }))?.variantId ?? null);
+    if (variantId) items.push({ variantId, quantity: item.quantidade });
+  }
+  return items;
+}
+
+/** A entrega escolhida no caderninho (valor + tipo), se houver — o cupom de frete grátis depende dela. */
+function chosenShipping(state: BotState): { cents: number; kind: "motoboy" | "correios" } | null {
+  const chosenKey = state.chosenOptionKey ?? state.chosenRateId;
+  if (!chosenKey) return null;
+  const quote = (state.lastQuotes ?? []).find((q) => quoteKey(q) === chosenKey);
+  if (!quote) return null;
+  return { cents: quote.priceCents, kind: quote.kind === "motoboy" ? "motoboy" : "correios" };
+}
+
+/** Cota o cupom para a sacola DESTA conversa (identidade = a cliente da conversa, pelo cadastro ou telefone). */
+async function quoteCartCoupon(db: DbOrTx, ctx: BotExecutorContext, state: BotState, code: string): Promise<CouponQuote> {
+  const cart = state.cart ?? [];
+  return quoteCoupon(db, {
+    code,
+    items: await cartCouponItems(db, cart),
+    identity: { customerId: await resolveConversationCustomerId(db, ctx), phoneE164: ctx.phoneE164 },
+    shipping: chosenShipping(state),
+    now: ctx.now,
+  });
+}
+
+/** "desconto de R$ 20,00 nesta sacola" / "frete grátis (motoboy)" — o que o cupom faz, numa frase curta. */
+function quoteSummary(quote: CouponQuote, subtotalCents: number): string {
+  if (quote.freeShipping) {
+    const scope = quote.pending.includes("shipping_scope") ? " (o escopo motoboy/Correios é conferido com a entrega escolhida)" : "";
+    return `frete grátis${quote.shippingDiscountCents > 0 ? ` (${formatCentsBRL(quote.shippingDiscountCents)} da entrega escolhida)` : ""}${scope}; as peças continuam ${formatCentsBRL(subtotalCents)}`;
+  }
+  return `desconto de ${formatCentsBRL(quote.discountCents)} sobre o subtotal de ${formatCentsBRL(subtotalCents)} das peças → ${formatCentsBRL(subtotalCents - quote.discountCents)} (o frete não entra no desconto)`;
+}
 
 /**
  * A sacola mudou: o cupom validado é refeito sobre o subtotal novo (o
@@ -18,6 +59,7 @@ import type { BotExecutorContext, ToolResult } from "./shared";
  */
 async function refreshCoupon(
   db: DbOrTx,
+  ctx: BotExecutorContext,
   state: BotState,
 ): Promise<{ coupon: BotState["coupon"]; note: string | null }> {
   if (!state.coupon) return { coupon: undefined, note: null };
@@ -30,10 +72,10 @@ async function refreshCoupon(
     };
   }
   try {
-    const quote = await quoteCoupon(db, { code, subtotalCents: cartSubtotalCents(cart) });
+    const quote = await quoteCartCoupon(db, ctx, state, code);
     return {
-      coupon: { code: quote.code, discountCents: quote.discountCents, at: new Date().toISOString() },
-      note: `[Cupom ${quote.code} continua válido: desconto de ${formatCentsBRL(quote.discountCents)} nesta sacola.]`,
+      coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, at: new Date().toISOString() },
+      note: `[Cupom ${quote.code} continua válido: ${quoteSummary(quote, cartSubtotalCents(cart))}.]`,
     };
   } catch (error) {
     if (error instanceof CouponServiceError) {
@@ -54,7 +96,7 @@ async function changeCart(
 ): Promise<{ state: BotState; couponNote: string | null }> {
   const changed = await updateBotState(db, ctx, change);
   if (!changed.coupon) return { state: changed, couponNote: null };
-  const refreshed = await refreshCoupon(db, changed);
+  const refreshed = await refreshCoupon(db, ctx, changed);
   const state = await updateBotState(db, ctx, (current) => ({ ...current, coupon: refreshed.coupon }));
   return { state, couponNote: refreshed.note };
 }
@@ -295,9 +337,9 @@ export async function execValidarCupom(
   }
   const subtotalCents = cartSubtotalCents(cart);
   const codigo = input.cupom.trim().toUpperCase();
-  let quote;
+  let quote: CouponQuote;
   try {
-    quote = await quoteCoupon(db, { code: codigo, subtotalCents });
+    quote = await quoteCartCoupon(db, ctx, state, codigo);
   } catch (error) {
     if (error instanceof CouponServiceError) {
       return {
@@ -309,12 +351,14 @@ export async function execValidarCupom(
   }
   await updateBotState(db, ctx, (current) => ({
     ...current,
-    coupon: { code: quote.code, discountCents: quote.discountCents, at: new Date().toISOString() },
+    coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, at: new Date().toISOString() },
   }));
+  const notice = pendingNotice(quote.pending);
   return {
     ok: true,
     text: [
-      `Cupom ${quote.code} válido: desconto de ${formatCentsBRL(quote.discountCents)} sobre o subtotal de ${formatCentsBRL(subtotalCents)} das peças → ${formatCentsBRL(subtotalCents - quote.discountCents)} (o frete não entra no desconto).`,
+      `Cupom ${quote.code} válido: ${quoteSummary(quote, subtotalCents)}.`,
+      ...(notice ? [`[${notice}]`] : []),
       `Passe cupom: "${quote.code}" em criar_pedido — o desconto só é aplicado ao fechar o pedido, e o resumo oficial virá com o valor final.`,
     ].join("\n"),
   };

@@ -6,7 +6,7 @@ export {
   products,
   productVariants,
 } from "./catalog";
-export { coupons } from "./coupons";
+export { COUPON_ORIGINS, COUPON_TYPES, FREE_SHIPPING_SCOPES, couponCategories, couponProducts, couponRedemptions, coupons } from "./coupons";
 export { customerAddresses, customers } from "./customers";
 export { emailMessages, emailThreads } from "./email";
 export {

@@ -33,6 +33,7 @@ export function TotalsList({
   onRemoveDiscount,
   shippingCents,
   shippingFallback = "—",
+  shippingNote,
   totalCents,
   className,
 }: {
@@ -44,6 +45,8 @@ export function TotalsList({
   /** null = entrega ainda não cotada (mostra o fallback). */
   shippingCents: number | null;
   shippingFallback?: string;
+  /** "Frete grátis pelo cupom": aparece ao lado de "Entrega" quando o cupom perdoou o frete. */
+  shippingNote?: string;
   totalCents: number;
   className?: string;
 }) {
@@ -68,7 +71,10 @@ export function TotalsList({
           − {formatCentsBRL(discountCents)}
         </Row>
       ) : null}
-      <Row label="Entrega">
+      <Row
+        label="Entrega"
+        extra={shippingNote ? <span className="font-store text-xs text-laurel-700">{shippingNote}</span> : undefined}
+      >
         {shippingCents === null
           ? shippingFallback
           : shippingCents === 0

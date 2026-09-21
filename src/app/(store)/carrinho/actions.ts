@@ -4,12 +4,15 @@
 // os pesos vêm do banco (nunca do cliente) e o preço de cada opção vem da
 // tabela shipping_rates via quoteShipping.
 
-import { and, eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { z, ZodError } from "zod";
 
 import { getCorreiosQuoter } from "@/adapters/superfrete";
 import { getDb } from "@/db/client";
-import { priceVersions, productVariants } from "@/db/schema";
+import { productVariants } from "@/db/schema";
+import { pendingNotice } from "@/core/coupons/messages";
+import { normalizeDocument } from "@/lib/document";
+import { toE164BR } from "@/lib/phone";
 import {
   quoteCoupon,
   ServiceError as CouponServiceError,
@@ -101,9 +104,10 @@ export async function quoteShippingAction(
 }
 
 // ---------------------------------------------------------------------------
-// Cupom de desconto: o cliente manda só o código + variantId/quantidade.
-// O subtotal é recalculado AQUI com os preços ATIVOS do banco (nunca os do
-// cliente) e o serviço de cupons valida vigência/mínimo/limite de usos.
+// Cupom de desconto: o cliente manda o código + variantId/quantidade (e, se
+// já escolheu, a entrega; no checkout, CPF e telefone). Preços vêm do banco
+// (nunca do cliente) e a regra mora em core/coupons via quoteCoupon. Sem
+// identidade, as regras por cliente ficam pendentes — o aviso diz isso.
 // ---------------------------------------------------------------------------
 
 const quoteCouponActionSchema = z.object({
@@ -117,6 +121,16 @@ const quoteCouponActionSchema = z.object({
     )
     .min(1, "A sacola está vazia.")
     .max(100),
+  /** Entrega já escolhida na sacola/checkout (valor e tipo), se houver. */
+  shipping: z
+    .object({ cents: z.number().int().min(0), kind: z.enum(["motoboy", "correios"]) })
+    .nullable()
+    .optional(),
+  /** Só o checkout manda: CPF/CNPJ e telefone válidos confirmam as regras por cliente. */
+  customer: z
+    .object({ document: z.string().trim().min(1), phone: z.string().trim().min(1) })
+    .nullable()
+    .optional(),
 });
 
 export type QuoteCouponActionInput = z.input<typeof quoteCouponActionSchema>;
@@ -127,6 +141,11 @@ export type QuoteCouponActionResult =
       /** Código normalizado (UPPERCASE), como será gravado no pedido. */
       code: string;
       discountCents: number;
+      freeShipping: boolean;
+      /** Frete perdoado com a entrega informada (0 sem entrega escolhida). */
+      shippingDiscountCents: number;
+      /** "Confirmamos no fechamento…" quando algo depende de CPF/telefone/entrega; null quando não. */
+      pendingNotice: string | null;
     }
   | { ok: false; error: string };
 
@@ -137,36 +156,27 @@ export async function quoteCouponAction(
     const parsed = quoteCouponActionSchema.parse(input);
     const db = getDb();
 
-    // Preços ativos das variantes direto do banco; variante sem preço ativo
-    // não soma (o checkout vai barrá-la de qualquer forma com NO_ACTIVE_PRICE).
-    const variantIds = parsed.items.map((item) => item.variantId);
-    const rows = await db
-      .select({
-        variantId: priceVersions.productVariantId,
-        priceCents: priceVersions.priceCents,
-      })
-      .from(priceVersions)
-      .where(
-        and(
-          inArray(priceVersions.productVariantId, variantIds),
-          eq(priceVersions.status, "active"),
-        ),
-      );
-    const priceByVariant = new Map(
-      rows.map((row) => [row.variantId, row.priceCents]),
-    );
-
-    const subtotalCents = parsed.items.reduce(
-      (sum, item) =>
-        sum + (priceByVariant.get(item.variantId) ?? 0) * item.quantity,
-      0,
-    );
+    let identity: { documentDigits: string | null; phoneE164: string | null } | null = null;
+    if (parsed.customer) {
+      const document = normalizeDocument(parsed.customer.document);
+      const phone = toE164BR(parsed.customer.phone);
+      if (document && phone) identity = { documentDigits: document.digits, phoneE164: phone };
+    }
 
     const quote = await quoteCoupon(db, {
       code: parsed.code,
-      subtotalCents,
+      items: parsed.items,
+      identity,
+      shipping: parsed.shipping ?? null,
     });
-    return { ok: true, code: quote.code, discountCents: quote.discountCents };
+    return {
+      ok: true,
+      code: quote.code,
+      discountCents: quote.discountCents,
+      freeShipping: quote.freeShipping,
+      shippingDiscountCents: quote.shippingDiscountCents,
+      pendingNotice: pendingNotice(quote.pending),
+    };
   } catch (error) {
     if (error instanceof CouponServiceError) {
       return { ok: false, error: error.message };
