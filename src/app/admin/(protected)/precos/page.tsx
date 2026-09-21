@@ -12,13 +12,13 @@ import { requireOwner } from "@/services/auth";
 import { listPricesOverview } from "@/services/pricing";
 import { formatPercent } from "./labels";
 import { RecalcButton } from "./recalc-button";
+import { buttonClassName } from "@/components/ui/button-styles";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Preços" };
 
-const linkButtonClasses =
-  "inline-flex items-center justify-center rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800";
+const linkButtonClasses = buttonClassName({ variant: "outline" });
 
 export default async function PricesOverviewPage({
   searchParams,
