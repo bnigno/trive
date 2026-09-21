@@ -307,3 +307,26 @@ export async function saveLateDeliverySettingsAction(
     return { error: toErrorMessage(error) };
   }
 }
+
+/** Cupons automáticos — mimo pela foto do "Quem já vestiu". */
+export async function saveLookCouponSettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("cupons");
+  try {
+    const db = getDb();
+    const values: Array<{ key: string; value: unknown }> = [
+      { key: "look_coupon_enabled", value: formData.get("enabled") === "on" },
+      { key: "look_coupon_percent", value: parseIntField(text(formData, "percent"), "Desconto (%)", 1, 50) },
+      { key: "look_coupon_days", value: parseIntField(text(formData, "days"), "Vale por (dias)", 1, 180) },
+    ];
+    for (const { key, value } of values) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+    revalidatePath("/admin/cupons");
+    return { success: "Mimo pela foto salvo." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}

@@ -692,7 +692,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "registrar_foto_com_a_peca",
     description:
-      "A cliente mandou há pouco uma foto DELA usando uma peça da loja que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça e, se ela mandou mais de uma foto, qual delas (foto: 1 = a primeira). Nunca chame para print do Instagram, foto de outra marca, peça no cabide, foto de outra pessoa ou foto sem a peça.",
+      "A cliente mandou há pouco uma foto DELA usando uma peça da loja que comprou (o caderninho diz o que ela comprou). Guarda a foto: ela recebe um cartão 'Ana veste …' e a pergunta se pode aparecer na página da peça — você NÃO pergunta nada disso. Passe o slug ou o nome exato da peça e, se ela mandou mais de uma foto, qual delas (foto: 1 = a primeira). Nunca chame para print do Instagram, foto de outra marca, peça no cabide, foto de outra pessoa ou foto sem a peça. Pode devolver um cupom de agradecimento (o mimo pela foto): repita o código como veio.",
     input_schema: {
       type: "object",
       properties: {

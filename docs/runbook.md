@@ -1062,6 +1062,16 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   não menciona desconto. O motivo fica na nota do cupom (lista com "Ver
   conversa"). No ensaio nada é emitido (`ENSAIO-CARINHO`). Produção:
   `scripts/sync-seed.ts --settings lia_gift_enabled,lia_gift_percent,lia_gift_daily_quota,lia_gift_min_purchases,lia_gift_min_cart_cents,lia_gift_days,lia_gift_cooldown_days`
+
+  e a migração 0051.
+- **Mimo pela foto** (card em `/admin/cupons`) — quando a cliente manda a
+  foto dela com uma peça que comprou e a Lia registra no "Quem já vestiu", ela
+  ganha um cupom pessoal (padrão 10%, 60 dias), uma vez por peça, só com
+  pedido **entregue** e foto que não é print do catálogo (dHash a mais de 8
+  de qualquer foto da peça). O cupom nasce no registro (não no "sim" de
+  publicar — o consentimento continua livre) e o cartão repete o código na
+  legenda. A fila do "Quem já vestiu" mostra "mimo: cupom …". Produção:
+  `scripts/sync-seed.ts --settings look_coupon_enabled,look_coupon_percent,look_coupon_days`
   e a migração 0052.
 
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")

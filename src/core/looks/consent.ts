@@ -64,10 +64,11 @@ export function lookCardTitle(displayName: string, productName: string): string 
   return `${displayName === LOOK_DISPLAY_NAME_FALLBACK ? "Uma cliente" : displayName} veste ${productName}`;
 }
 
-/** A legenda do cartão no WhatsApp dela. */
-export function lookCardCaption(displayName: string, productName: string): string {
+/** A legenda do cartão no WhatsApp dela (com a linha do mimo, quando houve). */
+export function lookCardCaption(displayName: string, productName: string, couponLine: string | null = null): string {
   const greeting = displayName === LOOK_DISPLAY_NAME_FALLBACK ? "Ficou lindo em você" : `${displayName}, ficou lindo em você`;
-  return `${greeting} 🤎 Fizemos este cartão com a sua foto no ${productName} — é seu, para guardar ou postar.`;
+  const caption = `${greeting} 🤎 Fizemos este cartão com a sua foto no ${productName} — é seu, para guardar ou postar.`;
+  return couponLine ? `${caption}\n${couponLine}` : caption;
 }
 
 /** O que a Lia (e o painel) leem no histórico quando o toque volta. */

@@ -19,8 +19,9 @@ import { Button } from "@/components/ui/form";
 import { toggleCouponAction } from "./actions";
 import { CouponCreateForm, CouponDeleteForm, CouponEditForm, type CouponCategoryOption, type CouponFormDefaults } from "./forms";
 import { formatCouponValue, ORIGIN_LABELS } from "./labels";
-import { LateDeliverySettingsForm } from "./automatic-forms";
+import { LateDeliverySettingsForm, LookCouponSettingsForm } from "./automatic-forms";
 import { loadLateDeliverySettings, type LateDeliverySettings } from "@/services/late-delivery";
+import { loadLookCouponSettings, type LookCouponSettings } from "@/services/look-coupons";
 
 export const dynamic = "force-dynamic";
 
@@ -111,11 +112,13 @@ async function loadPage(): Promise<{
   categories: CouponCategoryOption[];
   slugById: Map<string, string>;
   lateDelivery: LateDeliverySettings;
+  lookCoupon: LookCouponSettings;
 } | null> {
   try {
     const db = getDb();
     const coupons = await listCoupons(db);
     const lateDelivery = await loadLateDeliverySettings(db);
+    const lookCoupon = await loadLookCouponSettings(db);
     const categoryRows = await db
       .select({ id: categories.id, name: categories.name })
       .from(categories)
@@ -128,7 +131,7 @@ async function loadPage(): Promise<{
             .from(products)
             .where(and(inArray(products.id, productIds), isNull(products.deletedAt)))
         : [];
-    return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])), lateDelivery };
+    return { coupons, categories: categoryRows, slugById: new Map(slugRows.map((row) => [row.id, row.slug])), lateDelivery, lookCoupon };
   } catch {
     return null;
   }
@@ -152,7 +155,7 @@ export default async function CuponsPage() {
       </div>
     );
   }
-  const { coupons, categories: categoryOptions, slugById, lateDelivery } = page;
+  const { coupons, categories: categoryOptions, slugById, lateDelivery, lookCoupon } = page;
   const now = new Date();
 
   return (
@@ -327,6 +330,8 @@ export default async function CuponsPage() {
             você pode desativar qualquer um. Tudo nasce desligado.
           </p>
           <LateDeliverySettingsForm defaults={lateDelivery} />
+          <hr className="border-zinc-200 dark:border-zinc-800" />
+          <LookCouponSettingsForm defaults={lookCoupon} />
         </div>
       </Card>
 

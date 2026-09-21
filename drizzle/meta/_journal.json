@@ -372,6 +372,13 @@
       "when": 1789967670065,
       "tag": "0052_gentilezas_da_lia",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1789966263448,
+      "tag": "0052_mimo_pela_foto",
+      "breakpoints": true
     }
   ]
 }

@@ -5,13 +5,16 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 
 import type { BotToolInputs } from "@/core/bot/tools";
 import { lookCardTitle, lookDisplayName } from "@/core/looks/consent";
-import { customers, orderItems, orders, productVariants } from "@/db/schema";
+import { lookCouponDedupeKey, lookCouponEligibility, lookCouponRefusalHint, lookCouponToolHint } from "@/core/looks/coupon";
+import { customerLooks, customers, orderItems, orders, productVariants } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
+import { issueCoupon } from "@/services/coupons";
 import { isCustomerLooksEnabled, registerCustomerLook, revokeCustomerLooksByPhone } from "@/services/customer-looks";
+import { loadLookCouponSettings } from "@/services/look-coupons";
+import { findProductsByPhotoHash } from "@/services/photo-match";
 
-import { resolveConversationCustomerId } from "./orders";
-import { DRY_RUN_TEXT, type BotExecutorContext, type ToolResult } from "./shared";
+import { DRY_RUN_TEXT, resolveConversationCustomerId, type BotExecutorContext, type ToolResult } from "./shared";
 
 export async function execRegistrarFotoComAPeca(
   db: DbOrTx,
@@ -48,9 +51,10 @@ export async function execRegistrarFotoComAPeca(
   // vale sem ele — ela pode ter comprado na mão).
   let orderId: string | null = null;
   let productVariantId: string | null = null;
+  let deliveredOrderId: string | null = null;
   if (customerId) {
     const [item] = await db
-      .select({ orderId: orders.id, productVariantId: orderItems.productVariantId })
+      .select({ orderId: orders.id, productVariantId: orderItems.productVariantId, status: orders.status })
       .from(orderItems)
       .innerJoin(orders, eq(orders.id, orderItems.orderId))
       .innerJoin(productVariants, eq(productVariants.id, orderItems.productVariantId))
@@ -60,6 +64,7 @@ export async function execRegistrarFotoComAPeca(
     if (item) {
       orderId = item.orderId;
       productVariantId = item.productVariantId;
+      if (item.status === "delivered") deliveredOrderId = item.orderId;
     }
   }
   const displayName = lookDisplayName(customer?.fullName);
@@ -76,11 +81,54 @@ export async function execRegistrarFotoComAPeca(
   if (!registered.created) {
     return { ok: true, text: "Essa foto já estava guardada: o cartão e a pergunta já foram (ou estão a caminho). Não registre de novo; se ela quiser outra peça no cartão, peça uma foto nova." };
   }
+  const gift = await lookCouponFor(db, ctx, {
+    lookId: registered.lookId,
+    customerId,
+    productId: resolved.detail.id,
+    productName: resolved.detail.name,
+    deliveredOrderId,
+    phash: photo.phash ?? null,
+  });
   const more = photos.length > 1 ? ` (registrei a ${input.foto ?? photos.length}ª das ${photos.length} fotos recentes)` : "";
   return {
     ok: true,
-    text: `Foto guardada${more}. Em instantes ela recebe o cartão "${lookCardTitle(displayName, resolved.detail.name)}" e a pergunta se pode aparecer na página da peça — diga só que o cartão está chegando; NÃO pergunte sobre a página (a lista faz isso) e não peça outra foto.${orderId ? "" : " Não achei pedido dela com essa peça: a equipe confere antes de publicar."}`,
+    text: `Foto guardada${more}. Em instantes ela recebe o cartão "${lookCardTitle(displayName, resolved.detail.name)}" e a pergunta se pode aparecer na página da peça — diga só que o cartão está chegando; NÃO pergunte sobre a página (a lista faz isso) e não peça outra foto.${orderId ? "" : " Não achei pedido dela com essa peça: a equipe confere antes de publicar."}${gift ? ` ${gift}` : ""}`,
   };
+}
+
+/**
+ * O mimo pela foto: cupom pessoal, uma vez por peça, só com pedido ENTREGUE
+ * e foto que não é do catálogo. Devolve a dica para a Lia (ou null = silêncio).
+ */
+async function lookCouponFor(
+  db: DbOrTx,
+  ctx: BotExecutorContext,
+  input: { lookId: string; customerId: string | null; productId: string; productName: string; deliveredOrderId: string | null; phash: string | null },
+): Promise<string | null> {
+  const settings = await loadLookCouponSettings(db);
+  const catalogDistances = input.phash ? (await findProductsByPhotoHash(db, input.phash)).map((match) => match.distance) : null;
+  const eligibility = lookCouponEligibility({
+    enabled: settings.enabled,
+    customerId: input.customerId,
+    deliveredOrderId: input.deliveredOrderId,
+    catalogDistances,
+  });
+  if (!eligibility.ok) return lookCouponRefusalHint(eligibility.reason);
+  const customerId = input.customerId as string;
+  const now = ctx.now ?? new Date();
+  const issued = await issueCoupon(db, {
+    dedupeKey: lookCouponDedupeKey(customerId, input.productId),
+    customerId,
+    origin: "look_photo",
+    type: "percent",
+    value: settings.percent,
+    expiresAt: new Date(now.getTime() + settings.days * 86_400_000),
+    note: `Foto dela com ${input.productName}`,
+    orderId: input.deliveredOrderId,
+    now,
+  });
+  await db.update(customerLooks).set({ couponId: issued.couponId, updatedAt: now }).where(eq(customerLooks.id, input.lookId));
+  return lookCouponToolHint({ code: issued.code, percent: settings.percent, expiresAt: issued.expiresAt, created: issued.created });
 }
 
 export async function execRetirarMinhaFoto(db: DbOrTx, ctx: BotExecutorContext): Promise<ToolResult> {

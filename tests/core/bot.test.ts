@@ -87,7 +87,7 @@ describe("buildBotSystemPrompt", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
     expect(prompt).toContain("Cupom só existe se validar_cupom (ou oferecer_gentileza, ver GENTILEZAS) confirmar");
     expect(prompt).toContain("criar_pedido.cupom");
-    expect(prompt).toContain("cupom validado por validar_cupom nesta conversa");
+    expect(prompt).toContain("Desconto só com cupom de validar_cupom ou gentileza que oferecer_gentileza confirmou (ok: true) nesta conversa");
     expect(prompt).toContain("chame historico_de_compras quando ela perguntar o que levou");
     expect(prompt).toContain("Nunca cite compra que a ferramenta não devolveu");
     expect(prompt).toContain("cupom = o código que validar_cupom confirmou");

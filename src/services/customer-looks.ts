@@ -24,7 +24,8 @@ import {
   lookConsentOptions,
   type LookConsentAnswer,
 } from "@/core/looks/consent";
-import { auditLog, customerLooks, customers, products, settings, waMessages } from "@/db/schema";
+import { lookCouponCaptionLine } from "@/core/looks/coupon";
+import { auditLog, coupons, customerLooks, customers, products, settings, waMessages } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { loadCardPhotoDataUrl, type CardRenderer } from "@/services/bot-cards";
 import { getStoreName } from "@/services/settings";
@@ -163,10 +164,15 @@ export async function renderAndSendCustomerLookCard(
       photoUrl: waMessages.mediaUrl,
       productName: products.name,
       productDeletedAt: products.deletedAt,
+      couponCode: coupons.code,
+      couponValue: coupons.value,
+      couponExpiresAt: coupons.expiresAt,
+      couponActive: coupons.isActive,
     })
     .from(customerLooks)
     .innerJoin(products, eq(products.id, customerLooks.productId))
     .leftJoin(waMessages, eq(waMessages.id, customerLooks.photoWaMessageId))
+    .leftJoin(coupons, eq(coupons.id, customerLooks.couponId))
     .where(eq(customerLooks.id, lookId))
     .limit(1);
   if (!look) return { skipped: "foto_inexistente" };
@@ -210,7 +216,14 @@ export async function renderAndSendCustomerLookCard(
   const image = await sendMediaMessage(db, provider, {
     kind: "image",
     imageUrl: cardUrl,
-    body: lookCardCaption(look.displayName, look.productName),
+    body: lookCardCaption(
+      look.displayName,
+      look.productName,
+      // O mimo, repetido pelo cartão (a Lia pode errar o código; a legenda não).
+      look.couponCode && look.couponActive && look.couponExpiresAt
+        ? lookCouponCaptionLine({ code: look.couponCode, percent: look.couponValue ?? 0, expiresAt: look.couponExpiresAt })
+        : null,
+    ),
     phoneE164: look.phoneE164,
     ...(look.customerId ? { customerId: look.customerId } : {}),
     dedupeKey: `wa.look_card_img:${lookId}`,
@@ -386,6 +399,8 @@ export async function revokeCustomerLooksByPhone(
 
 export interface CustomerLookRow {
   id: string;
+  /** O mimo pela foto, quando houve. */
+  couponCode: string | null;
   displayName: string;
   phoneE164: string;
   customerName: string | null;
@@ -412,6 +427,7 @@ function toRow(row: Omit<CustomerLookRow, "isPublic">): CustomerLookRow {
 
 const lookRowSelect = {
   id: customerLooks.id,
+  couponCode: coupons.code,
   displayName: customerLooks.displayName,
   phoneE164: customerLooks.phoneE164,
   customerName: customers.fullName,
@@ -437,6 +453,7 @@ export async function listPendingLooks(db: DbOrTx): Promise<CustomerLookRow[]> {
     .from(customerLooks)
     .innerJoin(products, eq(products.id, customerLooks.productId))
     .leftJoin(customers, eq(customers.id, customerLooks.customerId))
+    .leftJoin(coupons, eq(coupons.id, customerLooks.couponId))
     .where(and(eq(customerLooks.consentAnswer, "sim"), isNull(customerLooks.approvedAt), isNull(customerLooks.rejectedAt), isNull(customerLooks.revokedAt), isNotNull(customerLooks.photoPath)))
     .orderBy(customerLooks.consentAt);
   return rows.map(toRow);
@@ -457,6 +474,7 @@ export async function listRecentLooks(db: DbOrTx, input: { limit?: number } = {}
     .from(customerLooks)
     .innerJoin(products, eq(products.id, customerLooks.productId))
     .leftJoin(customers, eq(customers.id, customerLooks.customerId))
+    .leftJoin(coupons, eq(coupons.id, customerLooks.couponId))
     .orderBy(desc(customerLooks.createdAt))
     .limit(input.limit ?? 200);
   return rows.map(toRow);
@@ -469,6 +487,7 @@ export async function listPublicLooks(db: DbOrTx): Promise<CustomerLookRow[]> {
     .from(customerLooks)
     .innerJoin(products, eq(products.id, customerLooks.productId))
     .leftJoin(customers, eq(customers.id, customerLooks.customerId))
+    .leftJoin(coupons, eq(coupons.id, customerLooks.couponId))
     .where(and(eq(customerLooks.consentAnswer, "sim"), isNotNull(customerLooks.approvedAt), isNull(customerLooks.rejectedAt), isNull(customerLooks.revokedAt), isNotNull(customerLooks.photoPath)))
     .orderBy(desc(customerLooks.approvedAt));
   return rows.map(toRow);

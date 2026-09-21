@@ -607,6 +607,10 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   lia_gift_min_cart_cents: z.number().int().min(0),
   lia_gift_days: z.number().int().min(1).max(30, { error: "Entre 1 e 30 dias." }),
   lia_gift_cooldown_days: z.number().int().min(0).max(365),
+  /** Mimo pela foto do "Quem já vestiu": cupom pessoal quando ela manda a foto com a peça que comprou. */
+  look_coupon_enabled: z.boolean(),
+  look_coupon_percent: z.number().int().min(1).max(50, { error: "Entre 1% e 50%." }),
+  look_coupon_days: z.number().int().min(1).max(180, { error: "Entre 1 e 180 dias." }),
   /** "Quem já vestiu": a Lia guarda a foto da cliente com a peça e pede consentimento. */
   customer_looks_enabled: z.boolean(),
   /** A Lia manda a nota em áudio da curadora como mensagem de voz (ausente = ligado). */

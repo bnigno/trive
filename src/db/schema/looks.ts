@@ -8,6 +8,7 @@ import { sql } from "drizzle-orm";
 import { check, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { productVariants, products } from "./catalog";
+import { coupons } from "./coupons";
 import { customers } from "./customers";
 import { users } from "./governance";
 import { orders } from "./orders";
@@ -25,6 +26,8 @@ export const customerLooks = pgTable(
     productVariantId: uuid("product_variant_id").references(() => productVariants.id, { onDelete: "set null" }),
     /** O pedido entregue com a peça, quando existe (rastro; a foto vale sem ele). */
     orderId: uuid("order_id").references(() => orders.id, { onDelete: "set null" }),
+    // O mimo pela foto (cupom pessoal emitido no registro), quando houve.
+    couponId: uuid("coupon_id").references(() => coupons.id, { onDelete: "set null" }),
     /** Primeiro nome, como sai no cartão e na vitrine ("Ana veste …"). */
     displayName: text("display_name").notNull(),
     /** A mensagem com a foto (a fila baixa dela; a URL da Z-API expira em semanas). */

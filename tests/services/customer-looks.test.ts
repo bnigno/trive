@@ -150,6 +150,89 @@ describe("registrar_foto_com_a_peca (executor)", () => {
   });
 });
 
+describe("mimo pela foto (cupom no registro)", () => {
+  async function enableLookCoupon() {
+    await db.insert(schema.settings).values([
+      { key: "look_coupon_enabled", value: true },
+      { key: "look_coupon_percent", value: 10 },
+      { key: "look_coupon_days", value: 60 },
+    ]);
+  }
+  function executorFor(input: { conversationId: string; customerId: string | null; photoWaMessageId: string; phash?: string }) {
+    return buildToolExecutor(sdb, {
+      conversationId: input.conversationId,
+      phoneE164: PHONE,
+      customerId: input.customerId,
+      lastInboundId: input.photoWaMessageId,
+      recentImages: [{ waMessageId: input.photoWaMessageId, mediaUrl: PHOTO_URL, ...(input.phash ? { phash: input.phash } : {}) }],
+      now: NOW,
+    });
+  }
+
+  it("pedido entregue + foto longe do catálogo → cupom pessoal, coupon_id na foto, código na dica e na legenda do cartão; 2ª foto da peça → 'já ganhou'", async () => {
+    await enableLookCoupon();
+    const { productId, variantId } = await seedProduct();
+    // Uma foto do catálogo com hash: a foto dela está longe (distância > 8).
+    await db.insert(schema.productImages).values({ productId, storagePath: "products/x/1.jpg", sortOrder: 0, phash: "0000000000000000" });
+    const { customerId, conversationId, photoWaMessageId } = await seedConversationWithPhoto({ productId, variantId, delivered: true });
+    const result = await executorFor({ conversationId, customerId, photoWaMessageId, phash: "ffffffffffffffff" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    expect(result.ok).toBe(true);
+    expect(result.text).toMatch(/Ela ganhou o cupom ANA-[A-Z2-9]{5} \(10% até 13\/11\)/);
+
+    const [look] = await db.select().from(schema.customerLooks);
+    expect(look.couponId).not.toBeNull();
+    const [coupon] = await db.select().from(schema.coupons).where(eq(schema.coupons.id, look.couponId as string));
+    expect(coupon).toMatchObject({ origin: "look_photo", customerId, value: 10, maxUses: 1, perCustomerLimit: 1, dedupeKey: `look_photo:${customerId}:${productId}`, note: "Foto dela com Longo Dunas" });
+
+    // O cartão repete o código na legenda.
+    provider.setMediaFixture(PHOTO_URL, await photoJpeg(), "image/jpeg");
+    await renderAndSendCustomerLookCard(sdb, provider, storage, render, { lookId: look.id }, { now: () => NOW });
+    expect(provider.sentImages[0].caption).toContain(`Seu mimo: cupom ${coupon.code} (10% até 13/11) 🤎`);
+
+    // Outra foto da MESMA peça: a linha nasce, o cupom não.
+    const [second] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: PHOTO_URL, status: "delivered", zapiMessageId: "IMG-2" })
+      .returning({ id: schema.waMessages.id });
+    const again = await executorFor({ conversationId, customerId, photoWaMessageId: second.id, phash: "ffffffffffffffff" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    expect(again.text).toContain(`Ela já tinha ganhado o cupom ${coupon.code} por essa peça: não prometa outro.`);
+    expect(await db.select().from(schema.coupons)).toHaveLength(1);
+  });
+
+  it("só pago (não entregue) → sem cupom em silêncio; print do catálogo → sem cupom com aviso; desligado → foto registrada, sem cupom", async () => {
+    await enableLookCoupon();
+    const { productId, variantId } = await seedProduct();
+    await db.insert(schema.productImages).values({ productId, storagePath: "products/x/1.jpg", sortOrder: 0, phash: "0000000000000000" });
+    const paid = await seedConversationWithPhoto({ productId, variantId, delivered: true });
+    await db.update(schema.orders).set({ status: "paid", deliveredAt: null });
+    const soPago = await executorFor({ ...paid })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    expect(soPago.ok).toBe(true);
+    expect(soPago.text).not.toContain("cupom");
+    expect(await db.select().from(schema.coupons)).toHaveLength(0);
+
+    await db.update(schema.orders).set({ status: "delivered", deliveredAt: NOW });
+    const [print] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: paid.conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: PHOTO_URL, status: "delivered", zapiMessageId: "IMG-P" })
+      .returning({ id: schema.waMessages.id });
+    const doCatalogo = await executorFor({ conversationId: paid.conversationId, customerId: paid.customerId, photoWaMessageId: print.id, phash: "0000000000000001" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    expect(doCatalogo.ok).toBe(true);
+    expect(doCatalogo.text).toContain("parece ser do catálogo/print");
+    expect(await db.select().from(schema.coupons)).toHaveLength(0);
+
+    await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "look_coupon_enabled"));
+    const [third] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: paid.conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: PHOTO_URL, status: "delivered", zapiMessageId: "IMG-3" })
+      .returning({ id: schema.waMessages.id });
+    const off = await executorFor({ conversationId: paid.conversationId, customerId: paid.customerId, photoWaMessageId: third.id, phash: "ffffffffffffffff" })("registrar_foto_com_a_peca", { produto: "longo-dunas" });
+    expect(off.ok).toBe(true);
+    expect(off.text).not.toContain("cupom");
+    expect(await db.select().from(schema.customerLooks)).toHaveLength(3);
+    expect(await db.select().from(schema.coupons)).toHaveLength(0);
+  });
+});
+
 describe("wa.customer_look_card (fila)", () => {
   async function registered(): Promise<{ lookId: string; productId: string; customerId: string; conversationId: string }> {
     const { productId, variantId } = await seedProduct();
