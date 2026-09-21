@@ -36,7 +36,7 @@ import {
 } from "./reports";
 import { siteBridgeFunnel } from "./site-carts";
 import { getStockOverview } from "./stock";
-import { countConversationsAwaitingOwner } from "./wa-conversations";
+import { countUnseenConversations } from "./wa-conversations";
 import { getBotActivitySummary, type BotActivitySummary } from "./wa-insights";
 import { countPendingSuggestions } from "./wa-suggestions";
 
@@ -53,7 +53,10 @@ export type PaidDay = {
 export type RecentOrder = Awaited<ReturnType<typeof listOrders>>[number];
 
 export type DashboardAttention = {
+  /** Conversas transferidas para o dono com mensagem que ele ainda não viu. */
   conversationsAwaiting: number;
+  /** Conversas com mensagem não vista em qualquer status aberto (inclui as de cima). */
+  conversationsWithNewMessages: number;
   emailThreadsAwaiting: number;
   pendingSuggestions: number;
 };
@@ -234,13 +237,18 @@ async function loadShared(db: DbOrTx, now: Date): Promise<DashboardShared> {
     safe("lowStock", async () => (await getStockOverview(db)).filter((row) => row.low).length),
     safe("readiness", () => getReadinessSummary(db)),
     safe("attention", async () => {
-      const [conversationsAwaiting, emailThreadsAwaiting, pendingSuggestions] =
+      const [unseen, emailThreadsAwaiting, pendingSuggestions] =
         await Promise.all([
-          countConversationsAwaitingOwner(db),
+          countUnseenConversations(db),
           countThreadsAwaiting(db),
           countPendingSuggestions(db),
         ]);
-      return { conversationsAwaiting, emailThreadsAwaiting, pendingSuggestions };
+      return {
+        conversationsAwaiting: unseen.awaitingOwner,
+        conversationsWithNewMessages: unseen.withNewMessages,
+        emailThreadsAwaiting,
+        pendingSuggestions,
+      };
     }),
     safe("newCustomers", () => countNewCustomers(db, now)),
     safe("recentOrders", () => listOrders(db, { limit: 5 })),

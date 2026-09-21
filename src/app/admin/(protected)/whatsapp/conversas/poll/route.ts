@@ -9,13 +9,14 @@ import { getAuthUserOrNull } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
 import { isBotEnabled } from "@/services/wa-bot";
 import {
-  countConversationsAwaitingOwner,
+  countUnseenConversations,
   getWaThreadTail,
-  listConversationsAwaitingOwner,
+  listUnseenConversations,
   listWaConversations,
 } from "@/services/wa-conversations";
 import { listPendingSuggestions } from "@/services/wa-suggestions";
-import { maskPhone } from "../format";
+import { conversationLabel } from "../format";
+import { inboundPreview, type LightPollResponse } from "./light-schema";
 
 export const dynamic = "force-dynamic";
 
@@ -27,11 +28,11 @@ const querySchema = z.object({
 });
 
 /**
- * `?light=1` (badge/toast em qualquer página do admin): só a contagem e as
- * conversas aguardando o dono — pula as queries pesadas de lista e thread.
- * Sem `light`: lista completa + cauda da thread aberta (`?c=<uuid>`), mais
- * o estado global da vendedora (ligada? nome?) para os badges não mentirem.
- * Datas saem como ISO 8601 (serialização JSON de Date).
+ * `?light=1` (crachá/toast/título em qualquer página do admin): as duas
+ * contagens e as conversas com mensagem não vista — pula as queries pesadas
+ * de lista e thread. Sem `light`: lista completa + cauda da thread aberta
+ * (`?c=<uuid>`), mais o estado global da vendedora (ligada? nome?) para os
+ * badges não mentirem. Datas saem como ISO 8601 (serialização JSON de Date).
  */
 export async function GET(request: Request): Promise<Response> {
   const user = await getAuthUserOrNull();
@@ -56,24 +57,26 @@ export async function GET(request: Request): Promise<Response> {
 
   const db = getDb();
   const serverTime = new Date().toISOString();
-  const humanCount = await countConversationsAwaitingOwner(db);
+  const counts = await countUnseenConversations(db);
+  const humanCount = counts.awaitingOwner;
 
   if (parsed.data.light === "1") {
-    const [awaiting, suggestions] = await Promise.all([listConversationsAwaitingOwner(db), listPendingSuggestions(db)]);
-    return Response.json(
-      {
-        serverTime,
-        humanCount,
-        awaiting: awaiting.map((conversation) => ({
-          id: conversation.id,
-          label:
-            conversation.customerName ?? maskPhone(conversation.phoneE164),
-        })),
-        suggestionCount: suggestions.length,
-        suggestions: suggestions.map((suggestion) => ({ id: suggestion.conversationId, label: suggestion.label })),
-      },
-      { headers: NO_STORE },
-    );
+    const [unseen, suggestions] = await Promise.all([listUnseenConversations(db), listPendingSuggestions(db)]);
+    const payload: LightPollResponse = {
+      serverTime,
+      awaitingOwner: counts.awaitingOwner,
+      withNewMessages: counts.withNewMessages,
+      unseen: unseen.map((conversation) => ({
+        id: conversation.id,
+        label: conversationLabel({ ...conversation, isOwnerNotices: false }),
+        status: conversation.status,
+        preview: inboundPreview(conversation.lastInbound?.body),
+        lastInboundAt: conversation.lastInbound?.createdAt.toISOString() ?? null,
+      })),
+      suggestionCount: suggestions.length,
+      suggestions: suggestions.map((suggestion) => ({ id: suggestion.conversationId, label: suggestion.label })),
+    };
+    return Response.json(payload, { headers: NO_STORE });
   }
 
   const [botEnabled, settings, conversations, thread] = await Promise.all([

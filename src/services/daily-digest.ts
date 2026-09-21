@@ -34,7 +34,7 @@ import { summarizeCityEditionsForDigest } from "@/services/city-editions";
 import { countOrdersMustShipToday } from "@/services/needed-by";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { getStoreName } from "@/services/settings";
-import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
+import { countUnseenConversations } from "@/services/wa-conversations";
 import { summarizeBotActivity } from "@/services/wa-insights";
 import { isWaEnabled, sendToOwner, type SendWaMessageResult } from "@/services/wa-messaging";
 
@@ -141,7 +141,7 @@ export async function buildDailyDigestData(
   }
 
   const [conversationsAwaitingOwner, bot, stock, top, storeName, mustShipToday, editions] = await Promise.all([
-    countConversationsAwaitingOwner(db),
+    countUnseenConversations(db).then((counts) => counts.awaitingOwner),
     summarizeBotActivity(db, { from, to }),
     getStockOverview(db),
     topProducts(db, { days: BEST_SELLER_DAYS, limit: 1 }),

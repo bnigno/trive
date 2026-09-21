@@ -197,10 +197,13 @@ function KpiRow({ dashboard }: { dashboard: AdminDashboard }) {
   const { shared, owner } = dashboard;
   const created = shared.ordersCreated;
   const attention = shared.attention;
+  const withSeller = attention ? attention.conversationsWithNewMessages - attention.conversationsAwaiting : 0;
   const conversationsHint = attention
     ? attention.pendingSuggestions > 0
       ? `${attention.pendingSuggestions} ${attention.pendingSuggestions === 1 ? "sugestão" : "sugestões"} da Lia para revisar.`
-      : "Clientes esperando uma pessoa responder."
+      : withSeller > 0
+        ? `Mais ${withSeller} com mensagem nova, a Lia respondendo.`
+        : "Clientes esperando uma pessoa responder."
     : "Banco indisponível no momento.";
 
   const ordersCard = (

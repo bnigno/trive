@@ -123,6 +123,30 @@ export function buildAttentionRows(dashboard: AdminDashboard): AttentionRow[] {
       severity: "neutral",
     });
   }
+  // WhatsApp: quem espera por você (transferidas) é urgente; o resto é a
+  // vendedora cuidando — informa, não cobra. Os dois links abrem "Não lidas".
+  if (shared.attention?.conversationsAwaiting) {
+    const awaiting = shared.attention.conversationsAwaiting;
+    rows.push({
+      key: "wa-awaiting",
+      label: "Esperando por você no WhatsApp",
+      count: awaiting,
+      hint: `${plural(awaiting, "Conversa transferida", "Conversas transferidas")} com mensagem que você ainda não viu.`,
+      href: "/admin/whatsapp/conversas?f=nao-lidas",
+      severity: "warning",
+    });
+  }
+  const withSeller = (shared.attention?.conversationsWithNewMessages ?? 0) - (shared.attention?.conversationsAwaiting ?? 0);
+  if (withSeller > 0) {
+    rows.push({
+      key: "wa-new",
+      label: "Mensagem nova com a vendedora",
+      count: withSeller,
+      hint: "A vendedora está respondendo; abra se quiser acompanhar.",
+      href: "/admin/whatsapp/conversas?f=nao-lidas",
+      severity: "neutral",
+    });
+  }
   // Para a equipe os e-mails já estão no painel de cima; para o dono entram aqui.
   if (owner && shared.attention?.emailThreadsAwaiting) {
     rows.push({

@@ -69,10 +69,10 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     title: "Atendimento",
     items: [
-      // O badge (e o viewport de avisos de transferência que ele monta) vive
-      // em Conversas: é o item que a equipe enxerga. Se ficasse na Central do
-      // WhatsApp — área só do dono — o funcionário deixaria de receber o
-      // aviso de que a vendedora passou uma conversa para humano.
+      // O crachá de mensagem nova vive em Conversas: é o item que a equipe
+      // enxerga. Se ficasse na Central do WhatsApp — área só do dono — o
+      // funcionário deixaria de ver que a vendedora passou uma conversa para
+      // humano. (Os toasts e o bipe são do avisador, no layout.)
       {
         label: "Conversas",
         href: "/admin/whatsapp/conversas",

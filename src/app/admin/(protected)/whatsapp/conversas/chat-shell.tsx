@@ -8,12 +8,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cx } from "@/components/ui/cx";
 import { useNotify } from "../../use-notify";
+import { publishWaUnseen } from "../../wa-unseen-store";
 import {
   closeConversationAction,
+  markAllConversationsSeenAction,
   markConversationSeenAction,
   sendManualReplyAction,
 } from "./actions";
-import { ConversationList, type ConversationFilter } from "./conversation-list";
+import { ConversationList, filterFromParam, type ConversationFilter } from "./conversation-list";
 import { attendantBadge, conversationLabel } from "./format";
 import type { OptimisticDisplay } from "./message-list";
 import { ThreadPanel } from "./thread-panel";
@@ -102,7 +104,8 @@ export function ChatShell({
   const [pollFailures, setPollFailures] = useState(0);
   const [scrollSignal, setScrollSignal] = useState(0);
   const [announcement, setAnnouncement] = useState("");
-  const [filter, setFilter] = useState<ConversationFilter>("all");
+  // "?f=nao-lidas" (o Atenção agora e o toast apontam para cá) abre já filtrado.
+  const [filter, setFilter] = useState<ConversationFilter>(() => filterFromParam(searchParams.get("f")));
   const [query, setQuery] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
 
@@ -155,6 +158,17 @@ export function ChatShell({
       })
       .catch(() => {
         // "Visto" é telemetria: falhar não pode atrapalhar o atendimento.
+      });
+  }, []);
+
+  const markAllSeen = useCallback(() => {
+    void markAllConversationsSeenAction()
+      .then((result) => {
+        if (!result.ok) return;
+        setConversations((prev) => prev.map((c) => (c.unreadCount > 0 ? { ...c, unreadCount: 0 } : c)));
+      })
+      .catch(() => {
+        // Idem: o poll seguinte mostra o estado real.
       });
   }, []);
 
@@ -335,11 +349,23 @@ export function ChatShell({
       document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [markSeen]);
 
-  // Título da aba: "(N) Conversas" com a soma de não-lidas; restaura ao sair.
-  const unreadTotal = useMemo(
-    () => conversations.reduce((sum, c) => sum + c.unreadCount, 0),
-    [conversations],
-  );
+  // Os mesmos números do crachá do menu e do início: CONVERSAS com mensagem
+  // não vista (não mensagens), sem a de avisos internos e sem as encerradas.
+  const unseen = useMemo(() => {
+    const withNew = conversations.filter((c) => c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed");
+    return {
+      awaitingOwner: withNew.filter((c) => c.status === "human").length,
+      withNewMessages: withNew.length,
+      suggestionCount: conversations.filter((c) => c.pendingSuggestion && c.status !== "closed").length,
+    };
+  }, [conversations]);
+  // Nesta página o avisador do layout descansa: quem alimenta o crachá é o chat.
+  useEffect(() => {
+    publishWaUnseen(unseen);
+  }, [unseen]);
+
+  // Título da aba: "(N) Conversas"; restaura ao sair.
+  const unreadTotal = unseen.withNewMessages;
   useEffect(() => {
     baseTitleRef.current ??= document.title;
     const base = baseTitleRef.current;
@@ -608,6 +634,7 @@ export function ChatShell({
             counts={counts}
             filter={filter}
             onFilterChange={setFilter}
+            onMarkAllSeen={markAllSeen}
             query={query}
             onQueryChange={setQuery}
             selectedId={selectedId}

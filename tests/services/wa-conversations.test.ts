@@ -11,10 +11,11 @@ import { ServiceError } from "@/services/settings";
 import {
   autoReturnIdleHumanConversations,
   closeWaConversation,
-  countConversationsAwaitingOwner,
+  countUnseenConversations,
   getWaConversationThread,
   getWaThreadTail,
-  listConversationsAwaitingOwner,
+  listUnseenConversations,
+  markAllConversationsSeen,
   listWaConversations,
   markConversationSeen,
   returnWaConversationToBot,
@@ -516,10 +517,11 @@ describe("wa-conversations (painel do admin)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // countConversationsAwaitingOwner / listConversationsAwaitingOwner
+  // countUnseenConversations / listUnseenConversations / markAllConversationsSeen
   // -------------------------------------------------------------------------
 
-  it("countAwaiting: só conversa 'human' com inbound não vista; lista traz nome e telefone", async () => {
+  it("countUnseen: toda conversa aberta com inbound não vista conta; 'human' é a parte urgente; avisos internos e encerradas ficam de fora", async () => {
+    await db.insert(schema.settings).values({ key: "owner_whatsapp_phone", value: "(11) 95555-0000" });
     const [customer] = await db
       .insert(schema.customers)
       .values({
@@ -529,11 +531,8 @@ describe("wa-conversations (painel do admin)", () => {
       })
       .returning({ id: schema.customers.id });
 
-    // Conta: human + inbound nunca vista.
-    const awaiting = await createConversation({
-      status: "human",
-      customerId: customer.id,
-    });
+    // Conta e é urgente: human + inbound nunca vista.
+    const awaiting = await createConversation({ status: "human", customerId: customer.id });
     await addMessage(awaiting, "inbound", "cadê você?", new Date("2026-08-01T10:00:00Z"));
 
     // NÃO conta: human com tudo visto.
@@ -544,35 +543,81 @@ describe("wa-conversations (painel do admin)", () => {
     });
     await addMessage(seen, "inbound", "obrigado", new Date("2026-08-01T10:00:00Z"));
 
-    // NÃO conta: open com inbound não vista (o bot está atendendo).
+    // Conta (a vendedora está atendendo), mas não é urgente. Sem cadastro:
+    // o nome do WhatsApp vem do caderninho.
     const openConversation = await createConversation({
       phoneE164: "+5511777770000",
+      botState: { displayName: "Bia" },
     });
-    await addMessage(openConversation, "inbound", "oi", new Date("2026-08-01T10:00:00Z"));
+    await addMessage(openConversation, "inbound", "oi", new Date("2026-08-01T09:00:00Z"));
+    await addMessage(openConversation, "outbound", "oi, Bia!", new Date("2026-08-01T09:01:00Z"));
+    await addMessage(openConversation, "inbound", "  tem   em M?  ", new Date("2026-08-01T11:00:00Z"));
 
     // NÃO conta: closed.
-    const closedConversation = await createConversation({
-      phoneE164: "+5511666660000",
-      status: "closed",
-    });
+    const closedConversation = await createConversation({ phoneE164: "+5511666660000", status: "closed" });
     await addMessage(closedConversation, "inbound", "até mais", new Date("2026-08-01T10:00:00Z"));
 
-    expect(await countConversationsAwaitingOwner(sdb)).toBe(1);
-    const list = await listConversationsAwaitingOwner(sdb);
-    expect(list).toEqual([
-      {
-        id: awaiting,
-        phoneE164: "+5511999990000",
-        customerName: "Ana Compradora",
-      },
-    ]);
+    // NÃO conta: a conversa com o WhatsApp do dono (avisos internos).
+    const ownerNotices = await createConversation({ phoneE164: "+5511955550000", status: "human" });
+    await addMessage(ownerNotices, "inbound", "ok", new Date("2026-08-01T10:00:00Z"));
 
-    // Ler a conversa apaga o badge; inbound nova reacende. O "visto" usa o
-    // relógio real, então a mensagem nova precisa nascer DEPOIS dele.
+    expect(await countUnseenConversations(sdb)).toEqual({ withNewMessages: 2, awaitingOwner: 1 });
+
+    // A lista vem da mensagem mais recente para a mais antiga, com a última inbound.
+    const list = await listUnseenConversations(sdb);
+    expect(list.map((item) => item.id)).toEqual([openConversation, awaiting]);
+    expect(list[0]).toMatchObject({
+      phoneE164: "+5511777770000",
+      customerName: null,
+      displayName: "Bia",
+      status: "open",
+      lastInbound: { body: "  tem   em M?  ", createdAt: new Date("2026-08-01T11:00:00Z") },
+    });
+    expect(list[1]).toMatchObject({
+      customerName: "Ana Compradora",
+      displayName: null,
+      status: "human",
+      lastInbound: { body: "cadê você?" },
+    });
+
+    // Ler a conversa apaga; inbound nova reacende. O "visto" usa o relógio
+    // real, então a mensagem nova precisa nascer DEPOIS dele.
     await markConversationSeen(sdb, { conversationId: awaiting });
-    expect(await countConversationsAwaitingOwner(sdb)).toBe(0);
+    expect(await countUnseenConversations(sdb)).toEqual({ withNewMessages: 1, awaitingOwner: 0 });
     await addMessage(awaiting, "inbound", "voltei", new Date(Date.now() + 60_000));
-    expect(await countConversationsAwaitingOwner(sdb)).toBe(1);
+    expect(await countUnseenConversations(sdb)).toEqual({ withNewMessages: 2, awaitingOwner: 1 });
+  });
+
+  it("countUnseen sem telefone do dono cadastrado: ninguém é excluído por engano", async () => {
+    const open = await createConversation();
+    await addMessage(open, "inbound", "oi", new Date("2026-08-01T10:00:00Z"));
+    expect(await countUnseenConversations(sdb)).toEqual({ withNewMessages: 1, awaitingOwner: 0 });
+  });
+
+  it("markAllConversationsSeen zera todas de uma vez e não toca a de avisos internos nem a já lida", async () => {
+    await db.insert(schema.settings).values({ key: "owner_whatsapp_phone", value: "+5511955550000" });
+    const a = await createConversation({ status: "human" });
+    await addMessage(a, "inbound", "a", new Date("2026-08-01T10:00:00Z"));
+    const b = await createConversation({ phoneE164: "+5511777770000" });
+    await addMessage(b, "inbound", "b", new Date("2026-08-01T10:00:00Z"));
+    const seenBefore = new Date("2026-08-02T00:00:00Z");
+    const read = await createConversation({ phoneE164: "+5511888880000", ownerLastSeenAt: seenBefore });
+    await addMessage(read, "inbound", "c", new Date("2026-08-01T10:00:00Z"));
+    const ownerNotices = await createConversation({ phoneE164: "+5511955550000" });
+    await addMessage(ownerNotices, "inbound", "ok", new Date("2026-08-01T10:00:00Z"));
+
+    const result = await markAllConversationsSeen(sdb);
+    expect(result.count).toBe(2);
+    expect(await countUnseenConversations(sdb)).toEqual({ withNewMessages: 0, awaitingOwner: 0 });
+
+    const rows = await db
+      .select({ id: schema.waConversations.id, seenAt: schema.waConversations.ownerLastSeenAt })
+      .from(schema.waConversations);
+    const seenById = new Map(rows.map((row) => [row.id, row.seenAt]));
+    expect(seenById.get(a)).toEqual(result.seenAt);
+    expect(seenById.get(b)).toEqual(result.seenAt);
+    expect(seenById.get(read)).toEqual(seenBefore);
+    expect(seenById.get(ownerNotices)).toBeNull();
   });
 });
 

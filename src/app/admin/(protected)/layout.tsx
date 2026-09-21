@@ -9,8 +9,10 @@ import { getStoreName } from "@/services/settings";
 import { Avatar } from "@/components/ui/avatar";
 import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
 import { AdminBrand } from "./admin-brand";
+import { AdminNotifier } from "./admin-notifier";
 import { MobileNav } from "./mobile-nav";
 import { AdminNav } from "./nav";
+import { NotifyPrefsMenu } from "./notify-prefs-menu";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +56,7 @@ export default async function AdminLayout({
           {user.role === "owner" ? "Proprietário" : "Equipe"}
         </p>
       </div>
+      <NotifyPrefsMenu />
       <IconButtonLink
         href="/admin/nova-senha"
         label="Minha senha"
@@ -75,6 +78,8 @@ export default async function AdminLayout({
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
+      {/* Uma instância só: poll leve, toasts, bipe e "(N)" no título, em qualquer página. */}
+      <AdminNotifier />
       <aside className="hidden w-64 shrink-0 flex-col border-r border-white/10 bg-noir-950 text-zinc-400 md:flex">
         <div className="border-b border-white/10 px-5 py-4">
           <AdminBrand storeName={storeName} />

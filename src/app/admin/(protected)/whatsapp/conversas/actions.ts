@@ -10,6 +10,7 @@ import { requireUser } from "@/services/auth";
 import { ServiceError } from "@/services/settings";
 import {
   closeWaConversation,
+  markAllConversationsSeen,
   markConversationSeen,
   returnWaConversationToBot,
   sendManualWaReply,
@@ -129,6 +130,16 @@ export async function cancelFollowupAction(followupId: string): Promise<ActionRe
     return { ok: true };
   } catch (error) {
     return { error: toErrorMessage(error) };
+  }
+}
+
+export async function markAllConversationsSeenAction(): Promise<{ ok: boolean; count: number }> {
+  await requireUser();
+  try {
+    const { count } = await markAllConversationsSeen(getDb());
+    return { ok: true, count };
+  } catch {
+    return { ok: false, count: 0 };
   }
 }
 

@@ -12,9 +12,9 @@ import { createPortal } from "react-dom";
 import { cx } from "@/components/ui/cx";
 
 /**
- * Toasts de transferência ("Robô transferiu uma conversa").
+ * Toasts de mensagem nova, transferência e sugestão da vendedora.
  *
- * Uso (wa-nav-badge hoje; a página de conversas pode reutilizar):
+ * Uso (o avisador do layout hoje; a página de conversas pode reutilizar):
  *
  *   const { toasts, pushToast, dismissToast } = useHandoffToasts();
  *   pushToast({ conversationId, label });
@@ -81,13 +81,7 @@ export function HandoffToastViewport({
   if (!mounted || toasts.length === 0) return null;
 
   return createPortal(
-    // stopPropagation: o portal propaga eventos pela árvore REACT (não pelo
-    // DOM) — este viewport é montado dentro do <Link> da sidebar, e sem isso
-    // um clique no toast navegaria para /admin/whatsapp.
-    <div
-      className="fixed bottom-6 right-6 z-50 flex flex-col gap-3"
-      onClick={(event) => event.stopPropagation()}
-    >
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
       {toasts.map((toast) => (
         <HandoffToastCard key={toast.id} toast={toast} onDismiss={onDismiss} />
       ))}

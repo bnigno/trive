@@ -18,7 +18,7 @@ import { requireOwner } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
 import { listCampaignLinks, type CampaignLink } from "@/services/campaign-links";
 import { getLastDigest } from "@/services/daily-digest";
-import { countConversationsAwaitingOwner } from "@/services/wa-conversations";
+import { countUnseenConversations } from "@/services/wa-conversations";
 import {
   getBotActivitySummary,
   getBotResponseTimes,
@@ -144,7 +144,7 @@ async function loadPageData(): Promise<PageData | null> {
       getBotActivitySummary(db),
       getBotResponseTimes(db),
       listRecentBotActivity(db, { limit: 8 }),
-      countConversationsAwaitingOwner(db),
+      countUnseenConversations(db).then((counts) => counts.awaitingOwner),
       getLastDigest(db),
       listCampaignLinks(db),
     ]);
