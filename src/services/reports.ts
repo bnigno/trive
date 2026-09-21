@@ -26,8 +26,8 @@ import type { DbOrTx } from "@/queue/enqueue";
 
 const EXCLUDED_STATUSES = ["canceled", "refunded"] as const;
 
-/** Condição compartilhada de "pedido pago". */
-function paidCondition() {
+/** Condição compartilhada de "pedido pago" (relatórios e as "mais vendidas" do caderninho da Lia). */
+export function paidCondition() {
   return and(
     isNotNull(orders.paidAt),
     notInArray(orders.status, [...EXCLUDED_STATUSES]),

@@ -316,7 +316,7 @@ function cartItemLabel(item: BotCartItem): string {
 /**
  * Linhas da sacola prontas para o modelo: "• 1× Vestido (Preto · M) — R$ 289,00 [sku: X]".
  * O [sku: …] é só para a ferramenta (remover, quantidade): o colchete é
- * interno (regra 23) e polishBotReply o tira se o modelo copiar.
+ * interno (regra 20 do prompt) e polishBotReply o tira se o modelo copiar.
  */
 export function formatCartLines(cart: readonly BotCartItem[] | undefined): string[] {
   const itens = cart ?? [];
@@ -350,6 +350,14 @@ function todayLine(now: Date): string {
   const [y, m, d] = key.split("-");
   return `${spWeekdayName(key)}, ${d}/${m}/${y} (${key})`;
 }
+
+/**
+ * Teto de linhas extras no caderninho — acima da soma dos máximos de cada
+ * fonte (cartela 1 + reserva 1 + avisos 1 + feedback 3 + fotos 3 + compra 1 +
+ * envio 1 + ponte 1 + retorno 2 + destaques 2 = 16): nada legítimo cai; é
+ * guarda contra uma fonte nova sem teto. Linhas vazias não contam.
+ */
+export const EXTRA_LINES_MAX = 16;
 
 export function renderContextNote(
   state: BotState,
@@ -419,8 +427,8 @@ export function renderContextNote(
   }
   // Linhas vindas de outras fontes de verdade (reserva ativa, avisos pedidos,
   // cartela) — o caderninho não duplica o que já mora em tabela própria.
-  for (const line of extras.lines ?? []) {
-    if (line.trim() !== "") linhas.push(`• ${line.trim()}`);
+  for (const line of (extras.lines ?? []).map((l) => l.trim()).filter((l) => l !== "").slice(0, EXTRA_LINES_MAX)) {
+    linhas.push(`• ${line}`);
   }
 
   if (linhas.length === 0) return null;

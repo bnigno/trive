@@ -15,6 +15,7 @@ import {
   type DefaultPolicy,
   type FeeRule,
 } from "@/services/settings";
+import { getStoreFacts } from "@/services/store-facts";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,8 +32,10 @@ import {
   PolicyForm,
   StockSettingsForm,
   StoreDataForm,
+  StoreFactsForm,
   StorefrontForm,
 } from "./forms";
+import { brandWordWarning } from "@/core/bot/owner-instructions";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +90,9 @@ type SettingsData = {
   };
   cityDates: CityDate[];
   mpEnabled: boolean;
+  /** O que a Lia sabe da loja (ficha do prompt) e a prévia do bloco como ela o lê. */
+  storeFacts: { hours: string; pickup: string; about: string };
+  storeFactsPreview: string;
 };
 
 function asString(value: unknown): string {
@@ -96,7 +102,7 @@ function asString(value: unknown): string {
 async function loadSettings(): Promise<SettingsData | null> {
   try {
     const db = getDb();
-    const [feeRules, policy, map] = await Promise.all([
+    const [feeRules, policy, map, storeFactsPreview] = await Promise.all([
       getFeeRules(db),
       getDefaultPolicy(db),
       getSettingsMap(db, [
@@ -111,6 +117,9 @@ async function loadSettings(): Promise<SettingsData | null> {
         "store_whatsapp",
         "store_instagram",
         "store_pix_key",
+        "store_hours",
+        "store_pickup",
+        "store_about",
         "store_tagline",
         "store_manifesto",
         "edition_name",
@@ -119,11 +128,14 @@ async function loadSettings(): Promise<SettingsData | null> {
         "city_dates",
         "mp_enabled",
       ]),
+      getStoreFacts(db),
     ]);
     return {
       feeRules,
       policy,
       mpEnabled: map.mp_enabled === true,
+      storeFacts: { hours: asString(map.store_hours), pickup: asString(map.store_pickup), about: asString(map.store_about) },
+      storeFactsPreview,
       store: {
         name: asString(map.store_name),
         cnpj: asString(map.store_cnpj),
@@ -241,6 +253,26 @@ export default async function ConfiguracoesPage() {
               editionName: data.storefront.editionName,
             }}
           />
+        </div>
+      </Card>
+
+      <Card title="O que a Lia sabe da loja">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            A Lia responde &quot;onde fica&quot;, &quot;como entrega&quot;, &quot;como pago&quot; e &quot;posso trocar&quot; com esta
+            ficha. Frete e pagamento entram sozinhos a partir de Frete e Mercado Pago; a política de troca vem de
+            WhatsApp → Vendedora.
+          </p>
+          {(() => {
+            // Qualquer texto livre que entra na ficha da Lia (sobre, horário, retirada, frase da loja).
+            const warning = [data.storeFacts.about, data.storeFacts.hours, data.storeFacts.pickup, data.storefront.tagline].map(brandWordWarning).find(Boolean);
+            return warning ? <Badge tone="warning">{warning}</Badge> : null;
+          })()}
+          <StoreFactsForm defaults={data.storeFacts} />
+          <details className="text-sm">
+            <summary className="cursor-pointer text-zinc-600 dark:text-zinc-300">Prévia do que a Lia lê</summary>
+            <pre className="mt-2 whitespace-pre-wrap rounded-md bg-zinc-50 p-3 text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">{data.storeFactsPreview}</pre>
+          </details>
         </div>
       </Card>
 

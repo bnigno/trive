@@ -276,6 +276,29 @@ function formatCnpjBR(digits: string): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12, 14)}`;
 }
 
+export async function updateStoreFactsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("configuracoes");
+  try {
+    const db = getDb();
+    const entries: Array<[string, string]> = [
+      ["store_hours", String(formData.get("storeHours") ?? "").trim()],
+      ["store_pickup", String(formData.get("storePickup") ?? "").trim()],
+      // O textarea manda \r\n: normaliza antes de contar e gravar (como a carta de estreia).
+      ["store_about", String(formData.get("storeAbout") ?? "").replace(/\r\n?/g, "\n").trim()],
+    ];
+    for (const [key, value] of entries) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+    revalidatePath("/admin/configuracoes");
+    return { success: "Ficha salva. A Lia já usa na próxima conversa." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
 export async function updateStoreDataAction(
   _prev: FormState,
   formData: FormData,

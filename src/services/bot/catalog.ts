@@ -19,6 +19,8 @@ import {
   lookCardTitle,
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
+import { formatCatalogLine } from "@/core/bot/catalog-line";
+import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, pieceTypeTerms, type PieceType } from "@/core/catalog/piece-types";
 import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
@@ -44,9 +46,11 @@ import {
   listProductIdsWithVariant,
   listPublicProducts,
   listPublicVariantFacts,
+  listVariantFactsFor,
   publicImageUrl,
   type PublicProductDetail,
   type PublicProductListItem,
+  type PublicVariantFacts,
 } from "@/services/store-catalog";
 import { siteBaseUrl } from "@/services/wa-messaging";
 
@@ -72,6 +76,29 @@ export async function resolveCategorySlug(
     .where(ilike(categories.name, `%${trimmed}%`))
     .limit(1);
   return byName?.slug ?? null;
+}
+
+export type CatalogScope = { kind: "category"; slug: string } | { kind: "piece_type"; pieceType: PieceType };
+
+/**
+ * O que a Lia passou em `categoria`: categoria pelo slug exato primeiro (a
+ * loja pode ter uma categoria "Vestidos"), depois tipo de peça (vestido,
+ * corset, bolsa… — inclusive plural e sinônimo), depois categoria pelo nome.
+ * Null quando não é nada disso.
+ */
+export async function resolveCatalogScope(db: DbOrTx, term: string): Promise<CatalogScope | null> {
+  const trimmed = term.trim();
+  if (trimmed === "") return null;
+  const [bySlug] = await db
+    .select({ slug: categories.slug })
+    .from(categories)
+    .where(eq(categories.slug, trimmed.toLowerCase()))
+    .limit(1);
+  if (bySlug) return { kind: "category", slug: bySlug.slug };
+  const pieceType = parsePieceType(trimmed);
+  if (pieceType) return { kind: "piece_type", pieceType };
+  const slug = await resolveCategorySlug(db, trimmed);
+  return slug ? { kind: "category", slug } : null;
 }
 
 type CatalogList = { message: string; options: { title: string; description?: string }[] };
@@ -125,16 +152,22 @@ export async function execListarProdutos(
   const filtros: string[] = [];
 
   let categorySlug: string | undefined;
+  let pieceType: PieceType | undefined;
   if (input.categoria?.trim()) {
-    const slug = await resolveCategorySlug(db, input.categoria);
-    if (!slug) {
+    const scope = await resolveCatalogScope(db, input.categoria);
+    if (!scope) {
       return {
         ok: false,
-        text: `Não existe a categoria "${input.categoria}". Use uma das categorias da PLANTA DA LOJA ou busque por palavra (busca).`,
+        text: `Não existe a categoria nem o tipo "${input.categoria}". Use uma categoria ou um tipo da PLANTA DA LOJA, ou busque por palavra (busca).`,
       };
     }
-    categorySlug = slug;
-    filtros.push(`categoria ${input.categoria.trim()}`);
+    if (scope.kind === "category") {
+      categorySlug = scope.slug;
+      filtros.push(`categoria ${input.categoria.trim()}`);
+    } else {
+      pieceType = scope.pieceType;
+      filtros.push(`tipo ${pieceTypeLabel(scope.pieceType)}`);
+    }
   }
   let editionSlug: string | undefined;
   if (input.edicao?.trim()) {
@@ -151,13 +184,18 @@ export async function execListarProdutos(
   }
   if (busca) filtros.push(`"${busca}"`);
 
+  // Tipo: as peças marcadas com ele E as ainda sem tipo cujo NOME tem um termo
+  // do tipo (rótulo, plural, sinônimos — a régua da sugestão): a dona pode não
+  // ter tipado tudo, e uma peça nova nasce sem tipo; negar o que existe não é opção.
   let items: PublicProductListItem[] = await listPublicProducts(db, {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
+    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true } : {}),
     ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
     limit: 200,
   });
+  const semTipoPeloNome = pieceType ? items.filter((item) => item.pieceType === null).length : 0;
 
   const byAttribute = await listProductIdsWithVariant(db, {
     ...(input.cor ? { cor: input.cor } : {}),
@@ -174,22 +212,42 @@ export async function execListarProdutos(
     filtros.push(`até ${formatCentsBRL(tetoCents)}`);
   }
 
+  if (pieceType && semTipoPeloNome > 0) {
+    const tipoIndex = filtros.findIndex((f) => f.startsWith("tipo "));
+    const rotulo = `tipo ${pieceTypeLabel(pieceType)} — ${semTipoPeloNome === items.length ? "nenhuma tem o tipo marcado: achadas pelo nome" : `${semTipoPeloNome} sem tipo marcado, achada(s) pelo nome`}`;
+    if (tipoIndex >= 0) filtros.splice(tipoIndex, 1, rotulo);
+    else filtros.push(rotulo);
+  }
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
     return {
       ok: true,
       text: filtros.length > 0
-        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra — e diga isso à cliente com honestidade.`
+        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${pieceType ? ` (já procurei "${pieceTypeLabel(pieceType).toLowerCase()}" no nome das peças também)` : ""} — e diga isso à cliente com honestidade.`
         : "O catálogo está vazio no momento — em breve teremos novidades!",
     };
   }
 
   const totalPaginas = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
   const pagina = Math.min(input.pagina ?? 1, totalPaginas);
-  const linhaDaPeca = (item: PublicProductListItem) => {
-    const preco = formatPriceRange(item.priceFromCents, item.priceToCents);
-    const categoria = item.categoryName ? ` · ${item.categoryName}` : "";
-    return `• ${item.name}${categoria} — ${preco}${item.available ? "" : " (esgotado)"}`;
+  // A linha leva tipo, cores e tamanhos COM estoque e a frase da peça: é o
+  // que a Lia tem para comentar com motivo real sem outra ida a detalhar_produto.
+  // Cores/tamanhos vêm numa consulta só, para as ≤ 30 linhas que vão sair.
+  const factsFor = async (list: readonly PublicProductListItem[]) =>
+    new Map((await listVariantFactsFor(db, list)).map((fact) => [fact.product.id, fact]));
+  const linhaDaPeca = (item: PublicProductListItem, facts: ReadonlyMap<string, PublicVariantFacts>) => {
+    const fact = facts.get(item.id);
+    const typed = item.pieceType !== null && (PIECE_TYPE_SLUGS as readonly string[]).includes(item.pieceType);
+    return formatCatalogLine({
+      name: item.name,
+      typeLabel: typed ? pieceTypeLabel(item.pieceType as PieceType) : null,
+      categoryName: item.categoryName,
+      price: formatPriceRange(item.priceFromCents, item.priceToCents),
+      available: item.available,
+      colors: fact?.colorsAvailable ?? [],
+      sizes: fact?.sizesAvailable ?? [],
+      blurbSource: item.blurbSource ?? null,
+    });
   };
   const listaTocavel = (fatia: PublicProductListItem[], inicio: number, title: string) => ({
     kind: "option_list" as const,
@@ -214,7 +272,8 @@ export async function execListarProdutos(
     }
     const inicio = (pagina - 1) * PAGE_SIZE;
     const page = items.slice(inicio, inicio + PAGE_SIZE);
-    const lines = page.map(linhaDaPeca);
+    const facts = await factsFor(page);
+    const lines = page.map((item) => linhaDaPeca(item, facts));
     lines.unshift(
       `${contagem} — mostrando ${inicio + 1} a ${inicio + page.length} (página ${pagina} de ${totalPaginas}${pagina < totalPaginas ? `; passe pagina: ${pagina + 1} para as próximas` : "; é a última"}).`,
     );
@@ -230,7 +289,7 @@ export async function execListarProdutos(
 
   // Catálogo inteiro: até CATALOG_MAX_LISTS_PER_CALL listas de PAGE_SIZE de
   // uma vez (a lista do WhatsApp só aceita 10 linhas). Guarda contra spam —
-  // a regra 11 manda chamar a ferramenta a cada "quero ver outra": se as
+  // a regra 5 do prompt manda chamar a ferramenta a cada "quero ver outra": se as
   // listas 2..N deste mesmo catálogo SAÍRAM (wa_messages 'sent') nos últimos
   // 30 min, vai só a primeira de novo. Ler o que foi entregue, e não um
   // estado gravado antes da entrega, cobre lista que falhou na Z-API,
@@ -250,7 +309,9 @@ export async function execListarProdutos(
   const paraEnviar = recente ? listas.slice(0, 1) : listas.slice(0, orcamento);
   const cortadasPeloTurno = !recente && paraEnviar.length < listas.length;
 
-  const lines = (recente ? fatias[0] : fatias.slice(0, paraEnviar.length).flat()).map(linhaDaPeca);
+  const linhasDe = recente ? fatias[0] : fatias.slice(0, paraEnviar.length).flat();
+  const facts = await factsFor(linhasDe);
+  const lines = linhasDe.map((item) => linhaDaPeca(item, facts));
   if (recente) {
     const outras = listas.length === 2 ? "a lista 2 já está" : `as listas 2 a ${listas.length} já estão`;
     lines.unshift(`${contagem} — a 1ª lista reenviada; ${outras} na conversa (enviadas há pouco).`);

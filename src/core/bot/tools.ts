@@ -164,7 +164,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         categoria: {
           type: "string",
           description:
-            "Nome ou slug de uma categoria da PLANTA DA LOJA (ex.: 'vestidos'). Omita para todas.",
+            "Categoria (ex.: 'vestuario', 'acessorios') OU tipo de peça (ex.: 'vestido', 'corset', 'bolsa') da PLANTA DA LOJA. Omita para todas.",
         },
         edicao: {
           type: "string",

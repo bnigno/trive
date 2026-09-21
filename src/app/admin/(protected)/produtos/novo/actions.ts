@@ -10,6 +10,7 @@ import {
   selectGridVariants,
 } from "@/core/catalog/variant-grid";
 import { measurementsSchema } from "@/core/catalog/measurements";
+import { PIECE_TYPE_SLUGS } from "@/core/catalog/piece-types";
 import { normalizeSkuInput, validateSku } from "@/core/catalog/sku";
 import { getSalesAssistant } from "@/adapters/assistant";
 import type { ProductDraft } from "@/core/catalog/product-draft";
@@ -141,6 +142,7 @@ const payloadSchema = z.object({
   careNotes: z.string().trim().default(""),
   fitNotes: z.string().trim().default(""),
   brand: z.string().trim().default(""),
+  pieceType: z.enum(PIECE_TYPE_SLUGS).or(z.literal("")).default(""),
   categoryId: z
     .string()
     .trim()
@@ -230,6 +232,7 @@ export async function createProductAction(
       fitNotes: data.fitNotes || undefined,
       brand: data.brand || undefined,
       categoryId: data.categoryId || undefined,
+      pieceType: data.pieceType || undefined,
       attributesSchema: axes,
       variants,
       userId: user.id,

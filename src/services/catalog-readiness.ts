@@ -6,10 +6,12 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import {
   assessProductReadiness,
-  summarizeReadiness,
+  type LiaReadinessSummary,
   type ProductReadiness,
   type ReadinessSummary,
   type ReadinessVariantFacts,
+  summarizeLiaReadiness,
+  summarizeReadiness,
 } from "@/core/catalog/readiness";
 import {
   categories,
@@ -41,6 +43,10 @@ export async function listProductReadiness(
       id: products.id,
       status: products.status,
       description: products.description,
+      composition: products.composition,
+      fitNotes: products.fitNotes,
+      curatorNote: products.curatorNote,
+      pieceType: products.pieceType,
       categoryId: products.categoryId,
       coverPath: categories.coverPath,
     })
@@ -103,6 +109,10 @@ export async function listProductReadiness(
       assessProductReadiness({
         status: row.status,
         descriptionLength: (row.description ?? "").trim().length,
+        compositionLength: (row.composition ?? "").trim().length,
+        fitNotesLength: (row.fitNotes ?? "").trim().length,
+        curatorNoteLength: (row.curatorNote ?? "").trim().length,
+        pieceType: row.pieceType,
         photoCount: photosByProduct.get(row.id) ?? 0,
         categoryId: row.categoryId,
         categoryHasCover: row.coverPath !== null && row.coverPath !== undefined,
@@ -117,4 +127,9 @@ export async function listProductReadiness(
 export async function getReadinessSummary(db: ServiceDb): Promise<ReadinessSummary> {
   const readiness = await listProductReadiness(db);
   return summarizeReadiness([...readiness.values()]);
+}
+
+/** O card "O que falta para a Lia falar bem": quantas peças têm a ficha completa e o que falta, por campo. */
+export async function getLiaReadinessSummary(db: ServiceDb): Promise<LiaReadinessSummary> {
+  return summarizeLiaReadiness([...(await listProductReadiness(db)).values()]);
 }

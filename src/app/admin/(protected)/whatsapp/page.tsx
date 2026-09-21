@@ -49,6 +49,7 @@ import {
 import { QrAutoRefresh } from "./qr-auto-refresh";
 import { Rehearsal } from "./rehearsal";
 import { ResponseTimes } from "./response-times";
+import { brandWordWarning } from "@/core/bot/owner-instructions";
 
 export const dynamic = "force-dynamic";
 
@@ -462,6 +463,7 @@ export default async function WhatsappPage() {
             botModel={botModel}
             botMode={botMode}
             exchangePolicy={exchangePolicy}
+            exchangePolicyWarning={brandWordWarning(exchangePolicy)}
             botExtraInstructions={botExtraInstructions}
             quickReplies={quickReplies}
             handoffSilenceHours={data.handoffSilenceHours}

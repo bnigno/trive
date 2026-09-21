@@ -3,19 +3,20 @@ import { describe, expect, it } from "vitest";
 import { formatCentsBRL } from "@/lib/money";
 import {
   addNote,
+  CART_MAX_QTY,
   cartAdd,
   cartIndexOf,
   cartRemoveAt,
-  findCartItem,
-  mergeCartByVariant,
-  sameProductName,
-  CART_MAX_QTY,
   cartSubtotalCents,
+  EXTRA_LINES_MAX,
+  findCartItem,
   formatCartLines,
-  NOTES_MAX,
   mergeBridgeIntoState,
+  mergeCartByVariant,
+  NOTES_MAX,
   parseBotState,
   renderContextNote,
+  sameProductName,
   type BotCartItem,
 } from "@/core/bot/memory";
 
@@ -315,5 +316,15 @@ describe("renderContextNote", () => {
   it("guarda quando a cotação foi feita", () => {
     const state = parseBotState({ lastCep: "68795000", lastQuotedAt: "2026-09-11T12:00:00.000Z" });
     expect(state.lastQuotedAt).toBe("2026-09-11T12:00:00.000Z");
+  });
+});
+
+describe("renderContextNote — teto das linhas extras", () => {
+  it("entram no máximo EXTRA_LINES_MAX linhas extras (as últimas caem); vazias não ocupam vaga", () => {
+    const lines = Array.from({ length: EXTRA_LINES_MAX + 3 }, (_, i) => `Linha ${i + 1}`);
+    const note = renderContextNote({}, { lines: ["", ...lines, ""], now: new Date("2026-09-20T15:00:00Z") })!;
+    expect(note).toContain(`• Linha ${EXTRA_LINES_MAX}`);
+    expect(note).not.toContain(`• Linha ${EXTRA_LINES_MAX + 1}`);
+    expect(note).not.toMatch(/^• $/m);
   });
 });

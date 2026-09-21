@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
-import { getReadinessSummary, listProductReadiness } from "@/services/catalog-readiness";
+import { getLiaReadinessSummary, getReadinessSummary, listProductReadiness } from "@/services/catalog-readiness";
 import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 
 let db: TestDb;
@@ -58,7 +58,7 @@ async function createReadyProduct(): Promise<{ productId: string; variantId: str
   const categoryId = await createCategory("categories/x-full.webp");
   await db
     .update(schema.products)
-    .set({ description: LONG_DESCRIPTION, categoryId })
+    .set({ description: LONG_DESCRIPTION, categoryId, composition: "100% linho", fitNotes: "Veste fiel ao tamanho.", curatorNote: "Minha peça preferida para o calor.", pieceType: "vestido" })
     .where(eq(schema.products.id, productId));
   await db.update(schema.productVariants).set({ weightGrams: 300 }).where(eq(schema.productVariants.id, variantId));
   await addPhotos(productId, 2);
@@ -70,7 +70,7 @@ describe("listProductReadiness", () => {
   it("peça completa é 'pronta'", async () => {
     const { productId } = await createReadyProduct();
     const readiness = await listProductReadiness(db, { productIds: [productId] });
-    expect(readiness.get(productId)).toEqual({ level: "ready", issues: [], primaryIssue: null });
+    expect(readiness.get(productId)).toEqual({ level: "ready", issues: [], primaryIssue: null, lia: [] });
   });
 
   it("sem preço bloqueia; com versão pendente diz que aguarda aprovação", async () => {
@@ -136,5 +136,18 @@ describe("getReadinessSummary", () => {
 
     await db.update(schema.products).set({ status: "archived" }).where(eq(schema.products.id, rascunho.productId));
     expect(await getReadinessSummary(db)).toEqual({ ready: 1, total: 1, allReady: true });
+  });
+});
+
+describe("getLiaReadinessSummary", () => {
+  it("conta a ficha da Lia por campo, sem as arquivadas", async () => {
+    await createReadyProduct();
+    const semFicha = await createTestVariant(db, { onHand: 1 });
+    const arquivada = await createTestVariant(db, { onHand: 1 });
+    await db.update(schema.products).set({ status: "archived" }).where(eq(schema.products.id, arquivada.productId));
+    const summary = await getLiaReadinessSummary(db);
+    expect(summary).toEqual({ total: 2, complete: 1, byCode: { no_piece_type: 1, no_composition: 1, no_fit_notes: 1, no_curator_note: 1 } });
+    const readiness = await listProductReadiness(db, { productIds: [semFicha.productId] });
+    expect(readiness.get(semFicha.productId)?.lia.map((issue) => issue.code)).toEqual(["no_piece_type", "no_composition", "no_fit_notes", "no_curator_note"]);
   });
 });

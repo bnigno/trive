@@ -53,6 +53,40 @@ describe("renderStoreMap", () => {
     ).not.toContain("Edições de Belém");
   });
 
+  it("tipos de peça viram sub-linhas da categoria, com 'sem tipo' e a dica de que categoria aceita tipo; sem tipos, a saída é a de sempre", () => {
+    const base = { totalProducts: 33, colors: [], sizes: [] };
+    const semTipos = renderStoreMap({ ...base, categories: [{ name: "Vestuário", slug: "vestuario", productCount: 33, priceFromCents: 8900, priceToCents: 45900 }] });
+    expect(semTipos).not.toContain("tipo:");
+    expect(semTipos).not.toContain("listar_produtos.categoria");
+
+    const comTipos = renderStoreMap({
+      ...base,
+      categories: [
+        {
+          name: "Vestuário",
+          slug: "vestuario",
+          productCount: 33,
+          priceFromCents: 8900,
+          priceToCents: 45900,
+          types: [
+            { type: "vestido", label: "Vestidos", productCount: 12, priceFromCents: 18900, priceToCents: 45900 },
+            { type: "corset", label: "Corsets", productCount: 4, priceFromCents: 22900, priceToCents: 28900 },
+          ],
+          untyped: 2,
+        },
+      ],
+    });
+    expect(comTipos).toContain(`• Vestuário (categoria: vestuario) — 33 peças, ${formatCentsBRL(8900)} a ${formatCentsBRL(45900)}`);
+    expect(comTipos).toContain(`  – Vestidos (tipo: vestido) — 12 peças, ${formatCentsBRL(18900)} a ${formatCentsBRL(45900)}`);
+    expect(comTipos).toContain(`  – Corsets (tipo: corset) — 4 peças, ${formatCentsBRL(22900)} a ${formatCentsBRL(28900)}`);
+    expect(comTipos).toContain("  – sem tipo marcado — 2 peças (o filtro por tipo não as vê; busque pelo nome)");
+    // Categoria com peças mas NENHUM tipo marcado: a Lia fica sabendo que o filtro está cego.
+    const cega = renderStoreMap({ ...base, categories: [{ name: "Vestuário", slug: "vestuario", productCount: 33, priceFromCents: 8900, priceToCents: 45900, types: [], untyped: 33 }] });
+    expect(cega).toContain("  – sem tipo marcado — 33 peças");
+    expect(cega).toContain("listar_produtos.categoria");
+    expect(comTipos).toContain('Em listar_produtos.categoria vale a categoria OU o tipo (ex.: "corset").');
+  });
+
   it("corta listas longas de valores sem esconder que há mais", () => {
     const cores = Array.from({ length: 30 }, (_, i) => `Cor ${i}`);
     const texto = renderStoreMap({

@@ -15,7 +15,7 @@ import {
   thumbPathFor,
   type ProductListItem,
 } from "@/services/catalog";
-import { listProductReadiness } from "@/services/catalog-readiness";
+import { getLiaReadinessSummary, listProductReadiness } from "@/services/catalog-readiness";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -32,7 +32,8 @@ import {
   RemoveCategoryCoverForm,
 } from "./category-cover-form";
 import { CategoryForm } from "./category-form";
-import { ReadinessBadge } from "./readiness-badge";
+import { LiaIssueLinks, ReadinessBadge } from "./readiness-badge";
+import { LIA_ISSUES, LIA_READINESS_CODES, type LiaReadinessCode } from "@/core/catalog/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -78,11 +79,12 @@ function parseReadinessFilter(value: string): ReadinessFilter | undefined {
   return value === "faltando" || value === "pronta" ? value : undefined;
 }
 
-function listUrl(q: string, status: string, prontidao = ""): string {
+function listUrl(q: string, status: string, prontidao = "", lia = ""): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (status) params.set("status", status);
   if (prontidao) params.set("prontidao", prontidao);
+  if (lia) params.set("lia", lia);
   const query = params.toString();
   return query ? `/admin/produtos?${query}` : "/admin/produtos";
 }
@@ -105,7 +107,7 @@ function PriceRange({ item }: { item: ProductListItem }) {
 export default async function ProdutosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; prontidao?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; prontidao?: string; lia?: string }>;
 }) {
   await requireUser();
   const params = await searchParams;
@@ -114,6 +116,8 @@ export default async function ProdutosPage({
   const status = parseStatus(statusParam);
   const readinessParam = (params.prontidao ?? "").trim();
   const readinessFilter = parseReadinessFilter(readinessParam);
+  const liaParam = (params.lia ?? "").trim();
+  const liaFilter = (LIA_READINESS_CODES as readonly string[]).includes(liaParam) ? (liaParam as LiaReadinessCode) : null;
 
   const db = getDb();
   const storage = getFileStorage();
@@ -122,11 +126,13 @@ export default async function ProdutosPage({
     listProducts(db, { search: q || undefined, status }),
     db.select().from(categories).orderBy(asc(categories.name)),
   ]);
-  const readiness = await listProductReadiness(db, {
-    productIds: allItems.map((item) => item.id),
-  });
+  const [readiness, liaSummary] = await Promise.all([
+    listProductReadiness(db, { productIds: allItems.map((item) => item.id) }),
+    getLiaReadinessSummary(db),
+  ]);
   // "Faltando algo" = quase pronta ou bloqueada; arquivadas ficam fora dos dois chips.
   const items = allItems.filter((item) => {
+    if (liaFilter && !readiness.get(item.id)?.lia.some((issue) => issue.code === liaFilter)) return false;
     if (!readinessFilter) return true;
     const level = readiness.get(item.id)?.level;
     return readinessFilter === "pronta"
@@ -180,7 +186,7 @@ export default async function ProdutosPage({
     }
   }
 
-  const hasFilters = Boolean(q || status || readinessFilter);
+  const hasFilters = Boolean(q || status || readinessFilter || liaFilter);
 
   return (
     <div className="flex flex-col gap-6">
@@ -212,6 +218,45 @@ export default async function ProdutosPage({
         }
       />
 
+      {/* A ficha da Lia (composição, como veste, nota, tipo) mora em cards só do dono: staff não vê o card nem os links. */}
+      <OwnerOnly>
+      {liaSummary.complete < liaSummary.total ? (
+        <section
+          className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30"
+          data-lia-summary=""
+        >
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">O que falta para a Lia falar bem das peças</h2>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+            A Lia só fala do que está na ficha: {liaSummary.complete} de {liaSummary.total} peças estão completas.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {LIA_READINESS_CODES.filter((code) => liaSummary.byCode[code] > 0).map((code) => (
+              <Link
+                key={code}
+                href={liaFilter === code ? listUrl(q, statusParam, readinessFilter) : listUrl(q, statusParam, readinessFilter, code)}
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  liaFilter === code
+                    ? "border-amber-600 bg-amber-600 text-white"
+                    : "border-amber-300 bg-white text-zinc-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-zinc-900 dark:text-zinc-200"
+                }`}
+              >
+                {LIA_ISSUES[code].label.replace(/ \(.*\)$/, "")} · {liaSummary.byCode[code]}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      </OwnerOnly>
+
+      {liaFilter ? (
+        <p className="text-xs text-zinc-600 dark:text-zinc-300" data-lia-filter="">
+          Filtro ativo: {LIA_ISSUES[liaFilter].label.replace(/ \(.*\)$/, "")} ·{" "}
+          <Link href={listUrl(q, statusParam, readinessFilter)} className="underline">
+            limpar
+          </Link>
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-3">
         <form
           method="get"
@@ -231,6 +276,7 @@ export default async function ProdutosPage({
           {readinessFilter ? (
             <input type="hidden" name="prontidao" value={readinessFilter} />
           ) : null}
+          {liaFilter ? <input type="hidden" name="lia" value={liaFilter} /> : null}
           <Button type="submit" variant="outline" className="shrink-0">
             Buscar
           </Button>
@@ -242,7 +288,7 @@ export default async function ProdutosPage({
             return (
               <Link
                 key={filter.value || "todos"}
-                href={listUrl(q, filter.value, readinessFilter)}
+                href={listUrl(q, filter.value, readinessFilter, liaFilter ?? "")}
                 className={cx(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   isCurrent
@@ -260,7 +306,7 @@ export default async function ProdutosPage({
             return (
               <Link
                 key={filter.value}
-                href={listUrl(q, statusParam, isCurrent ? "" : filter.value)}
+                href={listUrl(q, statusParam, isCurrent ? "" : filter.value, liaFilter ?? "")}
                 className={cx(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                   isCurrent
@@ -353,6 +399,9 @@ export default async function ProdutosPage({
                   {/* O selo mora embaixo do nome: no celular, a última coluna fica fora da tela. */}
                   <div className="mt-1">
                     <ReadinessBadge productId={item.id} readiness={readiness.get(item.id)} />
+                    <OwnerOnly>
+                      <LiaIssueLinks productId={item.id} issues={readiness.get(item.id)?.lia ?? []} />
+                    </OwnerOnly>
                   </div>
                 </Td>
                 <Td>{item.variantCount}</Td>

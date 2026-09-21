@@ -52,12 +52,10 @@ describe("buildBotSystemPrompt", () => {
 
   it("subordina a personalidade à exatidão e manda baixar a brincadeira em problema", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
-    // 17: exatidão ganha da graça; elogio nunca vira pressão de venda.
-    expect(prompt).toContain("17.");
+    // Exatidão ganha da graça; elogio nunca vira pressão de venda.
     expect(prompt).toContain("seja exata");
-    expect(prompt).toContain("pressionar a compra");
-    // 18: cliente irritada não recebe piada.
-    expect(prompt).toContain("18.");
+    expect(prompt).toContain("Nunca elogie para pressionar");
+    // Cliente irritada não recebe piada.
     expect(prompt).toContain("baixe a brincadeira");
   });
 
@@ -69,32 +67,30 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("transferir_para_atendente");
     expect(prompt).toContain("SAIR");
     expect(prompt).toContain("nota fiscal");
-    expect(prompt).toContain("1.");
-    expect(prompt).toContain("10.");
-    expect(prompt).toContain("15.");
-    expect(prompt).toContain("19.");
+    // Numeradas do 1 ao 22, sem buraco (os testes ancoram nos títulos, não nos números).
+    const regras = prompt.slice(prompt.indexOf("REGRAS DURAS"));
+    expect(regras.match(/^(\d+)\. /gm)?.map((m) => Number(m))).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
   });
 
   it("exige confirmar cor e tamanho antes de pôr na sacola em peça com variação", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
-    expect(prompt).toContain("12.");
     expect(prompt).toContain("COR e TAMANHO");
     expect(prompt).toContain("SKU exato");
     // O bot não pode "chutar" o tamanho para adiantar a venda.
     expect(prompt).toContain("nunca escolha por ela");
     // A sacola é a fonte do pedido e o frete escolhido vai em criar_pedido.
-    expect(prompt).toContain("13.");
-    expect(prompt).toContain("passe em frete a opção que a cliente escolheu");
+    expect(prompt).toContain("A SACOLA é o pedido");
+    expect(prompt).toContain("frete = a opção que ela escolheu");
   });
 
   it("cupom só pela ferramenta e histórico de compras para quem volta", () => {
     const prompt = buildBotSystemPrompt(promptOptions);
     expect(prompt).toContain("Cupom só existe se validar_cupom confirmar");
     expect(prompt).toContain("criar_pedido.cupom");
-    expect(prompt).toContain("cupom validado por validar_cupom NESTA conversa");
+    expect(prompt).toContain("cupom validado por validar_cupom nesta conversa");
     expect(prompt).toContain("chame historico_de_compras quando ela perguntar o que levou");
     expect(prompt).toContain("Nunca cite compra que a ferramenta não devolveu");
-    expect(prompt).toContain("e em cupom o código que validar_cupom confirmou");
+    expect(prompt).toContain("cupom = o código que validar_cupom confirmou");
     expect(prompt).toContain('se ela desistir do cupom, passe cupom vazio ""');
     const cupomDesc = (BOT_TOOLS.find((tool) => tool.name === "criar_pedido")?.input_schema.properties as Record<string, { description: string }>).cupom.description;
     expect(cupomDesc).toContain("OMITIDO = aplica o cupom já validado");
@@ -114,22 +110,21 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("explicitamente");
   });
 
-  it("inclui extraInstructions rotulado quando não-vazio", () => {
+  it("inclui extraInstructions como TOM E FATOS DO DONO, subordinado ao método e às regras", () => {
     const prompt = buildBotSystemPrompt({
       ...promptOptions,
       extraInstructions: "Frete grátis acima de R$ 200.",
     });
-    expect(prompt).toContain("Instruções do dono da loja:");
+    expect(prompt).toContain("TOM E FATOS DO DONO");
+    expect(prompt).toContain("prevalecem");
     expect(prompt).toContain("Frete grátis acima de R$ 200.");
   });
 
-  it("omite o rótulo quando extraInstructions é vazio ou só espaços", () => {
-    expect(buildBotSystemPrompt(promptOptions)).not.toContain(
-      "Instruções do dono da loja:",
-    );
+  it("omite o bloco quando extraInstructions é vazio ou só espaços", () => {
+    expect(buildBotSystemPrompt(promptOptions)).not.toContain("TOM E FATOS DO DONO");
     expect(
       buildBotSystemPrompt({ ...promptOptions, extraInstructions: "  \n " }),
-    ).not.toContain("Instruções do dono da loja:");
+    ).not.toContain("TOM E FATOS DO DONO");
   });
 });
 

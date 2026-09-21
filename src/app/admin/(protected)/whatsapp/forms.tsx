@@ -25,6 +25,7 @@ import {
   type FormState,
 } from "./actions";
 import { PREVIEW_VARIABLES, TEMPLATE_TRIGGERS } from "./template-triggers";
+import { ownerTextWarnings } from "@/core/bot/owner-instructions";
 
 const INITIAL_STATE: FormState = {};
 
@@ -203,6 +204,7 @@ export function BotSettingsForm({
   botModel,
   botMode,
   exchangePolicy,
+  exchangePolicyWarning,
   botExtraInstructions,
   quickReplies,
   handoffSilenceHours,
@@ -213,6 +215,8 @@ export function BotSettingsForm({
   botModel: string;
   botMode: string;
   exchangePolicy: string;
+  /** Aviso quando a política de troca chama a loja de "maison" (a ficha da Lia a repete). */
+  exchangePolicyWarning?: string | null;
   botExtraInstructions: string;
   quickReplies: string;
   handoffSilenceHours: number;
@@ -223,6 +227,8 @@ export function BotSettingsForm({
     saveBotSettingsAction,
     INITIAL_STATE,
   );
+  // Avisos ao vivo: o que a dona escreve que a Lia não pode cumprir aparece antes de salvar.
+  const [instructionWarnings, setInstructionWarnings] = useState(() => ownerTextWarnings(botExtraInstructions));
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -264,19 +270,28 @@ export function BotSettingsForm({
           defaultValue={exchangePolicy}
           placeholder="Ex.: Troca em até 7 dias após a entrega, com etiqueta e sem uso; o frete da troca é por nossa conta na primeira vez."
         />
+        {exchangePolicyWarning ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">⚠️ {exchangePolicyWarning}</p> : null}
       </Field>
 
       <Field
-        label="Instruções extras (opcional)"
-        hint="Escreva como se orientasse uma vendedora nova: o que destacar, o que evitar, promoções da semana. Preços, estoque e frete ela SEMPRE busca do sistema — instruções não mudam isso."
+        label="Tom e fatos da loja (opcional)"
+        hint="Ajustam o tom da Lia e completam a ficha da loja (ex.: “fale com calma, sem gíria”, “a produção é em Belém, em edições pequenas”). O método de venda e as regras duras continuam valendo: não peça para ela perguntar o nome, dar desconto ou prometer prazo — preço, estoque e frete ela sempre busca no sistema."
       >
         <TextArea
           name="botExtraInstructions"
           rows={4}
           maxLength={2000}
           defaultValue={botExtraInstructions}
-          placeholder="Ex.: Destaque que a produção é artesanal e que enviamos em até 2 dias úteis."
+          placeholder="Ex.: Fale de “você”, com calma. Destaque que as peças são escolhidas para o calor de Belém."
+          onChange={(event) => setInstructionWarnings(ownerTextWarnings(event.currentTarget.value))}
         />
+        {instructionWarnings.length > 0 ? (
+          <ul className="mt-2 flex flex-col gap-1 text-xs text-amber-700 dark:text-amber-400" data-owner-warnings="">
+            {instructionWarnings.map((warning) => (
+              <li key={warning}>⚠️ {warning}</li>
+            ))}
+          </ul>
+        ) : null}
       </Field>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
