@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { Field, FormError, FormSuccess, Input, SubmitButton } from "@/components/ui/form";
-import { saveLateDeliverySettingsAction, saveLookCouponSettingsAction, type FormState } from "./actions";
+import { saveLateDeliverySettingsAction, saveLookCouponSettingsAction, savePriceProtectionSettingsAction, type FormState } from "./actions";
 
 const INITIAL_STATE: FormState = {};
 
@@ -87,6 +87,43 @@ export function LookCouponSettingsForm({ defaults }: { defaults: LookCouponFormD
       <FormSuccess message={state.success} />
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar mimo pela foto</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export type PriceProtectionFormDefaults = { enabled: boolean; days: number };
+
+export function PriceProtectionSettingsForm({ defaults }: { defaults: PriceProtectionFormDefaults }) {
+  const [state, formAction] = useActionState(savePriceProtectionSettingsAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          name="enabled"
+          defaultChecked={defaults.enabled}
+          className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <span>
+          Proteção de preço
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+            Quando uma peça baixa de preço, quem pagou mais nos últimos dias ganha a diferença em cupom (30 dias) e uma
+            mensagem. Um cupom por pedido e peça; segunda queda na janela não gera outro. Atenção ao remarcar muitas peças
+            de uma vez: pode sair um cupom por cliente recente.
+          </span>
+        </span>
+      </label>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Janela depois do pagamento (dias)" hint="Pedidos pagos há até N dias contam. Ex.: 14.">
+          <Input name="days" type="number" min={1} max={60} step={1} defaultValue={String(defaults.days)} />
+        </Field>
+      </div>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar proteção de preço</SubmitButton>
       </div>
     </form>
   );

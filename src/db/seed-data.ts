@@ -79,6 +79,9 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "look_coupon_enabled", value: false },
   { key: "look_coupon_percent", value: 10 },
   { key: "look_coupon_days", value: 60 },
+  // Proteção de preço: desligada até a dona ligar em /admin/cupons.
+  { key: "price_protection_enabled", value: false },
+  { key: "price_protection_days", value: 14 },
   // "Quem já vestiu": foto da cliente com a peça vira cartão + consentimento.
   { key: "customer_looks_enabled", value: true },
   // Provador (grupos): nasce desligado — a dona liga quando registrar a primeira sala.
@@ -222,6 +225,15 @@ export const initialWaTemplates: Array<{
       "Para compensar, o cupom {{cupom}} vale {{valor}} na sua próxima compra, até {{validade}}: é só dizer o código por aqui ou usar em {{link}}.\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "pedido", "atraso", "cupom", "valor", "validade", "link"],
+  },
+  {
+    key: "price_protection_coupon",
+    label: "Proteção de preço (cupom da diferença)",
+    bodyTemplate:
+      "{{nome}}, {{peca}} que você levou no pedido #{{pedido}} baixou de preço — e quem comprou antes não fica para trás 🤎\n" +
+      "A diferença ({{valor}}) virou o cupom {{cupom}}, válido até {{validade}}, para a próxima compra: é só dizer o código por aqui ou usar em {{link}}.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "peca", "pedido", "valor", "cupom", "validade", "link"],
   },
   {
     key: "delivery_feedback_ask",

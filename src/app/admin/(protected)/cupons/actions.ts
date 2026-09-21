@@ -330,3 +330,20 @@ export async function saveLookCouponSettingsAction(
     return { error: toErrorMessage(error) };
   }
 }
+
+/** Cupons automáticos — proteção de preço. */
+export async function savePriceProtectionSettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("cupons");
+  try {
+    const db = getDb();
+    await updateSetting(db, { key: "price_protection_enabled", value: formData.get("enabled") === "on", userId: user.id });
+    await updateSetting(db, { key: "price_protection_days", value: parseIntField(text(formData, "days"), "Janela depois do pagamento (dias)", 1, 60), userId: user.id });
+    revalidatePath("/admin/cupons");
+    return { success: "Proteção de preço salva." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}

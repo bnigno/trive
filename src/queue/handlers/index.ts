@@ -35,6 +35,7 @@ const storeRevalidatePayloadSchema = z.object({ paths: z.array(z.string().regex(
 import { askDeliveryFeedback, feedbackAskPayloadSchema, scheduleDeliveryFeedback } from "@/services/delivery-feedback";
 import { couponIssuedPayloadSchema, sendCouponIssuedWa } from "@/services/coupon-notices";
 import { issueLateDeliveryCoupon, stopDeliveredPayloadSchema } from "@/services/late-delivery";
+import { priceActivatedPayloadSchema, protectPricesAfterDrop } from "@/services/price-protection";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -287,6 +288,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
         error,
       );
     }
+    // Proteção de preço: quem pagou mais nos últimos dias ganha a diferença em
+    // cupom (idempotente por pedido + variante; desligado = nada).
+    if (!event.aggregateId) return;
+    const payload = priceActivatedPayloadSchema.parse(event.payload);
+    const protection = await protectPricesAfterDrop(getDb(), { versionId: event.aggregateId, ...payload });
+    console.info(`[price.activated] ${event.aggregateId} → ${JSON.stringify(protection)}`);
   },
   // Marcos do pedido: e-mail (Fase 3) + WhatsApp (Fase 4) no MESMO evento.
   // Falha de qualquer provedor LANÇA de propósito: retry/backoff/DLQ da fila
