@@ -42,11 +42,21 @@ export async function findCustomerByDocumentOrPhone(
   return null;
 }
 
-/** Compras de verdade (paga em diante; reembolsada só se a caixa saiu) — a régua da estreia. */
-export async function countCustomerPurchases(db: DbOrTx, customerId: string): Promise<number> {
+/**
+ * Compras de verdade (paga em diante; reembolsada só se a caixa saiu) — a
+ * régua da estreia. Com `includePending`, um pedido aguardando pagamento
+ * também conta (o cupom de primeira compra não pode valer duas vezes
+ * enquanto o primeiro Pix não cai).
+ */
+export async function countCustomerPurchases(
+  db: DbOrTx,
+  customerId: string,
+  options: { includePending?: boolean } = {},
+): Promise<number> {
+  const statuses = options.includePending ? [...COUNTED_STATUSES, "pending_payment"] : [...COUNTED_STATUSES];
   const rows = await db
     .select({ status: orders.status, shippedAt: orders.shippedAt })
     .from(orders)
-    .where(and(eq(orders.customerId, customerId), inArray(orders.status, [...COUNTED_STATUSES])));
-  return rows.filter(countsAsPurchase).length;
+    .where(and(eq(orders.customerId, customerId), inArray(orders.status, statuses)));
+  return rows.filter((row) => row.status === "pending_payment" || countsAsPurchase(row)).length;
 }

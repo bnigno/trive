@@ -34,6 +34,7 @@ import {
   productVariants,
   products,
 } from "@/db/schema";
+import { toE164BR } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { countCustomerPurchases, findCustomerByDocumentOrPhone } from "@/services/customer-lookup";
 
@@ -305,12 +306,15 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     identity = { customerId, phoneE164 };
   }
 
+  // "Primeira compra" conta também o pedido ainda aguardando pagamento: dois
+  // fechamentos seguidos com o mesmo cupom de estreia não passam; se o
+  // primeiro expirar, ele é cancelado e deixa de contar.
   const priorPurchases =
     !coupon.firstPurchaseOnly || identity === null
       ? null
       : identity.customerId === null
         ? 0
-        : await countCustomerPurchases(db, identity.customerId);
+        : await countCustomerPurchases(db, identity.customerId, { includePending: true });
   const priorRedemptionsByThisCustomer =
     coupon.perCustomerLimit === null || identity === null
       ? null
@@ -439,6 +443,18 @@ const issueCouponSchema = z.object({
   codePrefix: z.string().trim().min(1).max(12).optional(),
   now: z.date().optional(),
   random: z.custom<() => number>((value) => typeof value === "function").optional(),
+}).superRefine((value, ctx) => {
+  // Mesmas réguas do CHECK do banco, com erro legível ANTES do INSERT (um
+  // INSERT recusado abortaria a transação de quem chamou).
+  if (value.type === "percent" && (value.value < 1 || value.value > 100)) {
+    ctx.addIssue({ code: "custom", path: ["value"], message: "Cupom percentual deve estar entre 1 e 100." });
+  }
+  if (value.type === "fixed" && value.value < 1) {
+    ctx.addIssue({ code: "custom", path: ["value"], message: "O valor do cupom deve ser maior que zero." });
+  }
+  if (value.type === "free_shipping" && value.value !== 0) {
+    ctx.addIssue({ code: "custom", path: ["value"], message: "Cupom de frete grátis não tem valor." });
+  }
 });
 
 export type IssueCouponInput = z.input<typeof issueCouponSchema>;
@@ -499,8 +515,10 @@ export async function issueCoupon(tx: DbOrTx, input: IssueCouponInput): Promise<
     origin: parsed.origin,
     note: parsed.note === "" ? null : parsed.note,
     perCustomerLimit: parsed.perCustomerLimit === undefined ? 1 : parsed.perCustomerLimit,
+    // Pessoal por cadastro e/ou por telefone (um contato sem cadastro ainda
+    // pode ter um cupom só dele); sem nenhum dos dois é um vale aberto.
     customerId: parsed.customerId,
-    phoneE164: parsed.customerId === null ? null : phoneE164,
+    phoneE164,
     firstPurchaseOnly: parsed.firstPurchaseOnly ?? false,
     freeShippingScope: parsed.freeShippingScope ?? "any",
     dedupeKey: parsed.dedupeKey,
@@ -756,13 +774,18 @@ async function resolveProductRefs(db: DbOrTx, refs: string[]): Promise<string[]>
   return [...ids];
 }
 
+/** Telefone como a dona digita → E.164 (+55…); acha o cadastro quando existe. */
 async function resolvePersonalIdentity(
   db: DbOrTx,
   customerPhone: string | null | undefined,
 ): Promise<{ customerId: string | null; phoneE164: string | null }> {
   if (!customerPhone) return { customerId: null, phoneE164: null };
-  const known = await findCustomerByDocumentOrPhone(db, { phoneE164: customerPhone });
-  return { customerId: known?.id ?? null, phoneE164: customerPhone };
+  const phoneE164 = toE164BR(customerPhone);
+  if (!phoneE164) {
+    throw new ServiceError("COUPON_PHONE_INVALID", "Telefone da cliente inválido: use DDD + número, ex.: (91) 99999-0000.");
+  }
+  const known = await findCustomerByDocumentOrPhone(db, { phoneE164 });
+  return { customerId: known?.id ?? null, phoneE164 };
 }
 
 function ruleSnapshot(coupon: Coupon): Record<string, unknown> {

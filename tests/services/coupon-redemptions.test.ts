@@ -135,6 +135,16 @@ describe("issueCoupon", () => {
     await expect(issue({ customerId: ana, dedupeKey: "terceira", codePrefix: "DESCULPA", random: () => 0.42 })).rejects.toMatchObject({ code: "COUPON_CODE_COLLISION" });
   });
 
+  it("sem cadastro mas com telefone: o cupom fica preso ao telefone; valor fora da régua é erro antes do INSERT", async () => {
+    const lead = await issue({ customerId: null, phoneE164: "+5591988880000", dedupeKey: "lead-1", random: Math.random });
+    const [row] = await db.select().from(schema.coupons).where(eq(schema.coupons.id, lead.couponId));
+    expect(row).toMatchObject({ customerId: null, phoneE164: "+5591988880000" });
+
+    await expect(issue({ customerId: null, dedupeKey: "ruim-1", type: "percent", value: 0 })).rejects.toThrowError(/entre 1 e 100/);
+    await expect(issue({ customerId: null, dedupeKey: "ruim-2", type: "fixed", value: 0 })).rejects.toThrowError(/maior que zero/);
+    await expect(issue({ customerId: null, dedupeKey: "ruim-3", type: "free_shipping", value: 5 })).rejects.toThrowError(/não tem valor/);
+  });
+
   it("frete grátis emitido nasce com value 0 e escopo; cliente desconhecida é erro", async () => {
     const ana = await createTestCustomer(db, "Ana");
     const frete = await issue({ customerId: ana, type: "free_shipping", value: 0, freeShippingScope: "motoboy" });

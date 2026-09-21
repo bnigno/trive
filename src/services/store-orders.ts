@@ -214,6 +214,12 @@ export interface CreateStoreOrderResult {
   /** Null em pedido 'cash' (dinheiro na entrega não expira). */
   paymentDueAt: Date | null;
   totalCents: number;
+  /** Desconto nas peças (0 em cupom de frete grátis). */
+  discountCents: number;
+  /** Frete COBRADO (0 quando o cupom perdoou o frete). */
+  shippingCents: number;
+  /** O cupom aplicado, como foi gravado; null sem cupom. */
+  coupon: { code: string; freeShipping: boolean; shippingDiscountCents: number } | null;
 }
 
 export async function createStoreOrder(
@@ -849,6 +855,9 @@ export async function createStoreOrder(
       publicToken: order.publicToken,
       paymentDueAt,
       totalCents: totals.totalCents,
+      discountCents: coupon?.discountCents ?? 0,
+      shippingCents: chargedShippingCents,
+      coupon: coupon ? { code: coupon.code, freeShipping: coupon.freeShipping, shippingDiscountCents } : null,
     };
   });
 }

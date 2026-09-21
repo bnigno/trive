@@ -360,12 +360,11 @@ export async function execCriarPedido(
     }
   }
 
-  const subtotalCents = resolved.reduce(
-    (sum, r) => sum + r.unitPriceCents * r.quantity,
-    0,
-  );
-  const discountCents = subtotalCents + chosen.priceCents - created.totalCents;
-
+  // O frete da linha é o COBRADO (0 com cupom de frete grátis) e o desconto é
+  // o gravado no pedido — nunca uma subtração de cabeça.
+  const freteLabel = created.coupon?.freeShipping
+    ? `grátis pelo cupom ${created.coupon.code}`
+    : formatCentsBRL(created.shippingCents);
   const lines = [
     `Pedido #${created.orderNumber} criado! 🎉`,
     ...resolved.map(
@@ -373,10 +372,10 @@ export async function execCriarPedido(
         `• ${r.quantity}× ${r.name} — ${formatCentsBRL(r.unitPriceCents * r.quantity)}`,
     ),
     chosen.kind === "motoboy" && chosen.label
-      ? `Entrega: ${chosen.name} — ${chosen.label} — ${formatCentsBRL(chosen.priceCents)}`
-      : `Frete (${chosen.name}): ${formatCentsBRL(chosen.priceCents)}`,
+      ? `Entrega: ${chosen.name} — ${chosen.label} — ${freteLabel}`
+      : `Frete (${chosen.name}): ${freteLabel}`,
     ...(neededBy ? [`Data marcada: ${neededByLabel(neededBy, occasion)}${chosen.arrival ? ` — ${chosen.arrival}` : ""}`] : []),
-    ...(discountCents > 0 ? [`Desconto: -${formatCentsBRL(discountCents)}`] : []),
+    ...(created.discountCents > 0 ? [`Desconto${created.coupon ? ` (${created.coupon.code})` : ""}: -${formatCentsBRL(created.discountCents)}`] : []),
     `TOTAL: ${formatCentsBRL(created.totalCents)}`,
     ...(input.presente
       ? [

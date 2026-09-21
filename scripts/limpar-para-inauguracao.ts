@@ -90,7 +90,7 @@ async function exportRows(db: ReturnType<typeof getDb>, dir: string): Promise<vo
     inbound_events: `WHERE source = 'zapi'`,
     stock_movements: `WHERE reference_type IN ('order', 'hold')`,
     financial_entries: `WHERE order_id IS NOT NULL`,
-    coupons: `WHERE customer_id IS NOT NULL OR dedupe_key IS NOT NULL`,
+    // coupons sem filtro: os da dona ficam, mas o used_count de todos é zerado.
   };
   // Também o que é atualizado/apagado fora da lista: faixas, peças, cupons e saldos de antes.
   const extra = ["shipping_rates", "products", "product_variants", "stock_levels"];

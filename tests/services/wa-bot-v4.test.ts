@@ -339,6 +339,10 @@ describe("validar_cupom", () => {
       uf: "SP",
     });
     expect(created.ok).toBe(true);
+    // O resumo fala do frete grátis, não de um "desconto" nas peças.
+    expect(created.text).toContain("grátis pelo cupom FRETE");
+    expect(created.text).not.toContain("Desconto:");
+    expect(created.text).toContain(`TOTAL: ${formatCentsBRL(8990)}`);
     const [order] = await db.select().from(schema.orders);
     expect(order.couponCode).toBe("FRETE");
     expect(order.shippingCents).toBe(0);

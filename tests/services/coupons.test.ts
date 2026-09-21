@@ -244,6 +244,14 @@ describe("quoteCoupon", () => {
     const nova = await quoteCoupon(sdb, { code: "ESTREIA", items: [item], identity: { phoneE164: "+5591988887777" } });
     expect(nova.pending).toEqual([]);
     expect((await quoteCoupon(sdb, { code: "ESTREIA", items: [item] })).pending).toEqual(["first_purchase"]);
+
+    // Pedido ainda aguardando o Pix também conta: a estreia não vale duas vezes seguidas.
+    const pendente = await createTestCustomer(db, "Bia Pendente");
+    await db.insert(schema.orders).values({ customerId: pendente, status: "pending_payment", subtotalCents: 1000, discountCents: 0, shippingCents: 0, totalCents: 1000 });
+    await expect(quoteCoupon(sdb, { code: "ESTREIA", items: [item], identity: { customerId: pendente } })).rejects.toMatchObject({ code: "COUPON_FIRST_PURCHASE_ONLY" });
+    // Cancelado sem pagar deixa de contar.
+    await db.update(schema.orders).set({ status: "canceled" }).where(eq(schema.orders.customerId, pendente));
+    expect((await quoteCoupon(sdb, { code: "ESTREIA", items: [item], identity: { customerId: pendente } })).pending).toEqual([]);
   });
 
   it("janela de horário e dia da semana no relógio de São Paulo", async () => {
@@ -349,6 +357,12 @@ describe("createCoupon", () => {
 
     await expect(makeCoupon({ code: "X1", productRefs: ["nao-existe"] })).rejects.toMatchObject({ code: "COUPON_PRODUCT_UNKNOWN" });
     await expect(makeCoupon({ code: "X2", validFromMinute: 840 })).rejects.toThrowError(/início e o de fim/);
+  });
+
+  it("telefone da cliente como a dona digita vira E.164; inválido é erro amigável", async () => {
+    const pessoal = await makeCoupon({ code: "PESSOAL", customerPhone: "(91) 99999-0000" });
+    expect(pessoal.phoneE164).toBe("+5591999990000");
+    await expect(makeCoupon({ code: "X3", customerPhone: "123" })).rejects.toMatchObject({ code: "COUPON_PHONE_INVALID" });
   });
 });
 
