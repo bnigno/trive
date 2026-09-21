@@ -1062,7 +1062,7 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   não menciona desconto. O motivo fica na nota do cupom (lista com "Ver
   conversa"). No ensaio nada é emitido (`ENSAIO-CARINHO`). Produção:
   `scripts/sync-seed.ts --settings lia_gift_enabled,lia_gift_percent,lia_gift_daily_quota,lia_gift_min_purchases,lia_gift_min_cart_cents,lia_gift_days,lia_gift_cooldown_days`
-  e a migração 0051.
+  e a migração 0052.
 
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")
 
