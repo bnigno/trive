@@ -1,10 +1,18 @@
+import { isWaGroupId } from "@/lib/phone";
+
 import type {
   DownloadedMedia,
+  GroupMetadata,
+  GroupSettings,
+  GroupSummary,
   MessagingProvider,
   OutboundAudioMessage,
   OutboundImageMessage,
   OutboundOptionListMessage,
+  OutboundPollMessage,
+  OutboundReaction,
   OutboundTextMessage,
+  PinDuration,
   QrCode,
   RecentChat,
   SentMessage,
@@ -16,6 +24,8 @@ export type FakeSentMessage = {
   toE164: string;
   body: string;
   typingSeconds?: number;
+  quotedProviderMessageId?: string;
+  mentionedPhones?: string[];
 };
 
 // PNG 1x1 transparente — QR code fake para os fluxos de pareamento no admin.
@@ -53,8 +63,95 @@ export class FakeMessagingProvider implements MessagingProvider {
       toE164: message.toE164,
       body: message.body,
       ...(message.typingSeconds !== undefined ? { typingSeconds: message.typingSeconds } : {}),
+      ...(message.quotedProviderMessageId !== undefined
+        ? { quotedProviderMessageId: message.quotedProviderMessageId }
+        : {}),
+      ...(message.mentionedPhones !== undefined ? { mentionedPhones: [...message.mentionedPhones] } : {}),
     });
     return { providerMessageId };
+  }
+
+  // --- Grupos ---------------------------------------------------------------
+
+  readonly sentPolls: (OutboundPollMessage & { providerMessageId: string })[] = [];
+  readonly sentReactions: OutboundReaction[] = [];
+  readonly pinnedMessages: { to: string; providerMessageId: string; duration: PinDuration }[] = [];
+  readonly groupSettingsUpdates: { groupId: string; settings: GroupSettings }[] = [];
+  readonly removedParticipants: { groupId: string; addresses: string[] }[] = [];
+  /** Grupos "existentes" na sessão fake: os testes semeiam com setGroup(). */
+  private readonly groups = new Map<string, GroupMetadata>();
+
+  async sendPoll(message: OutboundPollMessage): Promise<SentMessage> {
+    // Paridade com o real: a Z-API só aceita enquete em grupo.
+    if (!isWaGroupId(message.toGroupId)) {
+      throw new Error("Z-API respondeu HTTP 400 em /send-poll.");
+    }
+    const providerMessageId = this.nextProviderMessageId();
+    this.sentPolls.push({ ...message, options: [...message.options], providerMessageId });
+    return { providerMessageId };
+  }
+
+  async sendReaction(input: OutboundReaction): Promise<void> {
+    if (!this.connected) {
+      throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
+    }
+    this.sentReactions.push({ ...input });
+  }
+
+  async pinMessage(input: { to: string; providerMessageId: string; duration: PinDuration }): Promise<void> {
+    if (!this.connected) {
+      throw new Error("Sessão do WhatsApp desconectada (fake). Reconecte pelo QR code.");
+    }
+    this.pinnedMessages.push({ ...input });
+  }
+
+  async listGroups(): Promise<GroupSummary[]> {
+    if (!this.connected) throw new Error("Z-API desconectada (fake).");
+    return [...this.groups.values()].map((group) => ({ groupId: group.groupId, name: group.name }));
+  }
+
+  async getGroupMetadata(groupId: string): Promise<GroupMetadata> {
+    const group = this.groups.get(groupId);
+    // Paridade com o real: grupo desconhecido → a Z-API responde 4xx.
+    if (!group) throw new Error("Z-API respondeu HTTP 404 em /group-metadata.");
+    return { ...group, participants: group.participants.map((p) => ({ ...p })) };
+  }
+
+  async getGroupInvitationLink(groupId: string): Promise<string | null> {
+    const group = this.groups.get(groupId);
+    if (!group) throw new Error("Z-API respondeu HTTP 404 em /group-invitation-link.");
+    return group.invitationLink;
+  }
+
+  async updateGroupSettings(groupId: string, settings: GroupSettings): Promise<void> {
+    const group = this.groups.get(groupId);
+    if (!group) throw new Error("Z-API respondeu HTTP 404 em /update-group-settings.");
+    this.groupSettingsUpdates.push({ groupId, settings: { ...settings } });
+    this.groups.set(groupId, {
+      ...group,
+      adminOnlyMessage: settings.adminOnlyMessage,
+      adminOnlySettings: settings.adminOnlySettings,
+      requireAdminApproval: settings.requireAdminApproval,
+    });
+  }
+
+  async removeGroupParticipants(groupId: string, addresses: string[]): Promise<void> {
+    if (addresses.length === 0) return;
+    const group = this.groups.get(groupId);
+    if (!group) throw new Error("Z-API respondeu HTTP 404 em /remove-participant.");
+    this.removedParticipants.push({ groupId, addresses: [...addresses] });
+    const gone = new Set(addresses);
+    this.groups.set(groupId, {
+      ...group,
+      participants: group.participants.filter(
+        (p) => !((p.phoneE164 && gone.has(p.phoneE164)) || (p.lid && gone.has(p.lid))),
+      ),
+    });
+  }
+
+  /** Semeia (ou substitui) um grupo que a sessão fake "participa". */
+  setGroup(group: GroupMetadata): void {
+    this.groups.set(group.groupId, { ...group, participants: group.participants.map((p) => ({ ...p })) });
   }
 
   async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
@@ -150,6 +247,12 @@ export class FakeMessagingProvider implements MessagingProvider {
     this.sentImages.length = 0;
     this.sentAudios.length = 0;
     this.sentOptionLists.length = 0;
+    this.sentPolls.length = 0;
+    this.sentReactions.length = 0;
+    this.pinnedMessages.length = 0;
+    this.groupSettingsUpdates.length = 0;
+    this.removedParticipants.length = 0;
+    this.groups.clear();
     this.readReceipts.length = 0;
     this.connected = true;
     this.sequence = 0;
