@@ -38,6 +38,7 @@ import { issueLateDeliveryCoupon, stopDeliveredPayloadSchema } from "@/services/
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
+import { closeGroupPoll, groupPollClosePayloadSchema, groupPostPayloadSchema, sendGroupPost } from "@/services/wa-groups";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getGeocoder } from "@/adapters/geocoding";
 import { GEOCODE_MAX_ROUNDS, geocodeRunStops } from "@/services/delivery-runs";
@@ -777,6 +778,20 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   // Estoque cruzou o limiar para baixo → aviso interno ao dono (sem opt-in).
   // Busca nome/SKU/disponível na hora do envio (o payload pode estar velho).
+  // Provador: um post ritual no grupo, na hora marcada e na janela; skips
+  // (desligado, sala pausada, já enviado) não lançam — o post guarda o motivo.
+  "wa.group_post": async (event) => {
+    const { postId } = groupPostPayloadSchema.parse(event.payload);
+    const result = await sendGroupPost(getDb(), getMessagingProvider(), { postId });
+    console.info(`[wa.group_post] ${postId} → ${JSON.stringify(result)}`);
+  },
+  // Provador: apura a enquete e anuncia o resultado citando-a (a segunda
+  // metade do mesmo ritual — não conta na cadência).
+  "wa.group_poll_close": async (event) => {
+    const { postId } = groupPollClosePayloadSchema.parse(event.payload);
+    const result = await closeGroupPoll(getDb(), getMessagingProvider(), { postId });
+    console.info(`[wa.group_poll_close] ${postId} → ${JSON.stringify(result)}`);
+  },
   // Convite VIP de lançamento: um por convidada, na fase VIP e na janela.
   "wa.drop_invite": async (event) => {
     const payload = dropInvitePayloadSchema.parse(event.payload);

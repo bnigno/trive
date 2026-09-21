@@ -18,6 +18,7 @@ import { isWaEnabled, recoverUnpaidOrders } from "@/services/wa-messaging";
 import { scheduleIdleCartFollowups } from "@/services/wa-followups";
 import { checkSessionAndAlert } from "@/services/wa-session";
 import { checkInboundGapsAndAlert } from "@/services/wa-watchdog";
+import { syncAllGroups } from "@/services/wa-groups";
 import { alertFunctionFailure } from "@/services/system-alerts";
 import { autoReturnIdleHumanConversations } from "@/services/wa-conversations";
 
@@ -234,7 +235,20 @@ export const deliveryPositionsPurge = inngest.createFunction(
   },
 );
 
+// Provador: quem entrou e quem saiu de cada sala (metadata da Z-API), de
+// hora em hora; é aqui que o kill switch olha as saídas após o post. Os
+// posts em si não precisam de cron: são eventos do outbox com hora marcada.
+export const waGroupsSync = inngest.createFunction(
+  { id: "wa-groups-sync", triggers: [{ cron: "23 * * * *" }] },
+  async () => {
+    const db = getDb();
+    if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
+    return syncAllGroups(db, getMessagingProvider());
+  },
+);
+
 export const functions = [
+  waGroupsSync,
   functionFailureAlert,
   waInboundWatchdog,
   deliveryPositionsPurge,

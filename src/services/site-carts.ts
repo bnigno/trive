@@ -161,6 +161,7 @@ export async function createSiteCart(db: DbOrTx, rawInput: CreateSiteCartInput):
         sellerName: settings.sellerName,
         code,
         source: input.source,
+        campaignSlug: input.source === "campaign" ? (input.campaignSlug ?? null) : null,
         product: snapshot.product,
         items: snapshot.items,
         cep: input.cep,
@@ -225,7 +226,7 @@ export async function consumeSiteCartByCode(
     siteCartId: row.id,
     code,
     source,
-    sourceLabel: originLabel(source, campaign?.label ?? row.campaignSlug),
+    sourceLabel: originLabel(source, campaign?.label ?? row.campaignSlug, row.campaignSlug),
     // "Veio do site agora" conta da chegada da mensagem: quem tocou ontem e
     // escreveu hoje também merece a linha de estoque no primeiro turno.
     at: input.now.toISOString(),
@@ -351,7 +352,7 @@ export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date
       return {
         source,
         campaignSlug: source === "campaign" ? row.campaignSlug : null,
-        label: originLabel(source, row.campaignLabel ?? row.campaignSlug),
+        label: originLabel(source, row.campaignLabel ?? row.campaignSlug, row.campaignSlug),
         taps: Number(row.taps),
         conversations: Number(row.conversations),
         orders: Number(row.orders),

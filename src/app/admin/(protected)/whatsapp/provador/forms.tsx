@@ -1,0 +1,288 @@
+"use client";
+
+import { useActionState, useState } from "react";
+
+import { Button, Field, FormError, FormSuccess, Input, Select, SubmitButton, TextArea } from "@/components/ui/form";
+
+import { composePostAction, registerGroupAction, type FormState } from "./actions";
+
+const INITIAL_STATE: FormState = {};
+
+export type ProviderGroupOption = { groupId: string; name: string | null; registeredId: string | null };
+
+export function RegisterGroupForm({ groups }: { groups: ProviderGroupOption[] }) {
+  const [state, formAction] = useActionState(registerGroupAction, INITIAL_STATE);
+  const available = groups.filter((group) => group.registeredId === null);
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <Field
+        label="Grupo do WhatsApp da loja"
+        hint={
+          available.length === 0
+            ? "Nenhum grupo novo: crie o grupo no celular da loja (com você como admin) e recarregue esta página."
+            : "Só grupos de que o número da loja participa. Crie o grupo no celular com você como admin — o Provador nunca adiciona ninguém."
+        }
+      >
+        <Select name="providerGroupId" required defaultValue="">
+          <option value="" disabled>
+            {available.length === 0 ? "Sem grupos disponíveis" : "Escolha o grupo"}
+          </option>
+          {available.map((group) => (
+            <option key={group.groupId} value={group.groupId}>
+              {group.name ?? group.groupId}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton disabled={available.length === 0} pendingLabel="Registrando…">
+          Registrar como sala do Provador
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export type ProductOption = { id: string; name: string; hint: string | null; disabled: boolean };
+export type LookOption = { id: string; label: string };
+
+export type RitualDefaults = Record<"chegadas" | "enquete" | "quem_vestiu" | "livre", { day: string; time: string }>;
+
+const KIND_LABELS: Record<keyof RitualDefaults, string> = {
+  chegadas: "Passou pelo Provador (terça) — o que chegou",
+  enquete: "Vocês decidem (quinta) — enquete",
+  quem_vestiu: "Quem vestiu (sábado) — foto de cliente",
+  livre: "Post livre — texto seu",
+};
+
+/**
+ * Lista de marcação cujo valor vive no estado do React e vai ao form por
+ * inputs ocultos. Depois de uma server action o React 19 RESETA o form
+ * (checkbox volta ao defaultChecked, texto solto some): com o estado aqui, a
+ * pré-visualização não apaga o que a dona marcou.
+ */
+function CheckList({
+  name,
+  options,
+  max,
+  selected,
+  onChange,
+  emptyHint,
+}: {
+  name: string;
+  options: { id: string; label: string; hint?: string | null; disabled?: boolean }[];
+  max: number;
+  selected: string[];
+  onChange: (next: string[]) => void;
+  emptyHint: string;
+}) {
+  if (options.length === 0) return <p className="text-sm text-zinc-500 dark:text-zinc-400">{emptyHint}</p>;
+  return (
+    <>
+      {selected.map((id) => (
+        <input key={id} type="hidden" name={name} value={id} />
+      ))}
+      <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+        {options.map((option) => {
+          const checked = selected.includes(option.id);
+          const full = !checked && selected.length >= max;
+          return (
+            <li key={option.id}>
+              <label className={`flex items-start gap-2 rounded px-2 py-1 text-sm ${option.disabled || full ? "opacity-50" : "hover:bg-zinc-50 dark:hover:bg-zinc-800"}`}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={option.disabled || full}
+                  onChange={(event) => onChange(event.target.checked ? [...selected, option.id] : selected.filter((id) => id !== option.id))}
+                  className="mt-0.5"
+                />
+                <span>
+                  {option.label}
+                  {option.hint ? <span className="block text-xs text-zinc-500 dark:text-zinc-400">{option.hint}</span> : null}
+                </span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
+type ComposeDraft = {
+  productIds: string[];
+  vitrineWhen: string;
+  question: string;
+  options: string;
+  outcome: string;
+  maxOptions: string;
+  voterHoldHours: string;
+  lookIds: string[];
+  photoCoupon: boolean;
+  body: string;
+  imageUrl: string;
+};
+
+const EMPTY_DRAFT: ComposeDraft = {
+  productIds: [],
+  vitrineWhen: "",
+  question: "",
+  options: "",
+  outcome: "",
+  maxOptions: "1",
+  voterHoldHours: "24",
+  lookIds: [],
+  photoCoupon: false,
+  body: "",
+  imageUrl: "",
+};
+
+export function ComposePostForm({
+  groupId,
+  products,
+  looks,
+  defaults,
+  windowLabel,
+}: {
+  groupId: string;
+  products: ProductOption[];
+  looks: LookOption[];
+  defaults: RitualDefaults;
+  windowLabel: string;
+}) {
+  const [kind, setKind] = useState<keyof RitualDefaults>("chegadas");
+  const [day, setDay] = useState(defaults.chegadas.day);
+  const [time, setTime] = useState(defaults.chegadas.time);
+  // Tudo controlado: o reset do form depois da action não apaga o rascunho.
+  const [draft, setDraft] = useState<ComposeDraft>(EMPTY_DRAFT);
+  const set = <K extends keyof ComposeDraft>(key: K, value: ComposeDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const [state, formAction] = useActionState(async (previous: FormState, formData: FormData) => {
+    const result = await composePostAction(previous, formData);
+    // Agendou: o rascunho some (o próximo ritual começa do zero).
+    if (result.success) setDraft(EMPTY_DRAFT);
+    return result;
+  }, INITIAL_STATE);
+
+  function changeKind(next: keyof RitualDefaults) {
+    setKind(next);
+    setDay(defaults[next].day);
+    setTime(defaults[next].time);
+  }
+
+  return (
+    <form action={formAction} className="flex flex-col gap-5">
+      <input type="hidden" name="groupId" value={groupId} />
+      {/* O ritual vai por input oculto: o reset do form depois da action devolveria o select à primeira opção. */}
+      <input type="hidden" name="kind" value={kind} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Field label="Ritual" hint="Cada ritual tem o seu dia; o horário sugerido você pode mudar.">
+          <Select value={kind} onChange={(event) => changeKind(event.target.value as keyof RitualDefaults)}>
+            {(Object.keys(KIND_LABELS) as (keyof RitualDefaults)[]).map((key) => (
+              <option key={key} value={key}>
+                {KIND_LABELS[key]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Dia" hint="Vazio = sai agora (se estiver na janela).">
+          <Input type="date" name="day" value={day} onChange={(event) => setDay(event.target.value)} />
+        </Field>
+        <Field label="Hora" hint={`Janela de envio: ${windowLabel}. Domingo fica em silêncio.`}>
+          <Input type="time" name="time" value={time} onChange={(event) => setTime(event.target.value)} step={300} />
+        </Field>
+      </div>
+
+      {kind === "chegadas" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Peças (até 3)" hint="Só peças ativas, com preço e estoque. O estoque por tamanho entra sozinho no texto, do jeito que está no ledger.">
+            <CheckList
+              name="productIds"
+              options={products.map((p) => ({ id: p.id, label: p.name, hint: p.hint, disabled: p.disabled }))}
+              max={3}
+              selected={draft.productIds}
+              onChange={(next) => set("productIds", next)}
+              emptyHint="Nenhuma peça ativa com preço e estoque."
+            />
+          </Field>
+          <Field label="Quando vai para a vitrine" hint='Ex.: "amanhã às 9h". Vazio = já está na vitrine.'>
+            <Input name="vitrineWhen" maxLength={60} placeholder="amanhã às 9h" autoComplete="off" value={draft.vitrineWhen} onChange={(e) => set("vitrineWhen", e.target.value)} />
+          </Field>
+        </div>
+      ) : null}
+
+      {kind === "enquete" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Pergunta" hint='Ex.: "A Blusa Marfim volta em uma cor a mais — qual?"'>
+            <Input name="question" maxLength={255} required autoComplete="off" value={draft.question} onChange={(e) => set("question", e.target.value)} />
+          </Field>
+          <Field label="Opções (uma por linha, 2 a 12)">
+            <TextArea name="options" rows={4} required placeholder={"Verde-oliva\nVinho\nAzul-noite"} value={draft.options} onChange={(e) => set("options", e.target.value)} />
+          </Field>
+          <Field label="O que acontece com a vencedora" hint='Ex.: "chega em 15 dias". Vazio = sem promessa.'>
+            <Input name="outcome" maxLength={80} placeholder="chega em 15 dias" autoComplete="off" value={draft.outcome} onChange={(e) => set("outcome", e.target.value)} />
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Marcações por pessoa">
+              <Input type="number" name="maxOptions" min={1} max={12} value={draft.maxOptions} onChange={(e) => set("maxOptions", e.target.value)} />
+            </Field>
+            <Field label="Reserva de quem votou (h)" hint="0 = sem recompensa.">
+              <Input type="number" name="voterHoldHours" min={0} max={168} value={draft.voterHoldHours} onChange={(e) => set("voterHoldHours", e.target.value)} />
+            </Field>
+          </div>
+        </div>
+      ) : null}
+
+      {kind === "quem_vestiu" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Looks (até 2)" hint="Só fotos com o sim da cliente e aprovadas em Produtos › Quem já vestiu.">
+            <CheckList
+              name="lookIds"
+              options={looks.map((look) => ({ id: look.id, label: look.label }))}
+              max={2}
+              selected={draft.lookIds}
+              onChange={(next) => set("lookIds", next)}
+              emptyHint="Nenhum look aprovado ainda."
+            />
+          </Field>
+          <Field label="Cupom pela foto" hint="Só marque quando o cupom da foto (Onda 6) estiver ligado — o post promete.">
+            <label className="flex items-center gap-2 text-sm">
+              {draft.photoCoupon ? <input type="hidden" name="photoCoupon" value="on" /> : null}
+              <input type="checkbox" checked={draft.photoCoupon} onChange={(e) => set("photoCoupon", e.target.checked)} />
+              Dizer que foto vestindo a peça vira cupom
+            </label>
+          </Field>
+        </div>
+      ) : null}
+
+      {kind === "livre" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Texto" hint="Curto, concreto, sem “compre agora”. Termine com um convite para falar com a Lia no privado.">
+            <TextArea name="body" rows={6} maxLength={1500} required value={draft.body} onChange={(e) => set("body", e.target.value)} />
+          </Field>
+          <Field label="Imagem (URL pública, opcional)" hint="Com imagem, o texto vai como legenda.">
+            <Input name="imageUrl" type="url" placeholder="https://…" autoComplete="off" value={draft.imageUrl} onChange={(e) => set("imageUrl", e.target.value)} />
+          </Field>
+        </div>
+      ) : null}
+
+      {state.preview ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Como vai sair no grupo</p>
+          <pre className="whitespace-pre-wrap font-sans text-sm text-zinc-800 dark:text-zinc-200">{state.preview}</pre>
+        </div>
+      ) : null}
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" name="intent" value="preview" variant="outline">
+          Pré-visualizar
+        </Button>
+        <SubmitButton name="intent" value="schedule" pendingLabel="Agendando…">
+          Agendar no Provador
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}

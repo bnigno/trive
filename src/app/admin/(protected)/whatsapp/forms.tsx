@@ -50,7 +50,9 @@ export function ToggleSwitch({
     | "atelier_enabled"
     | "feedback_ask_enabled"
     | "customer_looks_enabled"
-    | "bot_audio_notes_enabled";
+    | "bot_audio_notes_enabled"
+    | "groups_enabled"
+    | "bot_group_mentions_enabled";
   checked: boolean;
   label: string;
   hint: string;

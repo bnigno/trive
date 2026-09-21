@@ -46,6 +46,8 @@ const toggleKeySchema = z.enum([
   "feedback_ask_enabled",
   "customer_looks_enabled",
   "bot_audio_notes_enabled",
+  "groups_enabled",
+  "bot_group_mentions_enabled",
 ]);
 
 export async function setToggleAction(
@@ -57,6 +59,7 @@ export async function setToggleAction(
     const parsedKey = toggleKeySchema.parse(key);
     await updateSetting(getDb(), { key: parsedKey, value, userId: user.id });
     revalidatePath("/admin/whatsapp");
+    revalidatePath("/admin/whatsapp/provador");
     return { ok: true };
   } catch (error) {
     return { error: toErrorMessage(error) };

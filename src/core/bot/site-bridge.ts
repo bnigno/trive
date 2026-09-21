@@ -59,10 +59,19 @@ export const bridgeItemSchema = z.object({
 });
 export type BridgeItem = z.infer<typeof bridgeItemSchema>;
 
+/** Links do Provador (grupos de WhatsApp) têm o prefixo fixo: é ele que muda "story" para "Provador" na ponte. */
+export const PROVADOR_CAMPAIGN_PREFIX = "prov-";
+
+export function isProvadorCampaign(slug: string | null | undefined): boolean {
+  return typeof slug === "string" && slug.startsWith(PROVADOR_CAMPAIGN_PREFIX);
+}
+
 export type BridgeMessageInput = {
   sellerName: string;
   code: string;
   source: BridgeSource;
+  /** O slug do link (campaign): decide se a cliente "viu no story" ou "no Provador". */
+  campaignSlug?: string | null;
   /** A peça em vista (pdp/campaign). */
   product?: { name: string; variation?: string } | null;
   /** A sacola (cart). */
@@ -93,19 +102,22 @@ export function buildBridgeMessage(input: BridgeMessageInput): string {
     const entrega = input.cep ? `, entrega no CEP ${cepLabel(input.cep)}` : "";
     return `${oi} minha sacola no site: ${lista}${entrega} ${tag}`;
   }
+  const viaProvador = input.source === "campaign" && isProvadorCampaign(input.campaignSlug);
   if (input.product) {
-    const onde = input.source === "campaign" ? " no story" : "";
+    const onde = input.source === "campaign" ? (viaProvador ? " no Provador" : " no story") : "";
     return `${oi} vi o ${itemPhrase(input.product)}${onde} ${tag}`;
   }
+  if (viaProvador) return `${oi} vim pelo Provador ${tag}`;
   return `${oi} vim pelo ${input.source === "campaign" ? "story" : "site"} ${tag}`;
 }
 
 /**
- * "página da peça", "sacola", "rodapé do site", "story «Dunas»" — para o
- * caderninho e o painel. No story, o nome é o rótulo do link (ou o slug,
- * quando o link foi apagado).
+ * "página da peça", "sacola", "rodapé do site", "story «Dunas»", "Provador
+ * «chegadas 22/09»" — para o caderninho e o painel. No story, o nome é o
+ * rótulo do link (ou o slug, quando o link foi apagado); o slug diz se o
+ * link é do Provador.
  */
-export function originLabel(source: BridgeSource, campaign?: string | null): string {
+export function originLabel(source: BridgeSource, campaign?: string | null, campaignSlug?: string | null): string {
   switch (source) {
     case "pdp":
       return "página da peça";
@@ -113,8 +125,10 @@ export function originLabel(source: BridgeSource, campaign?: string | null): str
       return "sacola";
     case "footer":
       return "rodapé do site";
-    case "campaign":
-      return campaign?.trim() ? `story «${campaign.trim()}»` : "story";
+    case "campaign": {
+      const where = isProvadorCampaign(campaignSlug ?? campaign) ? "Provador" : "story";
+      return campaign?.trim() ? `${where} «${campaign.trim()}»` : where;
+    }
   }
 }
 

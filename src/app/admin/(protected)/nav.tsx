@@ -74,6 +74,7 @@ const NAV_GROUPS: NavGroup[] = [
         area: "whatsapp",
         exact: true,
       },
+      { label: "Provador", href: "/admin/whatsapp/provador", area: "whatsapp" },
     ],
   },
   {

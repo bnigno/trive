@@ -59,6 +59,11 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // Turno proativo da Lia (retorno combinado): o modelo pode estar fora do
   // ar por um instante; 3 tentativas espaçadas e a conversa não vira DLQ à toa.
   "wa.bot_followup": { maxAttempts: 3, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+  // Post do Provador: a hora do ritual importa (terça 10h não pode virar
+  // quarta); 4 tentativas em ~15 min e, se a Z-API seguir fora do ar, a DLQ
+  // avisa — a dona reagenda pelo painel.
+  "wa.group_post": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+  "wa.group_poll_close": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
   // wa.bot_turn fica na política padrão (banco/provedor fora do ar continuam
   // tentando por até 1 h); o teto do MODELO é próprio e menor
   // (services/wa-bot BOT_TURN_MODEL_ATTEMPTS), com plano B na última.

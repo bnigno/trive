@@ -3,9 +3,9 @@
 // nunca no domingo. Previsibilidade é o contrário de spam — e o teto vive
 // aqui, no core, para nenhum caminho (painel, fila, script) passar por cima.
 // Tudo no "dia de São Paulo". Puro.
-import { spDayKey, spNextDayKey, spPreviousDayKey, weekdayIndexSP } from "@/lib/sp-day";
+import { spDayEnd, spDayKey, spNextDayKey, spPreviousDayKey, weekdayIndexSP } from "@/lib/sp-day";
 
-import { DEFAULT_SEND_WINDOW, isWithinSendWindow, type SendWindow } from "@/core/whatsapp/send-window";
+import { DEFAULT_SEND_WINDOW, isWithinSendWindow, nextSendWindowStart, type SendWindow } from "@/core/whatsapp/send-window";
 
 export type GroupPostKind = "chegadas" | "enquete" | "quem_vestiu" | "cortina" | "livre";
 
@@ -79,6 +79,47 @@ export function canSchedulePost(input: {
   if (sameWeek >= Math.max(1, Math.floor(policy.postsPerWeek))) return { ok: false, reason: "teto_semanal" };
 
   return { ok: true };
+}
+
+/**
+ * Um post agendado que a fila não conseguiu entregar em até tanto tempo não
+ * sai mais (terça 10h não pode virar terça 17h): fica "não saiu" e a dona
+ * reagenda. Também é o ponto em que um post travado deixa de contar na
+ * cadência.
+ */
+export const POST_LATE_AFTER_MS = 6 * 3_600_000;
+
+/** Depois do fim da janela, o post marcado para dentro dela ainda sai por esta folga (a fila atrasa minutos, não horas). */
+export const WINDOW_CLOSE_GRACE_MS = 30 * 60_000;
+
+/** O post ainda pode sair agora? (marcado para `scheduledAt`, a fila chegou em `now`.) */
+export function isPostTooLate(scheduledAt: Date, now: Date): boolean {
+  return now.getTime() - scheduledAt.getTime() > POST_LATE_AFTER_MS;
+}
+
+/**
+ * Pode publicar neste instante? Dentro da janela, ou até a folga depois do
+ * fim dela — e nunca em dia de silêncio.
+ */
+export function canPublishNow(now: Date, policy: GroupCadencePolicy = DEFAULT_GROUP_CADENCE): boolean {
+  if (policy.quietWeekdays.includes(weekdayIndexSP(spDayKey(now)))) return false;
+  if (isWithinSendWindow(now, policy.window)) return true;
+  const withGrace = new Date(now.getTime() - WINDOW_CLOSE_GRACE_MS);
+  return isWithinSendWindow(withGrace, policy.window) && spDayKey(withGrace) === spDayKey(now);
+}
+
+/**
+ * O próximo instante em que se pode publicar: agora, se a janela está
+ * aberta num dia normal; senão a abertura da janela no próximo dia que não
+ * é de silêncio. Serve para adiar o que NÃO é post (o resultado da enquete).
+ */
+export function nextPublishableAt(now: Date, policy: GroupCadencePolicy = DEFAULT_GROUP_CADENCE): Date {
+  let cursor = nextSendWindowStart(now, policy.window);
+  for (let step = 0; step < 8; step += 1) {
+    if (!policy.quietWeekdays.includes(weekdayIndexSP(spDayKey(cursor)))) return cursor;
+    cursor = nextSendWindowStart(spDayEnd(spDayKey(cursor)), policy.window);
+  }
+  return cursor;
 }
 
 /** Dia da semana de cada ritual (0 = domingo); cortina e livre não têm dia fixo. */
