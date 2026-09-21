@@ -16,7 +16,7 @@ import {
   type FeeRule,
 } from "@/services/settings";
 import { getStoreFacts } from "@/services/store-facts";
-import { loadStudioSettings, type StudioSettings } from "@/services/studio";
+import { loadStudioSettings, type StudioSettings } from "@/services/studio-settings";
 import { HOUSE_MODELS, SCENE_PRESETS } from "@/core/studio/presets";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";

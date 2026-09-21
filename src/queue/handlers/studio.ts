@@ -10,7 +10,7 @@ import {
   generateStudioOption,
   type StudioBasePhotoResult,
   type StudioOptionResult,
-} from "@/services/studio";
+} from "@/services/studio-generate";
 
 export type StudioHandlerDeps = {
   db: DbOrTx;

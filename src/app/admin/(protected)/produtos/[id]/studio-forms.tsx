@@ -5,9 +5,7 @@
 // uma candidata. Sem regra aqui: o custo vem do core e as decisões do service.
 import { useActionState, useState } from "react";
 
-import { estimateRequestUsdCents, usdCentsToBrlCents } from "@/core/studio/cost";
 import type { StudioQuality } from "@/core/studio/presets";
-import { formatCentsBRL } from "@/lib/money";
 import { Button, Field, FormError, FormSuccess, Select, SubmitButton } from "@/components/ui/form";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 
@@ -17,6 +15,9 @@ const INITIAL_STATE: FormState = {};
 
 export type StudioOption = { key: string; label: string; description?: string; available?: boolean };
 
+/** Custo já formatado ("R$ 2,09") por qualidade e por nº de opções (1–4): a conta é do servidor. */
+export type StudioEstimates = Record<StudioQuality, string[]>;
+
 export function RequestStudioForm({
   productId,
   colorOptions,
@@ -24,6 +25,7 @@ export function RequestStudioForm({
   models,
   sizes,
   defaults,
+  estimates,
 }: {
   productId: string;
   colorOptions: string[];
@@ -31,12 +33,12 @@ export function RequestStudioForm({
   models: StudioOption[];
   sizes: StudioOption[];
   defaults: { sceneKey: string; modelKey: string; sizeKey: string; quality: StudioQuality };
+  estimates: StudioEstimates;
 }) {
   const [state, formAction] = useActionState(requestStudioPhotosAction, INITIAL_STATE);
   const [quality, setQuality] = useState<StudioQuality>(defaults.quality);
   const [options, setOptions] = useState(3);
-  const estimate = estimateRequestUsdCents({ options, quality });
-  const brl = formatCentsBRL(usdCentsToBrlCents(estimate.totalUsdCents));
+  const brl = estimates[quality][options - 1] ?? estimates[quality][2] ?? "";
 
   return (
     <form action={formAction} className="flex flex-col gap-4">

@@ -26,8 +26,6 @@ import {
   discardStudioCandidate,
   enqueueStudioBasePhotos,
   estimateStudioRequest,
-  generateStudioBasePhotos,
-  generateStudioOption,
   getChosenBasePhoto,
   listStudioBasePhotos,
   listStudioRequestsForProduct,
@@ -37,6 +35,7 @@ import {
   STUDIO_OPTION_EVENT,
   summarizeStudioCosts,
 } from "@/services/studio";
+import { generateStudioBasePhotos, generateStudioOption } from "@/services/studio-generate";
 import { createTestDb, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 vi.mock("@/inngest/client", () => ({ inngest: { send: async () => ({ ids: [] }) } }));

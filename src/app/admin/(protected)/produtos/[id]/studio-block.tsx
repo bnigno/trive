@@ -12,13 +12,20 @@ import { parsePieceType } from "@/core/catalog/piece-types";
 import { candidateLabel, requestLabel } from "@/core/studio/labels";
 import { BODY_SIZES, HOUSE_MODELS, SCENE_PRESETS } from "@/core/studio/presets";
 import { garmentCategoryFor } from "@/core/studio/prompts";
-import { usdCentsToBrlCents } from "@/core/studio/cost";
+import { estimateRequestUsdCents, usdCentsToBrlCents } from "@/core/studio/cost";
 import { formatDateTimeSP } from "@/emails/templates";
 import { formatCentsBRL } from "@/lib/money";
 import type { StudioBasePhoto, StudioRequestView, StudioSettings } from "@/services/studio";
 import { studioBaseKey } from "@/services/studio";
 
-import { CandidateActions, RequestStudioForm } from "./studio-forms";
+import { CandidateActions, RequestStudioForm, type StudioEstimates } from "./studio-forms";
+
+/** A conta de cada combinação qualidade × nº de opções, pronta para o botão. */
+function buildEstimates(): StudioEstimates {
+  const table = (quality: "economica" | "alta") =>
+    [1, 2, 3, 4].map((options) => formatCentsBRL(usdCentsToBrlCents(estimateRequestUsdCents({ options, quality }).totalUsdCents)));
+  return { economica: table("economica"), alta: table("alta") };
+}
 
 export function StudioBlock({
   productId,
@@ -93,6 +100,7 @@ export function StudioBlock({
             models={models}
             sizes={sizes}
             defaults={{ sceneKey: settings.defaultScene, modelKey: settings.defaultModel, sizeKey: "M", quality: settings.quality }}
+            estimates={buildEstimates()}
           />
         )}
 
