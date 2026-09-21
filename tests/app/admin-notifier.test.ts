@@ -24,6 +24,7 @@ function unseen(overrides: Partial<LightPollUnseen> = {}): LightPollUnseen {
     id: "c1",
     label: "Ana",
     status: "open",
+    awaitingOwner: false,
     preview: "tem em M?",
     lastInboundAt: "2026-09-21T12:00:00.000Z",
     ...overrides,
@@ -45,6 +46,8 @@ describe("poll leve: schema e prévia", () => {
     expect(lightPollResponseSchema.safeParse({ serverTime: "x", awaitingOwner: -1, withNewMessages: 0, unseen: [], suggestionCount: 0, suggestions: [] }).success).toBe(false);
     expect(lightPollResponseSchema.safeParse({ serverTime: "x", humanCount: 1, awaiting: [] }).success).toBe(false);
     expect(lightPollResponseSchema.safeParse({ serverTime: "x", awaitingOwner: 0, withNewMessages: 0, unseen: [{ id: "c1" }], suggestionCount: 0, suggestions: [] }).success).toBe(false);
+    // Sem `awaitingOwner` no item (formato antigo, só `status`): recusa — o cliente não pode chutar.
+    expect(lightPollResponseSchema.safeParse({ serverTime: "x", awaitingOwner: 0, withNewMessages: 0, unseen: [{ id: "c1", label: "Ana", status: "human", preview: null, lastInboundAt: null }], suggestionCount: 0, suggestions: [] }).success).toBe(false);
   });
 
   it("prévia: uma linha, sem espaços repetidos, no máximo 120 caracteres; vazio vira null", () => {
@@ -74,10 +77,12 @@ describe("freshUnseen: uma vez por mensagem", () => {
     expect(freshUnseen(known, [unseen({ lastInboundAt: null })])).toEqual([]);
   });
 
-  it("a mesma mensagem passando para o dono é nova (a transferência merece aviso); human → human não", () => {
-    const known = rememberUnseen([unseen({ status: "open" })]);
-    expect(freshUnseen(known, [unseen({ status: "human" })])).toHaveLength(1);
-    expect(freshUnseen(rememberUnseen([unseen({ status: "human" })]), [unseen({ status: "human" })])).toEqual([]);
+  it("a mesma mensagem passando para o dono é nova (a transferência merece aviso); já com o dono → não", () => {
+    const known = rememberUnseen([unseen({ awaitingOwner: false })]);
+    expect(freshUnseen(known, [unseen({ awaitingOwner: true, status: "human" })])).toHaveLength(1);
+    expect(freshUnseen(rememberUnseen([unseen({ awaitingOwner: true })]), [unseen({ awaitingOwner: true })])).toEqual([]);
+    // Devolvida à vendedora com a mesma mensagem: nada a avisar.
+    expect(freshUnseen(rememberUnseen([unseen({ awaitingOwner: true })]), [unseen({ awaitingOwner: false })])).toEqual([]);
   });
 
   it("quem saiu da lista (foi lida) e voltou com outra mensagem conta de novo", () => {
@@ -105,13 +110,15 @@ describe("ritmo do poll", () => {
 describe("texto do aviso", () => {
   it("toast: 'Nova mensagem de' para a vendedora atendendo; 'esperando por você' quando é com o dono", () => {
     expect(toastTitleFor(unseen())).toBe("Nova mensagem de Ana");
-    expect(toastTitleFor(unseen({ status: "human" }))).toBe("Ana está esperando por você");
+    expect(toastTitleFor(unseen({ awaitingOwner: true }))).toBe("Ana está esperando por você");
+    // Vendedora desligada: a conversa continua 'open', mas é com você.
+    expect(toastTitleFor(unseen({ status: "open", awaitingOwner: true }))).toBe("Ana está esperando por você");
   });
 
   it("aviso de sistema: um por lote — singular com prévia, plural com até 3 nomes", () => {
     expect(notificationFor([])).toBeNull();
     expect(notificationFor([unseen()])).toEqual({ title: "Nova mensagem de Ana", body: "tem em M?", conversationId: "c1" });
-    expect(notificationFor([unseen({ preview: null, status: "human" })])).toEqual({ title: "Ana está esperando por você", body: undefined, conversationId: "c1" });
+    expect(notificationFor([unseen({ preview: null, awaitingOwner: true })])).toEqual({ title: "Ana está esperando por você", body: undefined, conversationId: "c1" });
     const many = ["Ana", "Bia", "Carla", "Dani", "Eva"].map((label, index) => unseen({ id: `c${index}`, label }));
     expect(notificationFor(many)).toEqual({ title: "5 conversas com mensagem nova", body: "Ana, Bia, Carla e mais 2", conversationId: "c0" });
     expect(notificationFor(many.slice(0, 2))?.body).toBe("Ana, Bia");

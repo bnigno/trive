@@ -349,15 +349,21 @@ export function ChatShell({
   }, [markSeen]);
 
   // Os mesmos números do crachá do menu e do início: CONVERSAS com mensagem
-  // não vista (não mensagens), sem a de avisos internos e sem as encerradas.
+  // não vista (não mensagens), sem a de avisos internos e sem as encerradas;
+  // "esperando você" pela mesma régua do badge da lista (transferida,
+  // vendedora em pausa ou desligada).
   const unseen = useMemo(() => {
     const withNew = conversations.filter((c) => c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed");
+    const awaitingOwner = withNew.filter(
+      (c) =>
+        attendantBadge(c.status, c.botDisabledUntil ? new Date(c.botDisabledUntil) : null, { botEnabled, sellerName }).attendant === "you",
+    ).length;
     return {
-      awaitingOwner: withNew.filter((c) => c.status === "human").length,
+      awaitingOwner,
       withNewMessages: withNew.length,
       suggestionCount: conversations.filter((c) => c.pendingSuggestion && c.status !== "closed").length,
     };
-  }, [conversations]);
+  }, [conversations, botEnabled, sellerName]);
   // Nesta página o avisador do layout descansa: quem alimenta o crachá do
   // menu e o "(N)" do título da aba é o chat, pelo mesmo store.
   useEffect(() => {
@@ -558,7 +564,8 @@ export function ChatShell({
       }
       if (filter === "all") return c.status !== "closed" || c.id === selectedId;
       if (filter === "closed") return c.status === "closed";
-      if (filter === "unread") return c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed";
+      // A aberta continua na lista depois de lida (senão some do lado enquanto você responde).
+      if (filter === "unread") return (c.unreadCount > 0 && !c.isOwnerNotices && c.status !== "closed") || c.id === selectedId;
       const badge = attendantBadge(
         c.status,
         c.botDisabledUntil ? new Date(c.botDisabledUntil) : null,

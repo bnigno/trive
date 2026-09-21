@@ -8,6 +8,8 @@ export const lightPollUnseenSchema = z.object({
   /** Nome do cadastro, senão o do WhatsApp, senão o telefone mascarado. */
   label: z.string(),
   status: z.string(),
+  /** Espera uma pessoa: transferida, vendedora em pausa ou desligada. */
+  awaitingOwner: z.boolean(),
   /** Prévia da última mensagem recebida (corpo ou marcador de mídia). */
   preview: z.string().nullable(),
   /** Quando a última mensagem recebida chegou — a chave do "uma vez por mensagem". */

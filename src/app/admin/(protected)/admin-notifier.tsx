@@ -71,7 +71,7 @@ export function AdminNotifier() {
         const alert = notificationFor(fresh, freshSuggestions);
         if (alert) {
           notify({
-            kind: fresh.some((item) => item.status === "human") ? "handoff" : "inbound",
+            kind: fresh.some((item) => item.awaitingOwner) ? "handoff" : "inbound",
             title: alert.title,
             body: alert.body,
             conversationId: alert.conversationId,

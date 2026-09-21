@@ -70,6 +70,7 @@ export async function GET(request: Request): Promise<Response> {
         id: conversation.id,
         label: conversationLabel({ ...conversation, isOwnerNotices: false }),
         status: conversation.status,
+        awaitingOwner: conversation.awaitingOwner,
         preview: inboundPreview(conversation.lastInbound?.body),
         lastInboundAt: conversation.lastInbound?.createdAt.toISOString() ?? null,
       })),

@@ -19,10 +19,10 @@ export function pollDelayMs(input: { hidden: boolean; idleForMs: number; failure
   return Math.min(base * 2 ** input.failures, POLL_MAX_BACKOFF_MS);
 }
 
-export type KnownUnseen = Map<string, { lastInboundAt: string | null; status: string }>;
+export type KnownUnseen = Map<string, { lastInboundAt: string | null; awaitingOwner: boolean }>;
 
 export function rememberUnseen(items: readonly LightPollUnseen[]): KnownUnseen {
-  return new Map(items.map((item) => [item.id, { lastInboundAt: item.lastInboundAt, status: item.status }]));
+  return new Map(items.map((item) => [item.id, { lastInboundAt: item.lastInboundAt, awaitingOwner: item.awaitingOwner }]));
 }
 
 /**
@@ -39,12 +39,12 @@ export function freshUnseen(known: KnownUnseen, incoming: readonly LightPollUnse
       // ISO 8601 em UTC compara como texto.
       return item.lastInboundAt !== null && (previous.lastInboundAt === null || item.lastInboundAt > previous.lastInboundAt);
     }
-    return item.status === "human" && previous.status !== "human";
+    return item.awaitingOwner && !previous.awaitingOwner;
   });
 }
 
-export function toastTitleFor(item: Pick<LightPollUnseen, "label" | "status">): string {
-  return item.status === "human" ? `${item.label} está esperando por você` : `Nova mensagem de ${item.label}`;
+export function toastTitleFor(item: Pick<LightPollUnseen, "label" | "awaitingOwner">): string {
+  return item.awaitingOwner ? `${item.label} está esperando por você` : `Nova mensagem de ${item.label}`;
 }
 
 /** Um aviso de sistema por lote (nunca uma rajada de bipes): singular com prévia, plural com os nomes. */
