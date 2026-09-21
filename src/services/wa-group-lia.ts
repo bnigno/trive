@@ -9,12 +9,14 @@
 //   depois do "Passou pelo Provador" (a peça no tamanho e na cor dela),
 //   "ficou a última no seu tamanho" para quem reagiu (1 por semana), e a
 //   vencedora da enquete que chegou (para quem votou nela).
-// - "só privado" / SAIR: sai do grupo pela fila (wa.group_remove).
+// - "só privado" / SAIR: sai do grupo pela fila (wa.group_remove) — no
+//   banco a saída pedida fica so_privado | removida; "saiu" é só o que o
+//   sync vê (ela saiu sozinha).
 //
 // Intervalo entre avisos ativos: 5 min (boas práticas da Z-API), nunca os
 // 20 s do lote de "voltou".
 
-import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { SalesAssistant } from "@/adapters/assistant";
@@ -51,7 +53,7 @@ import { loadAudienceCandidates } from "@/services/drops";
 import { getSettingsMap } from "@/services/settings";
 import { getStoreMap } from "@/services/store-catalog";
 import { buildToolExecutor, isBotEnabled } from "@/services/wa-bot";
-import { loadGroupPolicy } from "@/services/wa-groups";
+import { loadGroupPolicy, REQUESTED_EXIT_GRACE_MS } from "@/services/wa-groups";
 import { isWaEnabled, sendTemplateMessage, siteBaseUrl } from "@/services/wa-messaging";
 
 import { DEFAULT_BOT_MODEL, DEFAULT_STORE_NAME } from "./bot/shared";
@@ -73,7 +75,7 @@ export const GROUP_NOTICE_INTERVAL_SECONDS = 300;
 const REACTION_LOOKBACK_DAYS = 30;
 
 export const groupMentionPayloadSchema = z.object({ signalId: z.uuid() });
-export const groupRemovePayloadSchema = z.object({ phoneE164: z.string().min(1), reason: z.enum(["so_privado", "saiu"]) });
+export const groupRemovePayloadSchema = z.object({ phoneE164: z.string().min(1), reason: z.enum(["so_privado", "removida"]) });
 export const groupAffinityFanoutPayloadSchema = z.object({ postId: z.uuid() });
 export const groupAffinityNoticePayloadSchema = z.object({ postId: z.uuid(), customerId: z.uuid() });
 export const groupLastUnitPayloadSchema = z.object({ variantId: z.uuid(), movementId: z.string().min(1) });
@@ -224,12 +226,13 @@ export async function runGroupMentionTurn(
  * Marca a saída nas salas em que ela está e enfileira a remoção (efeito
  * externo só pela fila). Devolve quantas salas; zero = não estava em nenhuma.
  */
-export async function leaveGroupsByPhone(db: DbOrTx, input: { phoneE164: string; reason: "so_privado" | "saiu"; now?: Date }): Promise<{ groups: number }> {
+export async function leaveGroupsByPhone(db: DbOrTx, input: { phoneE164: string; reason: "so_privado" | "removida"; now?: Date }): Promise<{ groups: number }> {
   const now = input.now ?? new Date();
+  // A identidade da conversa pode ser o telefone ou o LID; a linha da sala pode estar por qualquer um.
   const rows = await db
     .update(waGroupMembers)
     .set({ leftAt: now, leftReason: input.reason, updatedAt: now })
-    .where(and(eq(waGroupMembers.phoneE164, input.phoneE164), isNull(waGroupMembers.leftAt)))
+    .where(and(or(eq(waGroupMembers.phoneE164, input.phoneE164), eq(waGroupMembers.lid, input.phoneE164)), isNull(waGroupMembers.leftAt)))
     .returning({ groupId: waGroupMembers.groupId });
   if (rows.length === 0) return { groups: 0 };
   await enqueueOutboxEvent(
@@ -245,16 +248,30 @@ export async function leaveGroupsByPhone(db: DbOrTx, input: { phoneE164: string;
   return { groups: rows.length };
 }
 
-/** Handler de wa.group_remove: tira a pessoa de todas as salas ativas (o WhatsApp da loja precisa ser admin). */
-export async function removeFromGroups(db: DbOrTx, provider: MessagingProvider, input: { phoneE164: string }): Promise<{ removed: number }> {
+
+/**
+ * Handler de wa.group_remove: tira a pessoa das salas ativas de que ela
+ * pediu para sair nos últimos dias (o WhatsApp da loja precisa ser admin).
+ * Erro do provedor lança — a fila tenta de novo; enquanto isso o sync não
+ * a "traz de volta" (saída pedida vale mais que presença no metadata).
+ */
+export async function removeFromGroups(db: DbOrTx, provider: MessagingProvider, input: { phoneE164: string; now?: Date }): Promise<{ removed: number }> {
+  const now = input.now ?? new Date();
   const rows = await db
-    .select({ providerGroupId: waGroups.providerGroupId })
+    .select({ providerGroupId: waGroups.providerGroupId, address: waGroupMembers.phoneE164 })
     .from(waGroupMembers)
     .innerJoin(waGroups, eq(waGroups.id, waGroupMembers.groupId))
-    .where(and(eq(waGroupMembers.phoneE164, input.phoneE164), eq(waGroups.isActive, true)));
+    .where(
+      and(
+        or(eq(waGroupMembers.phoneE164, input.phoneE164), eq(waGroupMembers.lid, input.phoneE164)),
+        eq(waGroups.isActive, true),
+        inArray(waGroupMembers.leftReason, ["so_privado", "removida"]),
+        gte(waGroupMembers.leftAt, new Date(now.getTime() - REQUESTED_EXIT_GRACE_MS)),
+      ),
+    );
   let removed = 0;
   for (const row of rows) {
-    await provider.removeGroupParticipants(row.providerGroupId, [input.phoneE164]);
+    await provider.removeGroupParticipants(row.providerGroupId, [row.address]);
     removed += 1;
   }
   return { removed };
@@ -293,6 +310,36 @@ async function loadAffinityProductsByIds(db: DbOrTx, productIds: readonly string
   return [...map.values()].map(({ sizes, colors, ...rest }) => ({ ...rest, sizesAvailable: [...sizes], colorsAvailable: [...colors] }));
 }
 
+function fold(value: string): string {
+  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+}
+
+/**
+ * A peça do post que tem o TAMANHO dela (a promessa do aviso é "chegou no
+ * seu tamanho"); a cor que ela ama é o motivo a mais. Null quando nenhuma
+ * peça tem o tamanho — cor sozinha ou categoria já comprada não bastam.
+ */
+export function bestSizeMatch(
+  candidate: AudienceCandidate,
+  products: readonly DropAffinityProduct[],
+): { product: DropAffinityProduct; size: string; color: string | null; score: number } | null {
+  const profile = candidate.profile;
+  if (!profile) return null;
+  let best: { product: DropAffinityProduct; size: string; color: string | null; score: number } | null = null;
+  for (const product of products) {
+    const sizeKey = sizeKeyForCategory(product.categoryName, product.name);
+    const wanted = sizeKey ? profile.sizes[sizeKey] : undefined;
+    if (!wanted) continue;
+    const size = product.sizesAvailable.find((available) => fold(available) === fold(wanted));
+    if (!size) continue;
+    const loved = profile.colorsLove.map(fold);
+    const color = product.colorsAvailable.find((available) => loved.some((love) => fold(available).includes(love) || love.includes(fold(available)))) ?? null;
+    const { score } = scoreProductAffinity(candidate, product);
+    if (best === null || score > best.score) best = { product, size, color, score };
+  }
+  return best;
+}
+
 /** Membras ativas da sala que têm cadastro com opt-in (as candidatas a aviso). */
 async function groupCandidates(db: DbOrTx, groupId: string): Promise<AudienceCandidate[]> {
   const members = await db
@@ -324,7 +371,11 @@ export async function fanOutAffinityNotices(db: DbOrTx, input: { postId: string;
   ]);
   const limitRaw = Number(settings["drop_audience_limit"]);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 60;
-  const ranked = rankAudience(candidates, affinityProducts, limit);
+  // Elegíveis pela régua dos lançamentos E com o tamanho dela numa peça do post.
+  const ranked = rankAudience(candidates, affinityProducts, limit).filter((invite) => {
+    const candidate = candidates.find((c) => c.customerId === invite.customerId);
+    return candidate !== undefined && bestSizeMatch(candidate, affinityProducts) !== null;
+  });
   if (ranked.length === 0) return { queued: 0, candidates: candidates.length };
   const schedule = staggerWithinWindow(ranked.length, { from: now, intervalSeconds: GROUP_NOTICE_INTERVAL_SECONDS, window: policy.cadence.window });
   let queued = 0;
@@ -375,16 +426,13 @@ export async function sendAffinityNotice(db: DbOrTx, provider: MessagingProvider
     await deferNotice(db, { eventType: GROUP_AFFINITY_NOTICE_EVENT, dedupeBase: `${GROUP_AFFINITY_NOTICE_EVENT}:${post.id}:${input.customerId}`, aggregateType: "wa_group_post", aggregateId: post.id, payload: { postId: post.id, customerId: input.customerId }, now });
     return { skipped: "fora_da_janela" };
   }
-  // A melhor peça do post para ela, de novo na hora de mandar (o estoque mudou desde o post).
+  // A melhor peça do post para ela, de novo na hora de mandar (o estoque
+  // mudou desde o post): precisa ter o tamanho dela agora.
   const affinityProducts = await loadAffinityProductsByIds(db, post.productIds);
-  let best: { product: DropAffinityProduct; score: number; reasons: string[] } | null = null;
-  for (const product of affinityProducts) {
-    const result = scoreProductAffinity(candidate, product);
-    if (result.score >= 2 && (best === null || result.score > best.score)) best = { product, ...result };
-  }
+  const best = bestSizeMatch(candidate, affinityProducts);
   if (!best) return { skipped: "sem_afinidade" };
-  const sizeKey = sizeKeyForCategory(best.product.categoryName, best.product.name);
-  const size = sizeKey ? (candidate.profile?.sizes[sizeKey] ?? "") : "";
+  // O motivo fala com ELA ("no seu tamanho"), não sobre ela como no painel dos lançamentos.
+  const motivo = `tem no seu tamanho (${best.size})${best.color ? ` e em ${best.color}, que é a sua cor` : ""}`;
   return sendTemplateMessage(db, provider, {
     templateKey: "provador_affinity",
     phoneE164: candidate.phoneE164,
@@ -392,8 +440,8 @@ export async function sendAffinityNotice(db: DbOrTx, provider: MessagingProvider
     vars: {
       nome: firstName(candidate.fullName),
       peca: best.product.name,
-      tamanho: size,
-      motivo: best.reasons.join(" e "),
+      tamanho: best.size,
+      motivo,
       horas: String(policy.holdHours),
     },
     dedupeKey: `${GROUP_AFFINITY_NOTICE_EVENT}:${post.id}:${input.customerId}`,
@@ -527,10 +575,6 @@ export async function sendLastUnitNotice(db: DbOrTx, provider: MessagingProvider
 // Vencedora da enquete chegou: para quem votou nela
 // ---------------------------------------------------------------------------
 
-function fold(value: string): string {
-  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
-}
-
 /**
  * Handler complementar de stock.restocked: enquetes apuradas nos últimos 60
  * dias cuja peça é a desta variação e cuja vencedora é a cor (ou o
@@ -557,11 +601,13 @@ export async function fanOutPollWinnerNotices(db: DbOrTx, input: { variantId: st
         sql`${waGroupPosts.productIds} @> ${JSON.stringify([variant.productId])}::jsonb`,
       ),
     );
+  // Igualdade exata (sem acento/caixa): "M" não pode casar com "Marrom" nem
+  // "Verde" com "Verde-oliva" — a enquete usa os nomes como estão no cadastro.
   const matches = polls.filter((poll) => {
     const winner = poll.pollResult?.winner;
     if (!winner) return false;
     const w = fold(winner);
-    return [variant.color, variant.size].some((attr) => attr && (fold(attr).includes(w) || w.includes(fold(attr))));
+    return [variant.color, variant.size].some((attr) => attr && fold(attr) === w);
   });
   if (matches.length === 0) return { queued: 0 };
   const targets: { postId: string; customerId: string }[] = [];

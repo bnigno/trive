@@ -136,6 +136,11 @@ describe("entrar_no_provador", () => {
     const again = await run("entrar_no_provador", { cliente_autorizou: true });
     expect(again).toMatchObject({ ok: true, text: expect.stringContaining("já está no Provador TRIVÉ") });
     expect(await wasend()).toHaveLength(1);
+
+    // Saiu e voltou por um convite novo da Lia: "pela Lia" de novo (não a origem velha).
+    await db.update(schema.waGroupMembers).set({ leftAt: NOW, leftReason: "saiu", source: "sync" }).where(eq(schema.waGroupMembers.phoneE164, ANA));
+    await syncGroupMembers(sdb, provider, { groupId: group.id, now: new Date(NOW.getTime() + 2 * 3_600_000) });
+    expect((await listGroupMembers(sdb, { groupId: group.id })).find((m) => m.phoneE164 === ANA)).toMatchObject({ source: "lia", leftAt: null });
   });
 
   it("cadastro existente sem opt-in ganha o opt-in; nome vem do perfil do WhatsApp quando não há cadastro; número oculto não entra; ensaio não faz nada", async () => {

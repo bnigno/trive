@@ -919,8 +919,8 @@ export async function processZapiInbound(
       await cancelDropWaitlistByPhone(tx, identityPhone, now);
       await cancelStockAlertsByPhone(tx, identityPhone, now);
       await cancelBotFollowupsByPhone(tx, { phoneE164: identityPhone, reason: "sair", now });
-      // "SAIR desliga tudo" (cartão do Provador): sai das salas também.
-      await leaveGroupsByPhone(tx, { phoneE164: identityPhone, reason: "saiu", now });
+      // "SAIR desliga tudo" (cartão do Provador): sai das salas também (a loja a remove).
+      await leaveGroupsByPhone(tx, { phoneE164: identityPhone, reason: "removida", now });
       if (customer) {
         await tx
           .update(customers)

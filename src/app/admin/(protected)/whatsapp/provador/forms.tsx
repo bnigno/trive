@@ -256,7 +256,7 @@ export function ComposePostForm({
           <Field label="O que acontece com a vencedora" hint='Ex.: "chega em 15 dias". Vazio = sem promessa.'>
             <Input name="outcome" maxLength={80} placeholder="chega em 15 dias" autoComplete="off" value={draft.outcome} onChange={(e) => set("outcome", e.target.value)} />
           </Field>
-          <Field label="Peça da enquete (opcional)" hint="Quando a cor (ou o tamanho) vencedora chegar ao estoque desta peça, quem votou nela é avisada no privado antes de todo mundo.">
+          <Field label="Peça da enquete (opcional)" hint="Quando a cor (ou o tamanho) vencedora chegar ao estoque desta peça, quem votou nela é avisada no privado antes de todo mundo. Para o aviso sair, escreva as opções exatamente como a cor está no cadastro da peça (ex.: “Verde-oliva”, não “Verde”).">
             <Select name="pollProductId" value={draft.pollProductId} onChange={(e) => set("pollProductId", e.target.value)}>
               <option value="">Sem peça</option>
               {products.map((product) => (

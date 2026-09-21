@@ -308,6 +308,9 @@ function isPaused(group: { pausedUntil: Date | null }, now: Date): boolean {
 
 export const PROVADOR_INVITE_ACTION = "wa.provador_invite";
 
+/** Saída pedida ("só privado"/SAIR): por tanto tempo o sync não a considera de volta mesmo que o metadata ainda a liste. */
+export const REQUESTED_EXIT_GRACE_MS = 7 * 86_400_000;
+
 /** Ela já pediu o convite pela Lia? (audit wa.provador_invite pelo telefone — vale para o sync marcar "pela Lia".) */
 export async function findProvadorInviteByPhone(db: DbOrTx, phoneE164: string, since: Date): Promise<boolean> {
   const [row] = await db
@@ -345,7 +348,7 @@ async function syncMembersFromMetadata(
     if (key) present.set(key, participant);
   }
   const rows = await db
-    .select({ id: waGroupMembers.id, phoneE164: waGroupMembers.phoneE164, lid: waGroupMembers.lid, leftAt: waGroupMembers.leftAt })
+    .select({ id: waGroupMembers.id, phoneE164: waGroupMembers.phoneE164, lid: waGroupMembers.lid, leftAt: waGroupMembers.leftAt, leftReason: waGroupMembers.leftReason })
     .from(waGroupMembers)
     .where(eq(waGroupMembers.groupId, groupId));
   const knownByPhone = new Map(rows.map((row) => [row.phoneE164, row]));
@@ -389,6 +392,17 @@ async function syncMembersFromMetadata(
       continue;
     }
     matched.add(row.id);
+    // Ela pediu para sair ("só privado"/SAIR) há poucos dias e a remoção ainda
+    // não aconteceu: a presença no metadata não a traz de volta — o pedido
+    // dela vale mais. Passado o prazo, presença é presença (ela pode ter
+    // voltado pelo link, ou a dona a recolocou).
+    if (
+      row.leftAt !== null &&
+      (row.leftReason === "so_privado" || row.leftReason === "removida") &&
+      now.getTime() - row.leftAt.getTime() < REQUESTED_EXIT_GRACE_MS
+    ) {
+      continue;
+    }
     // O telefone é o endereço melhor: a linha sobe do LID para ele, nunca o contrário.
     const identity = participant.phoneE164
       ? row.phoneE164 !== participant.phoneE164
@@ -398,9 +412,11 @@ async function syncMembersFromMetadata(
           : {}
       : {};
     if (row.leftAt !== null) {
+      // Voltou: pelo convite da Lia (30 dias) conta como "pela Lia" de novo.
+      const invited = participant.phoneE164 ? await findProvadorInviteByPhone(db, participant.phoneE164, new Date(now.getTime() - 30 * 86_400_000)) : false;
       await db
         .update(waGroupMembers)
-        .set({ ...identity, leftAt: null, leftReason: null, joinedAt: now, isAdmin: participant.isAdmin, updatedAt: now })
+        .set({ ...identity, ...(invited ? { source: "lia" } : {}), leftAt: null, leftReason: null, joinedAt: now, isAdmin: participant.isAdmin, updatedAt: now })
         .where(eq(waGroupMembers.id, row.id));
       joined += 1;
     } else {

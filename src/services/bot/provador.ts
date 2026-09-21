@@ -3,7 +3,7 @@
 // privado (auditado) e o cartão de boas-vindas com o link do grupo — que a
 // LOJA manda pela fila, nunca o modelo. Ninguém é adicionado: ela entra
 // tocando no convite; o sync da sala reconhece a entrada e a marca "pela Lia".
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import type { BotToolInputs } from "@/core/bot/tools";
 import { renderWelcomeCard } from "@/core/groups/rituals";
@@ -95,7 +95,7 @@ export async function execEntrarNoProvador(
   const [member] = await db
     .select({ id: waGroupMembers.id })
     .from(waGroupMembers)
-    .where(and(eq(waGroupMembers.groupId, room.id), eq(waGroupMembers.phoneE164, ctx.phoneE164), isNull(waGroupMembers.leftAt)))
+    .where(and(eq(waGroupMembers.groupId, room.id), or(eq(waGroupMembers.phoneE164, ctx.phoneE164), eq(waGroupMembers.lid, ctx.phoneE164)), isNull(waGroupMembers.leftAt)))
     .limit(1);
   if (member) {
     return { ok: true, text: `Ela já está no ${room.name}. Diga isso em 1 frase e siga a conversa (os avisos no privado já estão ligados).` };

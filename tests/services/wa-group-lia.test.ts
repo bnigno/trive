@@ -260,20 +260,35 @@ describe("só privado e SAIR", () => {
     // Ela ainda tem opt-in (só privado ≠ SAIR).
     expect((await db.select().from(schema.customers))[0]?.marketingOptIn).toBe(true);
 
+    // Enquanto a remoção não acontece, o sync (ela ainda aparece no metadata) NÃO a traz de volta.
+    await syncGroupMembers(sdb, provider, { groupId: group.id, now: new Date(NOW.getTime() + 60_000) });
+    expect((await db.select().from(schema.waGroupMembers).where(eq(schema.waGroupMembers.phoneE164, ANA)))[0]).toMatchObject({ leftReason: "so_privado" });
+
     expect(await removeFromGroups(sdb, provider, { phoneE164: ANA })).toEqual({ removed: 1 });
     expect(provider.removedParticipants).toEqual([{ groupId: GROUP, addresses: [ANA] }]);
+    // Saída antiga (mais de 7 dias) não é refeita.
+    expect(await removeFromGroups(sdb, provider, { phoneE164: ANA, now: new Date(NOW.getTime() + 8 * 86_400_000) })).toEqual({ removed: 0 });
 
     // Quem não está em grupo nenhum recebe outra frase.
     const again = await processZapiInbound(sdb, { providedSecret: "segredo", body: { ...base, messageId: "W-2", phone: "5591999990001", text: { message: "só privado" } } });
     expect(again).toMatchObject({ action: "so_privado", groups: 0 });
+
+    // Número oculto (linha da sala pelo LID): "só privado" também acha.
+    const LID = "220839349862480@lid";
+    provider.setGroup(metadata([{ phoneE164: "+5591981037536", lid: null, isAdmin: true }, { phoneE164: BIA, lid: null, isAdmin: false }, { phoneE164: null, lid: LID, isAdmin: false }]));
+    await syncGroupMembers(sdb, provider, { groupId: group.id, now: new Date(NOW.getTime() + 120_000) });
+    const lidResult = await processZapiInbound(sdb, { providedSecret: "segredo", body: { ...base, messageId: "W-L", phone: LID, chatLid: LID, text: { message: "só privado" } } });
+    expect(lidResult).toMatchObject({ action: "so_privado", groups: 1 });
+    expect(await removeFromGroups(sdb, provider, { phoneE164: LID })).toEqual({ removed: 1 });
+    expect(provider.removedParticipants.at(-1)).toEqual({ groupId: GROUP, addresses: [LID] });
 
     // SAIR de quem está no grupo: sai da sala e desliga tudo.
     await customer("Bia", BIA);
     const sair = await processZapiInbound(sdb, { providedSecret: "segredo", body: { ...base, messageId: "W-3", phone: "5591999990002", text: { message: "SAIR" } } });
     expect(sair).toMatchObject({ action: "opt_out" });
     const [bia] = await db.select().from(schema.waGroupMembers).where(eq(schema.waGroupMembers.phoneE164, BIA));
-    expect(bia).toMatchObject({ leftReason: "saiu" });
-    expect(await outbox("wa.group_remove")).toHaveLength(2);
+    expect(bia).toMatchObject({ leftReason: "removida" });
+    expect(await outbox("wa.group_remove")).toHaveLength(3);
   });
 });
 
@@ -297,7 +312,7 @@ describe("avisos no privado", () => {
 
     const sent = await sendAffinityNotice(sdb, provider, { postId: post.id, customerId: anaId, now: sp("2026-09-22", 10, 5) });
     expect(sent).toMatchObject({ sent: true });
-    expect(provider.sentMessages.at(-1)).toMatchObject({ toE164: ANA, body: "Ana: Vestido Terracota tem o M dela e em terracota, cor que ela ama — M por 24 h?" });
+    expect(provider.sentMessages.at(-1)).toMatchObject({ toE164: ANA, body: "Ana: Vestido Terracota tem no seu tamanho (M) e em terracota, que é a sua cor — M por 24 h?" });
     // Idempotente: o retry não manda de novo (dedupe em wa_messages).
     expect(await sendAffinityNotice(sdb, provider, { postId: post.id, customerId: anaId, now: sp("2026-09-22", 10, 6) })).toEqual({ skipped: "ja_enviado" });
     expect(provider.sentMessages.filter((m) => m.toE164 === ANA)).toHaveLength(1);
@@ -312,6 +327,16 @@ describe("avisos no privado", () => {
     // Sem opt-in: nada.
     await db.update(schema.customers).set({ marketingOptIn: false }).where(eq(schema.customers.id, anaId));
     expect(await sendAffinityNotice(sdb, provider, { postId: late.id, customerId: anaId, now: sp("2026-09-28", 9) })).toEqual({ skipped: "sem_opt_in" });
+  });
+
+  it("cor amada ou categoria comprada sem o TAMANHO na peça não recebem o aviso (a promessa é 'no seu tamanho')", async () => {
+    const { productId } = await pricedProduct("Vestido Terracota", "Vestidos", [{ size: "G", color: "terracota", onHand: 3 }]);
+    const anaId = await customer("Ana Souza", ANA, { sizes: { vestido: "M" }, colorsLove: ["terracota"] }); // cor sim, tamanho não
+    const group = await registered();
+    const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: NOW, userId: FIXED_USER_ID, post: { kind: "chegadas", productIds: [productId] } }, { now: NOW });
+    await sendGroupPost(sdb, provider, { postId: post.id, now: NOW });
+    expect(await fanOutAffinityNotices(sdb, { postId: post.id, now: NOW })).toEqual({ queued: 0, candidates: 1 });
+    expect(await sendAffinityNotice(sdb, provider, { postId: post.id, customerId: anaId, now: sp("2026-09-22", 10, 5) })).toEqual({ skipped: "sem_afinidade" });
   });
 
   it("intervalo entre avisos ativos é de 5 min (nunca os 20 s do lote)", async () => {
@@ -387,6 +412,13 @@ describe("avisos no privado", () => {
     expect(notices[0]?.payload).toEqual({ postId: poll.id, variantId: variantIds[1], customerId: anaId });
     expect(await sendPollWinnerNotice(sdb, provider, { postId: poll.id, variantId: variantIds[1]!, customerId: anaId, now: sp("2026-09-29", 10) })).toMatchObject({ sent: true });
     expect(provider.sentMessages.at(-1)).toMatchObject({ toE164: ANA, body: "Deu Verde-oliva: Blusa Marfim chegou (4), 24 h de reserva." });
+
+    // "Verde" não casa com "verde-oliva" (só igualdade exata): uma variação "verde" não avisa.
+    const [verde] = await db.insert(schema.productVariants).values({ productId, sku: "MARFIM-VERDE-M", costCents: 1000, attributes: { tamanho: "M", cor: "verde" } }).returning({ id: schema.productVariants.id });
+    await db.insert(schema.stockLevels).values({ productVariantId: verde.id, onHand: 0, reserved: 0 });
+    await adjustStock(sdb, { variantId: verde.id, quantityDelta: 2, note: "chegou", userId: FIXED_USER_ID });
+    const verdeEvent = (await outbox("stock.restocked")).find((e) => (e.payload as { variantId: string }).variantId === verde.id);
+    expect(await fanOutPollWinnerNotices(sdb, { ...(verdeEvent!.payload as { variantId: string; movementId: string }), now: sp("2026-09-29", 11) })).toEqual({ queued: 0 });
 
     // A reposição da cor que NÃO ganhou não avisa ninguém.
     await adjustStock(sdb, { variantId: variantIds[0]!, quantityDelta: -3, note: "zerou", userId: FIXED_USER_ID });
