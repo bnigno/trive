@@ -145,6 +145,7 @@ function LookMeta({ row }: { row: CustomerLookRow }) {
           " · sem pedido com essa peça — confira antes de aprovar"
         )}
         {row.consentAt ? ` · autorizou em ${formatDateTimeSP(row.consentAt)}` : ""}
+        {row.couponCode ? ` · mimo: cupom ${row.couponCode}` : ""}
       </p>
     </div>
   );

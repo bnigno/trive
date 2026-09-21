@@ -6,9 +6,9 @@
 import { z } from "zod";
 
 import { formatCentsBRL } from "@/lib/money";
-import { spDayEnd, spDayKey } from "@/lib/sp-day";
 
 import { couponCodePrefix } from "./codes";
+import { couponExpiryAfterDays } from "./expiry";
 
 export const liaGiftPolicySchema = z.object({
   enabled: z.boolean(),
@@ -87,8 +87,7 @@ function refuse(code: LiaGiftRefusal): LiaGiftDecision {
 
 /** Fim do dia de São Paulo de `now + validDays` (a Lia diz "vale até dd/mm"). */
 export function liaGiftExpiresAt(now: Date, validDays: number): Date {
-  const lastDay = spDayKey(new Date(now.getTime() + validDays * 86_400_000));
-  return new Date(spDayEnd(lastDay).getTime() - 1000);
+  return couponExpiryAfterDays(now, validDays);
 }
 
 /** A primeira condição que falha decide. */
