@@ -37,7 +37,7 @@ export function RequestStudioForm({
 }) {
   const [state, formAction] = useActionState(requestStudioPhotosAction, INITIAL_STATE);
   const [quality, setQuality] = useState<StudioQuality>(defaults.quality);
-  const [options, setOptions] = useState(3);
+  const [options, setOptions] = useState(2);
   const brl = estimates[quality][options - 1] ?? estimates[quality][2] ?? "";
 
   return (

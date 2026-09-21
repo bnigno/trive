@@ -32,7 +32,7 @@ import { loadStudioSettings } from "@/services/studio-settings";
 
 export const STUDIO_OPTION_EVENT = "product.ai_photo";
 export const STUDIO_BASE_PHOTO_EVENT = "studio.base_photo";
-const DEFAULT_OPTIONS = 3;
+const DEFAULT_OPTIONS = 2;
 
 export class ServiceError extends Error {
   readonly code: string;
