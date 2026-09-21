@@ -1,19 +1,27 @@
 // Tipo de peça: o que a cliente pede ("um corset", "vestidos") e a loja só
 // tinha em duas categorias largas (Vestuário, Acessórios). Lista fixa em
 // código — a Lia e o painel falam a mesma língua; sinônimos cobrem o jeito
-// de a cliente e da dona escreverem. PURO: sem I/O.
+// de a cliente e da dona escreverem (o plural dos sinônimos é derivado por
+// pluralizePieceTerm; rótulo e plural são explícitos). PURO: sem I/O.
+//
+// Tipo novo = uma linha aqui (slug sem acento, rótulo, plural, sinônimos) +
+// um caso em tests/core/catalog/piece-types.test.ts. Sem migração: a coluna
+// products.piece_type é texto livre garantido por Zod no service. Depois,
+// `scripts/sugerir-tipo-de-peca.ts` para as peças que ainda estão sem tipo.
+// Um mesmo termo não pode pertencer a dois tipos — o teste de guarda acusa.
 
 export const PIECE_TYPES = [
   { slug: "vestido", label: "Vestido", plural: "Vestidos", synonyms: ["longo", "midi", "curto"] },
   { slug: "blusa", label: "Blusa", plural: "Blusas", synonyms: ["bata", "regata", "camiseta", "t-shirt", "baby look", "baby-look"] },
   { slug: "cropped", label: "Cropped", plural: "Croppeds", synonyms: ["cropp"] },
   { slug: "top", label: "Top", plural: "Tops", synonyms: [] },
-  { slug: "body", label: "Body", plural: "Bodies", synonyms: [] },
+  { slug: "body", label: "Body", plural: "Bodies", synonyms: ["bodys"] },
   { slug: "corset", label: "Corset", plural: "Corsets", synonyms: ["corselet", "espartilho"] },
   { slug: "camisa", label: "Camisa", plural: "Camisas", synonyms: ["camisao", "chemise"] },
   { slug: "saia", label: "Saia", plural: "Saias", synonyms: [] },
   { slug: "calca", label: "Calça", plural: "Calças", synonyms: ["pantalona", "legging"] },
-  { slug: "short", label: "Short", plural: "Shorts", synonyms: ["bermuda"] },
+  { slug: "short", label: "Short", plural: "Shorts", synonyms: [] },
+  { slug: "bermuda", label: "Bermuda", plural: "Bermudas", synonyms: [] },
   { slug: "macacao", label: "Macacão", plural: "Macacões", synonyms: ["macaquinho"] },
   { slug: "conjunto", label: "Conjunto", plural: "Conjuntos", synonyms: ["set"] },
   { slug: "kimono", label: "Kimono", plural: "Kimonos", synonyms: ["quimono"] },
@@ -43,19 +51,42 @@ export function normalizePieceTerm(term: string): string {
     .trim();
 }
 
+/**
+ * Plural de um sinônimo já normalizado, pelas regras simples do português e
+ * dos estrangeirismos que a moda usa: bermuda → bermudas, camisao → camisoes,
+ * clutch → clutches, cardigan → cardigans; o que termina em s/x/z não muda
+ * (oculos). Não cobre exceções (-l → -is, -ao → -aes): para essas, escreva
+ * o plural como sinônimo explícito.
+ */
+export function pluralizePieceTerm(term: string): string {
+  const word = normalizePieceTerm(term);
+  if (word === "") return word;
+  if (word.endsWith("ao")) return `${word.slice(0, -2)}oes`;
+  if (word.endsWith("m")) return `${word.slice(0, -1)}ns`;
+  if (word.endsWith("ch") || word.endsWith("sh")) return `${word}es`;
+  if (/[sxz]$/u.test(word)) return word;
+  return `${word}s`;
+}
+
+/** Rótulo, plural, slug, sinônimos e o plural de cada sinônimo — normalizados, sem repetição, nesta ordem. */
+function termsOf(type: (typeof PIECE_TYPES)[number]): string[] {
+  const synonyms = [...type.synonyms].map((term) => normalizePieceTerm(term));
+  return [...new Set([type.label, type.plural, type.slug].map((term) => normalizePieceTerm(term)).concat(synonyms, synonyms.map(pluralizePieceTerm)))];
+}
+
 const BY_TERM: ReadonlyMap<string, PieceType> = (() => {
   const map = new Map<string, PieceType>();
   for (const type of PIECE_TYPES) {
-    for (const term of [type.slug, type.label, type.plural, ...type.synonyms]) map.set(normalizePieceTerm(term), type.slug);
+    for (const term of termsOf(type)) map.set(term, type.slug);
   }
   return map;
 })();
 
-/** Tudo o que pode aparecer no NOME de uma peça deste tipo: rótulo, plural, slug e sinônimos — a mesma régua de suggestPieceType. */
+/** Tudo o que pode aparecer no NOME de uma peça deste tipo: rótulo, plural, slug, sinônimos (e seus plurais) — a mesma régua de suggestPieceType. */
 export function pieceTypeTerms(slug: PieceType): string[] {
   const type = PIECE_TYPES.find((entry) => entry.slug === slug);
   if (!type) return [slug];
-  return [...new Set([type.label, type.plural, type.slug, ...type.synonyms].map((term) => normalizePieceTerm(term)))];
+  return termsOf(type);
 }
 
 export function pieceTypeLabel(slug: PieceType): string {

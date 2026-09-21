@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeLabel, pieceTypePlural, pieceTypeTerms, suggestPieceType } from "@/core/catalog/piece-types";
+import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeLabel, pieceTypePlural, pieceTypeTerms, pluralizePieceTerm, suggestPieceType } from "@/core/catalog/piece-types";
 
 describe("tipos de peça", () => {
   it("a lista é fechada, sem slug repetido, e todo slug tem rótulo e plural", () => {
@@ -19,15 +19,45 @@ describe("tipos de peça", () => {
     expect(parsePieceType("corselet")).toBe("corset");
     expect(parsePieceType("  Calça ")).toBe("calca");
     expect(parsePieceType("baby look")).toBe("blusa");
+    expect(parsePieceType("Bermuda")).toBe("bermuda");
     expect(parsePieceType("Sapatos")).toBeNull();
     expect(parsePieceType("vestuario")).toBeNull();
     expect(parsePieceType("")).toBeNull();
   });
 
-  it("pieceTypeTerms lista rótulo, plural, slug e sinônimos normalizados — o que se procura no nome quando o tipo não está marcado", () => {
-    expect(pieceTypeTerms("vestido")).toEqual(["vestido", "vestidos", "longo", "midi", "curto"]);
-    expect(pieceTypeTerms("calca")).toEqual(["calca", "calcas", "pantalona", "legging"]);
+  it("pieceTypeTerms lista rótulo, plural, slug, sinônimos e o plural dos sinônimos — o que se procura no nome quando o tipo não está marcado", () => {
+    expect(pieceTypeTerms("vestido")).toEqual(["vestido", "vestidos", "longo", "midi", "curto", "longos", "midis", "curtos"]);
+    expect(pieceTypeTerms("calca")).toEqual(["calca", "calcas", "pantalona", "legging", "pantalonas", "leggings"]);
     expect(pieceTypeTerms("blusa")).toContain("baby look");
+    expect(pieceTypeTerms("blusa")).toContain("baby looks");
+    expect(pieceTypeTerms("bermuda")).toEqual(["bermuda", "bermudas"]);
+    expect(pieceTypeTerms("short")).not.toContain("bermuda");
+  });
+
+  it("o plural dos sinônimos também é reconhecido — a cliente escreve 'pantalonas', a dona escreve 'BERMUDAS'", () => {
+    expect(parsePieceType("bermudas")).toBe("bermuda");
+    expect(parsePieceType("pantalonas")).toBe("calca");
+    expect(parsePieceType("camisões")).toBe("camisa");
+    expect(parsePieceType("leggings")).toBe("calca");
+    expect(parsePieceType("bodys")).toBe("body");
+    expect(parsePieceType("clutches")).toBe("bolsa");
+  });
+
+  it("pluralizePieceTerm segue as regras simples do português e dos estrangeirismos da moda", () => {
+    expect(pluralizePieceTerm("bermuda")).toBe("bermudas");
+    expect(pluralizePieceTerm("camisão")).toBe("camisoes");
+    expect(pluralizePieceTerm("clutch")).toBe("clutches");
+    expect(pluralizePieceTerm("cardigan")).toBe("cardigans");
+    expect(pluralizePieceTerm("blazer")).toBe("blazers");
+    expect(pluralizePieceTerm("baby look")).toBe("baby looks");
+    expect(pluralizePieceTerm("óculos")).toBe("oculos");
+    expect(pluralizePieceTerm("")).toBe("");
+  });
+
+  it("guarda: nenhum termo pertence a dois tipos (a próxima linha da lista não pode disputar um sinônimo)", () => {
+    for (const type of PIECE_TYPES) {
+      for (const term of pieceTypeTerms(type.slug)) expect({ term, tipo: parsePieceType(term) }).toEqual({ term, tipo: type.slug });
+    }
   });
 
   it("suggestPieceType lê o nome da peça: primeiro termo reconhecido, conjunto ganha, nunca 'outro'", () => {
@@ -37,6 +67,9 @@ describe("tipos de peça", () => {
     expect(suggestPieceType("Saia e top do conjunto")).toBe("conjunto");
     expect(suggestPieceType("BABY LOOK BELLA")).toBe("blusa");
     expect(suggestPieceType("Cropped Íris")).toBe("cropped");
+    expect(suggestPieceType("BERMUDAS JEANS")).toBe("bermuda");
+    expect(suggestPieceType("SHORT BERMUDA")).toBe("short");
+    expect(suggestPieceType("Calça pantalonas Lua")).toBe("calca");
     expect(suggestPieceType("Aurora")).toBeNull();
     expect(suggestPieceType("Outro")).toBeNull();
     expect(suggestPieceType("")).toBeNull();

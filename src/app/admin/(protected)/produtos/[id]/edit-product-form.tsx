@@ -100,7 +100,7 @@ export function EditProductForm({
         <Field
           label="Tipo de peça"
           className="sm:col-span-2"
-          hint={`A Lia usa o tipo para achar a peça quando a cliente pede "um corset" ou "vestidos". ${product.pieceType ? "" : "Sugerido pelo nome quando vazio — confira antes de salvar."}`}
+          hint={`A Lia usa o tipo para achar a peça quando a cliente pede "um corset" ou "vestidos". ${product.pieceType ? "" : "Sugerido pelo nome quando vazio — confira antes de salvar. "}Falta um tipo? Peça para incluir na lista — é uma linha no código, sem mexer nas peças.`}
         >
           <Select name="pieceType" defaultValue={product.pieceType ?? suggestPieceType(product.name) ?? ""} autoFocus={autoFocusField === "pieceType"}>
             <option value="">Sem tipo</option>
