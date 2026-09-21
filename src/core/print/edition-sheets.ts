@@ -1,10 +1,12 @@
-// Os cartões da edição e a carta de estreia na folha A4 — PURO. Decide em
-// quais folhas cada imagem cai e onde: no papel fotográfico comum (tesoura)
-// 4 cartões por folha e uma folha MISTA com a carta em cima e 2 cartões
-// embaixo (poupa uma folha por primeira compra); na Silhouette 2 cartões por
-// folha e a carta sozinha na sua folha — o layout misto não é simétrico na
-// altura, e um DXF que o Studio importe invertido cortaria carta e cartão
-// trocados. Só entra o que já tem imagem gerada.
+// Os cartões da edição, a carta de estreia e os vales (15 × 10, o mesmo
+// papel da carta) na folha A4 — PURO. Decide em quais folhas cada imagem cai
+// e onde: no papel fotográfico comum (tesoura) 4 cartões por folha e uma
+// folha MISTA com a primeira 15×10 em cima e 2 cartões embaixo (poupa uma
+// folha por primeira compra); as demais 15×10 vão de 2 em 2 na grade do
+// adesivo da sacola; na Silhouette 2 cartões por folha e as 15×10 de 2 em 2
+// na mesma grade (o corte é o mesmo arquivo do adesivo) — o layout misto
+// não é simétrico na altura, e um DXF que o Studio importe invertido
+// cortaria carta e cartão trocados. Só entra o que já tem imagem gerada.
 import { PAGE_A4, silhouetteSafeArea } from "@/core/catalog/silhouette";
 import { EDITION_CARD, EDITION_LETTER, gridPositions, PLAIN_SHEET_MARGIN_MM, printableArea, type AreaMm, type GridPosition } from "@/core/print/round-labels";
 import type { PageMm } from "@/core/print/dxf";
@@ -104,26 +106,42 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 /**
- * As folhas, na ordem de impressão: a carta primeiro (na mista, com os dois
- * primeiros cartões, no A4; sozinha na Silhouette), depois os cartões
- * restantes de 4 em 4 (A4) ou 2 em 2 (Silhouette), na ordem das peças.
- * Itens sem imagem ficam de fora — a tela já pede "gere de novo".
+ * As folhas, na ordem de impressão: a primeira 15×10 (a carta, ou o vale)
+ * primeiro — na mista, com os dois primeiros cartões, no A4; sozinha na
+ * Silhouette —, as outras 15×10 de 2 em 2 na grade do adesivo, depois os
+ * cartões restantes de 4 em 4 (A4) ou 2 em 2 (Silhouette), na ordem das
+ * peças. Itens sem imagem ficam de fora — a tela já pede "gere de novo".
+ * `letter` (uma só) continua aceito por compatibilidade.
  */
-export function planEditionSheets(input: { letter: EditionSheetItemInput | null; cards: readonly EditionSheetItemInput[]; format: EditionSheetFormat; page?: PageMm }): EditionSheet[] {
+export function planEditionSheets(input: {
+  letter?: EditionSheetItemInput | null;
+  letters?: readonly EditionSheetItemInput[];
+  cards: readonly EditionSheetItemInput[];
+  format: EditionSheetFormat;
+  page?: PageMm;
+}): EditionSheet[] {
   const layout = editionSheetLayout(input.format, input.page);
   const hasUrl = (item: EditionSheetItemInput): item is EditionSheetItemInput & { url: string } => item.url !== null;
-  const letter = input.letter && hasUrl(input.letter) ? input.letter : null;
+  const letters = [...(input.letter ? [input.letter] : []), ...(input.letters ?? [])].filter(hasUrl);
   const cards = input.cards.filter(hasUrl);
   const sheets: EditionSheet[] = [];
   let rest = cards;
+  let restLetters = letters;
 
-  if (letter && layout.letterPosition) {
+  if (restLetters.length > 0 && layout.letterPosition) {
+    const first = restLetters[0];
+    restLetters = restLetters.slice(1);
     const onMixed = layout.mixedCardPositions.length > 0 ? rest.slice(0, layout.mixedCardPositions.length) : [];
     rest = rest.slice(onMixed.length);
     sheets.push({
       kind: onMixed.length > 0 ? "mixed" : "letter",
-      items: [place(letter, layout.letterPosition), ...onMixed.map((card, index) => place(card, layout.mixedCardPositions[index]))],
+      items: [place(first, layout.letterPosition), ...onMixed.map((card, index) => place(card, layout.mixedCardPositions[index]))],
     });
+  }
+  // As outras 15×10, de 2 em 2 na grade do adesivo (o corte é o mesmo).
+  const lettersPerSheet = Math.max(1, layout.letterCutPositions.length);
+  for (const group of chunk(restLetters, lettersPerSheet)) {
+    sheets.push({ kind: "letter", items: group.map((item, index) => place(item, layout.letterCutPositions[index])) });
   }
   const perSheet = layout.cardPositions.length;
   if (perSheet > 0) {

@@ -7,6 +7,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { getDb } from "@/db/client";
 import { loadReceiptAssets } from "@/receipts/assets";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
+import { renderVoucherPng } from "@/receipts/render-voucher";
 import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { requireUser } from "@/services/auth";
 import { publishEditionCards, ServiceError } from "@/services/edition-cards";
@@ -33,6 +34,7 @@ export async function generateEditionCardsAction(
       {
         card: (data) => renderEditionCardPng(data, assets),
         letter: (data) => renderDebutLetterPng(data, assets),
+        voucher: (data) => renderVoucherPng(data, assets),
       },
       { orderId: parsed.data },
     );

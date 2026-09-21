@@ -79,6 +79,35 @@ describe("planEditionSheets — A4", () => {
   });
 });
 
+describe("planEditionSheets — vales (15×10 como a carta)", () => {
+  const vale = (key: string): EditionSheetItemInput => ({ key, kind: "letter", url: `https://cdn/${key}.jpg`, alt: key });
+
+  it("A4: carta + 2 vales + 5 cartões = mista (carta + 2), uma folha com os 2 vales (grade do adesivo) e uma com 3 cartões", () => {
+    const sheets = planEditionSheets({ letter: LETTER, letters: [vale("vale-voce"), vale("vale-amiga")], cards: cards(5), format: "a4" });
+    expect(sheets.map((s) => [s.kind, s.items.map((i) => i.key)])).toEqual([
+      ["mixed", ["carta", "c1", "c2"]],
+      ["letter", ["vale-voce", "vale-amiga"]],
+      ["cards", ["c3", "c4", "c5"]],
+    ]);
+    // Os dois vales caem nas duas células do adesivo da sacola.
+    expect(sheets[1].items.map((i) => [i.xMm, i.yMm, i.widthMm, i.heightMm])).toEqual([
+      [30, 45.5, 150, 100],
+      [30, 151.5, 150, 100],
+    ]);
+  });
+
+  it("sem carta: o primeiro vale vai na mista (A4) ou sozinho (Silhouette); 3 vales na Silhouette = 1 + 2", () => {
+    expect(planEditionSheets({ letters: [vale("vale-voce"), vale("vale-amiga")], cards: cards(2), format: "a4" }).map((s) => [s.kind, s.items.map((i) => i.key)])).toEqual([
+      ["mixed", ["vale-voce", "c1", "c2"]],
+      ["letter", ["vale-amiga"]],
+    ]);
+    expect(planEditionSheets({ letters: [vale("a"), vale("b"), vale("c")], cards: [], format: "silhouette" }).map((s) => [s.kind, s.items.map((i) => i.key)])).toEqual([
+      ["letter", ["a"]],
+      ["letter", ["b", "c"]],
+    ]);
+  });
+});
+
 describe("planEditionSheets — Silhouette", () => {
   it("carta sozinha na primeira folha, depois os cartões de 2 em 2", () => {
     const sheets = planEditionSheets({ letter: LETTER, cards: cards(3), format: "silhouette" });

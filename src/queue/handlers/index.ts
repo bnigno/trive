@@ -16,6 +16,7 @@ import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
 import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
+import { renderVoucherPng } from "@/receipts/render-voucher";
 import { renderEditionCardPng } from "@/receipts/render-edition-card";
 import { sendGiftNoteWa } from "@/services/gifts";
 import { sendDropStoryToOwner } from "@/services/drop-story";
@@ -37,6 +38,7 @@ import { couponIssuedPayloadSchema, sendCouponIssuedWa } from "@/services/coupon
 import { issueLateDeliveryCoupon, stopDeliveredPayloadSchema } from "@/services/late-delivery";
 import { priceActivatedPayloadSchema, protectPricesAfterDrop } from "@/services/price-protection";
 import { deactivateIssuedCouponsForOrder } from "@/services/coupons";
+import { rewardReferrerForPaidOrder } from "@/services/paper-vouchers";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -329,6 +331,9 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "order.paid": async (event) => {
     const orderId = String(event.payload.orderId);
+    // A amiga pagou com o vale da caixa: quem indicou ganha o prêmio (idempotente).
+    const reward = await rewardReferrerForPaidOrder(getDb(), { orderId });
+    if (!("skipped" in reward) || reward.skipped !== "sem_cupom") console.info(`[order.paid] prêmio da indicação ${orderId} → ${JSON.stringify(reward)}`);
     // Os cartões da edição (e a carta de estreia) ficam prontos antes de a
     // dona chegar à mesa de embalagem. Evento próprio, uma vez por pedido —
     // enfileirado ANTES dos avisos, para não ficar refém de uma sessão da
@@ -368,6 +373,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
         render: {
           card: (data) => renderEditionCardPng(data, assets),
           letter: (data) => renderDebutLetterPng(data, assets),
+          voucher: (data) => renderVoucherPng(data, assets),
         },
       },
       event,
@@ -688,7 +694,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "order.refunded": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
     // O pedido caiu: o cupom que ele gerou (proteção de preço) e ainda não foi usado sai de cena.
-    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection"] });
+    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral"] });
     const result = await sendOrderRefundedWa(getDb(), getMessagingProvider(), { orderId });
     console.info(`[order.refunded] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },
@@ -783,7 +789,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // motivo em linguagem humana e o link do pedido (só com opt-in).
   "order.canceled": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
-    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection"] });
+    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral"] });
     const result = await sendOrderCanceledWa(getDb(), getMessagingProvider(), { orderId });
     console.info(`[order.canceled] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },

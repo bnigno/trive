@@ -63,9 +63,16 @@ export default async function EditionCardsPage({ params, searchParams }: { param
     ? { key: "carta", kind: "letter", url: cards.letter.url, alt: `Carta de estreia para ${cards.letter.recipientName}` }
     : null;
   const cardItems: EditionSheetItemInput[] = cards.cards.map((card) => ({ key: card.productId, kind: "card", url: card.url, alt: `Cartão da edição: ${card.name}` }));
-  const sheets = planEditionSheets({ letter: letterItem, cards: cardItems, format });
+  const voucherItems: EditionSheetItemInput[] = cards.vouchers.map((voucher) => ({
+    key: voucher.kind === "para_voce" ? "vale-voce" : "vale-amiga",
+    kind: "letter",
+    url: voucher.url,
+    alt: voucher.kind === "para_voce" ? `Vale para você: ${voucher.code}` : `Vale para uma amiga: ${voucher.code}`,
+  }));
+  const sheets = planEditionSheets({ letter: letterItem, letters: voucherItems, cards: cardItems, format });
   const printedCards = cardItems.filter((item) => item.url !== null).length;
   const printedLetter = letterItem !== null && letterItem.url !== null;
+  const printedVouchers = voucherItems.filter((item) => item.url !== null).length;
   const layout = editionSheetLayout(format);
   const cardsPerSheet = layout.cardPositions.length;
   const cardsDxf = silhouette
@@ -86,8 +93,14 @@ export default async function EditionCardsPage({ params, searchParams }: { param
         : "O que sai na caixa mudou depois da geração (ficha, nota, nome da edição, presente ou a carta) — gere de novo antes de imprimir.",
     });
   }
-  if (generated && (cardItems.some((item) => item.url === null) || (letterItem && letterItem.url === null))) {
-    warnings.push({ key: "missing", text: "Há peça (ou a carta) sem imagem ainda: ela fica fora da folha até você gerar de novo." });
+  if (generated && (cardItems.some((item) => item.url === null) || (letterItem && letterItem.url === null) || voucherItems.some((item) => item.url === null))) {
+    warnings.push({ key: "missing", text: "Há peça (ou a carta, ou um vale) sem imagem ainda: fica fora da folha até você gerar de novo." });
+  }
+  if (!generated && cards.plannedVouchers.length > 0) {
+    warnings.push({
+      key: "vouchers",
+      text: `Ao gerar, ${cards.plannedVouchers.length === 1 ? "sai o vale “para uma amiga” (pedido presente)" : "saem os vales “para você” e “para uma amiga”"} (15 × 10 cm, como a carta) — os códigos nascem na geração.`,
+    });
   }
   if (cards.isGift && hasCards) {
     warnings.push({
@@ -146,7 +159,7 @@ export default async function EditionCardsPage({ params, searchParams }: { param
   const summary =
     sheets.length === 0
       ? null
-      : `${printedCards === 0 ? "" : printedCards === 1 ? "1 cartão" : `${printedCards} cartões`}${printedLetter ? (printedCards > 0 ? " + a carta" : "a carta") : ""} em ${sheets.length === 1 ? "1 folha" : `${sheets.length} folhas`} — ${
+      : `${printedCards === 0 ? "" : printedCards === 1 ? "1 cartão" : `${printedCards} cartões`}${printedLetter ? (printedCards > 0 ? " + a carta" : "a carta") : ""}${printedVouchers > 0 ? `${printedCards > 0 || printedLetter ? " + " : ""}${printedVouchers === 1 ? "1 vale" : `${printedVouchers} vales`}` : ""} em ${sheets.length === 1 ? "1 folha" : `${sheets.length} folhas`} — ${
           silhouette ? `${cardsPerSheet} cartões por folha (as marcas de registro ocupam as margens; a carta vai sozinha)` : `${cardsPerSheet} cartões por folha (a carta divide a folha com 2 cartões)`
         }.`;
 
@@ -225,7 +238,7 @@ export default async function EditionCardsPage({ params, searchParams }: { param
               </div>
               <div className="flex flex-wrap gap-2">
                 {cardsDxf ? <DxfDownloadButton dxf={cardsDxf} fileName="cartoes-corte-silhouette.dxf" label="Baixar corte dos cartões (DXF)" /> : null}
-                {letterDxf && cards.letter ? <DxfDownloadButton dxf={letterDxf} fileName="adesivo-sacola-corte-silhouette.dxf" label="Baixar corte da carta (DXF, o mesmo do adesivo da sacola)" /> : null}
+                {letterDxf && (cards.letter || cards.vouchers.length > 0) ? <DxfDownloadButton dxf={letterDxf} fileName="adesivo-sacola-corte-silhouette.dxf" label="Baixar corte da carta e dos vales (DXF, o mesmo do adesivo da sacola)" /> : null}
               </div>
               <div>
                 <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">Primeira vez (uma vez só)</h3>

@@ -352,3 +352,28 @@ export async function savePriceProtectionSettingsAction(
     return { error: toErrorMessage(error) };
   }
 }
+
+/** Cupons automáticos — vales de papel na caixa. */
+export async function savePaperVoucherSettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("cupons");
+  try {
+    const db = getDb();
+    const values: Array<{ key: string; value: unknown }> = [
+      { key: "paper_voucher_enabled", value: formData.get("enabled") === "on" },
+      { key: "paper_voucher_percent", value: parseIntField(text(formData, "percent"), "Para você (%)", 1, 50) },
+      { key: "referral_percent", value: parseIntField(text(formData, "referralPercent"), "Para uma amiga (%)", 1, 50) },
+      { key: "referral_reward_percent", value: parseIntField(text(formData, "rewardPercent"), "Prêmio de quem indicou (%)", 1, 50) },
+      { key: "paper_voucher_days", value: parseIntField(text(formData, "days"), "Valem por (dias)", 7, 180) },
+    ];
+    for (const { key, value } of values) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+    revalidatePath("/admin/cupons");
+    return { success: "Vales de papel salvos." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}

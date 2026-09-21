@@ -82,6 +82,12 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   // Proteção de preço: desligada até a dona ligar em /admin/cupons.
   { key: "price_protection_enabled", value: false },
   { key: "price_protection_days", value: 14 },
+  // Vales de papel na caixa: desligado até a dona ligar em /admin/cupons.
+  { key: "paper_voucher_enabled", value: false },
+  { key: "paper_voucher_percent", value: 10 },
+  { key: "referral_percent", value: 10 },
+  { key: "referral_reward_percent", value: 10 },
+  { key: "paper_voucher_days", value: 45 },
   // "Quem já vestiu": foto da cliente com a peça vira cartão + consentimento.
   { key: "customer_looks_enabled", value: true },
   // Provador (grupos): nasce desligado — a dona liga quando registrar a primeira sala.
@@ -234,6 +240,15 @@ export const initialWaTemplates: Array<{
       "A diferença ({{valor}}) virou o cupom {{cupom}}, válido até {{validade}}, para a próxima compra: é só dizer o código por aqui ou usar em {{link}}.\n" +
       "Para não receber avisos, responda SAIR.",
     variables: ["nome", "peca", "pedido", "valor", "cupom", "validade", "link"],
+  },
+  {
+    key: "referral_reward_coupon",
+    label: "Prêmio da indicação (a amiga usou o vale)",
+    bodyTemplate:
+      "{{nome}}, {{amiga}} usou o seu vale e fez a primeira compra 🤎\n" +
+      "O seu presente: cupom {{cupom}} de {{valor}}, válido até {{validade}} — é só dizer o código por aqui ou usar em {{link}}.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "amiga", "cupom", "valor", "validade", "link"],
   },
   {
     key: "delivery_feedback_ask",

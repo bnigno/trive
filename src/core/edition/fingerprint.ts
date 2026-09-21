@@ -6,6 +6,7 @@
 import { z } from "zod";
 
 import type { DebutLetterData, EditionCardData } from "@/core/edition/types";
+import { VOUCHER_FINGERPRINT_KEYS, voucherFingerprint, type VoucherCardData } from "@/core/edition/voucher";
 import { sha256Hex } from "@/lib/hash";
 
 /** O hash de um cartão: tudo o que entra no desenho, em ordem fixa. */
@@ -51,10 +52,18 @@ export function parseEditionFingerprints(stored: unknown): EditionFingerprints |
 export function editionFingerprintsOf(
   cards: { productId: string; data: EditionCardData }[],
   letter: DebutLetterData | null = null,
+  vouchers: readonly VoucherCardData[] = [],
 ): EditionFingerprints {
   const entries = cards.map((card): [string, string] => [card.productId, editionCardFingerprint(card.data)]);
   if (letter) entries.push([LETTER_FINGERPRINT_KEY, debutLetterFingerprint(letter)]);
+  for (const voucher of vouchers) entries.push([VOUCHER_FINGERPRINT_KEYS[voucher.kind], voucherFingerprint(voucher)]);
   return Object.fromEntries(entries);
+}
+
+/** O vale ficou velho? Só depois de gerados: o hash de hoje é outro, ou o vale nem estava na geração. */
+export function isVoucherStale(stored: EditionFingerprints | null, voucher: VoucherCardData): boolean {
+  if (stored === null) return false;
+  return stored[VOUCHER_FINGERPRINT_KEYS[voucher.kind]] !== voucherFingerprint(voucher);
 }
 
 /**

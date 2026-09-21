@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { Field, FormError, FormSuccess, Input, SubmitButton } from "@/components/ui/form";
-import { saveLateDeliverySettingsAction, saveLookCouponSettingsAction, savePriceProtectionSettingsAction, type FormState } from "./actions";
+import { saveLateDeliverySettingsAction, saveLookCouponSettingsAction, savePaperVoucherSettingsAction, savePriceProtectionSettingsAction, type FormState } from "./actions";
 
 const INITIAL_STATE: FormState = {};
 
@@ -124,6 +124,52 @@ export function PriceProtectionSettingsForm({ defaults }: { defaults: PriceProte
       <FormSuccess message={state.success} />
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar proteção de preço</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export type PaperVoucherFormDefaults = { enabled: boolean; percent: number; referralPercent: number; rewardPercent: number; days: number };
+
+export function PaperVoucherSettingsForm({ defaults }: { defaults: PaperVoucherFormDefaults }) {
+  const [state, formAction] = useActionState(savePaperVoucherSettingsAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          name="enabled"
+          defaultChecked={defaults.enabled}
+          className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <span>
+          Vales de papel na caixa
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+            Ao gerar os cartões da edição, saem dois cartões de 15 × 10 cm com QR da Lia: “para você” (cupom pessoal da
+            compradora) e “para uma amiga” (primeira compra dela, uma vez por cliente, até 3 usos). Quando a amiga paga, quem
+            indicou ganha o prêmio e uma mensagem. Pedido presente sai só com o da amiga. Precisa do WhatsApp da loja cadastrado.
+          </span>
+        </span>
+      </label>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+        <Field label="Para você (%)" hint="O cupom da compradora.">
+          <Input name="percent" type="number" min={1} max={50} step={1} defaultValue={String(defaults.percent)} />
+        </Field>
+        <Field label="Para uma amiga (%)" hint="Na primeira compra da amiga.">
+          <Input name="referralPercent" type="number" min={1} max={50} step={1} defaultValue={String(defaults.referralPercent)} />
+        </Field>
+        <Field label="Prêmio de quem indicou (%)" hint="Quando a amiga paga.">
+          <Input name="rewardPercent" type="number" min={1} max={50} step={1} defaultValue={String(defaults.rewardPercent)} />
+        </Field>
+        <Field label="Valem por (dias)" hint="Contados da geração dos cartões. Ex.: 45.">
+          <Input name="days" type="number" min={7} max={180} step={1} defaultValue={String(defaults.days)} />
+        </Field>
+      </div>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar vales de papel</SubmitButton>
       </div>
     </form>
   );
