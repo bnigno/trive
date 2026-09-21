@@ -119,6 +119,7 @@ type ComposeDraft = {
   outcome: string;
   maxOptions: string;
   voterHoldHours: string;
+  pollProductId: string;
   lookIds: string[];
   photoCoupon: boolean;
   body: string;
@@ -133,6 +134,7 @@ const EMPTY_DRAFT: ComposeDraft = {
   outcome: "",
   maxOptions: "1",
   voterHoldHours: "24",
+  pollProductId: "",
   lookIds: [],
   photoCoupon: false,
   body: "",
@@ -222,6 +224,16 @@ export function ComposePostForm({
           </Field>
           <Field label="O que acontece com a vencedora" hint='Ex.: "chega em 15 dias". Vazio = sem promessa.'>
             <Input name="outcome" maxLength={80} placeholder="chega em 15 dias" autoComplete="off" value={draft.outcome} onChange={(e) => set("outcome", e.target.value)} />
+          </Field>
+          <Field label="Peça da enquete (opcional)" hint="Quando a cor (ou o tamanho) vencedora chegar ao estoque desta peça, quem votou nela é avisada no privado antes de todo mundo.">
+            <Select name="pollProductId" value={draft.pollProductId} onChange={(e) => set("pollProductId", e.target.value)}>
+              <option value="">Sem peça</option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+            </Select>
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Marcações por pessoa">

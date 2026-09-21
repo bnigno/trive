@@ -43,6 +43,23 @@ import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
 import { closeGroupPoll, groupPollClosePayloadSchema, groupPostPayloadSchema, sendGroupPost } from "@/services/wa-groups";
+import {
+  fanOutAffinityNotices,
+  fanOutLastUnitNotices,
+  fanOutPollWinnerNotices,
+  groupAffinityFanoutPayloadSchema,
+  groupAffinityNoticePayloadSchema,
+  groupLastUnitNoticePayloadSchema,
+  groupLastUnitPayloadSchema,
+  groupMentionPayloadSchema,
+  groupPollWinnerNoticePayloadSchema,
+  groupRemovePayloadSchema,
+  removeFromGroups,
+  runGroupMentionTurn,
+  sendAffinityNotice,
+  sendLastUnitNotice,
+  sendPollWinnerNotice,
+} from "@/services/wa-group-lia";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getGeocoder } from "@/adapters/geocoding";
 import { GEOCODE_MAX_ROUNDS, geocodeRunStops } from "@/services/delivery-runs";
@@ -821,6 +838,46 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const result = await closeGroupPoll(getDb(), getMessagingProvider(), { postId });
     console.info(`[wa.group_poll_close] ${postId} → ${JSON.stringify(result)}`);
   },
+  // Provador: alguém chamou a Lia no grupo — turno curto, só catálogo,
+  // resposta citando a mensagem. Falha do modelo lança (política do evento).
+  "wa.group_mention": async (event) => {
+    const { signalId } = groupMentionPayloadSchema.parse(event.payload);
+    const result = await runGroupMentionTurn(getDb(), getSalesAssistant(), getMessagingProvider(), { signalId, deadlineAt: event.deadlineAt ?? null });
+    console.info(`[wa.group_mention] ${signalId} → ${JSON.stringify(result)}`);
+  },
+  // "só privado"/SAIR: sai das salas (o WhatsApp da loja é admin).
+  "wa.group_remove": async (event) => {
+    const { phoneE164 } = groupRemovePayloadSchema.parse(event.payload);
+    const result = await removeFromGroups(getDb(), getMessagingProvider(), { phoneE164 });
+    console.info(`[wa.group_remove] ${phoneE164.slice(-4)} → ${JSON.stringify(result)}`);
+  },
+  // Depois do "Passou pelo Provador": um aviso por pessoa com afinidade, de 5 em 5 min.
+  "wa.group_affinity_fanout": async (event) => {
+    const { postId } = groupAffinityFanoutPayloadSchema.parse(event.payload);
+    const result = await fanOutAffinityNotices(getDb(), { postId });
+    console.info(`[wa.group_affinity_fanout] ${postId} → ${JSON.stringify(result)}`);
+  },
+  "wa.group_affinity_notice": async (event) => {
+    const payload = groupAffinityNoticePayloadSchema.parse(event.payload);
+    const result = await sendAffinityNotice(getDb(), getMessagingProvider(), payload);
+    console.info(`[wa.group_affinity_notice] ${payload.postId}/${payload.customerId} → ${JSON.stringify(result)}`);
+  },
+  // Sobrou uma unidade: quem reagiu ao post da peça e veste o tamanho.
+  "stock.last_unit": async (event) => {
+    const payload = groupLastUnitPayloadSchema.parse(event.payload);
+    const result = await fanOutLastUnitNotices(getDb(), payload);
+    console.info(`[stock.last_unit] ${payload.variantId} → ${JSON.stringify(result)}`);
+  },
+  "wa.group_last_unit_notice": async (event) => {
+    const payload = groupLastUnitNoticePayloadSchema.parse(event.payload);
+    const result = await sendLastUnitNotice(getDb(), getMessagingProvider(), payload);
+    console.info(`[wa.group_last_unit_notice] ${payload.variantId}/${payload.customerId} → ${JSON.stringify(result)}`);
+  },
+  "wa.group_poll_winner_notice": async (event) => {
+    const payload = groupPollWinnerNoticePayloadSchema.parse(event.payload);
+    const result = await sendPollWinnerNotice(getDb(), getMessagingProvider(), payload);
+    console.info(`[wa.group_poll_winner_notice] ${payload.postId}/${payload.customerId} → ${JSON.stringify(result)}`);
+  },
   // Convite VIP de lançamento: um por convidada, na fase VIP e na janela.
   "wa.drop_invite": async (event) => {
     const payload = dropInvitePayloadSchema.parse(event.payload);
@@ -851,7 +908,9 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "stock.restocked": async (event) => {
     const payload = stockRestockedPayloadSchema.parse(event.payload);
     const result = await fanOutRestockAlerts(getDb(), payload);
-    console.info(`[stock.restocked] ${payload.variantId} → ${JSON.stringify(result)}`);
+    // Provador: a vencedora da enquete chegou → quem votou nela é a primeira a saber.
+    const winners = await fanOutPollWinnerNotices(getDb(), { variantId: payload.variantId, movementId: payload.movementId });
+    console.info(`[stock.restocked] ${payload.variantId} → ${JSON.stringify({ ...result, pollWinners: winners.queued })}`);
   },
   // UMA mensagem para quem pediu o aviso (foto + texto), dentro da janela.
   "wa.restock_notify": async (event) => {

@@ -125,3 +125,11 @@ export function isLowStock(level: StockLevel, threshold: number): boolean {
 export function restockCrossed(before: StockLevel, after: StockLevel): boolean {
   return before.onHand - before.reserved <= 0 && after.onHand - after.reserved > 0;
 }
+
+/**
+ * Ficou a ÚLTIMA unidade disponível (de 2+ para exatamente 1): o sinal do
+ * Provador para avisar, uma vez, quem curtiu a peça e veste esse tamanho.
+ */
+export function lastUnitCrossed(before: StockLevel, after: StockLevel): boolean {
+  return before.onHand - before.reserved >= 2 && after.onHand - after.reserved === 1;
+}

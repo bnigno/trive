@@ -35,6 +35,7 @@ import {
   renderQuemVestiuPost,
   tallyPoll,
 } from "@/core/groups/rituals";
+import { groupSignalMemoryLines } from "@/core/groups/mention";
 import { decodePollVote, type GroupSignal, parseGroupInbound } from "@/core/groups/signals";
 import {
   auditLog,
@@ -550,6 +551,8 @@ const composePostSchema = z.discriminatedUnion("kind", [
     maxOptions: z.number().int().min(1).max(12).optional(),
     outcome: z.string().trim().max(80).optional(),
     voterHoldHours: z.number().int().min(0).max(168).optional(),
+    /** A peça da enquete (opcional): quando a cor/tamanho vencedor chegar ao estoque, quem votou nela é avisada. */
+    productId: z.uuid().optional(),
   }),
   z.object({
     kind: z.literal("quem_vestiu"),
@@ -724,7 +727,11 @@ export async function composeGroupPost(
       const problem = pollProblem(input);
       if (problem) throw new ServiceError(`enquete_${problem}`, POLL_PROBLEM_MESSAGES[problem]);
       const poll = renderPoll(input);
-      return { ...base, body: poll.message, pollOptions: poll.options, pollMaxOptions: input.maxOptions ?? 1 };
+      if (input.productId) {
+        const [product] = await db.select({ id: products.id }).from(products).where(and(eq(products.id, input.productId), isNull(products.deletedAt))).limit(1);
+        if (!product) throw new ServiceError("peca_inexistente", "A peça da enquete não existe mais.");
+      }
+      return { ...base, body: poll.message, pollOptions: poll.options, pollMaxOptions: input.maxOptions ?? 1, productIds: input.productId ? [input.productId] : null };
     }
     case "quem_vestiu": {
       const looks = await loadLooks(db, input.lookIds);
@@ -1039,6 +1046,21 @@ export async function sendGroupPost(db: DbOrTx, provider: MessagingProvider, inp
       .update(waGroupPosts)
       .set({ status: "sent", sentAt: now, providerMessageId, updatedAt: now })
       .where(eq(waGroupPosts.id, post.id));
+    // Chegadas: quem tem afinidade com uma peça recebe, no privado, "chegou
+    // no seu tamanho" — escalonado e com opt-in (handler em wa-group-lia).
+    if (post.kind === "chegadas" && post.productIds && post.productIds.length > 0) {
+      await enqueueOutboxEvent(
+        tx,
+        {
+          eventType: "wa.group_affinity_fanout",
+          dedupeKey: `wa.group_affinity_fanout:${post.id}`,
+          aggregateType: "wa_group_post",
+          aggregateId: post.id,
+          payload: { postId: post.id },
+        },
+        { kick: false },
+      );
+    }
     if (post.kind === "enquete") {
       await enqueueOutboxEvent(
         tx,
@@ -1131,7 +1153,7 @@ export async function closeGroupPoll(db: DbOrTx, provider: MessagingProvider, in
 // ---------------------------------------------------------------------------
 
 export type RecordGroupSignalResult =
-  | { recorded: true; kind: GroupSignal["kind"]; groupId: string; postId: string | null; signalId: string }
+  | { recorded: true; kind: GroupSignal["kind"]; groupId: string; postId: string | null; signalId: string; mention?: "queued" | "duplicado" | "desligado" | "teto_hora" }
   | { ignored: "provador_desligado" | "sala_desconhecida" | "sala_inativa" | "nao_e_sinal" };
 
 /**
@@ -1211,6 +1233,9 @@ export async function recordGroupSignal(db: DbOrTx, signal: GroupSignal, opts: {
   return { recorded: true, kind: signal.kind, groupId: group.id, postId: post?.id ?? null, signalId: signalId ?? "" };
 }
 
+/** Quem enfileira a resposta da Lia a uma menção (injetado para não fechar ciclo com wa-bot). */
+export type MentionEnqueuer = (db: DbOrTx, input: { signalId: string; groupId: string; now?: Date }) => Promise<"queued" | "duplicado" | "desligado" | "teto_hora">;
+
 /** O que o webhook precisa entregar de uma mensagem de grupo (já validado por Zod lá). */
 export type GroupInboundBody = {
   messageId: string;
@@ -1227,7 +1252,11 @@ export type GroupInboundBody = {
  * Entrada de grupo pelo webhook: classifica (core) e grava. Com o Provador
  * desligado nada é lido — nem para contar.
  */
-export async function processGroupInbound(db: DbOrTx, body: GroupInboundBody, opts: { now?: Date } = {}): Promise<RecordGroupSignalResult> {
+export async function processGroupInbound(
+  db: DbOrTx,
+  body: GroupInboundBody,
+  opts: { now?: Date; onMention?: MentionEnqueuer } = {},
+): Promise<RecordGroupSignalResult> {
   const policy = await loadGroupPolicy(db);
   if (!policy.groupsEnabled) return { ignored: "provador_desligado" };
   const map = await getSettingsMap(db, ["bot_seller_name", "store_whatsapp"]);
@@ -1238,7 +1267,47 @@ export async function processGroupInbound(db: DbOrTx, body: GroupInboundBody, op
     { sellerName, storePhoneDigits },
   );
   if (!signal) return { ignored: "nao_e_sinal" };
-  return recordGroupSignal(db, signal, opts);
+  const recorded = await recordGroupSignal(db, signal, opts);
+  if ("recorded" in recorded && recorded.kind === "mention" && recorded.signalId && opts.onMention) {
+    const mention = await opts.onMention(db, { signalId: recorded.signalId, groupId: recorded.groupId, now: opts.now });
+    return { ...recorded, mention };
+  }
+  return recorded;
+}
+
+// ---------------------------------------------------------------------------
+// Caderninho: o que o Provador sabe desta cliente
+// ---------------------------------------------------------------------------
+
+export async function groupMemoryLines(db: DbOrTx, phoneE164: string): Promise<string[]> {
+  const rows = await db
+    .select({
+      kind: waGroupSignals.kind,
+      value: waGroupSignals.value,
+      createdAt: waGroupSignals.createdAt,
+      postKind: waGroupPosts.kind,
+      postAt: waGroupPosts.sentAt,
+      productIds: waGroupPosts.productIds,
+    })
+    .from(waGroupSignals)
+    .leftJoin(waGroupPosts, eq(waGroupPosts.id, waGroupSignals.postId))
+    .where(and(eq(waGroupSignals.participantPhone, phoneE164), inArray(waGroupSignals.kind, ["poll_vote", "reaction", "mention"])))
+    .orderBy(desc(waGroupSignals.createdAt))
+    .limit(12);
+  if (rows.length === 0) return [];
+  const ids = [...new Set(rows.flatMap((row) => row.productIds ?? []))];
+  const names = ids.length > 0 ? await db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, ids)) : [];
+  const nameById = new Map(names.map((row) => [row.id, row.name]));
+  return groupSignalMemoryLines(
+    rows.map((row) => ({
+      kind: row.kind as "poll_vote" | "reaction" | "mention",
+      value: row.value,
+      createdAt: row.createdAt,
+      postKind: (row.postKind as GroupPostKind | null) ?? null,
+      postAt: row.postAt ?? null,
+      productNames: (row.productIds ?? []).map((id) => nameById.get(id)).filter((name): name is string => Boolean(name)),
+    })),
+  );
 }
 
 // ---------------------------------------------------------------------------

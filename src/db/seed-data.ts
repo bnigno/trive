@@ -339,6 +339,32 @@ export const initialWaTemplates: Array<{
     variables: ["nome", "produto", "prazo", "link"],
   },
   {
+    // Provador: depois do "Passou pelo Provador", a peça no tamanho e na cor
+    // dela — só com afinidade, opt-in e na janela; um aviso por pessoa por post.
+    key: "provador_affinity",
+    label: "Provador: chegou no seu tamanho",
+    bodyTemplate:
+      "{{nome}}, das peças que entraram no Provador hoje, {{peca}} {{motivo}}. Quer que eu segure por {{horas}} h no {{tamanho}}? Se não for a hora, tudo bem — ela vai para a vitrine em breve.",
+    variables: ["nome", "peca", "motivo", "horas", "tamanho"],
+  },
+  {
+    // Provador: sobrou uma unidade no tamanho de quem reagiu ao post — no
+    // máximo um aviso por semana por pessoa.
+    key: "provador_last_unit",
+    label: "Provador: ficou a última no seu tamanho",
+    bodyTemplate:
+      "Você curtiu {{peca}} no Provador. Ficou uma em {{tamanho}}. Não é pressão — é só para você não descobrir depois. Segura?",
+    variables: ["nome", "peca", "tamanho"],
+  },
+  {
+    // Provador: a vencedora da enquete chegou — quem votou nela sabe primeiro.
+    key: "provador_poll_winner",
+    label: "Provador: a cor que você votou chegou",
+    bodyTemplate:
+      "Deu {{opcao}} — e você votou nela. {{peca}} chegou: tem {{quantidade}} agora. Suas {{horas}} h de reserva começam agora; me diz \"segura\" que eu guardo.",
+    variables: ["nome", "opcao", "peca", "quantidade", "horas"],
+  },
+  {
     // "Me avisa quando voltar": UMA mensagem quando a peça volta ao estoque.
     key: "stock_back",
     label: "Peça voltou (aviso pedido)",

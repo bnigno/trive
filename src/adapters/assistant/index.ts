@@ -1,4 +1,4 @@
-import type { ToolExecutor } from "@/core/bot/tools";
+import type { BotToolName, ToolExecutor } from "@/core/bot/tools";
 
 import { getAdapterMode } from "../adapter-mode";
 import { ClaudeSalesAssistant } from "./claude";
@@ -26,6 +26,12 @@ export type RespondTurnInput = {
   executeTool: ToolExecutor;
   /** Prazo do turno: sem tempo para outra chamada, falha passageira ("tempo esgotado"). */
   deadlineAt?: Date;
+  /**
+   * Só estas ferramentas vão ao modelo (turno da Lia no GRUPO: catálogo e
+   * mais nada). Ausente = todas. Muda o prefixo do cache: use só onde o
+   * turno é raro.
+   */
+  tools?: readonly BotToolName[];
 };
 
 export type AssistantTurn = {

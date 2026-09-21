@@ -133,6 +133,7 @@ const composeFormSchema = z.object({
   maxOptions: z.coerce.number().int().min(1).max(12).default(1),
   outcome: optionalText,
   voterHoldHours: z.coerce.number().int().min(0).max(168).default(24),
+  pollProductId: z.union([z.literal(""), z.uuid()]).default(""),
   lookIds: z.array(z.uuid()).default([]),
   photoCoupon: z.enum(["on"]).optional(),
   body: z.string().default(""),
@@ -153,6 +154,7 @@ function readComposeForm(formData: FormData): z.infer<typeof composeFormSchema> 
     maxOptions: formData.get("maxOptions") || 1,
     outcome: formData.get("outcome") ?? "",
     voterHoldHours: formData.get("voterHoldHours") || 24,
+    pollProductId: formData.get("pollProductId") ?? "",
     lookIds: formData.getAll("lookIds").map(String).filter((value) => value !== ""),
     photoCoupon: formData.get("photoCoupon") ?? undefined,
     body: formData.get("body") ?? "",
@@ -175,6 +177,7 @@ function toComposeInput(form: z.infer<typeof composeFormSchema>): ComposeGroupPo
         maxOptions: form.maxOptions,
         ...(form.outcome ? { outcome: form.outcome } : {}),
         voterHoldHours: form.voterHoldHours,
+        ...(form.pollProductId ? { productId: form.pollProductId } : {}),
       };
     case "quem_vestiu":
       return { kind: "quem_vestiu", lookIds: form.lookIds, photoCoupon: form.photoCoupon === "on" };

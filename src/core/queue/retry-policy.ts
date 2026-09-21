@@ -64,6 +64,9 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // avisa — a dona reagenda pelo painel.
   "wa.group_post": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
   "wa.group_poll_close": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+  // A Lia chamada no grupo: resposta em minutos ou nada (uma resposta duas
+  // horas depois no grupo é ruído); 3 tentativas curtas.
+  "wa.group_mention": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 180_000 },
   // wa.bot_turn fica na política padrão (banco/provedor fora do ar continuam
   // tentando por até 1 h); o teto do MODELO é próprio e menor
   // (services/wa-bot BOT_TURN_MODEL_ATTEMPTS), com plano B na última.
