@@ -70,6 +70,8 @@ type CouponState =
       shippingDiscountCents: number;
       /** "Confirmamos no fechamento…" — o que depende de CPF/telefone/entrega. */
       pendingNotice: string | null;
+      /** Cupom que muda com o tempo: o que vale hoje e quando muda. */
+      hint: string | null;
     };
 
 /** Cupom que não existe mais não fica guardado no navegador (os outros erros são da sacola de agora). */
@@ -127,6 +129,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           freeShipping: result.freeShipping,
           shippingDiscountCents: result.shippingDiscountCents,
           pendingNotice: result.pendingNotice,
+          hint: result.hint,
         });
       });
     },
@@ -462,6 +465,9 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                       remover cupom
                     </button>
                   </div>
+                  {appliedCoupon.hint ? (
+                    <p className="mt-1 font-store text-xs text-gold-800">{appliedCoupon.hint}</p>
+                  ) : null}
                   {appliedCoupon.pendingNotice ? (
                     <p className="mt-1 font-store text-xs text-ink-500">{appliedCoupon.pendingNotice}</p>
                   ) : null}

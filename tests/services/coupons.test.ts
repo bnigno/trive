@@ -269,6 +269,48 @@ describe("quoteCoupon", () => {
   });
 });
 
+describe("cupom que muda com o tempo", () => {
+  it("cria com degraus, cota o valor do dia com a dica, recusa degraus tortos; o resgate guarda o valor aplicado", async () => {
+    const created = await makeCoupon({ code: "AMADURECE", value: 5, valueSchedule: [{ afterDays: 7, value: 10 }, { afterDays: 30, value: 15 }] });
+    expect(created.valueSchedule).toEqual([{ afterDays: 7, value: 10 }, { afterDays: 30, value: 15 }]);
+    const item = await sellable(10_000);
+
+    const today = await quoteCoupon(sdb, { code: "AMADURECE", items: [item], now: new Date(created.createdAt.getTime() + 60_000) });
+    expect(today).toMatchObject({ discountCents: 500, appliedValue: 5 });
+    expect(today.hint).toMatch(/^Hoje vale 5%\. Em 7 dias \(\d{2}\/\d{2}\) passa a 10%, se a peça ainda estiver aqui\.$/);
+
+    const later = await quoteCoupon(sdb, { code: "AMADURECE", items: [item], now: new Date(created.createdAt.getTime() + 8 * 86_400_000) });
+    expect(later).toMatchObject({ discountCents: 1000, appliedValue: 10 });
+    expect((await quoteCoupon(sdb, { code: "AMADURECE", items: [item], now: new Date(created.createdAt.getTime() + 40 * 86_400_000) })).hint).toBe("Hoje vale 15% — o valor final deste cupom.");
+
+    // Sem degraus: sem dica.
+    await makeCoupon({ code: "FIXO" });
+    expect((await quoteCoupon(sdb, { code: "FIXO", items: [item] })).hint).toBeNull();
+
+    await expect(makeCoupon({ code: "TORTO", valueSchedule: [{ afterDays: 9, value: 10 }, { afterDays: 7, value: 12 }] })).rejects.toThrowError(/crescer/);
+    await expect(makeCoupon({ code: "DEMAIS", valueSchedule: [{ afterDays: 7, value: 101 }] })).rejects.toThrowError(/entre 1 e 100/);
+    await expect(makeCoupon({ code: "FRETE", type: "free_shipping", value: 0, valueSchedule: [{ afterDays: 7, value: 10 }] })).rejects.toThrowError(/degraus/);
+
+    // O valor do dia vai para o resgate (applied_value = 10, não 5).
+    await redeemCouponInTx(sdb, await redeemInput(created.id, { appliedValue: later.appliedValue, discountCents: later.discountCents }));
+    const [redemption] = await db.select().from(schema.couponRedemptions);
+    expect(redemption.appliedValue).toBe(10);
+
+    // Degraus são regra: não mudam depois do uso.
+    await expect(updateCoupon(sdb, { couponId: created.id, valueSchedule: null, userId: FIXED_USER_ID })).rejects.toMatchObject({ code: "COUPON_IN_USE" });
+  });
+
+  it("degraus postos depois num cupom antigo sem vigência contam a partir de hoje", async () => {
+    const old = await makeCoupon({ code: "ANTIGO", value: 5 });
+    await db.update(schema.coupons).set({ createdAt: new Date(Date.now() - 60 * 86_400_000) }).where(eq(schema.coupons.id, old.id));
+    const before = Date.now();
+    const updated = await updateCoupon(sdb, { couponId: old.id, valueSchedule: [{ afterDays: 7, value: 15 }], userId: FIXED_USER_ID });
+    expect(updated.startsAt?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    const item = await sellable(10_000);
+    expect((await quoteCoupon(sdb, { code: "ANTIGO", items: [item] })).appliedValue).toBe(5);
+  });
+});
+
 describe("redeemCouponInTx", () => {
   it("guard atômico: max_uses 1 disputado 2x → um resgata, o outro falha e used_count fica em 1", async () => {
     const created = await makeCoupon({ code: "UNICO", maxUses: 1 });

@@ -1,0 +1,2 @@
+ALTER TABLE "coupons" ADD COLUMN "value_schedule" jsonb;--> statement-breakpoint
+ALTER TABLE "coupons" ADD CONSTRAINT "coupons_value_schedule_check" CHECK ("coupons"."value_schedule" IS NULL OR (jsonb_typeof("coupons"."value_schedule") = 'array' AND jsonb_array_length("coupons"."value_schedule") BETWEEN 1 AND 3));

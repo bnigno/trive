@@ -77,6 +77,10 @@ export const coupons = pgTable(
     validWeekdays: jsonb("valid_weekdays").$type<number[]>(),
     validFromMinute: smallint("valid_from_minute"),
     validToMinute: smallint("valid_to_minute"),
+    // Cupom que muda com o tempo: degraus [{ afterDays, value }] a partir do
+    // início da vigência (ou da criação); `value` é o do dia 0. Subindo
+    // amadurece, descendo derrete. A forma é conferida aqui; o conteúdo, no core.
+    valueSchedule: jsonb("value_schedule").$type<{ afterDays: number; value: number }[]>(),
     // Emissão automática: uma chave por evento ("late_delivery:<orderId>") —
     // a UNIQUE é quem garante que a rotina não emite duas vezes.
     dedupeKey: text("dedupe_key"),
@@ -138,6 +142,10 @@ export const coupons = pgTable(
     check(
       "coupons_free_shipping_scope_check",
       sql`${table.freeShippingScope} IN ('any', 'motoboy', 'correios')`,
+    ),
+    check(
+      "coupons_value_schedule_check",
+      sql`${table.valueSchedule} IS NULL OR (jsonb_typeof(${table.valueSchedule}) = 'array' AND jsonb_array_length(${table.valueSchedule}) BETWEEN 1 AND 3)`,
     ),
     check(
       "coupons_valid_minutes_check",
