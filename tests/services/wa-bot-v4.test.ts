@@ -305,6 +305,47 @@ describe("validar_cupom", () => {
     expect((await botState()).coupon).toBeUndefined();
   });
 
+  it("cupom pessoal: o do telefone da conversa vale (mesmo sem cadastro); o de outra cliente é recusado; frete grátis fala de frete", async () => {
+    await setupStore();
+    await createCoupon(sdb, { code: "MEU", type: "percent", value: 10, userId: FIXED_USER_ID, customerPhone: PHONE });
+    await createCoupon(sdb, { code: "DELA", type: "percent", value: 10, userId: FIXED_USER_ID, customerPhone: OTHER_PHONE });
+    await createCoupon(sdb, { code: "FRETE", type: "free_shipping", value: 0, userId: FIXED_USER_ID });
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+
+    expect((await execute("validar_cupom", { cupom: "MEU" })).ok).toBe(true);
+
+    const dela = await execute("validar_cupom", { cupom: "DELA" });
+    expect(dela.ok).toBe(false);
+    expect(dela.text).toContain("Este cupom é pessoal e foi feito para outra cliente.");
+    // Um cupom recusado não derruba o que já estava validado.
+    expect((await botState()).coupon).toMatchObject({ code: "MEU" });
+
+    const frete = await execute("validar_cupom", { cupom: "FRETE" });
+    expect(frete.ok).toBe(true);
+    expect(frete.text).toContain("Cupom FRETE válido: frete grátis");
+    expect((await botState()).coupon).toMatchObject({ code: "FRETE", discountCents: 0, freeShipping: true });
+
+    // Fechando com o cupom de frete: o pedido cobra frete 0.
+    await execute("cotar_frete", { cep: "01310100" });
+    const created = await execute("criar_pedido", {
+      nome_completo: "Maria da Silva",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+    });
+    expect(created.ok).toBe(true);
+    const [order] = await db.select().from(schema.orders);
+    expect(order.couponCode).toBe("FRETE");
+    expect(order.shippingCents).toBe(0);
+    expect(order.discountCents).toBe(0);
+    expect(order.totalCents).toBe(8990);
+  });
+
   it("no ensaio (dryRun) as ferramentas do turno se enxergam (sacola → cupom → sacola) e nada é gravado", async () => {
     await setupStore();
     await createCoupon(sdb, { code: "DEZ10", type: "percent", value: 10, userId: FIXED_USER_ID });
@@ -332,7 +373,7 @@ describe("validar_cupom", () => {
     // Quantidade é o TOTAL da linha: 3 fixa 3 (não 2 + 3).
     const more = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 3 });
     expect(more.text).toContain("Ajustei Longo Dunas (Areia · M) de 2× para 3× (quantidade = total na sacola).");
-    expect(more.text).toContain(`[Cupom DEZ10 continua válido: desconto de ${formatCentsBRL(2697)} nesta sacola.]`);
+    expect(more.text).toContain(`[Cupom DEZ10 continua válido: desconto de ${formatCentsBRL(2697)} sobre o subtotal de ${formatCentsBRL(26970)} das peças`);
     expect((await botState()).coupon).toMatchObject({ code: "DEZ10", discountCents: 2697 });
     // Repetir sem quantidade: nada muda, e o cupom fica como está.
     const again = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M" });

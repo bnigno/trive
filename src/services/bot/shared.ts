@@ -1,12 +1,12 @@
 // Peças comuns dos executores da vendedora: tipos, constantes, caderninho (bot_state) e emissor de cartões.
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { BotImageInput, SalesAssistant } from "@/adapters/assistant";
 import type { CepLookup } from "@/adapters/cep";
 import type { CorreiosQuoter } from "@/adapters/superfrete";
 import type { FileStorage } from "@/adapters/storage";
 import { parseBotState, type BotState } from "@/core/bot/memory";
 import { OPTION_LIST_MAX_OPTIONS } from "@/core/bot/option-list";
-import { waConversations } from "@/db/schema";
+import { customers, waConversations } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -309,4 +309,27 @@ export function formatPriceRange(fromCents: number, toCents: number): string {
   return fromCents === toCents
     ? formatCentsBRL(fromCents)
     : `a partir de ${formatCentsBRL(fromCents)}`;
+}
+
+/**
+ * Cliente DESTA conversa: vínculo direto, senão o dono do telefone. Base da
+ * segurança de status_do_pedido e enviar_chave_pix — nunca cruzar conversas.
+ */
+export async function resolveConversationCustomerId(
+  db: DbOrTx,
+  ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
+): Promise<string | null> {
+  // Cliente apagada ou anonimizada (LGPD) nunca volta pela conversa — nem
+  // pelo vínculo gravado, nem pelo telefone.
+  const alive = [isNull(customers.deletedAt), isNull(customers.anonymizedAt)];
+  const [customer] = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(
+      ctx.customerId
+        ? and(eq(customers.id, ctx.customerId), ...alive)
+        : and(eq(customers.phoneE164, ctx.phoneE164), ...alive),
+    )
+    .limit(1);
+  return customer?.id ?? null;
 }

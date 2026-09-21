@@ -90,9 +90,10 @@ async function exportRows(db: ReturnType<typeof getDb>, dir: string): Promise<vo
     inbound_events: `WHERE source = 'zapi'`,
     stock_movements: `WHERE reference_type IN ('order', 'hold')`,
     financial_entries: `WHERE order_id IS NOT NULL`,
+    coupons: `WHERE customer_id IS NOT NULL OR dedupe_key IS NOT NULL`,
   };
   // Também o que é atualizado/apagado fora da lista: faixas, peças, cupons e saldos de antes.
-  const extra = ["shipping_rates", "products", "product_variants", "coupons", "stock_levels"];
+  const extra = ["shipping_rates", "products", "product_variants", "stock_levels"];
   for (const table of [...WIPE_STEPS, ...extra]) {
     const rows = rowsOf<Record<string, unknown>>(await db.execute(sql.raw(`SELECT * FROM "${table}" ${partial[table as (typeof WIPE_STEPS)[number]] ?? ""}`)));
     writeFileSync(join(dir, `${table}.json`), JSON.stringify(rows, null, 1));

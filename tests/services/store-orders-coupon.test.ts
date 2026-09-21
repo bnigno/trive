@@ -10,6 +10,7 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { createCoupon, type CreateCouponInput } from "@/services/coupons";
 import {
   createStoreOrder,
+  expireOverdueReservations,
   ServiceError,
   type CreateStoreOrderInput,
 } from "@/services/store-orders";
@@ -146,8 +147,21 @@ describe("createStoreOrder com cupom", () => {
     expect(order.couponCode).toBe("DEZ10"); // snapshot UPPERCASE
     expect(order.totalCents).toBe(9980 - 998 + 1990);
 
-    // Uso consumido junto com o pedido.
+    // Uso consumido junto com o pedido, com o resgate (quem, quanto, valor do cupom).
     expect((await getCouponRow(coupon.id)).usedCount).toBe(1);
+    const redemptions = await db.select().from(schema.couponRedemptions);
+    expect(redemptions).toHaveLength(1);
+    expect(redemptions[0]).toMatchObject({
+      couponId: coupon.id,
+      orderId: result.orderId,
+      customerId: order.customerId,
+      phoneE164: "+5511999998888",
+      code: "DEZ10",
+      discountCents: 998,
+      shippingDiscountCents: 0,
+      appliedValue: 10,
+      releasedAt: null,
+    });
 
     // Audit do pedido registra o cupom aplicado.
     const audits = await db
@@ -300,5 +314,106 @@ describe("createStoreOrder com cupom", () => {
       .where(eq(schema.orders.id, second.orderId));
     expect(secondOrder.couponCode).toBeNull();
     expect(secondOrder.discountCents).toBe(0);
+  });
+
+  it("uma vez por cliente: 2º pedido da mesma cliente é recusado; cancelar o 1º sem pagar devolve o uso", async () => {
+    const { variantId, rateId } = await setupStore();
+    const coupon = await makeCoupon({ code: "UMAVEZ", perCustomerLimit: 1 });
+
+    const first = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "UMAVEZ" }));
+    expect((await getCouponRow(coupon.id)).usedCount).toBe(1);
+
+    const error = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "UMAVEZ" })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServiceError);
+    expect((error as ServiceError).code).toBe("COUPON_CUSTOMER_LIMIT");
+    expect((await countRows()).orders).toBe(1);
+
+    // A reserva do 1º vence sem pagamento → cancelado → o uso volta e o resgate fica "devolvido".
+    await db.update(schema.orders).set({ paymentDueAt: new Date(Date.now() - 60_000) }).where(eq(schema.orders.id, first.orderId));
+    expect(await expireOverdueReservations(sdb)).toEqual({ expired: 1 });
+    expect((await getCouponRow(coupon.id)).usedCount).toBe(0);
+    const [released] = await db.select().from(schema.couponRedemptions).where(eq(schema.couponRedemptions.orderId, first.orderId));
+    expect(released.releasedAt).not.toBeNull();
+
+    // Agora ela usa de novo.
+    const third = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "UMAVEZ" }));
+    expect(third.totalCents).toBe(9980 - 998 + 1990);
+    expect((await getCouponRow(coupon.id)).usedCount).toBe(1);
+  });
+
+  it("frete grátis: o pedido cobra frete 0, o resgate guarda o frete perdoado e expectedShippingCents é o preço da faixa", async () => {
+    const { variantId, rateId } = await setupStore();
+    const coupon = await makeCoupon({ code: "FRETEGRATIS", type: "free_shipping", value: 0 });
+
+    const result = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "FRETEGRATIS" }));
+    expect(result.totalCents).toBe(9980);
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, result.orderId));
+    expect(order.shippingCents).toBe(0);
+    expect(order.discountCents).toBe(0);
+    expect(order.couponId).toBe(coupon.id);
+    expect(order.totalCents).toBe(9980);
+    const [redemption] = await db.select().from(schema.couponRedemptions);
+    expect(redemption).toMatchObject({ shippingDiscountCents: 1990, discountCents: 0, appliedValue: null });
+  });
+
+  it("frete grátis só para motoboy é recusado num pedido pelos Correios, sem persistir nada", async () => {
+    const { variantId, rateId } = await setupStore();
+    await makeCoupon({ code: "SOMOTO", type: "free_shipping", value: 0, freeShippingScope: "motoboy" });
+
+    const error = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "SOMOTO" })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServiceError);
+    expect((error as ServiceError).code).toBe("COUPON_SHIPPING_SCOPE");
+    expect(await countRows()).toEqual({ orders: 0, customers: 0, movements: 0 });
+  });
+
+  it("cupom pessoal de outra cliente: recusado pelo CPF/telefone do checkout, nada persiste", async () => {
+    const { variantId, rateId } = await setupStore();
+    await makeCoupon({ code: "DAJOANA", customerPhone: "+5521977776666" });
+
+    const error = await createStoreOrder(sdb, baseInput(variantId, rateId, { couponCode: "DAJOANA" })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServiceError);
+    expect((error as ServiceError).code).toBe("COUPON_NOT_YOURS");
+    expect(await countRows()).toEqual({ orders: 0, customers: 0, movements: 0 });
+
+    // A dona do telefone fecha normalmente (mesmo sem cadastro prévio).
+    const ok = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rateId, {
+        customer: { fullName: "Joana Dona", document: VALID_CPF_2, phone: "(21) 97777-6666", marketingOptIn: false },
+        couponCode: "DAJOANA",
+      }),
+    );
+    expect(ok.totalCents).toBe(9980 - 998 + 1990);
+  });
+
+  it("restrição por peça: só a peça do cupom desconta; a outra linha segue cheia", async () => {
+    const { variantId, rateId } = await setupStore();
+    const outra = await createTestVariant(db, { sku: "CANECA-VERDE", costCents: 1200, onHand: 10, name: "Caneca Verde" });
+    await db.insert(schema.priceVersions).values({
+      productVariantId: outra.variantId,
+      versionNumber: 1,
+      status: "active",
+      priceCents: 3000,
+      origin: "initial",
+      breakdown: {},
+      costSnapshotCents: 1200,
+      computedMarginRate: "0.3000",
+      activatedAt: new Date(),
+    });
+    await makeCoupon({ code: "SOAZUL", type: "percent", value: 50, productRefs: ["CANECA-AZUL"] });
+
+    const result = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rateId, {
+        items: [
+          { variantId, quantity: 2, expectedUnitPriceCents: 4990 },
+          { variantId: outra.variantId, quantity: 1, expectedUnitPriceCents: 3000 },
+        ],
+        couponCode: "SOAZUL",
+      }),
+    );
+    // 50% só sobre 2 × 4990 = 4990; a caneca verde inteira.
+    expect(result.totalCents).toBe(9980 + 3000 - 4990 + 1990);
   });
 });

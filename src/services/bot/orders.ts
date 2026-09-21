@@ -1,5 +1,5 @@
 // Fechamento e pós-venda pela vendedora: criar_pedido, status_do_pedido, enviar_chave_pix.
-import { and, asc, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { getPaymentGateway } from "@/adapters/mercadopago";
 import {
@@ -15,7 +15,7 @@ import { formatCartLines } from "@/core/bot/memory";
 import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
-import { auditLog, customers, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
+import { auditLog, orderItems, orders, products, productVariants, waConversations } from "@/db/schema";
 import { formatDateTimeSP } from "@/emails/templates";
 import { isValidCpf } from "@/lib/document";
 import { formatCep } from "@/lib/cep";
@@ -41,7 +41,7 @@ import { resolveVariantBySku } from "./catalog";
 import { reconcileCartLines } from "./cart";
 import { loadSavedRegistration, resolveSavedIdentity } from "./customer";
 import type { OrderIdentity } from "./customer";
-import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, readBotState, updateBotState } from "./shared";
+import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, readBotState, resolveConversationCustomerId, updateBotState } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
 import { markSiteCartOrdered } from "@/services/site-carts";
 
@@ -397,28 +397,7 @@ export async function execCriarPedido(
   return { ok: true, text: lines.join("\n") };
 }
 
-/**
- * Cliente DESTA conversa: vínculo direto, senão o dono do telefone. Base da
- * segurança de status_do_pedido e enviar_chave_pix — nunca cruzar conversas.
- */
-export async function resolveConversationCustomerId(
-  db: DbOrTx,
-  ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
-): Promise<string | null> {
-  // Cliente apagada ou anonimizada (LGPD) nunca volta pela conversa — nem
-  // pelo vínculo gravado, nem pelo telefone.
-  const alive = [isNull(customers.deletedAt), isNull(customers.anonymizedAt)];
-  const [customer] = await db
-    .select({ id: customers.id })
-    .from(customers)
-    .where(
-      ctx.customerId
-        ? and(eq(customers.id, ctx.customerId), ...alive)
-        : and(eq(customers.phoneE164, ctx.phoneE164), ...alive),
-    )
-    .limit(1);
-  return customer?.id ?? null;
-}
+export { resolveConversationCustomerId };
 
 export async function execStatusDoPedido(
   db: DbOrTx,

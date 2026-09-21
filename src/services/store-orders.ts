@@ -2,7 +2,7 @@
 // WhatsApp), reserva de estoque com expiração curta e página pública de
 // acompanhamento por token SEM dados pessoais.
 import { RESERVATION_EXPIRED_REASON } from "@/core/orders/reasons";
-import { and, asc, eq, gte, isNull, lt, lte } from "drizzle-orm";
+import { and, asc, eq, gte, lt, lte } from "drizzle-orm";
 import { z } from "zod";
 
 import { variantLabel } from "@/core/catalog/attributes";
@@ -36,6 +36,7 @@ import {
   ServiceError as CouponServiceError,
   type CouponQuote,
 } from "@/services/coupons";
+import { findCustomerByDocumentOrPhone } from "@/services/customer-lookup";
 import { ServiceError, transitionOrder } from "@/services/orders";
 import { billableWeightGrams, isQuoteValid } from "@/core/shipping/correios-package";
 import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
@@ -487,17 +488,26 @@ export async function createStoreOrder(
       throw new ShippingChangedError(shippingCents);
     }
 
+    // (c) Cliente: procura por documento (dígitos), senão por telefone E.164.
+    // Só leitura aqui — o cupom precisa saber quem compra (cupom pessoal,
+    // primeira compra, limite por cliente); o cadastro é gravado mais abaixo.
+    const doc = parsed.customer.document;
+    const phone = parsed.customer.phone;
+    const existing = await findCustomerByDocumentOrPhone(tx, { documentDigits: doc.digits, phoneE164: phone });
+
     // (b2) Cupom: cotação ANTES de qualquer escrita — cupom inválido derruba
-    // o checkout com mensagem clara sem criar nada. O CONSUMO (used_count)
-    // acontece só depois do insert do pedido, nesta MESMA transação, com
-    // guard atômico contra corrida no último uso.
-    const subtotalCents = itemRows.reduce((sum, r) => sum + r.totalCents, 0);
+    // o checkout com mensagem clara sem criar nada. O CONSUMO (used_count +
+    // resgate) acontece só depois do insert do pedido, nesta MESMA
+    // transação, com guard atômico contra corrida no último uso.
     let coupon: CouponQuote | null = null;
     if (parsed.couponCode !== undefined && parsed.couponCode !== "") {
       try {
         coupon = await quoteCoupon(tx, {
           code: parsed.couponCode,
-          subtotalCents,
+          items: parsed.items.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
+          identity: { customerId: existing?.id ?? null, phoneE164: phone },
+          shipping: { cents: shippingCents, kind: chosenRate?.kind === "motoboy" ? "motoboy" : "correios" },
+          now,
         });
       } catch (error) {
         if (error instanceof CouponServiceError) {
@@ -507,6 +517,10 @@ export async function createStoreOrder(
         throw error;
       }
     }
+    // Frete grátis pelo cupom: o pedido grava o frete COBRADO (0); o perdoado
+    // fica no resgate. expectedShippingCents continua sendo o preço da opção.
+    const shippingDiscountCents = coupon?.shippingDiscountCents ?? 0;
+    const chargedShippingCents = shippingCents - shippingDiscountCents;
 
     // Pré-checagem de estoque com mensagem amigável ANTES de qualquer escrita
     // (a reserva na transição ainda revalida com lock — corrida segura).
@@ -526,23 +540,7 @@ export async function createStoreOrder(
       }
     }
 
-    // (c) Cliente: procura por documento (dígitos), senão por telefone E.164.
-    const doc = parsed.customer.document;
-    const phone = parsed.customer.phone;
-
-    let [existing] = await tx
-      .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
-      .from(customers)
-      .where(
-        and(eq(customers.documentNumber, doc.digits), isNull(customers.deletedAt)),
-      );
-    if (!existing) {
-      [existing] = await tx
-        .select({ id: customers.id, marketingOptIn: customers.marketingOptIn })
-        .from(customers)
-        .where(and(eq(customers.phoneE164, phone), isNull(customers.deletedAt)));
-    }
-
+    // (c) Cadastro: atualiza o que já existe ou cria.
     let customerId: string;
     if (existing) {
       customerId = existing.id;
@@ -644,7 +642,7 @@ export async function createStoreOrder(
         quantity: r.quantity,
       })),
       coupon?.discountCents ?? 0,
-      shippingCents,
+      chargedShippingCents,
     );
 
     // Presente: texto limpo (sem emoji — o bilhete é desenhado com a fonte
@@ -671,7 +669,7 @@ export async function createStoreOrder(
         discountCents: coupon?.discountCents ?? 0,
         couponId: coupon?.couponId ?? null,
         couponCode: coupon?.code ?? null,
-        shippingCents,
+        shippingCents: chargedShippingCents,
         shippingService,
         shippingQuoteId,
         totalCents: totals.totalCents,
@@ -697,7 +695,16 @@ export async function createStoreOrder(
     // (último uso perdido para um pedido simultâneo), TUDO desfaz.
     if (coupon) {
       try {
-        await redeemCouponInTx(tx, coupon.couponId);
+        await redeemCouponInTx(tx, {
+          couponId: coupon.couponId,
+          orderId: order.id,
+          customerId,
+          phoneE164: phone,
+          code: coupon.code,
+          discountCents: coupon.discountCents,
+          shippingDiscountCents,
+          appliedValue: coupon.appliedValue,
+        });
       } catch (error) {
         if (error instanceof CouponServiceError) {
           throw new ServiceError(error.code, error.message);
@@ -820,7 +827,8 @@ export async function createStoreOrder(
         subtotalCents: totals.subtotalCents,
         discountCents: coupon?.discountCents ?? 0,
         couponCode: coupon?.code ?? null,
-        shippingCents,
+        shippingCents: chargedShippingCents,
+        shippingDiscountCents,
         totalCents: totals.totalCents,
         paymentMethod: parsed.paymentMethod,
         paymentDueAt: paymentDueAt?.toISOString() ?? null,

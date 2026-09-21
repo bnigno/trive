@@ -255,17 +255,35 @@ export function CheckoutClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, cepDigits, itemsKey, quoteNonce]);
 
-  // ----- Cupom: re-cotado no servidor ao montar e quando a sacola muda -----
+  // ----- Entrega escolhida (o cupom de frete grátis e o total dependem dela) -----
+  const options = quote.status === "done" ? quote.options : [];
+  const selectedQuote = options.find((o) => o.optionKey === selectedOptionKey) ?? null;
+  const shippingCents =
+    shippingCentsOverride ?? selectedQuote?.priceCents ?? null;
+
+  // ----- Cupom: re-cotado no servidor ao montar e quando a sacola, a entrega
+  // ou a identidade (CPF + telefone válidos) mudam — com CPF e telefone, o
+  // servidor confirma as regras por cliente antes do "Fechar pedido".
   const [couponCode, setCouponCode] = useState<string | null>(
     initialCouponCode.trim() ? initialCouponCode.trim().toUpperCase() : null,
   );
   const [appliedCoupon, setAppliedCoupon] = useState<{
     code: string;
     discountCents: number;
+    freeShipping: boolean;
+    shippingDiscountCents: number;
+    pendingNotice: string | null;
   } | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [, startCouponQuote] = useTransition();
   const lastCouponKeyRef = useRef<string | null>(null);
+  const couponIdentity = (() => {
+    const doc = normalizeDocument(documentValue);
+    const phone = toE164BR(phoneValue);
+    return doc && phone ? { document: doc.digits, phone } : null;
+  })();
+  const couponShipping =
+    selectedQuote && shippingCents !== null ? { cents: shippingCents, kind: selectedQuote.kind } : null;
 
   useEffect(() => {
     if (!mounted || items.length === 0) return;
@@ -273,7 +291,12 @@ export function CheckoutClient({
       lastCouponKeyRef.current = null;
       return;
     }
-    const key = `${couponCode}|${itemsKey}`;
+    const key = [
+      couponCode,
+      itemsKey,
+      couponShipping ? `${couponShipping.kind}:${couponShipping.cents}` : "",
+      couponIdentity ? `${couponIdentity.document}:${couponIdentity.phone}` : "",
+    ].join("|");
     if (lastCouponKeyRef.current === key) return;
     lastCouponKeyRef.current = key;
     startCouponQuote(async () => {
@@ -283,11 +306,16 @@ export function CheckoutClient({
           variantId: line.variantId,
           quantity: line.quantity,
         })),
+        shipping: couponShipping,
+        customer: couponIdentity,
       });
       if (result.ok) {
         setAppliedCoupon({
           code: result.code,
           discountCents: result.discountCents,
+          freeShipping: result.freeShipping,
+          shippingDiscountCents: result.shippingDiscountCents,
+          pendingNotice: result.pendingNotice,
         });
         setCouponError(null);
         return;
@@ -300,7 +328,7 @@ export function CheckoutClient({
       setCouponError(result.error);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, couponCode, itemsKey]);
+  }, [mounted, couponCode, itemsKey, couponShipping?.kind, couponShipping?.cents, couponIdentity?.document, couponIdentity?.phone]);
 
   function removeCoupon() {
     setCouponCode(null);
@@ -312,12 +340,12 @@ export function CheckoutClient({
   // dobradas até "Ver as N peças".
   const [expanded, setExpanded] = useState(false);
 
-  const options = quote.status === "done" ? quote.options : [];
-  const selectedQuote = options.find((o) => o.optionKey === selectedOptionKey) ?? null;
-  const shippingCents =
-    shippingCentsOverride ?? selectedQuote?.priceCents ?? null;
   const discountCents = appliedCoupon?.discountCents ?? 0;
-  const totalCents = subtotalCents - discountCents + (shippingCents ?? 0);
+  // Frete cobrado = preço da opção − o que o cupom de frete grátis perdoa.
+  const shippingDiscountCents =
+    shippingCents === null ? 0 : Math.min(appliedCoupon?.shippingDiscountCents ?? 0, shippingCents);
+  const chargedShippingCents = shippingCents === null ? null : shippingCents - shippingDiscountCents;
+  const totalCents = subtotalCents - discountCents + (chargedShippingCents ?? 0);
 
   // ----- Envio do pedido ---------------------------------------------------
   const [submitting, startSubmit] = useTransition();
@@ -630,10 +658,22 @@ export function CheckoutClient({
               appliedCoupon ? `Desconto (${appliedCoupon.code})` : "Desconto"
             }
             onRemoveDiscount={appliedCoupon ? removeCoupon : undefined}
-            shippingCents={shippingCents}
+            shippingCents={chargedShippingCents}
             shippingFallback="—"
+            shippingNote={shippingDiscountCents > 0 ? "Frete grátis pelo cupom" : undefined}
             totalCents={totalCents}
           />
+          {appliedCoupon?.freeShipping && discountCents === 0 ? (
+            <p className="mt-2 flex items-center gap-3 font-store text-xs text-laurel-700">
+              <span>Cupom {appliedCoupon.code}: frete grátis.</span>
+              <button type="button" onClick={removeCoupon} className={cx(smallLink, "text-ink-700 hover:text-claret-700")}>
+                remover cupom
+              </button>
+            </p>
+          ) : null}
+          {appliedCoupon?.pendingNotice ? (
+            <p className="mt-2 font-store text-xs text-ink-500">{appliedCoupon.pendingNotice}</p>
+          ) : null}
           <p className="mt-2 font-store text-xs text-ink-500">
             O total é confirmado pelo servidor no envio do pedido.
           </p>

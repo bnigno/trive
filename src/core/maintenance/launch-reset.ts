@@ -19,9 +19,10 @@ export const ORDER_NUMBER_SEQUENCE = "orders_order_number_seq";
 
 /**
  * Tabelas apagadas, na ordem em que o banco deixa (filho antes do pai —
- * as FKs são RESTRICT). Quatro delas são parciais: financial_entries (só as
- * de pedido), stock_movements (só order/hold), inbound_events (só zapi
- * velho) e audit_log (só as entidades apagadas).
+ * as FKs são RESTRICT). Cinco delas são parciais: financial_entries (só as
+ * de pedido), coupons (só os pessoais e os emitidos por rotina — os da dona
+ * ficam), stock_movements (só order/hold), inbound_events (só zapi velho) e
+ * audit_log (só as entidades apagadas).
  */
 export const WIPE_STEPS = [
   "atelier_intakes",
@@ -40,11 +41,13 @@ export const WIPE_STEPS = [
   "delivery_positions",
   "delivery_stops",
   "delivery_runs",
+  "coupon_redemptions",
   "financial_entries",
   "order_status_history",
   "order_items",
   "orders",
   "customer_addresses",
+  "coupons",
   "customers",
   "stock_movements",
   "outbox_events",
@@ -73,6 +76,9 @@ export const WIPE_DEPENDENCIES: readonly (readonly [child: WipeStep, parent: Wip
   ["orders", "customers"],
   ["drop_invites", "customers"],
   ["customer_addresses", "customers"],
+  ["coupon_redemptions", "orders"],
+  ["coupon_redemptions", "coupons"],
+  ["coupons", "customers"],
 ];
 
 /**
@@ -117,6 +123,7 @@ export const LOCKED_TABLES: readonly string[] = [
   "delivery_positions",
   "delivery_feedback",
   "coupons",
+  "coupon_redemptions",
   "products",
   "product_variants",
   "drop_products",
