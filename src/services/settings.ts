@@ -605,6 +605,23 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   bot_audio_notes_enabled: z.boolean(),
   /** Datas da cidade (Círio, Natal…): o selo da vitrine e o "faltam N dias" do Bom dia. */
   city_dates: cityDatesSchema,
+  // --- Provador (grupos de WhatsApp da marca) ---
+  /** Interruptor geral dos grupos: desligado, nenhum post sai e nenhum sinal é lido. Ausente = desligado. */
+  groups_enabled: z.boolean(),
+  /** A Lia responde quando chamada (@Lia) no grupo. Ausente = desligado. */
+  bot_group_mentions_enabled: z.boolean(),
+  /** Teto de posts da marca por semana em cada sala (1–7). */
+  group_posts_per_week: z
+    .number()
+    .int()
+    .min(1, "O Provador recebe de 1 a 7 posts por semana.")
+    .max(7, "O Provador recebe de 1 a 7 posts por semana."),
+  /** Kill switch: % de membras que saem nas 24 h após um post para pausar a sala (0 = desligado). */
+  group_kill_switch_pct: z
+    .number()
+    .int()
+    .min(0, "A pausa automática vai de 0 (desligada) a 50%.")
+    .max(50, "A pausa automática vai de 0 (desligada) a 50%."),
   /** Nome da edição em cartaz (ex.: "Edição Círio"): entra no post e na legenda. */
   edition_name: z
     .string()

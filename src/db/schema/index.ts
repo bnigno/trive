@@ -33,3 +33,4 @@ export { customerLooks } from "./looks";
 export { waFollowups } from "./followups";
 export { waSuggestions } from "./suggestions";
 export { couriers, deliveryPositions, deliveryRuns, deliveryStops } from "./delivery";
+export { waGroupMembers, waGroupPosts, waGroups, waGroupSignals } from "./groups";
