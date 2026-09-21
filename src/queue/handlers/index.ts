@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import type { OutboxSource } from "@/core/queue/outbox-source";
 import { getRetryPolicy, handlerReserveMs } from "@/core/queue/retry-policy";
 import { isWaLid } from "@/lib/phone";
@@ -47,7 +48,7 @@ import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { getTranscriber } from "@/adapters/transcription";
 import { cardRenderPayloadSchema, renderAndSendBotCard } from "@/services/bot-cards";
 import { sendDailyDigestWa } from "@/services/daily-digest";
-import { applyConversationTouch, conversationTouchSchema } from "@/services/wa-conversation-touch";
+import { applyConversationTouch, conversationTouchSchema, isLockTimeoutError } from "@/services/wa-conversation-touch";
 import { applyMessageStatus, messageExists } from "@/services/wa-inbound";
 import { transcribeInboundAudio } from "@/services/wa-transcribe";
 import { sendQueuedEmail } from "@/services/email-inbox";
@@ -400,11 +401,21 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // vendedora ou dono). Falha do vendor relança até a política esgotar; na
   // última tentativa o serviço grava o marcador e a conversa segue.
   // Toque na conversa que o webhook não conseguiu dar (a linha estava presa
-  // pelo turno): aplica agora, esperando o lock — o worker tem tempo.
+  // pelo turno): aplica agora. Espera a vez só até o prazo do lote (o turno
+  // que a segura pode levar 45 s); sem tempo, volta à fila sem contar tentativa.
   "wa.conversation_touch": async (event) => {
     const touch = conversationTouchSchema.parse(event.payload);
+    const waitMs = event.deadlineAt ? event.deadlineAt.getTime() - Date.now() - 1_000 : 30_000;
+    if (waitMs < 1_000) throw new HandlerOutOfTimeError(waitMs);
     await getDb().transaction(async (tx) => {
-      await tx.select({ id: waConversations.id }).from(waConversations).where(eq(waConversations.id, touch.conversationId)).for("update");
+      await tx.execute(sql.raw(`set local lock_timeout = '${Math.floor(waitMs)}ms'`));
+      try {
+        await tx.select({ id: waConversations.id }).from(waConversations).where(eq(waConversations.id, touch.conversationId)).for("no key update");
+      } catch (error) {
+        if (isLockTimeoutError(error)) throw new HandlerOutOfTimeError(0);
+        throw error;
+      }
+      await tx.execute(sql.raw("set local lock_timeout = 0"));
       await applyConversationTouch(tx, touch);
     });
   },

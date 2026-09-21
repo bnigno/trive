@@ -40,7 +40,7 @@ import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
 import { firstNameOf, isOwnerPhone } from "@/services/wa-messaging";
-import { touchConversationOrDefer, type ConversationTouch } from "@/services/wa-conversation-touch";
+import { touchConversationOrDefer, withRowLockTimeout, type ConversationTouch } from "@/services/wa-conversation-touch";
 import { findActiveCourierByPhone } from "@/services/couriers";
 import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
 import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
@@ -632,13 +632,19 @@ export async function processZapiInbound(
       if (lid) {
         const [stray] = await openConversation(eq(waConversations.phoneE164, lid));
         if (stray && stray.id !== byPhone.id) {
-          await tx.update(waConversations).set({ status: "closed", updatedAt: now }).where(eq(waConversations.id, stray.id));
+          // A conversa "stray" pode estar no meio de um turno da Lia: não se espera por ela — fecha na próxima mensagem.
+          await withRowLockTimeout(tx, (sp) => sp.update(waConversations).set({ status: "closed", updatedAt: now }).where(eq(waConversations.id, stray.id)));
         }
       }
     } else if (lidConversation) {
       if (realPhone && lidConversation.phoneE164 !== realPhone) {
-        await tx.update(waConversations).set({ phoneE164: realPhone, updatedAt: now }).where(eq(waConversations.id, lidConversation.id));
-        conversationAddress = realPhone;
+        // Religar o LID ao telefone mexe na chave (phone_e164): espera o turno em
+        // curso só 3 s; presa, a mensagem fica na conversa do LID desta vez e a
+        // próxima religa.
+        const relinked = await withRowLockTimeout(tx, (sp) =>
+          sp.update(waConversations).set({ phoneE164: realPhone, updatedAt: now }).where(eq(waConversations.id, lidConversation.id)),
+        );
+        conversationAddress = relinked ? realPhone : lidConversation.phoneE164;
       } else {
         conversationAddress = lidConversation.phoneE164;
       }

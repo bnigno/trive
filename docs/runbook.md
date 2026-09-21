@@ -103,7 +103,10 @@ e o turno seguinte aplica ao pegar a vez. O turno dela roda em seguida **na
 mesma chamada** que respondeu a anterior; se essa chamada já não tem 32 s
 pela frente, o aviso ao Inngest cuida. O turno espera a vez da conversa só o
 que o prazo permite (`lock_timeout`); sem tempo, volta à fila sem contar
-tentativa. O aviso ao Inngest (kick, com teto de 3 s e aviso no log quando
+tentativa. Se a mensagem chegou enquanto a Lia **transferia** a conversa (ou
+era silenciada), o turno dela nasce antes da transferência: ao rodar, ele vê
+a conversa "com você" e manda a mensagem para o seu WhatsApp, como o webhook
+teria feito. O aviso ao Inngest (kick, com teto de 3 s e aviso no log quando
 falha) e o cron de 1 minuto são **redes de segurança**
 para quando essa chamada morre no meio (deploy, estouro dos 60 s). No plano
 grátis do Inngest uma função leva ~30 s (p50; p90 ~70 s) só para COMEÇAR:

@@ -6,7 +6,7 @@
 // fila (wa.conversation_touch). Quem pegar a conversa em seguida — o próprio
 // turno, ao adquirir o lock, ou o worker — aplica. Todo toque é idempotente
 // (greatest/coalesce/merge), então a ordem de chegada não importa.
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
@@ -77,6 +77,26 @@ export async function applyConversationTouch(tx: DbOrTx, touch: ConversationTouc
 }
 
 /**
+ * Roda uma escrita numa linha que pode estar presa, esperando no máximo
+ * CONVERSATION_TOUCH_LOCK_TIMEOUT_MS; num savepoint, para a transação de quem
+ * chama seguir. Devolve false quando a linha estava presa (nada foi feito).
+ */
+export async function withRowLockTimeout(tx: DbOrTx, write: (savepoint: DbOrTx) => Promise<unknown>): Promise<boolean> {
+  try {
+    await tx.transaction(async (savepoint) => {
+      await savepoint.execute(sql.raw(`set local lock_timeout = '${CONVERSATION_TOUCH_LOCK_TIMEOUT_MS}ms'`));
+      await write(savepoint as unknown as DbOrTx);
+      // SET LOCAL sobrevive ao release do savepoint: volta ao padrão para o resto da transação.
+      await savepoint.execute(sql.raw("set local lock_timeout = 0"));
+    });
+    return true;
+  } catch (error) {
+    if (isLockTimeoutError(error)) return false;
+    throw error;
+  }
+}
+
+/**
  * O webhook: tenta o toque agora, esperando no máximo CONVERSATION_TOUCH_LOCK_TIMEOUT_MS
  * pela linha (um savepoint isola o erro; a transação de quem chama segue).
  * Linha presa (a Lia está no meio do turno): o toque vai para a fila e o
@@ -84,17 +104,10 @@ export async function applyConversationTouch(tx: DbOrTx, touch: ConversationTouc
  * enfileirado, ou null quando aplicou na hora.
  */
 export async function touchConversationOrDefer(tx: DbOrTx, touch: ConversationTouch): Promise<string | null> {
-  try {
-    await tx.transaction(async (savepoint) => {
-      await savepoint.execute(sql.raw(`set local lock_timeout = '${CONVERSATION_TOUCH_LOCK_TIMEOUT_MS}ms'`));
-      await applyConversationTouch(savepoint, touch);
-    });
-    return null;
-  } catch (error) {
-    if (!isLockTimeoutError(error)) throw error;
-  }
-  // O toque entra na fila ANTES do turno desta mensagem (next_attempt_at um
-  // segundo atrás): quem drenar a conversa aplica o toque primeiro.
+  if (await withRowLockTimeout(tx, (savepoint) => applyConversationTouch(savepoint, touch))) return null;
+  // O toque entra na fila datado ANTES do turno desta mensagem (o turno leva o
+  // now() do início da transação; aqui já se passaram os 3 s de espera):
+  // quem drenar a conversa em lote aplica o toque primeiro.
   return enqueueOutboxEvent(
     tx,
     {
@@ -102,17 +115,17 @@ export async function touchConversationOrDefer(tx: DbOrTx, touch: ConversationTo
       aggregateType: "wa_conversation",
       aggregateId: touch.conversationId,
       payload: touch,
-      nextAttemptAt: new Date(Date.now() - 1_000),
+      nextAttemptAt: new Date(new Date(touch.inboundAt).getTime() - 60_000),
     },
     { kick: false },
   );
 }
 
 /**
- * O turno, já com a conversa em FOR UPDATE: aplica os toques que ficaram na
- * fila para esta conversa e os dá por feitos. Uma linha que o worker já
- * reclamou (processing) fica com ele — o handler espera o lock e aplica
- * depois do commit; o merge é o mesmo.
+ * O turno, já com a vez da conversa: aplica os toques que ficaram na fila
+ * para esta conversa e os dá por feitos. Inclui os que um worker já reclamou
+ * (processing) e está esperando a vez lá fora: o turno vê o toque AGORA, e o
+ * handler, quando pegar a vez, aplica de novo — o toque é idempotente.
  */
 export async function applyPendingConversationTouches(tx: DbOrTx, conversationId: string): Promise<number> {
   const rows = await tx
@@ -122,7 +135,7 @@ export async function applyPendingConversationTouches(tx: DbOrTx, conversationId
       and(
         eq(outboxEvents.eventType, CONVERSATION_TOUCH_EVENT),
         eq(outboxEvents.aggregateId, conversationId),
-        eq(outboxEvents.status, "pending"),
+        inArray(outboxEvents.status, ["pending", "processing"]),
       ),
     )
     .orderBy(outboxEvents.createdAt)

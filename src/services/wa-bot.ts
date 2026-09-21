@@ -771,13 +771,51 @@ export type BotTurnTimings = {
 
 /** Sem prazo da fila (chamada direta, testes), espera a vez da conversa até isto. */
 const LOCK_WAIT_DEFAULT_MS = 30_000;
+/** O mesmo corte do encaminhamento feito pelo webhook (wa-inbound). */
+const FORWARD_BODY_MAX_CHARS = 300;
 
 /**
- * FOR UPDATE na conversa com teto de espera: o que sobra do prazo da fila
- * menos a reserva da entrega e o mínimo do modelo — esperar mais que isso é
+ * A última mensagem dela sem resposta da Lia vai para o WhatsApp do dono
+ * (dedupe wa.fwd:<id da Z-API> — o mesmo do webhook, então nunca duplica).
+ */
+async function forwardUnansweredInboundToOwner(tx: DbOrTx, conversation: Pick<TurnConversation, "id" | "phoneE164" | "customerId">): Promise<void> {
+  const [inbound] = await tx
+    .select({ id: waMessages.id, zapiMessageId: waMessages.zapiMessageId, body: waMessages.body })
+    .from(waMessages)
+    .where(and(eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
+    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+    .limit(1);
+  if (!inbound?.zapiMessageId || (await hasBotReplyFor(tx, conversation.id, inbound.id))) return;
+  const [customer] = conversation.customerId
+    ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
+    : [];
+  await enqueueOutboxEvent(
+    tx,
+    {
+      eventType: "wa.owner_forward",
+      dedupeKey: `wa.fwd:${inbound.zapiMessageId}`,
+      aggregateType: "wa_conversation",
+      aggregateId: conversation.id,
+      payload: {
+        phoneE164: conversation.phoneE164,
+        body: inbound.body.slice(0, FORWARD_BODY_MAX_CHARS),
+        ...(customer ? { customerName: customer.fullName } : {}),
+      },
+    },
+    { kick: false },
+  );
+}
+
+/**
+ * A vez da conversa, com teto de espera: o que sobra do prazo da fila menos
+ * a reserva da entrega e o mínimo do modelo — esperar mais que isso é
  * esperar para não fazer nada, segurando conexão e linha. Estourou →
- * HandlerOutOfTimeError (a fila devolve a linha sem contar tentativa). Com
- * a vez, aplica os toques pendentes do webhook e relê a linha.
+ * HandlerOutOfTimeError (a fila devolve a linha sem contar tentativa).
+ * FOR NO KEY UPDATE, não FOR UPDATE: serializa os turnos e segura o UPDATE
+ * do toque (que assim é adiado), mas deixa passar a checagem de chave
+ * estrangeira do INSERT da próxima mensagem (FOR KEY SHARE) — com FOR UPDATE
+ * o webhook ficava preso no INSERT da mensagem o turno inteiro. Com a vez,
+ * aplica os toques que o webhook deixou na fila e relê a linha.
  */
 async function lockConversationForTurn(tx: DbOrTx, conversationId: string, queueDeadlineAt: Date | undefined) {
   const waitMs = queueDeadlineAt
@@ -787,7 +825,7 @@ async function lockConversationForTurn(tx: DbOrTx, conversationId: string, queue
   await tx.execute(sql.raw(`set local lock_timeout = '${Math.floor(waitMs)}ms'`));
   let rows: (typeof waConversations.$inferSelect)[];
   try {
-    rows = await tx.select().from(waConversations).where(eq(waConversations.id, conversationId)).for("update");
+    rows = await tx.select().from(waConversations).where(eq(waConversations.id, conversationId)).for("no key update");
   } catch (error) {
     if (isLockTimeoutError(error)) throw new HandlerOutOfTimeError(0);
     throw error;
@@ -836,15 +874,23 @@ export async function runBotTurn(
     }
 
     if (!conversation) return { skipped: "conversa_inexistente" };
-    if (conversation.status === "human") return { skipped: "atendimento_humano" };
     if (conversation.status === "closed") return { skipped: "conversa_fechada" };
-    if (
-      conversation.botDisabledUntil !== null &&
-      conversation.botDisabledUntil.getTime() > Date.now()
-    ) {
-      return { skipped: "bot_silenciado" };
+    // O webhook decide "Lia ou dono" com a foto da conversa de ANTES do turno
+    // anterior commitar (ele não espera o turno). Se esse turno transferiu ou
+    // silenciou a Lia, a mensagem que chegou no meio já está enfileirada como
+    // turno: quem a leva ao dono, como o webhook teria feito, é este turno.
+    const skippedForHuman =
+      conversation.status === "human"
+        ? "atendimento_humano"
+        : conversation.botDisabledUntil !== null && conversation.botDisabledUntil.getTime() > Date.now()
+          ? "bot_silenciado"
+          : !(await isBotEnabled(tx))
+            ? "desabilitado"
+            : null;
+    if (skippedForHuman) {
+      await forwardUnansweredInboundToOwner(tx, conversation);
+      return { skipped: skippedForHuman };
     }
-    if (!(await isBotEnabled(tx))) return { skipped: "desabilitado" };
 
     const [lastInbound] = await tx
       .select({ id: waMessages.id, createdAt: waMessages.createdAt, zapiMessageId: waMessages.zapiMessageId })

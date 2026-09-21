@@ -493,9 +493,9 @@ describe("runBotTurn", () => {
     expect(bodies).toContain(HANDOFF_COURTESY_REPLY);
   });
 
-  it("conversa 'human' → skipped, sem nenhuma mensagem", async () => {
+  it("conversa 'human' → skipped, sem nenhuma mensagem — e a mensagem dela que ficou sem resposta vai ao dono (como o webhook faria), sem duplicar", async () => {
     const conversationId = await createConversation(PHONE, { status: "human" });
-    await addInbound(conversationId, "Oi?");
+    const inboundId = await addInbound(conversationId, "Oi?");
     assistant.enqueueScript({ replyTemplate: "não deve sair" });
 
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
@@ -503,6 +503,14 @@ describe("runBotTurn", () => {
     expect(result).toEqual({ skipped: "atendimento_humano" });
     expect(provider.sentMessages).toHaveLength(0);
     expect(assistant.turns).toHaveLength(0);
+    // O turno foi enfileirado com a foto de ANTES da transferência: quem leva a mensagem ao dono é ele.
+    const [inbound] = await db.select({ zapiMessageId: schema.waMessages.zapiMessageId }).from(schema.waMessages).where(eq(schema.waMessages.id, inboundId));
+    const forwards = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.owner_forward"));
+    expect(forwards).toHaveLength(1);
+    expect(forwards[0]).toMatchObject({ dedupeKey: `wa.fwd:${inbound.zapiMessageId}`, payload: { phoneE164: PHONE, body: "Oi?" } });
+    // Rodar de novo (retry da fila) não duplica o encaminhamento.
+    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.owner_forward"))).toHaveLength(1);
   });
 
   it("bot desligado (bot_enabled false) → skipped 'desabilitado'", async () => {
