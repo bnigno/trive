@@ -37,7 +37,6 @@ export const EFFECT_TOOLS: ReadonlySet<BotToolName> = new Set<BotToolName>([
   "registrar_foto_com_a_peca",
   "retirar_minha_foto",
   "agendar_retorno",
-  "oferecer_gentileza",
 ]);
 
 export const STATE_TOOLS: ReadonlySet<BotToolName> = new Set<BotToolName>([

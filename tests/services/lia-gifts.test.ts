@@ -190,9 +190,28 @@ describe("oferecer_gentileza (executor)", () => {
     expect(preview.text).toContain("Ensaio: as condições estão OK");
     expect(preview.text).toContain("ENSAIO-CARINHO");
     expect(await db.select().from(schema.coupons)).toHaveLength(0);
+    // No ensaio, a regra de uma por conversa também vale (caderninho em memória).
+    const previewAgain = await rehearsal("oferecer_gentileza", { motivo: "de novo" });
+    expect(previewAgain.ok).toBe(false);
+    expect(previewAgain.text).toContain("já ofereceu nesta conversa");
 
+    // Copiloto: recusa em silêncio (não é "a equipe cuida disso" — a Lia não pode prometer desconto).
     const copilot = executor({ copilot: true });
+    await copilot("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
     const blocked = await copilot("oferecer_gentileza", { motivo: "hesitou" });
     expect(blocked.ok).toBe(false);
+    expect(blocked.text).toContain("Sem gentileza agora (copiloto)");
+    expect(blocked.text).toContain("NÃO mencione desconto");
+  });
+
+  it("cupom que não vale para a sacola de agora: nada fica gravado e a Lia segue sem gentileza", async () => {
+    const { customerId } = await setupCart();
+    // Sacola abaixo do mínimo da política — a decisão passa (mínimo checado com o subtotal do caderninho),
+    // mas a cotação de verdade recusa (COUPON_MIN_ORDER): transação desfeita.
+    const cheap = await sellable(1000, "BARATA");
+    const result = await offerLiaGift(sdb, giftInput(customerId, cheap, { cartSubtotalCents: 28_900 }));
+    expect(result).toMatchObject({ ok: false, refusal: "unquotable" });
+    expect(await db.select().from(schema.coupons)).toHaveLength(0);
+    expect(await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "coupon.lia_gift"))).toHaveLength(0);
   });
 });

@@ -1,10 +1,11 @@
 // Gentilezas da Lia: o cupom de bolso que a vendedora pode oferecer dentro
 // da cota da dona. A decisão é do core (decideLiaGift) com os fatos daqui —
 // cota do dia (relógio de São Paulo), compras da cliente, última gentileza —
-// e a emissão passa pelo issueCoupon (idempotente por conversa + dia). Um
-// advisory lock serializa as emissões: duas conversas ao mesmo tempo não
-// furam a cota.
+// e a emissão passa pelo issueCoupon (idempotente por conversa + dia). Sem
+// lock global: duas conversas no mesmo segundo podem furar a cota em 1 (são
+// ~3 por dia) — um lock aqui ficaria preso até o fim do turno da Lia.
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { ServiceError as CouponServiceError } from "@/services/coupons";
 
 import {
   decideLiaGift,
@@ -116,8 +117,18 @@ export type OfferLiaGiftResult =
 export async function offerLiaGift(db: DbOrTx, input: LiaGiftInput): Promise<OfferLiaGiftResult> {
   const policy = await loadLiaGiftPolicy(db);
   if (!policy.enabled) return { ok: false, refusal: "disabled", reason: "recurso desligado" };
+  try {
+    return await offerLiaGiftTx(db, policy, input);
+  } catch (error) {
+    // O cupom nasceu mas não vale para a sacola de agora (mínimo, peça sem
+    // preço…): a transação desfez tudo e a Lia segue sem gentileza.
+    if (error instanceof CouponServiceError) return { ok: false, refusal: "unquotable", reason: "cupom não vale para esta sacola" };
+    throw error;
+  }
+}
+
+async function offerLiaGiftTx(db: DbOrTx, policy: LiaGiftPolicy, input: LiaGiftInput): Promise<OfferLiaGiftResult> {
   return db.transaction(async (tx): Promise<OfferLiaGiftResult> => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('lia_gift'))`);
     // Retry do turno no mesmo dia: a gentileza desta conversa já existe —
     // devolve a mesma, sem decidir de novo (a própria emissão viraria "cooldown").
     const dedupeKey = liaGiftDedupeKey(input.conversationId, spDayKey(input.now));

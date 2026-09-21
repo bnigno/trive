@@ -46,6 +46,12 @@ export async function execOferecerGentileza(
   if (ctx.dryRun) {
     const decision = await previewLiaGift(db, gift);
     if (!decision.ok) return { ok: false, text: liaGiftRefusalText(decision) };
+    // No ensaio o caderninho (em memória) também guarda "já ofereceu": a regra
+    // de uma por conversa aparece para a dona. O cupom, não — ele não existe.
+    await updateBotState(db, ctx, (current) => ({
+      ...current,
+      liaGift: { code: "ENSAIO-CARINHO", motivo: input.motivo, at: now.toISOString(), expiresAt: decision.expiresAt.toISOString() },
+    }));
     return {
       ok: true,
       text: `[Ensaio: as condições estão OK — na conversa real sairia um cupom de ${decision.percent}% válido até ${dateFormatter.format(decision.expiresAt)}. Nenhum cupom foi criado. Responda como se tivesse oferecido, chamando-o de ENSAIO-CARINHO.]`,

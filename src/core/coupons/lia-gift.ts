@@ -58,7 +58,9 @@ export type LiaGiftRefusal =
   | "cart_too_small"
   | "few_purchases"
   | "cooldown"
-  | "quota";
+  | "quota"
+  /** O cupom nasceu mas não vale para a sacola de agora (o serviço desfez). */
+  | "unquotable";
 
 export type LiaGiftDecision =
   | { ok: true; percent: number; expiresAt: Date }
@@ -76,6 +78,7 @@ const REFUSAL_REASONS: Record<LiaGiftRefusal, string> = {
   few_purchases: "cliente ainda não comprou o bastante",
   cooldown: "ganhou uma gentileza há pouco tempo",
   quota: "cota do dia esgotada",
+  unquotable: "cupom não vale para esta sacola",
 };
 
 function refuse(code: LiaGiftRefusal): LiaGiftDecision {
