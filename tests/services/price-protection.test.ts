@@ -108,14 +108,36 @@ describe("protectPricesAfterDrop", () => {
     expect(await protectPricesAfterDrop(sdb, { versionId: drop, variantId, priceCents: 17900, now: NOW })).toEqual({ issued: 0, already: 0 });
 
     const rise = await activePrice(variantId, 21900, 17900, 3);
-    expect(await protectPricesAfterDrop(sdb, { versionId: rise, variantId, priceCents: 21900, now: NOW })).toEqual({ skipped: "sem_queda" });
+    expect(await protectPricesAfterDrop(sdb, { versionId: rise, variantId, priceCents: 21900, now: NOW })).toEqual({ issued: 0, already: 0 });
+    // "Anterior" velho não engana: a queda é contra o que cada uma pagou.
     const initial = await activePrice(variantId, 15000, null, 4);
-    expect(await protectPricesAfterDrop(sdb, { versionId: initial, variantId, priceCents: 15000, now: NOW })).toEqual({ skipped: "sem_queda" });
+    expect(await protectPricesAfterDrop(sdb, { versionId: initial, variantId, priceCents: 15000, now: NOW })).toEqual({ issued: 1, already: 0 });
     expect(await protectPricesAfterDrop(sdb, { versionId: "00000000-0000-4000-8000-00000000dead", variantId, priceCents: 15000, now: NOW })).toEqual({ skipped: "versao_inexistente" });
 
     await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "price_protection_enabled"));
     expect(await protectPricesAfterDrop(sdb, { versionId: drop, variantId, priceCents: 17900, now: NOW })).toEqual({ skipped: "desligado" });
-    expect(await db.select().from(schema.coupons)).toHaveLength(0);
+    // Só o cupom da queda para 150 (quem pagou 170) nasceu; nada mais.
+    expect(await db.select().from(schema.coupons)).toHaveLength(1);
+  });
+
+  it("desconto do pedido rateado: com cupom de 10% ela pagou 179,10 — a diferença é sobre isso; janela conta da ativação; reembolso desativa o cupom não usado", async () => {
+    const { variantId } = await createTestVariant(db, { sku: "LD-M4", name: "Longo Dunas" });
+    const { orderId } = await paidOrder({ variantId, unitPriceCents: 19900 });
+    await db.update(schema.orders).set({ discountCents: 1990, totalCents: 17910 }).where(eq(schema.orders.id, orderId));
+    const drop = await activePrice(variantId, 17000, 19900, 2);
+    expect(await protectPricesAfterDrop(sdb, { versionId: drop, variantId, priceCents: 17000, now: NOW })).toEqual({ issued: 1, already: 0 });
+    const [coupon] = await db.select().from(schema.coupons);
+    expect(coupon.value).toBe(910); // 179,10 − 170,00
+    expect(coupon.note).toBe(`Longo Dunas baixou de R$ 179,10 para R$ 170,00 (pedido #${(await db.select({ n: schema.orders.orderNumber }).from(schema.orders))[0].n})`);
+
+    // Reprocessado dias depois: a janela ainda é a da ativação.
+    expect(await protectPricesAfterDrop(sdb, { versionId: drop, variantId, priceCents: 17000, now: new Date(NOW.getTime() + 30 * 86_400_000) })).toEqual({ issued: 0, already: 1 });
+
+    // O pedido foi reembolsado: o cupom não usado sai de cena.
+    const { deactivateIssuedCouponsForOrder } = await import("@/services/coupons");
+    expect(await deactivateIssuedCouponsForOrder(sdb, { orderId, origins: ["price_protection"] })).toBe(1);
+    expect((await db.select().from(schema.coupons))[0].isActive).toBe(false);
+    expect(await deactivateIssuedCouponsForOrder(sdb, { orderId, origins: ["price_protection"] })).toBe(0);
   });
 
   it("dois pedidos de clientes diferentes na janela: um cupom para cada, com a diferença de cada uma", async () => {

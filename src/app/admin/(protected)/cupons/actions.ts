@@ -339,8 +339,13 @@ export async function savePriceProtectionSettingsAction(
   const user = await requireOwner("cupons");
   try {
     const db = getDb();
-    await updateSetting(db, { key: "price_protection_enabled", value: formData.get("enabled") === "on", userId: user.id });
-    await updateSetting(db, { key: "price_protection_days", value: parseIntField(text(formData, "days"), "Janela depois do pagamento (dias)", 1, 60), userId: user.id });
+    const values: Array<{ key: string; value: unknown }> = [
+      { key: "price_protection_enabled", value: formData.get("enabled") === "on" },
+      { key: "price_protection_days", value: parseIntField(text(formData, "days"), "Janela depois do pagamento (dias)", 1, 60) },
+    ];
+    for (const { key, value } of values) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
     revalidatePath("/admin/cupons");
     return { success: "Proteção de preço salva." };
   } catch (error) {

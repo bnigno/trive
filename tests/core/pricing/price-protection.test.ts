@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { isPriceDrop, priceProtectionNote, priceProtectionRefundCents, protectionWindowStart } from "@/core/pricing/price-protection";
+import { effectiveUnitPriceCents, priceProtectionNote, priceProtectionRefundCents, protectionWindowStart } from "@/core/pricing/price-protection";
 
 describe("proteção de preço", () => {
-  it("queda só quando há preço anterior maior", () => {
-    expect(isPriceDrop({ priceCents: 17900, previousPriceCents: 19900 })).toBe(true);
-    expect(isPriceDrop({ priceCents: 19900, previousPriceCents: 19900 })).toBe(false);
-    expect(isPriceDrop({ priceCents: 21900, previousPriceCents: 19900 })).toBe(false);
-    expect(isPriceDrop({ priceCents: 17900, previousPriceCents: null })).toBe(false);
+  it("o que ela pagou: preço de lista com o desconto do pedido rateado", () => {
+    expect(effectiveUnitPriceCents({ unitPriceCents: 19900, subtotalCents: 19900, discountCents: 0 })).toBe(19900);
+    expect(effectiveUnitPriceCents({ unitPriceCents: 19900, subtotalCents: 19900, discountCents: 1990 })).toBe(17910);
+    // Duas peças, desconto de R$ 30 no pedido de R$ 300: cada uma "custou" 10% a menos.
+    expect(effectiveUnitPriceCents({ unitPriceCents: 10000, subtotalCents: 30000, discountCents: 3000 })).toBe(9000);
+    expect(effectiveUnitPriceCents({ unitPriceCents: 10000, subtotalCents: 0, discountCents: 3000 })).toBe(10000);
   });
 
   it("janela e diferença × quantidade (nunca negativa)", () => {

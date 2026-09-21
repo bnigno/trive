@@ -679,6 +679,23 @@ export async function listIssuedCouponsForOrder(db: DbOrTx, orderId: string): Pr
   return toCoupons(db, rows);
 }
 
+/**
+ * O pedido de origem caiu (reembolso/cancelamento): os cupons que ele gerou e
+ * ainda não foram usados são desativados. Devolve quantos.
+ */
+export async function deactivateIssuedCouponsForOrder(
+  db: DbOrTx,
+  input: { orderId: string; origins: CouponOrigin[] },
+): Promise<number> {
+  if (input.origins.length === 0) return 0;
+  const rows = await db
+    .update(coupons)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(and(eq(coupons.orderId, input.orderId), inArray(coupons.origin, input.origins), eq(coupons.isActive, true), eq(coupons.usedCount, 0)))
+    .returning({ id: coupons.id });
+  return rows.length;
+}
+
 /** Cupons pessoais desta cliente, mais recentes primeiro. */
 export async function listIssuedCouponsForCustomer(db: DbOrTx, customerId: string): Promise<Coupon[]> {
   const rows = await db
