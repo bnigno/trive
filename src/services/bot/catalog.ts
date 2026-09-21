@@ -184,30 +184,18 @@ export async function execListarProdutos(
   }
   if (busca) filtros.push(`"${busca}"`);
 
+  // Tipo: as peças marcadas com ele E as ainda sem tipo cujo NOME tem um termo
+  // do tipo (rótulo, plural, sinônimos — a régua da sugestão): a dona pode não
+  // ter tipado tudo, e uma peça nova nasce sem tipo; negar o que existe não é opção.
   let items: PublicProductListItem[] = await listPublicProducts(db, {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
-    ...(pieceType ? { pieceType } : {}),
+    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true } : {}),
     ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
     limit: 200,
   });
-  // Tipo sem nenhuma peça marcada (a dona ainda não tipou o catálogo, ou a
-  // peça é um "Longo Aurora" que ninguém marcou): não negar o que existe —
-  // procura no NOME por qualquer termo do tipo (rótulo, plural, sinônimos: a
-  // mesma régua da sugestão), mantendo a busca e a edição que vieram, e avisa.
-  let tipoPeloNome = false;
-  if (pieceType && items.length === 0) {
-    items = await listPublicProducts(db, {
-      nameAny: pieceTypeTerms(pieceType),
-      ...(busca ? { q: busca, includeDescription: true } : {}),
-      ...(categorySlug ? { categorySlug } : {}),
-      ...(editionSlug ? { editionSlug } : {}),
-      viewer: { customerId: ctx.customerId },
-      limit: 200,
-    });
-    tipoPeloNome = items.length > 0;
-  }
+  const semTipoPeloNome = pieceType ? items.filter((item) => item.pieceType === null).length : 0;
 
   const byAttribute = await listProductIdsWithVariant(db, {
     ...(input.cor ? { cor: input.cor } : {}),
@@ -224,9 +212,9 @@ export async function execListarProdutos(
     filtros.push(`até ${formatCentsBRL(tetoCents)}`);
   }
 
-  if (tipoPeloNome && pieceType) {
+  if (pieceType && semTipoPeloNome > 0) {
     const tipoIndex = filtros.findIndex((f) => f.startsWith("tipo "));
-    const rotulo = `${pieceTypeLabel(pieceType)} pelo nome — nenhuma peça tem o tipo marcado ainda`;
+    const rotulo = `tipo ${pieceTypeLabel(pieceType)} — ${semTipoPeloNome === items.length ? "nenhuma tem o tipo marcado: achadas pelo nome" : `${semTipoPeloNome} sem tipo marcado, achada(s) pelo nome`}`;
     if (tipoIndex >= 0) filtros.splice(tipoIndex, 1, rotulo);
     else filtros.push(rotulo);
   }

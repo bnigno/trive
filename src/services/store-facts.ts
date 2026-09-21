@@ -37,12 +37,15 @@ export async function getStoreFactsInput(db: DbOrTx, opts: { siteUrl: string }):
   const motoboyRates = rates.filter((rate) => rate.kind === "motoboy" && rate.isActive);
   // Janelas por cidade (cada faixa tem as suas; duas faixas da mesma cidade —
   // por peso ou CEP — somam as janelas): a ficha diz as de cada uma quando diferem.
-  const byCity = new Map<string, DeliveryWindow[]>();
+  const byCity = new Map<string, { city: string; windows: DeliveryWindow[] }>();
   for (const rate of motoboyRates) {
     const city = motoboyAreaLabel([rate]) || rate.name;
-    byCity.set(city, [...(byCity.get(city) ?? []), ...rate.deliveryWindows]);
+    const key = city.toLocaleLowerCase("pt-BR");
+    const entry = byCity.get(key) ?? { city, windows: [] };
+    entry.windows.push(...rate.deliveryWindows);
+    byCity.set(key, entry);
   }
-  const cities = [...byCity.entries()].map(([city, windows]) => ({ city, windows }));
+  const cities = [...byCity.values()];
   const area = motoboyAreaLabel(motoboyRates);
   // Correios "cotado na hora" = SuperFrete ligada E com CEP E com token, OU
   // uma faixa fixa de Correios ativa (cotar_frete devolve valor e prazo dela).

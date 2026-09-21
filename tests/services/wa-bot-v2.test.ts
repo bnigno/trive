@@ -1022,8 +1022,8 @@ describe("caderninho", () => {
     await db.insert(schema.shippingRates).values([
       { name: "Motoboy Belém", kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", priceCents: 1500, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
       { name: "Motoboy Ananindeua", kind: "motoboy", cepStart: "67000000", cepEnd: "67999999", priceCents: 2000, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
-      // Segunda faixa de Belém (outra faixa de CEP), mesma janela: a cidade não se repete na ficha.
-      { name: "Motoboy Belém", kind: "motoboy", cepStart: "66900000", cepEnd: "66999999", priceCents: 1800, deliveryWindows: [{ start: "19:00", end: "21:00", cutoff: "13:00" }] },
+      // Segunda faixa de Belém (outra faixa de CEP, nome em caixa alta), com outra janela: soma às de Belém sem repetir a cidade.
+      { name: "MOTOBOY BELÉM", kind: "motoboy", cepStart: "66900000", cepEnd: "66999999", priceCents: 1800, deliveryWindows: [{ start: "09:00", end: "12:00", cutoff: "08:00" }] },
       { name: "Motoboy antigo", kind: "motoboy", cepStart: "68000000", cepEnd: "68999999", priceCents: 2000, isActive: false, deliveryWindows: [{ start: "07:00", end: "08:00", cutoff: "06:00" }] },
     ]);
     const categoryId = await createCategory("Vestidos", "vestidos");
@@ -1036,7 +1036,7 @@ describe("caderninho", () => {
     expect(system).toContain("Você é Bia, a vendedora da");
     expect(system).toContain("FICHA DA LOJA");
     expect(system).toContain("Política de troca: Troca em 7 dias com etiqueta.");
-    expect(system).toContain("• Entrega por motoboy em Belém e Ananindeua, nas janelas 19h–21h (pague até 13h).");
+    expect(system).toContain("• Entrega por motoboy em Belém e Ananindeua — janelas por cidade: Belém 9h–12h (pague até 8h) · 19h–21h (pague até 13h); Ananindeua 19h–21h (pague até 13h).");
     expect(system).not.toContain("7h–8h");
     expect(system).toContain("• Atendimento: segunda a sábado, 9h às 19h");
     // Correios automático desligado (padrão): fora da área é pela equipe. Sem Mercado Pago ligado: Pix pela chave.
@@ -1200,16 +1200,25 @@ describe("listar_produtos 2.0", () => {
     expect(porTipo.text).toContain(`• Corset Rosalie · Corset — ${formatCentsBRL(22900)}`);
     expect(porTipo.text).not.toContain("Blusa Linho");
     // Tipo que NENHUMA peça tem marcado ainda ("vestido"; "vestidos" aqui é o slug da categoria): não nega o que existe —
-    // procura no nome por rótulo/plural/sinônimos e avisa.
+    // as peças sem tipo entram pelo NOME (rótulo/plural/sinônimos, palavra inteira) e a contagem avisa.
     const semTipoMarcado = await executor("listar_produtos", { categoria: "vestido" });
     expect(semTipoMarcado.ok).toBe(true);
-    expect(semTipoMarcado.text).toContain("2 peças encontradas (Vestido pelo nome — nenhuma peça tem o tipo marcado ainda)");
+    expect(semTipoMarcado.text).toContain("2 peças encontradas (tipo Vestido — nenhuma tem o tipo marcado: achadas pelo nome)");
     expect(semTipoMarcado.text).toContain("Vestido Dunas");
     expect(semTipoMarcado.text).toContain("Vestido Brisa");
-    // Com busca junto, a busca continua valendo dentro do tipo pelo nome.
+    // Com busca junto, a busca continua valendo.
     const comBusca = await executor("listar_produtos", { categoria: "vestido", busca: "brisa" });
-    expect(comBusca.text).toContain('1 peça encontrada (Vestido pelo nome — nenhuma peça tem o tipo marcado ainda, "brisa")');
+    expect(comBusca.text).toContain('1 peça encontrada (tipo Vestido — nenhuma tem o tipo marcado: achadas pelo nome, "brisa")');
     expect(comBusca.text).not.toContain("Vestido Dunas");
+    // Tipagem parcial: um vestido marcado + um sem tipo → os dois entram, e a contagem diz quantos vieram pelo nome.
+    const dunas = (await db.select({ id: schema.products.id }).from(schema.products).where(eq(schema.products.slug, "vestido-dunas")))[0];
+    await db.update(schema.products).set({ pieceType: "vestido" }).where(eq(schema.products.id, dunas.id));
+    const parcial = await executor("listar_produtos", { categoria: "vestido" });
+    expect(parcial.text).toContain("2 peças encontradas (tipo Vestido — 1 sem tipo marcado, achada(s) pelo nome)");
+    // Palavra inteira: "conjunto" (sinônimo "set") NÃO traz o Corset Rosalie.
+    const conjunto = await executor("listar_produtos", { categoria: "conjunto" });
+    expect(conjunto.text).toContain("Nenhuma peça encontrada (tipo Conjunto)");
+    expect(conjunto.text).not.toContain("Corset Rosalie");
     // Tipo marcado em outras peças, mas nenhuma com esse nome nem esse tipo: aí a resposta é honesta.
     const bolsas = await executor("listar_produtos", { categoria: "bolsas" });
     expect(bolsas.ok).toBe(true);

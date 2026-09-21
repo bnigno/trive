@@ -123,8 +123,10 @@ const listPublicProductsSchema = z.object({
   includeHidden: z.boolean().default(false),
   viewer: z.object({ customerId: z.uuid().nullable().optional(), inviteToken: z.string().nullable().optional() }).optional(),
   q: z.string().trim().min(1).optional(),
-  /** Qualquer um destes termos no NOME (sem acento nem caixa): "vestido" acha "VESTIDO ALBA" e "Longo Dunas" pelo sinônimo. */
+  /** Qualquer um destes termos como PALAVRA INTEIRA no nome (sem acento nem caixa): "vestido" acha "VESTIDO ALBA"; "set" não acha "CORSET". */
   nameAny: z.array(z.string().trim().min(1)).min(1).optional(),
+  /** Com pieceType: também as peças SEM tipo marcado cujo nome bate em nameAny (a dona ainda não tipou tudo). */
+  untypedByName: z.boolean().default(false),
   /** Busca também na descrição (a vendedora do WhatsApp procura por "linho"). */
   includeDescription: z.boolean().default(false),
   /** Deixa um produto de fora (ex.: o próprio, na lista de relacionados). */
@@ -176,7 +178,17 @@ export async function listPublicProducts(
   if (!parsed.includeHidden) filters.push(publiclyVisible(parsed.viewer));
   if (parsed.productIds) filters.push(inArray(products.id, parsed.productIds));
   if (parsed.categorySlug) filters.push(eq(categories.slug, parsed.categorySlug));
-  if (parsed.pieceType) filters.push(eq(products.pieceType, parsed.pieceType));
+  // Sem acento dos dois lados (unaccent não está garantido no PGlite): "calca" acha "CALÇA".
+  const unaccentedName = sql`translate(lower(${products.name}), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')`;
+  // Palavra inteira (\m…\M), não substring: "top" não acha "TOPÁZIO", "set" não acha "CORSET".
+  const nameMatches = (terms: readonly string[]) => or(...terms.map((term) => sql`${unaccentedName} ~ ${`\\m${escapeRegex(term.toLowerCase())}\\M`}`))!;
+  if (parsed.pieceType) {
+    filters.push(
+      parsed.untypedByName && parsed.nameAny
+        ? or(eq(products.pieceType, parsed.pieceType), and(isNull(products.pieceType), nameMatches(parsed.nameAny)))!
+        : eq(products.pieceType, parsed.pieceType),
+    );
+  }
   if (parsed.excludeProductId) filters.push(ne(products.id, parsed.excludeProductId));
   if (parsed.editionSlug) {
     filters.push(
@@ -196,11 +208,7 @@ export async function listPublicProducts(
       )!,
     );
   }
-  if (parsed.nameAny) {
-    // Sem acento dos dois lados (unaccent não está garantido no PGlite): "calca" acha "CALÇA".
-    const unaccented = sql`translate(lower(${products.name}), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')`;
-    filters.push(or(...parsed.nameAny.map((term) => sql`${unaccented} like ${`%${term.toLowerCase()}%`}`))!);
-  }
+  if (parsed.nameAny && !(parsed.pieceType && parsed.untypedByName)) filters.push(nameMatches(parsed.nameAny));
 
   const rows = await db
     .select({
@@ -1024,4 +1032,9 @@ export async function listProductIdsWithVariant(
     .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
     .where(and(...filters));
   return new Set(rows.map((row) => row.id));
+}
+
+/** Termos de tipo são palavras simples; escapar é só por garantia (o "." de "t-shirt" não é problema). */
+function escapeRegex(term: string): string {
+  return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -70,6 +70,14 @@ describe("expandDeliveryOptions", () => {
   });
 
   it("motoboyExclusive e motoboyAreaLabel: só motoboy onde ele chega; a área lê os nomes das faixas ativas sem o prefixo", () => {
+    // A mesma cidade em caixa diferente (duas faixas de CEP de Belém) entra uma vez, na primeira grafia.
+    expect(
+      motoboyAreaLabel([
+        { name: "Motoboy Belém", kind: "motoboy", cepStart: "66000000" },
+        { name: "MOTOBOY BELÉM", kind: "motoboy", cepStart: "66900000" },
+        { name: "Motoboy Ananindeua", kind: "motoboy", cepStart: "67000000" },
+      ]),
+    ).toBe("Belém e Ananindeua");
     expect(motoboyExclusive([PAC, MOTOBOY]).map((r) => r.rateId)).toEqual(["m1"]);
     expect(motoboyExclusive([PAC]).map((r) => r.rateId)).toEqual(["p1"]);
     expect(motoboyExclusive([])).toEqual([]);

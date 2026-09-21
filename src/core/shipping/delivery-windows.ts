@@ -118,11 +118,12 @@ export function motoboyCoversCep(rates: readonly { kind: ShippingKind; isActive?
  * faixa.
  */
 export function motoboyAreaLabel(rates: readonly { name: string; kind: ShippingKind; isActive?: boolean; cepStart?: string }[]): string {
+  // A mesma cidade escrita em caixa diferente ("Belém" e "BELÉM") é uma só: fica a primeira grafia.
   const cities = [...rates]
     .filter((rate) => rate.kind === "motoboy" && rate.isActive !== false)
     .sort((a, b) => (a.cepStart ?? "").localeCompare(b.cepStart ?? ""))
     .map((rate) => rate.name.replace(/^\s*motoboy\s*[-–—:·]?\s*/i, "").trim())
-    .filter((city, index, all) => city.length > 0 && all.indexOf(city) === index);
+    .filter((city, index, all) => city.length > 0 && all.findIndex((other) => other.toLocaleLowerCase("pt-BR") === city.toLocaleLowerCase("pt-BR")) === index);
   if (cities.length <= 1) return cities[0] ?? "";
   return `${cities.slice(0, -1).join(", ")} e ${cities[cities.length - 1]}`;
 }

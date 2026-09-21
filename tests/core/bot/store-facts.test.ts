@@ -29,7 +29,7 @@ describe("renderStoreFacts", () => {
 
   it("sem motoboy e com Correios pela equipe: uma linha de entrega só, sem prometer valor nem prazo", () => {
     const texto = renderStoreFacts({ ...FICHA_REAL, motoboy: null, correios: "pela_equipe" });
-    expect(texto).not.toContain("Entrega por motoboy");
+    expect(texto).not.toContain("motoboy");
     expect(texto).toContain("• Entrega: Correios com o frete calculado pela equipe — cotar_frete diz quando é o caso; não há valor nem prazo para prometer.");
   });
 
@@ -57,7 +57,7 @@ describe("renderStoreFacts", () => {
     expect(renderStoreFacts({ ...FICHA_REAL, exchangePolicy: "Troca em 7 dias." })).not.toContain("dias..");
     const comRetirada = renderStoreFacts({ ...FICHA_REAL, pickup: "Não temos loja aberta ao público." });
     expect(comRetirada).toContain("• Retirada: Não temos loja aberta ao público.\n");
-    expect(comRetirada).toContain("• Pedido pelo sistema é sempre com entrega (motoboy ou Correios): criar_pedido não tem opção de retirada");
+    expect(comRetirada).toContain("• Pedido pelo sistema é sempre com entrega: criar_pedido não tem opção de retirada");
   });
 
   it("é determinístico (prefixo cacheável do prompt)", () => {

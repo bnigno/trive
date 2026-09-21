@@ -68,7 +68,7 @@ export function renderStoreFacts(input: StoreFactsInput): string {
   // as ferramentas é fixo: criar_pedido não tem retirada (cotar_frete só
   // devolve motoboy e Correios) — quem insistir em retirar, é com a equipe.
   if (clean(input.pickup) !== "") lines.push(`• Retirada: ${clean(input.pickup)}`);
-  lines.push("• Pedido pelo sistema é sempre com entrega (motoboy ou Correios): criar_pedido não tem opção de retirada; se ela quiser retirar, monte a sacola e chame transferir_para_atendente.");
+  lines.push("• Pedido pelo sistema é sempre com entrega: criar_pedido não tem opção de retirada; se ela quiser retirar, monte a sacola e chame transferir_para_atendente.");
 
   const correios =
     input.correios === "cotado_na_hora"
