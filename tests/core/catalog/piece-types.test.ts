@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeLabel, pieceTypePlural, pieceTypeTerms, pluralizePieceTerm, suggestPieceType } from "@/core/catalog/piece-types";
+import { PIECE_TYPE_SLUGS, PIECE_TYPES, parsePieceType, pieceTypeHints, pieceTypeLabel, pieceTypeNear, pieceTypePlural, pieceTypeTerms, pluralizePieceTerm, suggestPieceType } from "@/core/catalog/piece-types";
 
 describe("tipos de peça", () => {
   it("a lista é fechada, sem slug repetido, e todo slug tem rótulo e plural", () => {
@@ -26,7 +26,7 @@ describe("tipos de peça", () => {
   });
 
   it("pieceTypeTerms lista rótulo, plural, slug, sinônimos e o plural dos sinônimos — o que se procura no nome quando o tipo não está marcado", () => {
-    expect(pieceTypeTerms("vestido")).toEqual(["vestido", "vestidos", "longo", "midi", "curto", "longos", "midis", "curtos"]);
+    expect(pieceTypeTerms("vestido")).toEqual(["vestido", "vestidos"]);
     expect(pieceTypeTerms("calca")).toEqual(["calca", "calcas", "pantalona", "legging", "pantalonas", "leggings"]);
     expect(pieceTypeTerms("blusa")).toContain("baby look");
     expect(pieceTypeTerms("blusa")).toContain("baby looks");
@@ -46,6 +46,8 @@ describe("tipos de peça", () => {
   it("pluralizePieceTerm segue as regras simples do português e dos estrangeirismos da moda", () => {
     expect(pluralizePieceTerm("bermuda")).toBe("bermudas");
     expect(pluralizePieceTerm("camisão")).toBe("camisoes");
+    expect(pluralizePieceTerm("jardim")).toBe("jardins");
+    expect(pluralizePieceTerm("capuz")).toBe("capuzes");
     expect(pluralizePieceTerm("clutch")).toBe("clutches");
     expect(pluralizePieceTerm("cardigan")).toBe("cardigans");
     expect(pluralizePieceTerm("blazer")).toBe("blazers");
@@ -54,9 +56,28 @@ describe("tipos de peça", () => {
     expect(pluralizePieceTerm("")).toBe("");
   });
 
-  it("guarda: nenhum termo pertence a dois tipos (a próxima linha da lista não pode disputar um sinônimo)", () => {
+  it("dicas (adjetivos) valem para reconhecer e sugerir, nunca para a busca no nome — 'KIMONO LONGO' não é vestido", () => {
+    expect(pieceTypeHints("vestido")).toEqual(["longo", "midi", "curto", "longos", "midis", "curtos"]);
+    expect(pieceTypeHints("bermuda")).toEqual([]);
+    expect(parsePieceType("longo")).toBe("vestido");
+    expect(parsePieceType("longos")).toBe("vestido");
+    expect(pieceTypeTerms("vestido")).not.toContain("longo");
+    expect(suggestPieceType("Longo Dunas")).toBe("vestido");
+    expect(suggestPieceType("KIMONO LONGO SOL")).toBe("kimono");
+    expect(suggestPieceType("LONGO KIMONO SOL")).toBe("kimono");
+  });
+
+  it("tipo vizinho: bermuda ↔ short; os outros não têm", () => {
+    expect(pieceTypeNear("bermuda")).toBe("short");
+    expect(pieceTypeNear("short")).toBe("bermuda");
+    expect(pieceTypeNear("vestido")).toBeNull();
+  });
+
+  it("guarda: nenhum termo nem dica pertence a dois tipos (a próxima linha da lista não pode disputar um sinônimo)", () => {
     for (const type of PIECE_TYPES) {
-      for (const term of pieceTypeTerms(type.slug)) expect({ term, tipo: parsePieceType(term) }).toEqual({ term, tipo: type.slug });
+      for (const term of [...pieceTypeTerms(type.slug), ...pieceTypeHints(type.slug)]) {
+        expect({ term, tipo: parsePieceType(term) }).toEqual({ term, tipo: type.slug });
+      }
     }
   });
 

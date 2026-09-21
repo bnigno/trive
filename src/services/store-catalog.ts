@@ -179,7 +179,8 @@ export async function listPublicProducts(
   if (parsed.productIds) filters.push(inArray(products.id, parsed.productIds));
   if (parsed.categorySlug) filters.push(eq(categories.slug, parsed.categorySlug));
   // Sem acento dos dois lados (unaccent não está garantido no PGlite): "calca" acha "CALÇA".
-  const unaccentedName = sql`translate(lower(${products.name}), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')`;
+  // Maiúsculas acentuadas também na tabela: lower() só as dobra em ctype UTF-8, e a busca não pode depender disso.
+  const unaccentedName = sql`translate(lower(${products.name}), 'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ', 'aaaaaeeeeiiiiooooouuuucaaaaaeeeeiiiiooooouuuuc')`;
   // Palavra inteira (\m…\M), não substring: "top" não acha "TOPÁZIO", "set" não acha "CORSET".
   const nameMatches = (terms: readonly string[]) => or(...terms.map((term) => sql`${unaccentedName} ~ ${`\\m${escapeRegex(term.toLowerCase())}\\M`}`))!;
   if (parsed.pieceType) {

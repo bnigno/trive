@@ -7,11 +7,13 @@
 // Tipo novo = uma linha aqui (slug sem acento, rótulo, plural, sinônimos) +
 // um caso em tests/core/catalog/piece-types.test.ts. Sem migração: a coluna
 // products.piece_type é texto livre garantido por Zod no service. Depois,
-// `scripts/sugerir-tipo-de-peca.ts` para as peças que ainda estão sem tipo.
+// `scripts/sugerir-tipo-de-peca.ts` para as peças que ainda estão sem tipo
+// (ele também lista as já marcadas cujo nome passou a sugerir outro tipo —
+// sinônimo que muda de dono não é regravado, a dona confere no painel).
 // Um mesmo termo não pode pertencer a dois tipos — o teste de guarda acusa.
 
 export const PIECE_TYPES = [
-  { slug: "vestido", label: "Vestido", plural: "Vestidos", synonyms: ["longo", "midi", "curto"] },
+  { slug: "vestido", label: "Vestido", plural: "Vestidos", synonyms: [] },
   { slug: "blusa", label: "Blusa", plural: "Blusas", synonyms: ["bata", "regata", "camiseta", "t-shirt", "baby look", "baby-look"] },
   { slug: "cropped", label: "Cropped", plural: "Croppeds", synonyms: ["cropp"] },
   { slug: "top", label: "Top", plural: "Tops", synonyms: [] },
@@ -42,6 +44,26 @@ export type PieceType = (typeof PIECE_TYPES)[number]["slug"];
 
 export const PIECE_TYPE_SLUGS = PIECE_TYPES.map((type) => type.slug) as [PieceType, ...PieceType[]];
 
+/**
+ * Palavras que a cliente usa como se fossem o tipo ("quero um longo") e que
+ * ajudam a sugerir o tipo pelo nome ("Longo Dunas"), mas que são ADJETIVOS:
+ * não entram em pieceTypeTerms, porque "KIMONO LONGO" não é vestido — a busca
+ * pelo nome só usa substantivos.
+ */
+const PIECE_TYPE_HINTS: Partial<Record<PieceType, readonly string[]>> = {
+  vestido: ["longo", "midi", "curto"],
+};
+
+/** Tipo vizinho: quando não há nenhuma peça do tipo pedido, a busca mostra este antes de negar (bermuda ↔ short). */
+const PIECE_TYPE_NEAR: Partial<Record<PieceType, PieceType>> = {
+  bermuda: "short",
+  short: "bermuda",
+};
+
+export function pieceTypeNear(slug: PieceType): PieceType | null {
+  return PIECE_TYPE_NEAR[slug] ?? null;
+}
+
 /** Minúsculas, sem acento, sem pontas — a mesma régua para o que a cliente escreve e para o nome da peça. */
 export function normalizePieceTerm(term: string): string {
   return term
@@ -54,39 +76,51 @@ export function normalizePieceTerm(term: string): string {
 /**
  * Plural de um sinônimo já normalizado, pelas regras simples do português e
  * dos estrangeirismos que a moda usa: bermuda → bermudas, camisao → camisoes,
- * clutch → clutches, cardigan → cardigans; o que termina em s/x/z não muda
- * (oculos). Não cobre exceções (-l → -is, -ao → -aes): para essas, escreva
- * o plural como sinônimo explícito.
+ * capuz → capuzes, clutch → clutches, cardigan → cardigans, blazer → blazers;
+ * o que termina em s/x não muda (oculos). Não cobre -l → -is (cachecol →
+ * cachecois), -ao → -aes/-aos, -r/-s oxítonos do português (colar → colares,
+ * pais → paises): para esses, escreva o plural como sinônimo explícito.
  */
 export function pluralizePieceTerm(term: string): string {
   const word = normalizePieceTerm(term);
   if (word === "") return word;
   if (word.endsWith("ao")) return `${word.slice(0, -2)}oes`;
   if (word.endsWith("m")) return `${word.slice(0, -1)}ns`;
-  if (word.endsWith("ch") || word.endsWith("sh")) return `${word}es`;
-  if (/[sxz]$/u.test(word)) return word;
+  if (word.endsWith("ch") || word.endsWith("sh") || word.endsWith("z")) return `${word}es`;
+  if (/[sx]$/u.test(word)) return word;
   return `${word}s`;
+}
+
+function withPlurals(terms: readonly string[]): string[] {
+  const normalized = terms.map((term) => normalizePieceTerm(term));
+  return normalized.concat(normalized.map(pluralizePieceTerm));
 }
 
 /** Rótulo, plural, slug, sinônimos e o plural de cada sinônimo — normalizados, sem repetição, nesta ordem. */
 function termsOf(type: (typeof PIECE_TYPES)[number]): string[] {
-  const synonyms = [...type.synonyms].map((term) => normalizePieceTerm(term));
-  return [...new Set([type.label, type.plural, type.slug].map((term) => normalizePieceTerm(term)).concat(synonyms, synonyms.map(pluralizePieceTerm)))];
+  return [...new Set([type.label, type.plural, type.slug].map((term) => normalizePieceTerm(term)).concat(withPlurals(type.synonyms)))];
 }
 
 const BY_TERM: ReadonlyMap<string, PieceType> = (() => {
   const map = new Map<string, PieceType>();
   for (const type of PIECE_TYPES) {
-    for (const term of termsOf(type)) map.set(term, type.slug);
+    for (const term of termsOf(type).concat(withPlurals(PIECE_TYPE_HINTS[type.slug] ?? []))) map.set(term, type.slug);
   }
   return map;
 })();
 
-/** Tudo o que pode aparecer no NOME de uma peça deste tipo: rótulo, plural, slug, sinônimos (e seus plurais) — a mesma régua de suggestPieceType. */
+const HINT_TERMS: ReadonlySet<string> = new Set(Object.values(PIECE_TYPE_HINTS).flatMap((hints) => withPlurals(hints)));
+
+/** Tudo o que pode aparecer no NOME de uma peça deste tipo: rótulo, plural, slug, sinônimos (e seus plurais) — substantivos; as dicas (adjetivos) ficam de fora. */
 export function pieceTypeTerms(slug: PieceType): string[] {
   const type = PIECE_TYPES.find((entry) => entry.slug === slug);
   if (!type) return [slug];
   return termsOf(type);
+}
+
+/** As dicas (adjetivos) do tipo, com plural: reconhecidas por parsePieceType e pela sugestão, nunca pela busca no nome. */
+export function pieceTypeHints(slug: PieceType): string[] {
+  return [...new Set(withPlurals(PIECE_TYPE_HINTS[slug] ?? []))];
 }
 
 export function pieceTypeLabel(slug: PieceType): string {
@@ -107,8 +141,10 @@ export function parsePieceType(term: string): PieceType | null {
 /**
  * Sugere o tipo pelo NOME da peça ("CORSET DOMINIQUE" → corset; "Longo Dunas"
  * → vestido; "CONJUNTO SAIA E TOP" → conjunto). Conjunto ganha de qualquer
- * outra palavra do nome; fora isso, vale o primeiro termo reconhecido. Nunca
- * sugere "outro" — isso é decisão da dona. Null quando nada bate ("Aurora").
+ * outra palavra do nome; fora isso, vale o primeiro substantivo reconhecido, e
+ * uma dica ("longo") só decide quando nenhum substantivo bate ("KIMONO LONGO"
+ * é kimono). Nunca sugere "outro" — isso é decisão da dona. Null quando nada
+ * bate ("Aurora").
  */
 export function suggestPieceType(name: string): PieceType | null {
   const normalized = normalizePieceTerm(name);
@@ -117,10 +153,13 @@ export function suggestPieceType(name: string): PieceType | null {
   // Termos compostos ("baby look") antes das palavras soltas.
   const compound = [...BY_TERM.entries()].find(([term, slug]) => term.includes(" ") && slug !== "outro" && normalized.includes(term));
   const hits: PieceType[] = compound ? [compound[1]] : [];
+  const hintHits: PieceType[] = [];
   for (const word of words) {
     const hit = BY_TERM.get(word);
-    if (hit && hit !== "outro" && !hits.includes(hit)) hits.push(hit);
+    if (!hit || hit === "outro") continue;
+    const bucket = HINT_TERMS.has(word) ? hintHits : hits;
+    if (!bucket.includes(hit)) bucket.push(hit);
   }
-  if (hits.length === 0) return null;
+  if (hits.length === 0) return hintHits[0] ?? null;
   return hits.includes("conjunto") ? "conjunto" : hits[0];
 }

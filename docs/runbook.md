@@ -602,7 +602,12 @@ A Lia lê três coisas, nesta ordem de "peso":
    sinônimos que a Lia entende, no singular e no plural — é fixa em
    `src/core/catalog/piece-types.ts`: tipo novo é uma linha lá (slug, rótulo,
    plural, sinônimos) mais um caso no teste, sem migração; o painel não cria
-   tipo. Depois de incluir, rode o script de sugestão para as peças ainda sem tipo.
+   tipo. Depois de incluir, rode o script de sugestão: ele grava só nas peças
+   ainda sem tipo e, no fim, lista as já marcadas cujo nome hoje sugere outro
+   tipo (um sinônimo que mudou de dono, como "bermuda" saindo de short) — essas
+   você confere no painel. Quando não há nenhuma peça do tipo pedido, a Lia
+   mostra antes de negar as que têm o termo no nome (marcadas com outro tipo)
+   e as do tipo vizinho (bermuda ↔ short), dizendo de onde veio cada uma.
 3. O **caderninho** de cada conversa: cliente, sacola, peça em vista, mais as
    **Novidades (últimos 14 dias)** e **Mais vendidas (30 dias)** — só nomes,
    para puxar assunto.

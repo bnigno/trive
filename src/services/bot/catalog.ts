@@ -20,7 +20,7 @@ import {
 } from "@/core/cards/types";
 import { variantLabel } from "@/core/catalog/attributes";
 import { formatCatalogLine } from "@/core/bot/catalog-line";
-import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, pieceTypeTerms, type PieceType } from "@/core/catalog/piece-types";
+import { parsePieceType, PIECE_TYPE_SLUGS, pieceTypeLabel, pieceTypeNear, pieceTypeTerms, type PieceType } from "@/core/catalog/piece-types";
 import { curatorNoteLines } from "@/core/bot/curator-note";
 import { careNotesToLabels, parseCareNotes } from "@/core/catalog/care";
 import {
@@ -187,15 +187,30 @@ export async function execListarProdutos(
   // Tipo: as peças marcadas com ele E as ainda sem tipo cujo NOME tem um termo
   // do tipo (rótulo, plural, sinônimos — a régua da sugestão): a dona pode não
   // ter tipado tudo, e uma peça nova nasce sem tipo; negar o que existe não é opção.
-  let items: PublicProductListItem[] = await listPublicProducts(db, {
+  const base = {
     ...(busca ? { q: busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
-    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true } : {}),
     ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
     limit: 200,
+  } as const;
+  let items: PublicProductListItem[] = await listPublicProducts(db, {
+    ...base,
+    ...(pieceType ? { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true } : {}),
   });
-  const semTipoPeloNome = pieceType ? items.filter((item) => item.pieceType === null).length : 0;
+
+  // Nenhuma do tipo: antes de negar, o nome de TODAS as peças (uma "SHORT
+  // BERMUDA" que a dona marcou como short) e o tipo vizinho (bermuda ↔ short).
+  // Cada linha leva o tipo real da peça, então a Lia sabe o que está mostrando.
+  const vizinho = pieceType ? pieceTypeNear(pieceType) : null;
+  const procurouEmTodas = pieceType !== undefined && items.length === 0;
+  const peloNomeIds = new Set<string>();
+  if (pieceType && procurouEmTodas) {
+    const peloNome = await listPublicProducts(db, { ...base, nameAny: pieceTypeTerms(pieceType) });
+    for (const item of peloNome) peloNomeIds.add(item.id);
+    const doVizinho = vizinho ? await listPublicProducts(db, { ...base, pieceType: vizinho, nameAny: pieceTypeTerms(vizinho), untypedByName: true }) : [];
+    items = peloNome.concat(doVizinho.filter((item) => !peloNomeIds.has(item.id)));
+  }
 
   const byAttribute = await listProductIdsWithVariant(db, {
     ...(input.cor ? { cor: input.cor } : {}),
@@ -212,18 +227,31 @@ export async function execListarProdutos(
     filtros.push(`até ${formatCentsBRL(tetoCents)}`);
   }
 
-  if (pieceType && semTipoPeloNome > 0) {
+  // O rótulo do tipo conta o que SOBROU depois dos filtros de cor, tamanho e preço.
+  const semTipoPeloNome = pieceType && !procurouEmTodas ? items.filter((item) => item.pieceType === null).length : 0;
+  const parecidas = (() => {
+    if (!pieceType || !procurouEmTodas || items.length === 0) return null;
+    const peloNome = items.filter((item) => peloNomeIds.has(item.id)).length;
+    const partes: string[] = [];
+    if (peloNome > 0) partes.push(`${peloNome} com "${pieceTypeLabel(pieceType).toLowerCase()}" no nome, marcada(s) com outro tipo`);
+    if (vizinho && items.length > peloNome) partes.push(`${items.length - peloNome} do tipo ${pieceTypeLabel(vizinho)}, o mais parecido`);
+    return `tipo ${pieceTypeLabel(pieceType)} — nenhuma com esse tipo; parecidas: ${partes.join(" e ")}`;
+  })();
+  if (pieceType && (parecidas || semTipoPeloNome > 0)) {
     const tipoIndex = filtros.findIndex((f) => f.startsWith("tipo "));
-    const rotulo = `tipo ${pieceTypeLabel(pieceType)} — ${semTipoPeloNome === items.length ? "nenhuma tem o tipo marcado: achadas pelo nome" : `${semTipoPeloNome} sem tipo marcado, achada(s) pelo nome`}`;
+    const rotulo = parecidas ?? `tipo ${pieceTypeLabel(pieceType)} — ${semTipoPeloNome === items.length ? "nenhuma tem o tipo marcado: achadas pelo nome" : `${semTipoPeloNome} sem tipo marcado, achada(s) pelo nome`}`;
     if (tipoIndex >= 0) filtros.splice(tipoIndex, 1, rotulo);
     else filtros.push(rotulo);
   }
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
   if (items.length === 0) {
+    const jaProcurei = pieceType && procurouEmTodas
+      ? ` (já procurei "${pieceTypeLabel(pieceType).toLowerCase()}" no nome de todas as peças${vizinho ? ` e no tipo ${pieceTypeLabel(vizinho)}` : ""} também)`
+      : "";
     return {
       ok: true,
       text: filtros.length > 0
-        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${pieceType ? ` (já procurei "${pieceTypeLabel(pieceType).toLowerCase()}" no nome das peças também)` : ""} — e diga isso à cliente com honestidade.`
+        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${jaProcurei} — e diga isso à cliente com honestidade.`
         : "O catálogo está vazio no momento — em breve teremos novidades!",
     };
   }
