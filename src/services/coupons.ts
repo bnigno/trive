@@ -425,7 +425,8 @@ export async function releaseCouponRedemptionInTx(tx: DbOrTx, orderId: string): 
 const issueCouponSchema = z.object({
   dedupeKey: z.string().trim().min(1).max(200),
   customerId: z.uuid().nullable(),
-  phoneE164: z.string().nullable().optional(),
+  // E.164 como no CHECK do banco: recusar aqui evita abortar a transação de quem chama.
+  phoneE164: z.string().regex(/^\+[1-9][0-9]{7,14}$/, "Telefone precisa estar em E.164 (+55…).").nullable().optional(),
   origin: z.enum(COUPON_ORIGINS),
   type: z.enum(["percent", "fixed", "free_shipping"]),
   value: z.number().int().min(0),

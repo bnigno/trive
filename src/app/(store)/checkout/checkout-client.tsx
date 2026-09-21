@@ -309,6 +309,9 @@ export function CheckoutClient({
         shipping: couponShipping,
         customer: couponIdentity,
       });
+      // Resposta de uma cotação antiga (CPF corrigido enquanto a anterior
+      // voava) não pode sobrescrever a atual.
+      if (lastCouponKeyRef.current !== key) return;
       if (result.ok) {
         setAppliedCoupon({
           code: result.code,

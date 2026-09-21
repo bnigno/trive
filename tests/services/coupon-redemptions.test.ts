@@ -140,6 +140,7 @@ describe("issueCoupon", () => {
     const [row] = await db.select().from(schema.coupons).where(eq(schema.coupons.id, lead.couponId));
     expect(row).toMatchObject({ customerId: null, phoneE164: "+5591988880000" });
 
+    await expect(issue({ customerId: null, dedupeKey: "ruim-0", phoneE164: "(91) 99999-0000" })).rejects.toThrowError(/E\.164/);
     await expect(issue({ customerId: null, dedupeKey: "ruim-1", type: "percent", value: 0 })).rejects.toThrowError(/entre 1 e 100/);
     await expect(issue({ customerId: null, dedupeKey: "ruim-2", type: "fixed", value: 0 })).rejects.toThrowError(/maior que zero/);
     await expect(issue({ customerId: null, dedupeKey: "ruim-3", type: "free_shipping", value: 5 })).rejects.toThrowError(/não tem valor/);
