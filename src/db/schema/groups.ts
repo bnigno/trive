@@ -124,6 +124,9 @@ export const waGroupPosts = pgTable(
     /** Enquete: opções na ordem (2–12) e quantas cada pessoa marca. */
     pollOptions: jsonb("poll_options").$type<string[]>(),
     pollMaxOptions: smallint("poll_max_options"),
+    /** Enquete apurada: a contagem, a vencedora e o id da mensagem do resultado (segunda metade do mesmo ritual, não um post novo). */
+    pollClosedAt: timestamp("poll_closed_at", { withTimezone: true }),
+    pollResult: jsonb("poll_result").$type<{ tally: { option: string; votes: number }[]; winner: string | null; voters: number; resultMessageId: string | null }>(),
     /** Peças do post (chegadas/cortina): é por elas que a afinidade no privado é calculada. */
     productIds: jsonb("product_ids").$type<string[]>(),
     /** Looks de cliente do "quem vestiu". */
