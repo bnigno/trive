@@ -128,6 +128,7 @@ function readRuleFields(formData: FormData): Omit<CreateCouponInput, "code" | "u
   }
   const customerPhone = text(formData, "customerPhone").trim();
   const valueSchedule = parseScheduleFields(formData, type);
+  const growth = parseGrowthFields(formData, type);
   return {
     type,
     value,
@@ -146,7 +147,22 @@ function readRuleFields(formData: FormData): Omit<CreateCouponInput, "code" | "u
     categoryIds: formData.getAll("categoryIds").map(String).filter((id) => id !== ""),
     note: text(formData, "note").trim() || null,
     valueSchedule,
+    growthPerRedeemer: growth.growthPerRedeemer,
+    growthCap: growth.growthCap,
   };
+}
+
+/** Cupom da turma: quanto sobe por amiga (pontos ou R$) e o teto; vazio = cupom comum. */
+function parseGrowthFields(formData: FormData, type: "percent" | "fixed" | "free_shipping"): { growthPerRedeemer: number; growthCap: number | null } {
+  const rawGrowth = text(formData, "growthPerRedeemer").trim();
+  const rawCap = text(formData, "growthCap").trim();
+  if (type === "free_shipping" || (rawGrowth === "" && rawCap === "")) return { growthPerRedeemer: 0, growthCap: null };
+  if (rawGrowth === "") throw new ServiceError("turma_invalida", "Cupom da turma: informe quanto sobe por amiga (ou deixe o teto vazio também).");
+  const growthPerRedeemer = type === "percent" ? parsePercentField(rawGrowth, "Sobe por amiga") : parseMoneyField(rawGrowth, "Sobe por amiga");
+  if (growthPerRedeemer <= 0) throw new ServiceError("turma_invalida", "Sobe por amiga: informe um valor maior que zero.");
+  if (rawCap === "") throw new ServiceError("turma_invalida", "Cupom da turma precisa de um teto.");
+  const growthCap = type === "percent" ? parsePercentField(rawCap, "Teto") : parseMoneyField(rawCap, "Teto");
+  return { growthPerRedeemer, growthCap };
 }
 
 /**

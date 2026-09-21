@@ -70,9 +70,22 @@ type CouponState =
       shippingDiscountCents: number;
       /** "Confirmamos no fechamento…" — o que depende de CPF/telefone/entrega. */
       pendingNotice: string | null;
-      /** Cupom que muda com o tempo: o que vale hoje e quando muda. */
+      /** Cupom que muda com o tempo ou da turma: o que vale hoje e como muda. */
       hint: string | null;
+      /** Cupom da turma: texto pronto para a amiga. */
+      shareText: string | null;
     };
+
+/** "Mandar para uma amiga": a folha de compartilhar do celular; no computador, o WhatsApp Web sem número (ela escolhe o contato). */
+function shareWithFriend(text: string): void {
+  if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+    navigator.share({ text }).catch(() => {
+      // Cancelou a folha: nada a fazer.
+    });
+    return;
+  }
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+}
 
 /** Cupom que não existe mais não fica guardado no navegador (os outros erros são da sacola de agora). */
 const FORGET_STORED_ON = new Set(["COUPON_NOT_FOUND", "COUPON_INACTIVE", "COUPON_EXPIRED", "COUPON_EXHAUSTED"]);
@@ -130,6 +143,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           shippingDiscountCents: result.shippingDiscountCents,
           pendingNotice: result.pendingNotice,
           hint: result.hint,
+          shareText: result.shareText,
         });
       });
     },
@@ -467,6 +481,15 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                   </div>
                   {appliedCoupon.hint ? (
                     <p className="mt-1 font-store text-xs text-gold-800">{appliedCoupon.hint}</p>
+                  ) : null}
+                  {appliedCoupon.shareText ? (
+                    <button
+                      type="button"
+                      onClick={() => shareWithFriend(appliedCoupon.shareText as string)}
+                      className={cx(btnSmallDark, "mt-2")}
+                    >
+                      Mandar para uma amiga
+                    </button>
                   ) : null}
                   {appliedCoupon.pendingNotice ? (
                     <p className="mt-1 font-store text-xs text-ink-500">{appliedCoupon.pendingNotice}</p>

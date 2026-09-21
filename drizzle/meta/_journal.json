@@ -351,6 +351,13 @@
       "when": 1789963099539,
       "tag": "0049_cupom_que_amadurece",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1789964302463,
+      "tag": "0050_cupom_da_turma",
+      "breakpoints": true
     }
   ]
 }

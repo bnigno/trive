@@ -311,6 +311,33 @@ describe("cupom que muda com o tempo", () => {
   });
 });
 
+describe("cupom da turma", () => {
+  it("sobe por cliente distinta (a mesma cliente conta 1), com a dica e o texto para a amiga; exige teto; não combina com degraus", async () => {
+    const turma = await makeCoupon({ code: "TURMA", value: 5, growthPerRedeemer: 2, growthCap: 15 });
+    const item = await sellable(10_000);
+
+    const first = await quoteCoupon(sdb, { code: "TURMA", items: [item] });
+    expect(first).toMatchObject({ appliedValue: 5, discountCents: 500 });
+    expect(first.hint).toBe("Cupom da turma: 5% hoje — você pode ser a primeira. Cada nova amiga sobe 2 pontos, até 15%.");
+    expect(first.shareText).toContain("Hoje tá em 5%. Pega o seu: ");
+    expect(first.shareText).toContain("/c/TURMA");
+
+    const ana = await createTestCustomer(db, "Ana");
+    await redeemCouponInTx(sdb, await redeemInput(turma.id, { customerId: ana }));
+    await redeemCouponInTx(sdb, await redeemInput(turma.id, { customerId: ana })); // a mesma Ana: conta 1
+    expect((await quoteCoupon(sdb, { code: "TURMA", items: [item] })).appliedValue).toBe(7);
+    await redeemCouponInTx(sdb, await redeemInput(turma.id));
+    const third = await quoteCoupon(sdb, { code: "TURMA", items: [item] });
+    expect(third).toMatchObject({ appliedValue: 9, discountCents: 900 });
+    expect(third.hint).toBe("Cupom da turma: 9% hoje — 2 amigas já usaram. Cada nova amiga sobe 2 pontos, até 15%.");
+    expect((await listCoupons(sdb)).find((c) => c.id === turma.id)).toMatchObject({ distinctRedeemers: 2, redemptionsCount: 3 });
+
+    await expect(makeCoupon({ code: "SEMTETO", value: 5, growthPerRedeemer: 2 })).rejects.toThrowError(/teto/);
+    await expect(makeCoupon({ code: "TETOBAIXO", value: 10, growthPerRedeemer: 2, growthCap: 5 })).rejects.toThrowError(/maior ou igual/);
+    await expect(makeCoupon({ code: "DUAS", value: 5, growthPerRedeemer: 2, growthCap: 15, valueSchedule: [{ afterDays: 7, value: 10 }] })).rejects.toThrowError(/uma mecânica/);
+  });
+});
+
 describe("redeemCouponInTx", () => {
   it("guard atômico: max_uses 1 disputado 2x → um resgata, o outro falha e used_count fica em 1", async () => {
     const created = await makeCoupon({ code: "UNICO", maxUses: 1 });

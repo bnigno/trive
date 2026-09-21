@@ -36,6 +36,8 @@ function rule(overrides: Partial<CouponRule> = {}): CouponRule {
     productIds: [],
     categoryIds: [],
     valueSchedule: null,
+    growthPerRedeemer: 0,
+    growthCap: null,
     createdAt: new Date("2026-09-01T12:00:00.000Z"),
     ...overrides,
   };
@@ -249,5 +251,14 @@ describe("evaluateCoupon — cupom que muda com o tempo", () => {
     // Fixo: os degraus são centavos e o clamp vale sobre o degrau.
     const fixed = rule({ type: "fixed", value: 1000, valueSchedule: [{ afterDays: 1, value: 999_999 }] });
     expect(expectOk(evaluateCoupon(fixed, ctx({ items: [VESTIDO] })))).toMatchObject({ appliedValue: 999_999, discountCents: 19900 });
+  });
+});
+
+describe("evaluateCoupon — cupom da turma", () => {
+  it("o valor sobe com as clientes distintas que já usaram, até o teto; sem contagem = ninguém ainda", () => {
+    const turma = rule({ value: 5, growthPerRedeemer: 2, growthCap: 15 });
+    expect(expectOk(evaluateCoupon(turma, ctx({ items: [VESTIDO], distinctRedeemers: 2 })))).toMatchObject({ appliedValue: 9, discountCents: 1791 });
+    expect(expectOk(evaluateCoupon(turma, ctx({ items: [VESTIDO], distinctRedeemers: 40 }))).appliedValue).toBe(15);
+    expect(expectOk(evaluateCoupon(turma, ctx({ items: [VESTIDO] }))).appliedValue).toBe(5);
   });
 });
