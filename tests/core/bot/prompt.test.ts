@@ -223,6 +223,18 @@ describe("rótulos das listas tocáveis", () => {
     expect(on).toContain("Chame ANTES de falar");
   });
 
+  it("PROVADOR só entra com o Provador ligado: porta pela cartela + sim, link nunca pela Lia, linhas do caderninho puxam assunto", () => {
+    const off = buildBotSystemPrompt(OPCOES);
+    expect(off).not.toContain("PROVADOR (o grupo de WhatsApp");
+    const on = buildBotSystemPrompt({ ...OPCOES, provadorEnabled: true });
+    expect(on).toContain("PROVADOR (o grupo de WhatsApp da TRIVÉ");
+    expect(on).toContain("grave com atualizar_cartela");
+    expect(on).toContain("com o SIM, chame entrar_no_provador");
+    expect(on).toContain("NUNCA escreva o link");
+    expect(on).toContain('Linhas "Provador: …" no caderninho: ela já está no grupo');
+    expect(on).toContain('"só privado"');
+  });
+
   it("botão da lista de variações cabe no teto do WhatsApp", () => {
     expect(VARIANT_MENU_BUTTON_LABEL.length).toBeLessThanOrEqual(OPTION_BUTTON_MAX_CHARS);
     expect(VARIANT_MENU_BUTTON_LABEL).not.toMatch(PALAVRAS_PROIBIDAS);

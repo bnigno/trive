@@ -52,11 +52,12 @@ import {
   waGroups,
   waGroupSignals,
 } from "@/db/schema";
-import { isWaLid, toWaGroupId } from "@/lib/phone";
+import { isWaLid, toWaGroupId, waMeUrl } from "@/lib/phone";
 import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { type DbOrTx, enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
 import { loadSendPolicy } from "@/services/wa-send-policy";
+import { loadBridgeSettings } from "@/services/site-carts";
 import { isWaEnabled, siteBaseUrl } from "@/services/wa-messaging";
 
 export class ServiceError extends Error {
@@ -305,6 +306,19 @@ function isPaused(group: { pausedUntil: Date | null }, now: Date): boolean {
 // Membras — sincronizadas do metadata da Z-API (entradas, saídas, kill switch)
 // ---------------------------------------------------------------------------
 
+export const PROVADOR_INVITE_ACTION = "wa.provador_invite";
+
+/** Ela já pediu o convite pela Lia? (audit wa.provador_invite pelo telefone — vale para o sync marcar "pela Lia".) */
+export async function findProvadorInviteByPhone(db: DbOrTx, phoneE164: string, since: Date): Promise<boolean> {
+  const [row] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, PROVADOR_INVITE_ACTION), sql`${auditLog.after} ->> 'phoneE164' = ${phoneE164}`, sql`${auditLog.createdAt} >= ${since}`))
+    .limit(1);
+  return row !== undefined;
+}
+
+
 type ParticipantLike = { phoneE164: string | null; lid: string | null; isAdmin: boolean };
 
 /** O endereço de conversa da participante: telefone quando existe, senão o LID. */
@@ -360,13 +374,15 @@ async function syncMembersFromMetadata(
             .where(and(eq(customers.phoneE164, participant.phoneE164), isNull(customers.deletedAt)))
             .limit(1)
         : [];
+      // Entrou pelo convite que a Lia mandou nos últimos 30 dias? Então "pela Lia".
+      const invited = participant.phoneE164 ? await findProvadorInviteByPhone(db, participant.phoneE164, new Date(now.getTime() - 30 * 86_400_000)) : false;
       await db.insert(waGroupMembers).values({
         groupId,
         phoneE164: key,
         lid: participant.phoneE164 ? participant.lid : null,
         customerId: customer?.id ?? null,
         isAdmin: participant.isAdmin,
-        source: "sync",
+        source: invited ? "lia" : "sync",
         joinedAt: now,
       });
       joined += 1;
@@ -1359,6 +1375,17 @@ export async function getGroupPostStats(db: DbOrTx, postId: string): Promise<Gro
     conversations: Number(funnel?.conversations ?? 0),
     orders: Number(funnel?.orders ?? 0),
   };
+}
+
+/** A mensagem que a porta de entrada (/provador, QR, adesivo) põe na boca da cliente. */
+export function provadorEntryMessage(sellerName: string): string {
+  return `Oi ${sellerName.trim() || "Lia"}, quero entrar no Provador`;
+}
+
+/** O wa.me da porta de entrada — null quando a loja não tem o número do WhatsApp configurado. */
+export async function provadorEntryUrl(db: DbOrTx): Promise<string | null> {
+  const settings = await loadBridgeSettings(db);
+  return waMeUrl(settings.storeWhatsapp, provadorEntryMessage(settings.sellerName));
 }
 
 /** "10:00" do horário marcado, para o painel. */

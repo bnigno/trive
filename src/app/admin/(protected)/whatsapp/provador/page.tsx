@@ -16,11 +16,12 @@ import { spDayLabel, spDayKey } from "@/lib/sp-day";
 import { requireOwner } from "@/services/auth";
 import { getSettingsMap } from "@/services/settings";
 import { isWaEnabled } from "@/services/wa-messaging";
-import { type GroupView, listGroups, listProviderGroups, loadGroupPolicy } from "@/services/wa-groups";
+import { type GroupView, listGroups, listProviderGroups, loadGroupPolicy, provadorEntryUrl } from "@/services/wa-groups";
+import { siteBaseUrl } from "@/services/wa-messaging";
 
 import { ToggleSwitch } from "../forms";
 import { houseRulesAction, pauseGroupAction, resumeGroupAction, setGroupActiveAction, syncGroupAction } from "./actions";
-import { type ProviderGroupOption, RegisterGroupForm } from "./forms";
+import { CopyBlock, type ProviderGroupOption, RegisterGroupForm } from "./forms";
 
 export const dynamic = "force-dynamic";
 
@@ -37,16 +38,19 @@ type PageData = {
   sellerName: string;
   postsPerWeek: number;
   windowLabel: string;
+  /** trivemaison.com.br/provador → wa.me da Lia; null sem o número da loja. */
+  entryUrl: string | null;
 };
 
 async function loadData(): Promise<PageData | null> {
   try {
     const db = getDb();
-    const [groups, policy, waEnabled, settings] = await Promise.all([
+    const [groups, policy, waEnabled, settings, entryUrl] = await Promise.all([
       listGroups(db),
       loadGroupPolicy(db),
       isWaEnabled(db),
       getSettingsMap(db, ["bot_seller_name"]),
+      provadorEntryUrl(db),
     ]);
     let providerGroups: ProviderGroupOption[] | null = null;
     if (waEnabled) {
@@ -66,6 +70,7 @@ async function loadData(): Promise<PageData | null> {
       sellerName,
       postsPerWeek: policy.cadence.postsPerWeek,
       windowLabel: `${policy.cadence.window.startHour}h às ${policy.cadence.window.endHour}h`,
+      entryUrl,
     };
   } catch {
     return null;
@@ -141,6 +146,31 @@ export default async function ProvadorPage() {
           ) : (
             <RegisterGroupForm groups={providerGroups} />
           )}
+        </div>
+      </Card>
+
+      <Card title="Porta de entrada e mudança de casa">
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Ninguém é adicionado ao grupo: quem toca em <span className="font-mono">{siteBaseUrl()}/provador</span> cai na {sellerName}, que pergunta o tamanho e as cores, pede o
+            sim para os avisos no privado e entrega o convite. É este link que vai no story, no QR do vale de papel, no adesivo da sacola — e na mensagem para o grupo antigo.
+          </p>
+          <CopyField
+            label="Link da porta de entrada"
+            value={`${siteBaseUrl()}/provador`}
+            hint={data.entryUrl ? `Abre o WhatsApp da loja com "quero entrar no Provador" já escrito.` : "Sem o número do WhatsApp da loja em Configurações, o link leva à home."}
+          />
+          <CopyBlock
+            label="Mensagem para o grupo antigo (cole no grupo pelo seu celular)"
+            value={[
+              `Meninas, o grupo vai mudar de casa. O novo se chama Provador TRIVÉ: três mensagens por semana, as peças chegam lá antes da vitrine e vocês votam no que a gente repõe.`,
+              ``,
+              `Para entrar, fala com a ${sellerName}: ${siteBaseUrl()}/provador — ela pergunta seu tamanho e suas cores (para só te avisar do que serve) e te manda o convite.`,
+              ``,
+              `Este grupo fecha dia ___/___. Quem passar até lá ganha um mimo da ${sellerName} na primeira compra.`,
+            ].join("\n")}
+            hint="Preencha a data (14 dias é um bom prazo). Mande de novo no 7º e no 12º dia; feche o grupo antigo na data. O mimo da primeira compra depende dos cupons da Lia (Onda 6)."
+          />
         </div>
       </Card>
 

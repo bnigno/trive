@@ -10,6 +10,37 @@ const INITIAL_STATE: FormState = {};
 
 export type ProviderGroupOption = { groupId: string; name: string | null; registeredId: string | null };
 
+/** Texto de várias linhas com "Copiar" (o CopyField é de uma linha só: um input não mostra quebras). */
+export function CopyBlock({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+      <pre className="whitespace-pre-wrap rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 font-sans text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">{value}</pre>
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(value);
+              setState("copied");
+              setTimeout(() => setState("idle"), 2500);
+            } catch {
+              setState("manual");
+            }
+          }}
+        >
+          {state === "copied" ? "Copiado" : "Copiar"}
+        </Button>
+        {state === "manual" ? <span className="text-xs text-zinc-500">Não deu para copiar sozinho: selecione o texto acima.</span> : null}
+      </div>
+      {hint ? <p className="text-xs text-zinc-500 dark:text-zinc-400">{hint}</p> : null}
+    </div>
+  );
+}
+
 export function RegisterGroupForm({ groups }: { groups: ProviderGroupOption[] }) {
   const [state, formAction] = useActionState(registerGroupAction, INITIAL_STATE);
   const available = groups.filter((group) => group.registeredId === null);
