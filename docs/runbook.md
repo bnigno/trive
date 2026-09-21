@@ -1063,7 +1063,7 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   conversa"). No ensaio nada é emitido (`ENSAIO-CARINHO`). Produção:
   `scripts/sync-seed.ts --settings lia_gift_enabled,lia_gift_percent,lia_gift_daily_quota,lia_gift_min_purchases,lia_gift_min_cart_cents,lia_gift_days,lia_gift_cooldown_days`
 
-  e a migração 0051.
+  e a migração 0052.
 - **Mimo pela foto** (card em `/admin/cupons`) — quando a cliente manda a
   foto dela com uma peça que comprou e a Lia registra no "Quem já vestiu", ela
   ganha um cupom pessoal (padrão 10%, 60 dias), uma vez por peça, só com
@@ -1072,7 +1072,7 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   publicar — o consentimento continua livre) e o cartão repete o código na
   legenda. A fila do "Quem já vestiu" mostra "mimo: cupom …". Produção:
   `scripts/sync-seed.ts --settings look_coupon_enabled,look_coupon_percent,look_coupon_days`
-  e a migração 0052.
+  e a migração 0053.
 
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")
 
