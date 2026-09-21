@@ -110,9 +110,7 @@ export function ProductDetailClient({
           variants={variants}
           selected={selected}
           matched={matched}
-          onSelect={(axis, value) =>
-            setSelected((previous) => ({ ...previous, [axis]: value }))
-          }
+          onSelect={setSelected}
         />
         {matched && matched.availableQty > 0 ? (
           <SameDayPromiseBadge weightGrams={matched.weightGrams} quote={sameDayPromiseAction} />

@@ -43,3 +43,26 @@ export function findMatchedVariant<T extends SelectableVariant>(
     axes.every((axis) => variant.attributes[axis] === selected[axis]),
   );
 }
+
+/**
+ * O que acontece quando a cliente toca num valor de um eixo. Se a combinação
+ * com os demais eixos existe (mesmo esgotada), só esse eixo muda. Se não
+ * existe, os outros eixos seguem a primeira variante com esse valor (com
+ * estoque, se houver). A TRIVÉ compra peças únicas: a grade costuma ser
+ * esparsa (cada cor num único tamanho) e, sem isso, a cliente ficaria presa
+ * na combinação inicial — trocar de cor exigiria trocar de tamanho antes, e
+ * vice-versa.
+ */
+export function selectAxisValue<T extends SelectableVariant>(
+  axes: readonly string[],
+  variants: readonly T[],
+  selected: Readonly<Record<string, string>>,
+  axis: string,
+  value: string,
+): Record<string, string> {
+  const candidate = { ...selected, [axis]: value };
+  if (findMatchedVariant(axes, variants, candidate)) return candidate;
+  const withValue = variants.filter((variant) => variant.attributes[axis] === value);
+  if (withValue.length === 0) return candidate;
+  return initialAxisSelection(axes, withValue);
+}
