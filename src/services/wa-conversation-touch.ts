@@ -6,7 +6,7 @@
 // fila (wa.conversation_touch). Quem pegar a conversa em seguida — o próprio
 // turno, ao adquirir o lock, ou o worker — aplica. Todo toque é idempotente
 // (greatest/coalesce/merge), então a ordem de chegada não importa.
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
@@ -123,9 +123,10 @@ export async function touchConversationOrDefer(tx: DbOrTx, touch: ConversationTo
 
 /**
  * O turno, já com a vez da conversa: aplica os toques que ficaram na fila
- * para esta conversa e os dá por feitos. Inclui os que um worker já reclamou
- * (processing) e está esperando a vez lá fora: o turno vê o toque AGORA, e o
- * handler, quando pegar a vez, aplica de novo — o toque é idempotente.
+ * para esta conversa e os dá por feitos. Só os de ninguém (pending): um toque
+ * que um worker já reclamou é dele — o handler espera a vez com teto e aplica
+ * depois; mexer numa linha de worker vivo prenderia o bookkeeping dele atrás
+ * desta transação (até 45 s) e ele desfaria o "done" ao devolver a linha.
  */
 export async function applyPendingConversationTouches(tx: DbOrTx, conversationId: string): Promise<number> {
   const rows = await tx
@@ -135,7 +136,7 @@ export async function applyPendingConversationTouches(tx: DbOrTx, conversationId
       and(
         eq(outboxEvents.eventType, CONVERSATION_TOUCH_EVENT),
         eq(outboxEvents.aggregateId, conversationId),
-        inArray(outboxEvents.status, ["pending", "processing"]),
+        eq(outboxEvents.status, "pending"),
       ),
     )
     .orderBy(outboxEvents.createdAt)

@@ -172,13 +172,15 @@ async function createConversation(
 
 let inboundSequence = 0;
 
-async function addInbound(conversationId: string, body: string): Promise<string> {
+async function addInbound(conversationId: string, body: string, opts: { kind?: "text" | "audio"; mediaMeta?: unknown } = {}): Promise<string> {
   inboundSequence += 1;
   const [message] = await db
     .insert(schema.waMessages)
     .values({
       conversationId,
       direction: "inbound",
+      ...(opts.kind ? { kind: opts.kind } : {}),
+      ...(opts.mediaMeta !== undefined ? { mediaMeta: opts.mediaMeta } : {}),
       zapiMessageId: `MSG-IN-${inboundSequence}-${Math.random().toString(36).slice(2, 8)}`,
       body,
       status: "delivered",
@@ -500,16 +502,20 @@ describe("runBotTurn", () => {
 
     const result = await runBotTurn(sdb, assistant, provider, { conversationId });
 
-    expect(result).toEqual({ skipped: "atendimento_humano" });
+    expect(result).toMatchObject({ skipped: "atendimento_humano" });
     expect(provider.sentMessages).toHaveLength(0);
     expect(assistant.turns).toHaveLength(0);
-    // O turno foi enfileirado com a foto de ANTES da transferência: quem leva a mensagem ao dono é ele.
+    // O turno foi enfileirado com a foto de ANTES da transferência: quem leva a mensagem ao dono é ele — com kick.
     const [inbound] = await db.select({ zapiMessageId: schema.waMessages.zapiMessageId }).from(schema.waMessages).where(eq(schema.waMessages.id, inboundId));
     const forwards = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.owner_forward"));
     expect(forwards).toHaveLength(1);
     expect(forwards[0]).toMatchObject({ dedupeKey: `wa.fwd:${inbound.zapiMessageId}`, payload: { phoneE164: PHONE, body: "Oi?" } });
-    // Rodar de novo (retry da fila) não duplica o encaminhamento.
-    await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toEqual({ skipped: "atendimento_humano", forwarded: [forwards[0].id] });
+    expect(kicks.at(-1)).toEqual({ name: "outbox/event.enqueued", data: { outboxEventId: forwards[0].id } });
+    // Rodar de novo (retry da fila) não duplica o encaminhamento; áudio ainda em transcrição fica para a transcrição.
+    await addInbound(conversationId, "[a cliente enviou um áudio]", { kind: "audio", mediaMeta: { transcript: { status: "pending" } } });
+    const again = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(again).toEqual({ skipped: "atendimento_humano", forwarded: [] });
     expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.owner_forward"))).toHaveLength(1);
   });
 

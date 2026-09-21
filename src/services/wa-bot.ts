@@ -773,37 +773,62 @@ export type BotTurnTimings = {
 const LOCK_WAIT_DEFAULT_MS = 30_000;
 /** O mesmo corte do encaminhamento feito pelo webhook (wa-inbound). */
 const FORWARD_BODY_MAX_CHARS = 300;
+/** Quantas mensagens recentes o turno pulado olha para achar as sem resposta. */
+const FORWARD_LOOKBACK_ROWS = 30;
 
 /**
- * A última mensagem dela sem resposta da Lia vai para o WhatsApp do dono
- * (dedupe wa.fwd:<id da Z-API> — o mesmo do webhook, então nunca duplica).
+ * As mensagens dela que ninguém respondeu (o mesmo critério do turno: resposta
+ * da Lia, resposta manual do painel ou sugestão aprovada cobrem) vão para o
+ * WhatsApp do dono, uma a uma, com o dedupe do webhook (wa.fwd:<id da Z-API>).
+ * Áudio ainda em transcrição fica de fora: quem o encaminha, transcrito, é a
+ * própria transcrição (routeInboundMessage). Devolve os ids enfileirados.
  */
-async function forwardUnansweredInboundToOwner(tx: DbOrTx, conversation: Pick<TurnConversation, "id" | "phoneE164" | "customerId">): Promise<void> {
-  const [inbound] = await tx
-    .select({ id: waMessages.id, zapiMessageId: waMessages.zapiMessageId, body: waMessages.body })
+async function forwardUnansweredInboundToOwner(tx: DbOrTx, conversation: Pick<TurnConversation, "id" | "phoneE164" | "customerId">): Promise<string[]> {
+  const recent = await tx
+    .select({
+      id: waMessages.id,
+      direction: waMessages.direction,
+      kind: waMessages.kind,
+      body: waMessages.body,
+      zapiMessageId: waMessages.zapiMessageId,
+      dedupeKey: waMessages.dedupeKey,
+      templateKey: waMessages.templateKey,
+      mediaMeta: waMessages.mediaMeta,
+      createdAt: waMessages.createdAt,
+    })
     .from(waMessages)
-    .where(and(eq(waMessages.conversationId, conversation.id), eq(waMessages.direction, "inbound")))
+    .where(eq(waMessages.conversationId, conversation.id))
     .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
-    .limit(1);
-  if (!inbound?.zapiMessageId || (await hasBotReplyFor(tx, conversation.id, inbound.id))) return;
+    .limit(FORWARD_LOOKBACK_ROWS);
+  // O mesmo critério do turno: sugestão aprovada e resposta manual também cobrem.
+  const rows = orderHistoryRows(await withSuggestionAnchors(tx, recent.reverse()));
+  const pending = pendingInboundRows(rows).filter(
+    (row) => row.zapiMessageId && !(row.kind === "audio" && parseWaMediaMeta(row.mediaMeta).transcript?.status === "pending"),
+  );
+  if (pending.length === 0) return [];
   const [customer] = conversation.customerId
     ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
     : [];
-  await enqueueOutboxEvent(
-    tx,
-    {
-      eventType: "wa.owner_forward",
-      dedupeKey: `wa.fwd:${inbound.zapiMessageId}`,
-      aggregateType: "wa_conversation",
-      aggregateId: conversation.id,
-      payload: {
-        phoneE164: conversation.phoneE164,
-        body: inbound.body.slice(0, FORWARD_BODY_MAX_CHARS),
-        ...(customer ? { customerName: customer.fullName } : {}),
+  const ids: string[] = [];
+  for (const inbound of pending) {
+    const id = await enqueueOutboxEvent(
+      tx,
+      {
+        eventType: "wa.owner_forward",
+        dedupeKey: `wa.fwd:${inbound.zapiMessageId}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: {
+          phoneE164: conversation.phoneE164,
+          body: inbound.body.slice(0, FORWARD_BODY_MAX_CHARS),
+          ...(customer ? { customerName: customer.fullName } : {}),
+        },
       },
-    },
-    { kick: false },
-  );
+      { kick: false },
+    );
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 /**
@@ -888,8 +913,8 @@ export async function runBotTurn(
             ? "desabilitado"
             : null;
     if (skippedForHuman) {
-      await forwardUnansweredInboundToOwner(tx, conversation);
-      return { skipped: skippedForHuman };
+      const forwarded = await forwardUnansweredInboundToOwner(tx, conversation);
+      return { skipped: skippedForHuman, forwarded };
     }
 
     const [lastInbound] = await tx
@@ -1116,8 +1141,10 @@ export async function runBotTurn(
     return { replied, handedOff: turn.handedOff };
   });
   // O que o turno enfileirou (cartão, aviso ao dono, sugestão) só fica
-  // visível agora, depois do commit: o kick aqui faz sair em segundos.
+  // visível agora, depois do commit: o kick aqui faz sair em segundos — o
+  // encaminhamento ao dono do turno pulado também.
   if (!("skipped" in result)) await kickOutbox();
+  else for (const id of result.forwarded ?? []) await kickOutbox(id, { eventType: "wa.owner_forward" });
   return result;
 }
 
