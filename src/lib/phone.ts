@@ -2,6 +2,12 @@ const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
 const DDD_PATTERN = /^[1-9][1-9]$/;
 /** LID do WhatsApp: identificador que substitui o número quando ele é oculto ('220839349862480@lid'). */
 const WA_LID_PATTERN = /^\d{5,20}@lid$/;
+/**
+ * Id de grupo como a Z-API o entrega: '120363019502650977-group' (grupos
+ * criados desde nov/2021) ou o legado 'telefone-timestamp'
+ * ('5511999999999-1623281429').
+ */
+const WA_GROUP_ID_PATTERN = /^\d{10,20}-(group|\d{9,10})$/;
 
 export function isValidE164(s: string): boolean {
   return E164_PATTERN.test(s);
@@ -12,9 +18,31 @@ export function isWaLid(s: string): boolean {
   return WA_LID_PATTERN.test(s);
 }
 
+/** '120363019502650977-group' — id de grupo da Z-API (ver WA_GROUP_ID_PATTERN). */
+export function isWaGroupId(s: string): boolean {
+  return WA_GROUP_ID_PATTERN.test(s);
+}
+
+/**
+ * Normaliza um id de grupo vindo da Z-API ou do WhatsApp Web
+ * ('120363…-group', '120363…@g.us', ' 120363…-GROUP ') para o canônico
+ * '…-group'; null se não for grupo. Um telefone NUNCA vira grupo.
+ */
+export function toWaGroupId(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().toLowerCase();
+  const jid = value.match(/^(\d{10,20}(?:-\d{9,10})?)@g\.us$/);
+  if (jid) {
+    const id = jid[1] as string;
+    return id.includes("-") ? id : `${id}-group`;
+  }
+  return isWaGroupId(value) ? value : null;
+}
+
 /**
  * Endereço de WhatsApp: o que vai no campo `phone` da Z-API — E.164
  * ('+5591…') ou LID ('…@lid'). A conversa guarda o endereço em phone_e164.
+ * Grupo NÃO é endereço de conversa: tem função própria (isWaGroupId).
  */
 export function isWaAddress(s: string): boolean {
   return isValidE164(s) || isWaLid(s);
@@ -27,9 +55,9 @@ export function toWaLid(raw: string | null | undefined): string | null {
   return match ? `${match[1]}@lid` : null;
 }
 
-/** O que a Z-API espera no campo `phone`: E.164 sem o '+', ou o LID como está. */
+/** O que a Z-API espera no campo `phone`: E.164 sem o '+'; LID e id de grupo como estão. */
 export function waAddressForZapi(address: string): string {
-  return isWaLid(address) ? address : address.replace(/^\+/, "");
+  return isWaLid(address) || isWaGroupId(address) ? address : address.replace(/^\+/, "");
 }
 
 /**

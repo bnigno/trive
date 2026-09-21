@@ -3,10 +3,18 @@ import { ZapiMessagingProvider } from "./client";
 import { FakeMessagingProvider } from "./fake";
 
 export type OutboundTextMessage = {
+  /** Endereço: E.164 ('+5591…'), LID ('…@lid') ou id de grupo ('…-group'). */
   toE164: string;
   body: string;
   /** Segundos de "digitando…" antes de a mensagem aparecer (1–15). */
   typingSeconds?: number;
+  /** Responde citando esta mensagem (o balão aparece "em resposta a"). */
+  quotedProviderMessageId?: string;
+  /**
+   * Menciona participantes (só em grupo): telefones SEM '+', e o texto
+   * precisa trazer '@' + o mesmo número em cada menção.
+   */
+  mentionedPhones?: string[];
 };
 
 // Imagem é mensagem de MÍDIA da Z-API (endpoint /send-image, não /send-text).
@@ -39,8 +47,66 @@ export type OutboundOptionListMessage = {
   options: OptionListOption[];
 };
 
+/** Enquete nativa do WhatsApp — a Z-API só a envia para GRUPOS. */
+export type OutboundPollMessage = {
+  toGroupId: string;
+  question: string;
+  /** 2 a 12 opções, como o WhatsApp permite. */
+  options: string[];
+  /** Quantas opções cada pessoa pode marcar (padrão: 1). */
+  maxOptions?: number;
+};
+
+export type OutboundReaction = {
+  /** Endereço do chat (E.164, LID ou grupo) onde a mensagem está. */
+  to: string;
+  providerMessageId: string;
+  /** Um emoji; string vazia remove a reação. */
+  emoji: string;
+};
+
+export type PinDuration = "24_hours" | "7_days" | "30_days";
+
 export type SentMessage = {
   providerMessageId: string;
+};
+
+/** Um participante como o metadata do grupo o entrega: telefone OU LID. */
+export type GroupParticipant = {
+  /** E.164 ('+5591…') quando a Z-API mostra o número; null quando só há LID. */
+  phoneE164: string | null;
+  lid: string | null;
+  isAdmin: boolean;
+};
+
+export type GroupSummary = {
+  groupId: string;
+  name: string | null;
+};
+
+export type GroupMetadata = {
+  groupId: string;
+  name: string | null;
+  description: string | null;
+  /** E.164 de quem criou o grupo, quando informado. */
+  ownerE164: string | null;
+  /** Só vem quando a sessão é admin do grupo. */
+  invitationLink: string | null;
+  adminOnlyMessage: boolean;
+  adminOnlySettings: boolean;
+  requireAdminApproval: boolean;
+  participants: GroupParticipant[];
+};
+
+export type GroupSettings = {
+  /** Só admins publicam (grupo de avisos). */
+  adminOnlyMessage: boolean;
+  /** Só admins mudam nome/foto/descrição. */
+  adminOnlySettings: boolean;
+  /** Quem entra pelo link espera aprovação de um admin. */
+  requireAdminApproval: boolean;
+  /** Só admins adicionam participantes. */
+  adminOnlyAddMember: boolean;
 };
 
 export type SessionStatus = {
@@ -111,6 +177,27 @@ export interface MessagingProvider {
    * como "mídia indisponível" (a conversa segue sem ela).
    */
   downloadMedia(input: { url: string; maxBytes: number }): Promise<DownloadedMedia>;
+
+  // --- Grupos (Provador) ---------------------------------------------------
+  // Grupo é um chat como outro para a Z-API: sendText/sendImage aceitam o id
+  // de grupo no endereço. O que segue é o que só existe em grupo.
+
+  /** Enquete nativa (POST /send-poll) — só grupos. */
+  sendPoll(input: OutboundPollMessage): Promise<SentMessage>;
+  /** Reage com emoji a uma mensagem (POST /send-reaction). Best-effort. */
+  sendReaction(input: OutboundReaction): Promise<void>;
+  /** Fixa uma mensagem no topo do chat (POST /pin-message). Best-effort. */
+  pinMessage(input: { to: string; providerMessageId: string; duration: PinDuration }): Promise<void>;
+  /** Todos os grupos de que a sessão participa (GET /groups). */
+  listGroups(): Promise<GroupSummary[]>;
+  /** Nome, configurações, link de convite e participantes (GET /group-metadata/{id}). */
+  getGroupMetadata(groupId: string): Promise<GroupMetadata>;
+  /** Link de convite do grupo (GET /group-invitation-link/{id}) — null quando a sessão não é admin. */
+  getGroupInvitationLink(groupId: string): Promise<string | null>;
+  /** Preferências do grupo (POST /update-group-settings) — exige a sessão como admin. */
+  updateGroupSettings(groupId: string, settings: GroupSettings): Promise<void>;
+  /** Remove participantes (POST /remove-participant) — telefones em E.164; exige admin. */
+  removeGroupParticipants(groupId: string, phonesE164: string[]): Promise<void>;
 }
 
 let instance: MessagingProvider | undefined;

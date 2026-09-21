@@ -1,14 +1,21 @@
 import { z } from "zod";
 
-import { isWaLid, waAddressForZapi } from "@/lib/phone";
+import { isWaLid, toWaGroupId, toWaLid, waAddressForZapi } from "@/lib/phone";
 
 import type {
   DownloadedMedia,
+  GroupMetadata,
+  GroupParticipant,
+  GroupSettings,
+  GroupSummary,
   MessagingProvider,
   OutboundAudioMessage,
   OutboundImageMessage,
   OutboundOptionListMessage,
+  OutboundPollMessage,
+  OutboundReaction,
   OutboundTextMessage,
+  PinDuration,
   QrCode,
   RecentChat,
   SentMessage,
@@ -46,6 +53,40 @@ const zapiChatsResponseSchema = z.array(
   }),
 );
 
+// GET /groups: mesmo formato do /chats, só grupos.
+const zapiGroupsResponseSchema = z.array(
+  z.looseObject({
+    phone: z.union([z.string(), z.number()]).nullish(),
+    name: z.string().nullish(),
+    isGroup: z.boolean().nullish(),
+  }),
+);
+
+// GET /group-metadata/{id}: participantes vêm com `phone` — que em produção
+// pode ser um LID ('…@lid') quando o WhatsApp esconde o número.
+const zapiGroupParticipantSchema = z.looseObject({
+  phone: z.union([z.string(), z.number()]).nullish(),
+  lid: z.string().nullish(),
+  isAdmin: z.boolean().nullish(),
+  isSuperAdmin: z.boolean().nullish(),
+});
+
+export const zapiGroupMetadataResponseSchema = z.looseObject({
+  phone: z.union([z.string(), z.number()]).nullish(),
+  subject: z.string().nullish(),
+  description: z.string().nullish(),
+  owner: z.union([z.string(), z.number()]).nullish(),
+  invitationLink: z.string().nullish(),
+  adminOnlyMessage: z.boolean().nullish(),
+  adminOnlySettings: z.boolean().nullish(),
+  requireAdminApproval: z.boolean().nullish(),
+  participants: z.array(zapiGroupParticipantSchema).nullish(),
+});
+
+export const zapiInvitationLinkResponseSchema = z.looseObject({
+  invitationLink: z.string().nullish(),
+});
+
 export const zapiStatusResponseSchema = z.looseObject({
   connected: z.union([z.boolean(), z.string()]).optional(),
   status: z.string().optional(),
@@ -68,6 +109,27 @@ function isConnectedPayload(payload: {
 }): boolean {
   if (payload.connected === true || payload.connected === "true") return true;
   return typeof payload.status === "string" && payload.status.toUpperCase() === "CONNECTED";
+}
+
+/** Telefone como a Z-API entrega ('5591…', com ou sem '+', ou LID) → E.164; null para LID/vazio. */
+function zapiPhoneToE164(raw: string | number | null | undefined): string | null {
+  if (raw == null) return null;
+  const value = String(raw).trim();
+  if (!value || toWaLid(value)) return null;
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 8 ? `+${digits}` : null;
+}
+
+function parseGroupParticipant(raw: z.infer<typeof zapiGroupParticipantSchema>): GroupParticipant | null {
+  const phoneRaw = raw.phone != null ? String(raw.phone) : null;
+  const lid = toWaLid(raw.lid) ?? toWaLid(phoneRaw);
+  const phoneE164 = zapiPhoneToE164(phoneRaw);
+  if (!phoneE164 && !lid) return null;
+  return {
+    phoneE164,
+    lid,
+    isAdmin: raw.isAdmin === true || raw.isSuperAdmin === true,
+  };
 }
 
 /** Remove prefixo de data URI ("data:image/png;base64,...") quando presente. */
@@ -151,6 +213,14 @@ export class ZapiMessagingProvider implements MessagingProvider {
         // delayMessage fixo no mínimo (1 s) em vez do padrão aleatório de
         // 1–3 s que a Z-API aplica quando não se diz nada.
         ...typingDelays(message.typingSeconds),
+        // messageId no /send-text = "responder mensagem" (balão citado).
+        ...(message.quotedProviderMessageId !== undefined
+          ? { messageId: message.quotedProviderMessageId }
+          : {}),
+        // Menção em grupo: a Z-API liga cada '@número' do texto ao participante.
+        ...(message.mentionedPhones !== undefined && message.mentionedPhones.length > 0
+          ? { mentioned: message.mentionedPhones.map((phone) => phone.replace(/^\+/, "")) }
+          : {}),
       },
     });
 
@@ -160,6 +230,114 @@ export class ZapiMessagingProvider implements MessagingProvider {
       throw new Error("Resposta da Z-API sem id de mensagem em /send-text.");
     }
     return { providerMessageId };
+  }
+
+  async sendPoll(message: OutboundPollMessage): Promise<SentMessage> {
+    const raw = await this.request("/send-poll", {
+      method: "POST",
+      body: {
+        phone: waAddressForZapi(message.toGroupId),
+        message: message.question,
+        poll: message.options.map((name) => ({ name })),
+        pollMaxOptions: message.maxOptions ?? 1,
+        delayMessage: 1,
+      },
+    });
+
+    const parsed = zapiSendTextResponseSchema.parse(raw);
+    const providerMessageId = parsed.messageId ?? parsed.zaapId ?? parsed.id;
+    if (!providerMessageId) {
+      throw new Error("Resposta da Z-API sem id de mensagem em /send-poll.");
+    }
+    return { providerMessageId };
+  }
+
+  async sendReaction(input: OutboundReaction): Promise<void> {
+    await this.request("/send-reaction", {
+      method: "POST",
+      body: {
+        phone: waAddressForZapi(input.to),
+        reaction: input.emoji,
+        messageId: input.providerMessageId,
+      },
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+    });
+  }
+
+  async pinMessage(input: { to: string; providerMessageId: string; duration: PinDuration }): Promise<void> {
+    await this.request("/pin-message", {
+      method: "POST",
+      body: {
+        phone: waAddressForZapi(input.to),
+        messageId: input.providerMessageId,
+        messageAction: "pin",
+        pinMessageDuration: input.duration,
+      },
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+    });
+  }
+
+  async listGroups(): Promise<GroupSummary[]> {
+    const raw = await this.request("/groups");
+    const parsed = zapiGroupsResponseSchema.parse(raw);
+    const groups: GroupSummary[] = [];
+    for (const item of parsed) {
+      const groupId = toWaGroupId(item.phone != null ? String(item.phone) : null);
+      if (!groupId) continue;
+      groups.push({ groupId, name: item.name?.trim() || null });
+    }
+    return groups;
+  }
+
+  async getGroupMetadata(groupId: string): Promise<GroupMetadata> {
+    const raw = await this.request(`/group-metadata/${encodeURIComponent(groupId)}`);
+    const parsed = zapiGroupMetadataResponseSchema.parse(raw);
+    const participants: GroupParticipant[] = [];
+    for (const item of parsed.participants ?? []) {
+      const participant = parseGroupParticipant(item);
+      if (participant) participants.push(participant);
+    }
+    return {
+      groupId: toWaGroupId(parsed.phone != null ? String(parsed.phone) : null) ?? groupId,
+      name: parsed.subject?.trim() || null,
+      description: parsed.description?.trim() || null,
+      ownerE164: zapiPhoneToE164(parsed.owner),
+      invitationLink: parsed.invitationLink?.trim() || null,
+      adminOnlyMessage: parsed.adminOnlyMessage === true,
+      adminOnlySettings: parsed.adminOnlySettings === true,
+      requireAdminApproval: parsed.requireAdminApproval === true,
+      participants,
+    };
+  }
+
+  async getGroupInvitationLink(groupId: string): Promise<string | null> {
+    const raw = await this.request(`/group-invitation-link/${encodeURIComponent(groupId)}`);
+    const parsed = zapiInvitationLinkResponseSchema.parse(raw);
+    return parsed.invitationLink?.trim() || null;
+  }
+
+  async updateGroupSettings(groupId: string, settings: GroupSettings): Promise<void> {
+    await this.request("/update-group-settings", {
+      method: "POST",
+      body: {
+        phone: waAddressForZapi(groupId),
+        adminOnlyMessage: settings.adminOnlyMessage,
+        adminOnlySettings: settings.adminOnlySettings,
+        requireAdminApproval: settings.requireAdminApproval,
+        adminOnlyAddMember: settings.adminOnlyAddMember,
+      },
+    });
+  }
+
+  async removeGroupParticipants(groupId: string, phonesE164: string[]): Promise<void> {
+    if (phonesE164.length === 0) return;
+    await this.request("/remove-participant", {
+      method: "POST",
+      body: {
+        groupId: waAddressForZapi(groupId),
+        phones: phonesE164.map((phone) => waAddressForZapi(phone)),
+      },
+    });
   }
 
   async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
