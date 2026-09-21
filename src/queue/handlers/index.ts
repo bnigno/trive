@@ -11,6 +11,7 @@ import { getImageStudio } from "@/adapters/image-studio";
 import { getEmailProvider } from "@/adapters/email";
 import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
+import { getPushProvider } from "@/adapters/push";
 import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
@@ -40,6 +41,8 @@ import { couponIssuedPayloadSchema, sendCouponIssuedWa } from "@/services/coupon
 import { issueLateDeliveryCoupon, stopDeliveredPayloadSchema } from "@/services/late-delivery";
 import { priceActivatedPayloadSchema, protectPricesAfterDrop } from "@/services/price-protection";
 import { deactivateIssuedCouponsForOrder } from "@/services/coupons";
+import { pushNewMessagePayloadSchema } from "@/core/notify/push";
+import { sendPushForConversation } from "@/services/push-notify";
 import { rewardReferrerForPaidOrder } from "@/services/paper-vouchers";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
@@ -884,6 +887,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const payload = groupLastUnitPayloadSchema.parse(event.payload);
     const result = await fanOutLastUnitNotices(getDb(), payload);
     console.info(`[stock.last_unit] ${payload.variantId} → ${JSON.stringify(result)}`);
+  },
+  // Aviso no celular com o painel fechado: relê a conversa e manda para cada
+  // aparelho inscrito; falha transitória lança (retry), inscrição morta some.
+  "push.new_message": async (event) => {
+    const payload = pushNewMessagePayloadSchema.parse(event.payload);
+    const result = await sendPushForConversation(getDb(), getPushProvider(), payload);
+    console.info(`[push.new_message] ${payload.conversationId} → ${JSON.stringify(result)}`);
   },
   "wa.group_last_unit_notice": async (event) => {
     const payload = groupLastUnitNoticePayloadSchema.parse(event.payload);

@@ -1,6 +1,7 @@
 import { KeyRound, LogOut } from "lucide-react";
 import { redirect } from "next/navigation";
 
+import { isPushConfigured, pushVapidPublicKey } from "@/adapters/push";
 import { getDb } from "@/db/client";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -38,6 +39,8 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const [user, storeName] = await Promise.all([requireUser(), loadStoreName()]);
+  // A chave pública do Web Push não é segredo; vai como prop, sem NEXT_PUBLIC.
+  const pushPublicKey = isPushConfigured() ? pushVapidPublicKey() : null;
 
   // Navegação e rodapé de usuário são os mesmos na barra lateral (md+) e na
   // gaveta do celular — o dono opera a loja pelo telefone.
@@ -56,7 +59,7 @@ export default async function AdminLayout({
           {user.role === "owner" ? "Proprietário" : "Equipe"}
         </p>
       </div>
-      <NotifyPrefsMenu />
+      <NotifyPrefsMenu pushPublicKey={pushPublicKey} />
       <IconButtonLink
         href="/admin/nova-senha"
         label="Minha senha"

@@ -71,6 +71,9 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // do vendor); 3 tentativas espaçadas e a dona vê o pedido "falhou" no painel.
   "product.ai_photo": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 300_000 },
   "studio.base_photo": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 300_000 },
+  // Push: servidor da Apple/Google fora do ar volta em segundos; depois de
+  // 3 tentativas o aviso perdeu o sentido (a próxima mensagem gera outro).
+  "push.new_message": { maxAttempts: 3, baseDelayMs: 15_000, maxDelayMs: 60_000 },
   // wa.bot_turn fica na política padrão (banco/provedor fora do ar continuam
   // tentando por até 1 h); o teto do MODELO é próprio e menor
   // (services/wa-bot BOT_TURN_MODEL_ATTEMPTS), com plano B na última.

@@ -159,3 +159,13 @@ Custo: créditos pré-pagos, sem mensalidade. 1 foto econômica = 1 crédito (US
 5. Os interruptores ficam na Central "Vendedora & WhatsApp": **"Foto no corpo"** (liga a geração) e **"Foto no corpo na vitrine"** (desligado, a foto de IA aparece só no post do Instagram e nos cartões da Lia). A cota diária e a qualidade padrão ficam em /admin/configuracoes.
 
 Sem a chave, o bloco avisa e nada é gerado; dev e testes usam o gerador fake (devolve a própria foto com a faixa "FAKE"). Toda geração, julgamento e escolha fica registrada com custo em `audit_log`; a foto gerada tem `origin = 'ai'` em `product_images` e nunca entra em "Quem já vestiu".
+
+## 11. Aviso no celular com o painel fechado (Web Push)
+
+O painel avisa de mensagem nova no WhatsApp mesmo fechado — no celular (instalado na tela de início) e no Chrome do computador. É o Web Push do próprio navegador: sem serviço pago, sem app na loja.
+
+1. Gere o par de chaves **uma única vez**: `npx web-push generate-vapid-keys`. Guarde as duas linhas (pública e privada); trocar as chaves depois desliga o aviso em todos os aparelhos até cada um religar.
+2. Cadastre na Vercel (Production e Preview): `WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY` e `WEB_PUSH_SUBJECT` (`https://trivemaison.com.br` ou `mailto:contato@trivemaison.com.br`). Redeploy.
+3. Em cada aparelho: painel → sino no rodapé do usuário → **Aviso neste aparelho (painel fechado)**. O navegador pede permissão nessa hora.
+4. **iPhone**: antes de ligar, adicione o painel à tela de início (Safari → Compartilhar → Adicionar à Tela de Início) e ligue **de dentro do app** — fora dele o iPhone não recebe aviso nenhum (regra da Apple, iOS 16.4+). **Android**: funciona no Chrome direto; instalar é opcional.
+5. Como funciona: cada mensagem recebida gera no máximo um aviso por conversa a cada 2 minutos; quem já abriu a conversa não recebe; com o painel visível na tela, o aviso não aparece (o toast e o som do painel já avisaram); tocar no aviso abre a conversa. Inscrição que morreu (app apagado, permissão revogada) some sozinha na primeira falha.

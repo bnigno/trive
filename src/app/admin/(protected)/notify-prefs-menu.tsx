@@ -1,12 +1,14 @@
 "use client";
 
-// Som e aviso de sistema das mensagens novas, no rodapé do usuário (lateral
-// e gaveta): valem para o painel inteiro neste navegador. A permissão do
-// navegador só é pedida quando você liga o aviso de sistema — nunca sozinha.
+// Avisos de mensagem nova, no rodapé do usuário (lateral e gaveta):
+// som e aviso de sistema valem para o painel aberto neste navegador; o
+// aviso neste aparelho (Web Push) chega com o painel fechado. A permissão
+// do navegador só é pedida quando você liga — nunca sozinha.
 import { Bell } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 import { useNotify } from "./use-notify";
+import { type PushState, usePushSubscription } from "./use-push-subscription";
 
 const emptySubscribe = () => () => {};
 
@@ -18,10 +20,24 @@ function readPermission(): "granted" | "denied" | "default" | "unsupported" {
   }
 }
 
-export function NotifyPrefsMenu() {
+const PUSH_HINT: Record<PushState, string> = {
+  carregando: "Conferindo este aparelho…",
+  sem_chave: "Avisos com o painel fechado ainda não estão configurados (chaves na Vercel).",
+  indisponivel: "Este navegador não recebe avisos com o painel fechado.",
+  precisa_instalar: "No iPhone: Compartilhar → Adicionar à Tela de Início, e ligue aqui dentro do app.",
+  bloqueado: "O navegador bloqueou os avisos deste site — libere nas configurações dele.",
+  desligado: "Chega mesmo com o painel fechado, neste aparelho — uma vez por conversa a cada 2 minutos.",
+  ligando: "Pedindo permissão ao navegador…",
+  ligado: "Ligado neste aparelho. Com o painel na tela, só o toast e o som avisam.",
+};
+
+export function NotifyPrefsMenu({ pushPublicKey }: { pushPublicKey: string | null }) {
   const { prefs, setPref } = useNotify();
   // Lido a cada render (o navegador pode ter mudado a permissão por fora).
   const permission = useSyncExternalStore(emptySubscribe, readPermission, () => "unsupported" as const);
+  const push = usePushSubscription(pushPublicKey);
+  const pushOn = push.state === "ligado" || push.state === "ligando";
+  const pushDisabled = !["desligado", "ligado"].includes(push.state);
 
   // O painel ancora no rodapé (o pai `relative`), não no sino: a lateral tem
   // 256 px e um painel preso ao ícone sairia pela esquerda.
@@ -55,13 +71,24 @@ export function NotifyPrefsMenu() {
           />
           Aviso na área de trabalho
         </label>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-zinc-500">
           {permission === "denied"
             ? "O navegador bloqueou os avisos deste site — libere nas configurações dele."
             : permission === "unsupported"
               ? "Este navegador não mostra avisos de sistema."
-              : "Valem em qualquer página do painel, neste navegador. O aviso de sistema aparece quando a aba está escondida."}
+              : "Com o painel aberto, em qualquer página. O aviso de sistema aparece quando a aba está escondida."}
         </p>
+        <label className="mt-3 flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={pushOn}
+            disabled={pushDisabled}
+            onChange={(event) => void (event.target.checked ? push.enable() : push.disable())}
+            className="size-4 accent-gold-400"
+          />
+          Aviso neste aparelho (painel fechado)
+        </label>
+        <p className="mt-1 text-xs text-zinc-500">{push.error ? `Não deu: ${push.error}.` : PUSH_HINT[push.state]}</p>
       </div>
     </details>
   );

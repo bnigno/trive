@@ -23,6 +23,8 @@ import {
 import { isTranscriptionConfigured } from "@/adapters/transcription";
 import { INBOUND_MEDIA_MARKERS, type WaMediaMeta } from "@/core/whatsapp/media";
 import { isValidE164, isWaLid, toE164BR, toWaLid } from "@/lib/phone";
+import { PUSH_EVENT_TYPE, pushDedupeKey } from "@/core/notify/push";
+import { hasAnyActivePushSubscription } from "@/services/push-subscriptions";
 import { enqueueOutboxEvent, kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import {
   enqueueAtelierHelp,
@@ -642,6 +644,9 @@ export async function processZapiInbound(
     return { action: "ignored", ignored: true, reason };
   }
 
+  // O aviso no celular nasce dentro da transação (regra 5) e é kickado depois
+  // do commit, ao lado do evento principal da mensagem.
+  let pushEventId: string | null = null;
   const result = await db.transaction(async (tx) => {
     const insertedInbound = await tx
       .insert(inboundEvents)
@@ -821,6 +826,22 @@ export async function processZapiInbound(
         .set({ status: "done", processedAt: new Date() })
         .where(eq(inboundEvents.id, inboundId));
       await touchConversationOrDefer(tx, touch);
+      // Aviso no celular (painel fechado): só com alguém inscrito, uma vez por
+      // conversa a cada 2 min (o UNIQUE do dedupe é o árbitro); o WhatsApp do
+      // dono não avisa a si mesmo.
+      if ((await hasAnyActivePushSubscription(tx)) && !(await isOwnerPhone(tx, identityPhone))) {
+        pushEventId = await enqueueOutboxEvent(
+          tx,
+          {
+            eventType: PUSH_EVENT_TYPE,
+            dedupeKey: pushDedupeKey(conversation.id, now),
+            aggregateType: "wa_message",
+            aggregateId: message.id,
+            payload: { conversationId: conversation.id, waMessageId: message.id },
+          },
+          { kick: false },
+        );
+      }
     };
 
     const queueTranscription = async (): Promise<string | null> => {
@@ -1088,6 +1109,7 @@ export async function processZapiInbound(
   // invocação do webhook morrer no meio, o Inngest a acha pendente).
   if (result.action !== "duplicate") {
     await kickOutbox("outboxEventId" in result && result.outboxEventId ? result.outboxEventId : undefined);
+    if (pushEventId) await kickOutbox(pushEventId);
   }
   return result;
 }
