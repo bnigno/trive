@@ -35,6 +35,8 @@ const storeRevalidatePayloadSchema = z.object({ paths: z.array(z.string().regex(
 import { askDeliveryFeedback, feedbackAskPayloadSchema, scheduleDeliveryFeedback } from "@/services/delivery-feedback";
 import { couponIssuedPayloadSchema, sendCouponIssuedWa } from "@/services/coupon-notices";
 import { issueLateDeliveryCoupon, stopDeliveredPayloadSchema } from "@/services/late-delivery";
+import { priceActivatedPayloadSchema, protectPricesAfterDrop } from "@/services/price-protection";
+import { deactivateIssuedCouponsForOrder } from "@/services/coupons";
 import { fanOutDropWaitlist, notifyDropOpen } from "@/services/drop-waitlist";
 import { sendDropInvite } from "@/services/drops";
 import { fanOutRestockAlerts, notifyRestockAlert } from "@/services/stock-alerts";
@@ -287,6 +289,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
         error,
       );
     }
+    // Proteção de preço: quem pagou mais nos últimos dias ganha a diferença em
+    // cupom (idempotente por pedido + variante; desligado = nada).
+    if (!event.aggregateId) return;
+    const payload = priceActivatedPayloadSchema.parse(event.payload);
+    const protection = await protectPricesAfterDrop(getDb(), { versionId: event.aggregateId, ...payload });
+    console.info(`[price.activated] ${event.aggregateId} → ${JSON.stringify(protection)}`);
   },
   // Marcos do pedido: e-mail (Fase 3) + WhatsApp (Fase 4) no MESMO evento.
   // Falha de qualquer provedor LANÇA de propósito: retry/backoff/DLQ da fila
@@ -679,8 +687,10 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // cliente recebe o aviso no WhatsApp (só com opt-in; dedupe por pedido).
   "order.refunded": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    // O pedido caiu: o cupom que ele gerou (proteção de preço) e ainda não foi usado sai de cena.
+    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection"] });
     const result = await sendOrderRefundedWa(getDb(), getMessagingProvider(), { orderId });
-    console.info(`[order.refunded] ${orderId}:`, result);
+    console.info(`[order.refunded] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },
   // Divergência taxa real × estimada: o dono recebe os dois valores e a
   // diferença no WhatsApp (uma vez por pedido).
@@ -773,8 +783,9 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // motivo em linguagem humana e o link do pedido (só com opt-in).
   "order.canceled": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection"] });
     const result = await sendOrderCanceledWa(getDb(), getMessagingProvider(), { orderId });
-    console.info(`[order.canceled] ${orderId}:`, result);
+    console.info(`[order.canceled] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },
   // Estoque cruzou o limiar para baixo → aviso interno ao dono (sem opt-in).
   // Busca nome/SKU/disponível na hora do envio (o payload pode estar velho).

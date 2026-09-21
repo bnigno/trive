@@ -35,6 +35,8 @@ import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
 import { getFeedbackForOrder } from "@/services/delivery-feedback";
 import { getStopForOrder } from "@/services/delivery-runs";
 import { lateDeliveryForOrder } from "@/services/late-delivery";
+import { listIssuedCouponsForOrder } from "@/services/coupons";
+import { formatCouponValue, ORIGIN_LABELS } from "../../cupons/labels";
 import { minutesLateLabel } from "@/core/delivery/lateness";
 import { FAILURE_REASON_LABELS, STOP_STATUS_LABELS } from "@/core/delivery/state";
 import { FEEDBACK_LABELS } from "@/core/orders/feedback";
@@ -77,6 +79,7 @@ export default async function PedidoDetalhePage({
   // Saída do motoboy com GPS: a prova da entrega (hora, quem recebeu, ponto).
   const stop = order.deliveryWindow ? await getStopForOrder(db, id) : null;
   const late = stop?.stopStatus === "delivered" ? await lateDeliveryForOrder(db, id) : null;
+  const issuedCoupons = await listIssuedCouponsForOrder(db, id);
   const status = order.status as OrderStatus;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
@@ -230,6 +233,26 @@ export default async function PedidoDetalhePage({
           <OrderMarginCard order={order} />
 
           <OrderFinancialCard orderId={order.id} />
+
+          {issuedCoupons.length > 0 ? (
+            <Card title="Cupons deste pedido">
+              <ul className="flex flex-col gap-2 text-sm">
+                {issuedCoupons.map((coupon) => (
+                  <li key={coupon.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="font-mono font-medium">{coupon.code}</span>
+                    <span className="text-zinc-700 dark:text-zinc-300">{formatCouponValue(coupon)}</span>
+                    <Badge tone="info">{ORIGIN_LABELS[coupon.origin]}</Badge>
+                    <span className="text-xs text-zinc-500">
+                      {coupon.usedCount > 0 ? "usado" : "não usado"}
+                      {coupon.expiresAt ? ` · até ${formatDateTimeSP(coupon.expiresAt).slice(0, 10)}` : ""}
+                      {coupon.isActive ? "" : " · desativado"}
+                    </span>
+                    {coupon.note ? <span className="block w-full text-xs text-zinc-500">{coupon.note}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ) : null}
 
           {order.status === "delivered" || feedback ? (
             <Card title="Chegou bem?">

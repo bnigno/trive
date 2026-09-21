@@ -611,6 +611,9 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   look_coupon_enabled: z.boolean(),
   look_coupon_percent: z.number().int().min(1).max(50, { error: "Entre 1% e 50%." }),
   look_coupon_days: z.number().int().min(1).max(180, { error: "Entre 1 e 180 dias." }),
+  /** Proteção de preço: peça baixou em até N dias depois do pagamento → a diferença vira cupom. */
+  price_protection_enabled: z.boolean(),
+  price_protection_days: z.number().int().min(1).max(60, { error: "Entre 1 e 60 dias." }),
   /** "Quem já vestiu": a Lia guarda a foto da cliente com a peça e pede consentimento. */
   customer_looks_enabled: z.boolean(),
   /** A Lia manda a nota em áudio da curadora como mensagem de voz (ausente = ligado). */
