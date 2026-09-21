@@ -140,10 +140,13 @@ export function catalogCardTitle(count: number): string {
  * R$ 300,00 · LINHO". Sem filtro: "A VITRINE DE HOJE".
  */
 export function catalogCardEyebrow(filters: readonly string[]): string {
+  // Os filtros também falam com o modelo ("tipo Bermuda — nenhuma com esse tipo; parecidas: …"):
+  // para a cliente fica só o nome do filtro, nunca a anotação depois do travessão.
   const parts = filters
     .map((filter) =>
       filter
-        .replace(/^(categoria|cor|tamanho)\s+/i, "")
+        .replace(/\s+—.*$/u, "")
+        .replace(/^(categoria|cor|tamanho|tipo)\s+/i, "")
         .replace(/^"(.*)"$/, "$1")
         .trim()
         .toUpperCase(),

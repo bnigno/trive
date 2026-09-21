@@ -537,7 +537,7 @@ export function NewProductForm({
                 ))}
               </Select>
             </Field>
-            <Field label="Tipo de peça" hint='A Lia acha a peça por ele quando a cliente pede "um corset" ou "vestidos".'>
+            <Field label="Tipo de peça" hint='A Lia acha a peça por ele quando a cliente pede "um corset" ou "vestidos". Falta um tipo? Peça para incluir na lista — é uma linha no código, sem mexer nas peças.'>
               <Select name="pieceType" defaultValue={kept.pieceType ?? ""}>
                 <option value="">Sem tipo</option>
                 {PIECE_TYPES.map((type) => (
