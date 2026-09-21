@@ -3,14 +3,16 @@ import { Badge, type BadgeTone } from "./badge";
 export function StatusPill({
   label,
   tone,
+  dot = false,
   className,
 }: {
   label: string;
   tone: BadgeTone;
+  dot?: boolean;
   className?: string;
 }) {
   return (
-    <Badge tone={tone} className={className}>
+    <Badge tone={tone} dot={dot} className={className}>
       {label}
     </Badge>
   );

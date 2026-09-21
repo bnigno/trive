@@ -7,6 +7,8 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
 
+import { NavCount } from "../nav-count";
+
 const POLL_URL = "/admin/emails/poll?light=1";
 const BASE_DELAY_MS = 60_000;
 const MAX_DELAY_MS = 240_000;
@@ -84,10 +86,5 @@ export function EmailNavBadge() {
 
   if (awaitingCount === 0) return null;
 
-  return (
-    <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-indigo-600 px-1.5 text-[11px] font-semibold text-white">
-      {awaitingCount}
-      <span className="sr-only"> e-mails aguardando resposta</span>
-    </span>
-  );
+  return <NavCount count={awaitingCount} srLabel=" e-mails aguardando resposta" />;
 }

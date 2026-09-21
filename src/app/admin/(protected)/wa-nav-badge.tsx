@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { HandoffToastViewport, useHandoffToasts } from "./handoff-toast";
+import { NavCount } from "./nav-count";
 import { useNotify } from "./use-notify";
 
 const POLL_URL = "/admin/whatsapp/conversas/poll?light=1";
@@ -170,12 +171,10 @@ export function WaNavBadge() {
   return (
     <>
       {humanCount + suggestionCount > 0 ? (
-        <span
+        <NavCount
+          count={humanCount + suggestionCount}
           title={suggestionCount > 0 ? `${suggestionCount} ${suggestionCount === 1 ? "sugestão" : "sugestões"} da vendedora` : undefined}
-          className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-gold-600 px-1.5 text-[11px] font-semibold text-white"
-        >
-          {humanCount + suggestionCount}
-        </span>
+        />
       ) : null}
       <HandoffToastViewport toasts={toasts} onDismiss={dismissToast} />
     </>
