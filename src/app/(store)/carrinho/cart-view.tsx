@@ -41,6 +41,8 @@ import { writeStoredCep } from "@/lib/cep-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
 import { pickDefaultOptionKey } from "@/lib/checkout-options";
 
+import { readStoredCoupon, writeStoredCoupon } from "@/lib/coupon-storage";
+
 import { quoteCouponAction, quoteShippingAction } from "./actions";
 import { CartBar } from "./cart-bar";
 
@@ -69,6 +71,9 @@ type CouponState =
       /** "Confirmamos no fechamento…" — o que depende de CPF/telefone/entrega. */
       pendingNotice: string | null;
     };
+
+/** Cupom que não existe mais não fica guardado no navegador (os outros erros são da sacola de agora). */
+const FORGET_STORED_ON = new Set(["COUPON_NOT_FOUND", "COUPON_INACTIVE", "COUPON_EXPIRED", "COUPON_EXHAUSTED"]);
 
 /** A entrega escolhida como o cupom precisa dela (valor + tipo), ou null. */
 function shippingForCoupon(option: DeliveryOption | null): { cents: number; kind: "motoboy" | "correios" } | null {
@@ -109,9 +114,12 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           shipping,
         });
         if (!result.ok) {
+          if (result.errorCode && FORGET_STORED_ON.has(result.errorCode)) writeStoredCoupon(null);
           setCoupon({ status: "error", message: result.error });
           return;
         }
+        // Guardado no navegador: o checkout e a próxima visita já sabem o cupom.
+        writeStoredCoupon(result.code);
         setCoupon({
           status: "applied",
           code: result.code,
@@ -125,6 +133,20 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
     [startCouponTransition],
   );
 
+  // Cupom que chegou pelo link /c/CÓDIGO (ou aplicado numa visita anterior):
+  // entra sozinho assim que a sacola hidrata com peças.
+  const storedTriedRef = useRef(false);
+  useEffect(() => {
+    if (!mounted || storedTriedRef.current || items.length === 0) return;
+    storedTriedRef.current = true;
+    const stored = readStoredCoupon();
+    if (!stored || coupon.status !== "idle") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- preenche o campo com o código guardado (pós-hidratação)
+    setCouponInput(stored);
+    applyCoupon(stored, items, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, items.length]);
+
   function handleCouponSubmit(event: React.FormEvent) {
     event.preventDefault();
     const code = couponInput.trim();
@@ -133,6 +155,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
   }
 
   function removeCoupon() {
+    writeStoredCoupon(null);
     setCoupon({ status: "idle" });
     setCouponInput("");
   }

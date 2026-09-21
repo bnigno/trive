@@ -147,7 +147,7 @@ export type QuoteCouponActionResult =
       /** "Confirmamos no fechamento…" quando algo depende de CPF/telefone/entrega; null quando não. */
       pendingNotice: string | null;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; errorCode?: string };
 
 export async function quoteCouponAction(
   input: QuoteCouponActionInput,
@@ -179,7 +179,7 @@ export async function quoteCouponAction(
     };
   } catch (error) {
     if (error instanceof CouponServiceError) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: error.message, errorCode: error.code };
     }
     if (error instanceof ZodError) {
       return {

@@ -50,6 +50,7 @@ import { readStoredStyle } from "@/lib/style-storage";
 import type { DeliveryOption } from "@/core/shipping/delivery-windows";
 import { assessNeededBy, isValidNeededBy, OCCASION_MAX } from "@/core/shipping/needed-by";
 import { writeStoredCep } from "@/lib/cep-storage";
+import { readStoredCoupon, writeStoredCoupon } from "@/lib/coupon-storage";
 import { spDayKey } from "@/lib/sp-day";
 import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
@@ -264,9 +265,18 @@ export function CheckoutClient({
   // ----- Cupom: re-cotado no servidor ao montar e quando a sacola, a entrega
   // ou a identidade (CPF + telefone válidos) mudam — com CPF e telefone, o
   // servidor confirma as regras por cliente antes do "Fechar pedido".
+  // O código vem da URL (?cupom=, vindo da sacola) ou, sem ela, do navegador
+  // (link /c/CÓDIGO) — lido depois da hidratação, como o CEP.
   const [couponCode, setCouponCode] = useState<string | null>(
     initialCouponCode.trim() ? initialCouponCode.trim().toUpperCase() : null,
   );
+  useEffect(() => {
+    if (!mounted || initialCouponCode.trim()) return;
+    const stored = readStoredCoupon();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- cupom guardado no navegador entra pós-hidratação
+    if (stored) setCouponCode((current) => current ?? stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
   const [appliedCoupon, setAppliedCoupon] = useState<{
     code: string;
     discountCents: number;
@@ -334,6 +344,7 @@ export function CheckoutClient({
   }, [mounted, couponCode, itemsKey, couponShipping?.kind, couponShipping?.cents, couponIdentity?.document, couponIdentity?.phone]);
 
   function removeCoupon() {
+    writeStoredCoupon(null);
     setCouponCode(null);
     setAppliedCoupon(null);
     setCouponError(null);
@@ -375,6 +386,8 @@ export function CheckoutClient({
             paymentMethod: payload.paymentMethod ?? "online",
           });
           clear();
+          // O cupom foi gasto com o pedido: a próxima sacola começa sem ele.
+          writeStoredCoupon(null);
           if (result.initPointUrl) {
             // Mercado Pago habilitado: vai DIRETO para o Checkout Pro pagar
             // agora. O back_url do MP traz o cliente de volta para

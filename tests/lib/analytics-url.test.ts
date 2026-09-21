@@ -13,6 +13,7 @@ describe("anonymizeAnalyticsUrl", () => {
     expect(anonymizeAnalyticsUrl("https://trivemaison.com.br/checkout?cep=01310100&cupom=BEMVINDA10")).toBe(
       "https://trivemaison.com.br/checkout?cep=01310100",
     );
+    expect(anonymizeAnalyticsUrl("https://trivemaison.com.br/c/MARIA-K7X2M")).toBe("https://trivemaison.com.br/c");
     expect(anonymizeAnalyticsUrl("https://trivemaison.com.br/produto/longo-dunas")).toBe(
       "https://trivemaison.com.br/produto/longo-dunas",
     );
