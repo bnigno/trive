@@ -83,6 +83,36 @@ async function loadMessage(id: string) {
 }
 
 describe("transcribeInboundAudio", () => {
+  it("runInline recebe o id do turno DEPOIS do commit (a linha já está no banco) e um erro nele não derruba a transcrição", async () => {
+    const { conversationId, messageId } = await seedAudio({ seconds: 5 });
+    transcriber.enqueueText("oi");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const seen: { id: string; status: string }[] = [];
+    const result = await transcribeInboundAudio(
+      sdb,
+      provider,
+      transcriber,
+      { waMessageId: messageId, attempt: 0 },
+      {
+        runInline: async (outboxEventId) => {
+          // Fora da transação (o PGlite travaria se a tx ainda estivesse aberta) e DEPOIS do kick.
+          const [row] = await db.select({ status: schema.outboxEvents.status }).from(schema.outboxEvents).where(eq(schema.outboxEvents.id, outboxEventId));
+          seen.push({ id: outboxEventId, status: row.status });
+          expect(kicks).toHaveLength(1);
+          throw new Error("inline caiu");
+        },
+      },
+    );
+    expect(result).toMatchObject({ transcribed: true, route: "bot_queued" });
+    const [event] = await db.select().from(schema.outboxEvents);
+    expect(event).toMatchObject({ eventType: "wa.bot_turn", payload: { conversationId } });
+    expect(seen).toEqual([{ id: event.id, status: "pending" }]);
+    // O kick (rede de segurança) saiu antes do inline, com o mesmo id.
+    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: { outboxEventId: event.id } }]);
+    expect(errors).toHaveBeenCalledOnce();
+    errors.mockRestore();
+  });
+
   it("grava a transcrição como corpo, marca done e enfileira o turno da vendedora", async () => {
     const { conversationId, messageId } = await seedAudio({ seconds: 14 });
     transcriber.enqueueText("  oi, quero o  vestido dunas\nno M ");
@@ -107,8 +137,8 @@ describe("transcribeInboundAudio", () => {
       dedupeKey: "wa.bot_turn:MSG-AUDIO-1",
       payload: { conversationId },
     });
-    // O kick do turno sai depois do commit, sem id.
-    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: {} }]);
+    // O kick do turno sai depois do commit, com o id do turno (rede de segurança do turno inline).
+    expect(kicks).toEqual([{ name: "outbox/event.enqueued", data: { outboxEventId: events[0].id } }]);
 
     // O audit guarda medidas, nunca o texto.
     const [audit] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "wa.transcribe"));

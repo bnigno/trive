@@ -50,6 +50,9 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   "wa.atelier_card": { maxAttempts: 2, baseDelayMs: 10_000, maxDelayMs: 30_000 },
   "wa.customer_look_card": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
   "store.revalidate": { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+  // Recibo (entregue/lida) que chegou antes de o balão da Lia existir: o turno
+  // commita em segundos; três olhadas espaçadas bastam, depois desiste.
+  "wa.status_replay": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 120_000 },
   // Geocodificação das paradas da saída: melhor esforço (sem pino a entrega
   // segue); o Nominatim fora do ar não melhora em minutos.
   "delivery_run.geocode": { maxAttempts: 4, baseDelayMs: 30_000, maxDelayMs: 300_000 },

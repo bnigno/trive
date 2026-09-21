@@ -92,6 +92,8 @@ import { execIdentificarPecaNaFoto } from "./bot/photo-match";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { followupMemoryLines } from "./wa-followups";
 import { FOLLOWUP_GRACE_MINUTES, isFollowupSuperseded, isFollowupTooLate, renderFollowupPrompt, type FollowupKind } from "@/core/bot/followup";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
+import type { OutboxSource } from "@/core/queue/outbox-source";
 import { getRetryPolicy } from "@/core/queue/retry-policy";
 import { BOT_FOLLOWUP_EVENT, idleCartStillValid } from "./wa-followups";
 import { waFollowups } from "@/db/schema";
@@ -100,6 +102,7 @@ import { enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
 import { loadSendPolicy } from "./wa-send-policy";
 import { spDayKey } from "@/lib/sp-day";
 import { customers } from "@/db/schema";
+import { applyPendingConversationTouches, isLockTimeoutError } from "./wa-conversation-touch";
 import { createSuggestion, enqueueSuggestionNotice, findSuggestionByInbound, resolveConversationBotMode, supersedePendingSuggestions } from "./wa-suggestions";
 import { execAnotar, execAtualizarCartela, execSugerirTamanho, loadMemoryLines } from "./bot/style";
 
@@ -584,7 +587,7 @@ async function hasBotReplyFor(tx: DbOrTx, conversationId: string, inboundId: str
 }
 
 // ---------------------------------------------------------------------------
-// deliverBotTurn — a entrega do turno: mídia antes do texto, até 3 balões,
+// deliverBotTurn — a entrega do turno: até 3 balões, depois a mídia,
 // cortesia pós-transferência; cada envio com dedupe determinístico derivado
 // de `dedupeBase` (id da inbound no turno reativo, id do retorno no
 // proativo) — o retry da fila nunca duplica nada.
@@ -607,12 +610,15 @@ export async function deliverBotTurn(
   const verifyPhone = input.verifyPhone ?? true;
   const replyDedupeKey = `wa.bot_reply:${dedupeBase}`;
   const customerRef = conversation.customerId ? { customerId: conversation.customerId } : {};
-  // Lista e foto ANTES do texto (o cliente vê e depois o convite); a voz da
-  // curadora DEPOIS ("segue a voz dela" e aí o áudio) — assim um texto que
-  // falha e aborta o turno nunca deixa uma mensagem de voz já entregue para o
-  // retry repetir. Cada mídia tem dedupe determinístico por índice; falha é
-  // melhor esforço.
-  // Primeira coisa que chegou à cliente (mídia ou balão): mede "mensagem → 1º balão".
+  // Texto PRIMEIRO: é o que a cliente sente como "ela respondeu" e sai ~1 s
+  // depois do "digitando"; lista, foto e cartão vêm logo atrás (o convite e
+  // depois a vitrine), e a voz da curadora por último ("segue a voz dela" e
+  // aí o áudio). Mídia que falha é melhor esforço (não derruba o turno); um
+  // BALÃO que falha depois de outro já aceito derruba a transação e o retry
+  // repete o primeiro — falha da Z-API entre dois balões é rara, e é o preço
+  // de a entrega inteira ser uma transação só. Cada mídia tem dedupe
+  // determinístico por índice.
+  // Primeira coisa que chegou à cliente (balão ou mídia): mede "mensagem → 1º balão".
   let firstSentAt: number | null = null;
   const sendAttachment = async (attachment: BotAttachment, index: number): Promise<void> => {
     const mediaDedupeKey = `wa.bot_media:${dedupeBase}:${index}`;
@@ -666,10 +672,6 @@ export async function deliverBotTurn(
       );
     }
   };
-  for (const [index, attachment] of attachments.entries()) {
-    if (attachment.kind !== "audio") await sendAttachment(attachment, index);
-  }
-
   let replied = false;
   let firstWaMessageId: string | null = null;
   for (const [index, bubble] of bubbles.entries()) {
@@ -681,7 +683,7 @@ export async function deliverBotTurn(
       dedupeKey: index === 0 ? replyDedupeKey : `${replyDedupeKey}:${index}`,
       requireOptIn: false,
       verifyPhone,
-      // "Digitando…" por 1–3 s antes de cada balão.
+      // "Digitando…" por 1–2 s antes de cada balão.
       typingSeconds: typingSecondsFor(body, index === 0 ? "first" : "next"),
     });
     if ("sent" in sent) {
@@ -691,6 +693,9 @@ export async function deliverBotTurn(
     }
   }
 
+  for (const [index, attachment] of attachments.entries()) {
+    if (attachment.kind !== "audio") await sendAttachment(attachment, index);
+  }
   for (const [index, attachment] of attachments.entries()) {
     if (attachment.kind === "audio") await sendAttachment(attachment, index);
   }
@@ -712,9 +717,13 @@ export async function deliverBotTurn(
 
 // ---------------------------------------------------------------------------
 // runBotTurn — um turno completo sobre a conversa, chamado pelo handler
-// 'wa.bot_turn' da fila. FOR UPDATE serializa turnos concorrentes da mesma
-// conversa; a idempotência REAL da resposta vem do dedupe derivado do id da
-// última wa_message inbound (retry da fila nunca duplica resposta).
+// 'wa.bot_turn' da fila. FOR UPDATE na linha da conversa serializa turnos
+// concorrentes E as escritas do webhook nela (quem grava a mensagem seguinte
+// espera o turno commitar — por isso o caderninho nunca perde o que o webhook
+// gravou); a idempotência REAL da resposta vem do dedupe derivado do id da
+// última wa_message inbound (retry da fila nunca duplica resposta). A rajada
+// (mensagem seguinte durante o turno) é atendida pelo kick inline, que drena
+// os turnos pendentes da mesma conversa na mesma lambda.
 // ---------------------------------------------------------------------------
 
 /**
@@ -724,6 +733,13 @@ export async function deliverBotTurn(
  * tentando por mais tempo, sem transferir ninguém).
  */
 export const BOT_TURN_MODEL_ATTEMPTS = 5;
+/**
+ * Sem isto pela frente depois de pegar a vez da conversa, o turno nem começa
+ * (o adapter recusaria a chamada): HandlerOutOfTimeError antes de qualquer
+ * efeito (nem ✓✓ azul) — o worker devolve a linha à fila sem contar tentativa
+ * e o kick pede outra invocação, com orçamento inteiro.
+ */
+export const BOT_TURN_MIN_MODEL_MS = 5_000;
 /**
  * Orçamento do turno dentro dos 60 s da rota do Inngest: ~0,5 s de partida,
  * ≤ 2 s de preparo, o modelo (com ferramentas) até este teto e a entrega
@@ -749,7 +765,104 @@ export type BotTurnTimings = {
   totalMs: number;
   /** Mensagem dela → primeiro balão enviado; null quando nada saiu. */
   inboundToFirstBubbleMs: number | null;
+  /** Quem rodou o turno: inline (mesma invocação do webhook), kick do Inngest ou cron; null = anterior à medição. */
+  source: OutboxSource | null;
 };
+
+/** Sem prazo da fila (chamada direta, testes), espera a vez da conversa até isto. */
+const LOCK_WAIT_DEFAULT_MS = 30_000;
+/** O mesmo corte do encaminhamento feito pelo webhook (wa-inbound). */
+const FORWARD_BODY_MAX_CHARS = 300;
+/** Quantas mensagens recentes o turno pulado olha para achar as sem resposta. */
+const FORWARD_LOOKBACK_ROWS = 30;
+
+/**
+ * As mensagens dela que ninguém respondeu (o mesmo critério do turno: resposta
+ * da Lia, resposta manual do painel ou sugestão aprovada cobrem) vão para o
+ * WhatsApp do dono, uma a uma, com o dedupe do webhook (wa.fwd:<id da Z-API>).
+ * Áudio ainda em transcrição fica de fora: quem o encaminha, transcrito, é a
+ * própria transcrição (routeInboundMessage). Devolve os ids enfileirados.
+ */
+async function forwardUnansweredInboundToOwner(tx: DbOrTx, conversation: Pick<TurnConversation, "id" | "phoneE164" | "customerId">): Promise<string[]> {
+  const recent = await tx
+    .select({
+      id: waMessages.id,
+      direction: waMessages.direction,
+      kind: waMessages.kind,
+      body: waMessages.body,
+      zapiMessageId: waMessages.zapiMessageId,
+      dedupeKey: waMessages.dedupeKey,
+      templateKey: waMessages.templateKey,
+      mediaMeta: waMessages.mediaMeta,
+      createdAt: waMessages.createdAt,
+    })
+    .from(waMessages)
+    .where(eq(waMessages.conversationId, conversation.id))
+    .orderBy(desc(waMessages.createdAt), desc(waMessages.id))
+    .limit(FORWARD_LOOKBACK_ROWS);
+  // O mesmo critério do turno: sugestão aprovada e resposta manual também cobrem.
+  const rows = orderHistoryRows(await withSuggestionAnchors(tx, recent.reverse()));
+  const pending = pendingInboundRows(rows).filter(
+    (row) => row.zapiMessageId && !(row.kind === "audio" && parseWaMediaMeta(row.mediaMeta).transcript?.status === "pending"),
+  );
+  if (pending.length === 0) return [];
+  const [customer] = conversation.customerId
+    ? await tx.select({ fullName: customers.fullName }).from(customers).where(eq(customers.id, conversation.customerId)).limit(1)
+    : [];
+  const ids: string[] = [];
+  for (const inbound of pending) {
+    const id = await enqueueOutboxEvent(
+      tx,
+      {
+        eventType: "wa.owner_forward",
+        dedupeKey: `wa.fwd:${inbound.zapiMessageId}`,
+        aggregateType: "wa_conversation",
+        aggregateId: conversation.id,
+        payload: {
+          phoneE164: conversation.phoneE164,
+          body: inbound.body.slice(0, FORWARD_BODY_MAX_CHARS),
+          ...(customer ? { customerName: customer.fullName } : {}),
+        },
+      },
+      { kick: false },
+    );
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * A vez da conversa, com teto de espera: o que sobra do prazo da fila menos
+ * a reserva da entrega e o mínimo do modelo — esperar mais que isso é
+ * esperar para não fazer nada, segurando conexão e linha. Estourou →
+ * HandlerOutOfTimeError (a fila devolve a linha sem contar tentativa).
+ * FOR NO KEY UPDATE, não FOR UPDATE: serializa os turnos e segura o UPDATE
+ * do toque (que assim é adiado), mas deixa passar a checagem de chave
+ * estrangeira do INSERT da próxima mensagem (FOR KEY SHARE) — com FOR UPDATE
+ * o webhook ficava preso no INSERT da mensagem o turno inteiro. Com a vez,
+ * aplica os toques que o webhook deixou na fila e relê a linha.
+ */
+async function lockConversationForTurn(tx: DbOrTx, conversationId: string, queueDeadlineAt: Date | undefined) {
+  const waitMs = queueDeadlineAt
+    ? queueDeadlineAt.getTime() - Date.now() - BOT_TURN_DELIVERY_RESERVE_MS - BOT_TURN_MIN_MODEL_MS
+    : LOCK_WAIT_DEFAULT_MS;
+  if (waitMs < 1_000) throw new HandlerOutOfTimeError(waitMs);
+  await tx.execute(sql.raw(`set local lock_timeout = '${Math.floor(waitMs)}ms'`));
+  let rows: (typeof waConversations.$inferSelect)[];
+  try {
+    rows = await tx.select().from(waConversations).where(eq(waConversations.id, conversationId)).for("no key update");
+  } catch (error) {
+    if (isLockTimeoutError(error)) throw new HandlerOutOfTimeError(0);
+    throw error;
+  }
+  // Só a espera pela conversa tem teto; o resto do turno segue como antes.
+  await tx.execute(sql.raw("set local lock_timeout = 0"));
+  if (rows.length === 0) return undefined;
+  const touched = await applyPendingConversationTouches(tx, conversationId);
+  if (touched === 0) return rows[0];
+  const [fresh] = await tx.select().from(waConversations).where(eq(waConversations.id, conversationId));
+  return fresh;
+}
 
 function modelDeadlineFor(turnStartedAt: number, queueDeadlineAt: Date | undefined): Date {
   return new Date(
@@ -764,36 +877,45 @@ export async function runBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { conversationId: string; attempt?: number; enqueuedAt?: Date; deadlineAt?: Date },
+  input: { conversationId: string; attempt?: number; enqueuedAt?: Date; deadlineAt?: Date; source?: OutboxSource },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunBotTurnResult> {
   const { conversationId } = input;
   // `attempt` = tentativas ANTERIORES da fila (0 na primeira).
   const lastModelAttempt = (input.attempt ?? 0) + 1 >= BOT_TURN_MODEL_ATTEMPTS;
-  const turnStartedAt = Date.now();
-  // O modelo tem até 35 s — ou o que sobra do prazo da fila menos a reserva
-  // da entrega, se for menos. Prazo curto demais para uma chamada vira
-  // "tempo esgotado" (passageiro) no adapter, sem começar: a fila reagenda
-  // (o worker já evita reclamar um turno sem ~32 s pela frente).
-  const modelDeadline = modelDeadlineFor(turnStartedAt, input.deadlineAt);
-
   const result = await db.transaction(async (tx): Promise<RunBotTurnResult> => {
-    const [conversation] = await tx
-      .select()
-      .from(waConversations)
-      .where(eq(waConversations.id, conversationId))
-      .for("update");
+    // Um turno por conversa: espera a vez só o que o prazo da fila permite
+    // (a espera não segura conexão nem linha além disso) e, com a vez,
+    // aplica os toques que o webhook deixou na fila enquanto a linha estava presa.
+    const conversation = await lockConversationForTurn(tx, conversationId, input.deadlineAt);
+    // O relógio do turno começa DEPOIS do lock: quem esperou o turno anterior
+    // mede o que sobra de verdade. O modelo tem até 35 s — ou o que sobra do
+    // prazo da fila menos a reserva da entrega, se for menos; sem o mínimo
+    // para UMA chamada, o turno nem começa (nem marca a mensagem como lida).
+    const turnStartedAt = Date.now();
+    const modelDeadline = modelDeadlineFor(turnStartedAt, input.deadlineAt);
+    if (modelDeadline.getTime() - turnStartedAt < BOT_TURN_MIN_MODEL_MS) {
+      throw new HandlerOutOfTimeError(modelDeadline.getTime() - turnStartedAt);
+    }
 
     if (!conversation) return { skipped: "conversa_inexistente" };
-    if (conversation.status === "human") return { skipped: "atendimento_humano" };
     if (conversation.status === "closed") return { skipped: "conversa_fechada" };
-    if (
-      conversation.botDisabledUntil !== null &&
-      conversation.botDisabledUntil.getTime() > Date.now()
-    ) {
-      return { skipped: "bot_silenciado" };
+    // O webhook decide "Lia ou dono" com a foto da conversa de ANTES do turno
+    // anterior commitar (ele não espera o turno). Se esse turno transferiu ou
+    // silenciou a Lia, a mensagem que chegou no meio já está enfileirada como
+    // turno: quem a leva ao dono, como o webhook teria feito, é este turno.
+    const skippedForHuman =
+      conversation.status === "human"
+        ? "atendimento_humano"
+        : conversation.botDisabledUntil !== null && conversation.botDisabledUntil.getTime() > Date.now()
+          ? "bot_silenciado"
+          : !(await isBotEnabled(tx))
+            ? "desabilitado"
+            : null;
+    if (skippedForHuman) {
+      const forwarded = await forwardUnansweredInboundToOwner(tx, conversation);
+      return { skipped: skippedForHuman, forwarded };
     }
-    if (!(await isBotEnabled(tx))) return { skipped: "desabilitado" };
 
     const [lastInbound] = await tx
       .select({ id: waMessages.id, createdAt: waMessages.createdAt, zapiMessageId: waMessages.zapiMessageId })
@@ -884,6 +1006,7 @@ export async function runBotTurn(
         deliveryMs: extra.deliveryMs,
         totalMs: finishedAt - turnStartedAt,
         inboundToFirstBubbleMs: extra.firstSentAt === null ? null : Math.max(0, extra.firstSentAt - lastInbound.createdAt.getTime()),
+        source: input.source ?? null,
       };
     };
     let modelMs = 0;
@@ -1018,16 +1141,18 @@ export async function runBotTurn(
     return { replied, handedOff: turn.handedOff };
   });
   // O que o turno enfileirou (cartão, aviso ao dono, sugestão) só fica
-  // visível agora, depois do commit: o kick aqui faz sair em segundos.
+  // visível agora, depois do commit: o kick aqui faz sair em segundos — o
+  // encaminhamento ao dono do turno pulado também.
   if (!("skipped" in result)) await kickOutbox();
+  else for (const id of result.forwarded ?? []) await kickOutbox(id, { eventType: "wa.owner_forward" });
   return result;
 }
 
 // ---------------------------------------------------------------------------
 // runScheduledBotTurn — o turno PROATIVO (retorno combinado / retomada):
 // chamado pelo handler 'wa.bot_followup' quando `due_at` vence. Mesmos
-// bloqueios do turno reativo (FOR UPDATE, humano, fechada, silenciada,
-// desligada), mais: só na janela de envio (fora dela re-enfileira datado),
+// bloqueios do turno reativo (FOR UPDATE na conversa, humano, fechada,
+// silenciada, desligada), mais: só na janela de envio (fora dela re-enfileira datado),
 // só se a cliente não voltou por conta depois do combinado, só sem SAIR.
 // A "fala" que abre o turno é sintética e vira um marcador no histórico.
 // ---------------------------------------------------------------------------
@@ -1040,7 +1165,7 @@ export async function runScheduledBotTurn(
   db: DbOrTx,
   assistant: SalesAssistant,
   provider: MessagingProvider,
-  input: { followupId: string; now?: Date; attempt?: number; deadlineAt?: Date | null },
+  input: { followupId: string; now?: Date; attempt?: number; deadlineAt?: Date | null; source?: OutboxSource },
   deps: { cards?: BotCardDeps } = {},
 ): Promise<RunScheduledBotTurnResult> {
   const { followupId } = input;
@@ -1048,14 +1173,19 @@ export async function runScheduledBotTurn(
   // `attempt` = tentativas ANTERIORES (0 na primeira), como no wa.transcribe.
   const lastAttempt = (input.attempt ?? 0) + 1 >= getRetryPolicy(BOT_FOLLOWUP_EVENT).maxAttempts;
 
-  const turnStartedAt = Date.now();
   const result = await db.transaction(async (tx): Promise<RunScheduledBotTurnResult> => {
     // Ordem dos locks igual à do turno reativo — a CONVERSA primeiro (o
     // reativo trava a conversa e depois mexe em wa_followups); só então o
     // retorno. Senão os dois turnos se travam em cruz e um deles cai.
     const [pointer] = await tx.select({ conversationId: waFollowups.conversationId }).from(waFollowups).where(eq(waFollowups.id, followupId)).limit(1);
     if (!pointer) return { skipped: "inexistente", followupId };
-    const [conversation] = await tx.select().from(waConversations).where(eq(waConversations.id, pointer.conversationId)).for("update");
+    const conversation = await lockConversationForTurn(tx, pointer.conversationId, input.deadlineAt ?? undefined);
+    // Relógio depois do lock e a mesma guarda do reativo: sem o mínimo para
+    // uma chamada, volta à fila sem contar tentativa (nada foi feito ainda).
+    const turnStartedAt = Date.now();
+    if (modelDeadlineFor(turnStartedAt, input.deadlineAt ?? undefined).getTime() - turnStartedAt < BOT_TURN_MIN_MODEL_MS) {
+      throw new HandlerOutOfTimeError(modelDeadlineFor(turnStartedAt, input.deadlineAt ?? undefined).getTime() - turnStartedAt);
+    }
     const [followup] = await tx.select().from(waFollowups).where(eq(waFollowups.id, followupId)).for("update");
     if (!followup) return { skipped: "inexistente", followupId };
     if (followup.status !== "scheduled") return { skipped: `status_${followup.status}`, followupId };
@@ -1204,6 +1334,7 @@ export async function runScheduledBotTurn(
           deliveryMs: null,
           totalMs: Date.now() - turnStartedAt,
           inboundToFirstBubbleMs: null,
+          source: input.source ?? null,
         } satisfies BotTurnTimings,
       },
     });

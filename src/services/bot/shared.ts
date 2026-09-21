@@ -144,7 +144,7 @@ export type RunBotTurnResult =
   | { replied: boolean; handedOff: boolean }
   /** Copiloto: o turno virou uma sugestão na Central; nada saiu para a cliente. */
   | { suggested: true; suggestionId: string }
-  | { skipped: string };
+  | { skipped: string; forwarded?: string[] };
 
 export type CardRequest = {
   kind: "catalog" | "look";

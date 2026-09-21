@@ -7,6 +7,8 @@ import {
   nextAttemptDelayMs,
 } from "@/core/queue/retry-policy";
 import type { Db } from "@/db/client";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
+import type { OutboxSource } from "@/core/queue/outbox-source";
 import { resolveOutboxHandler, type OutboxEvent } from "@/queue/handlers";
 
 const MAX_ERROR_LENGTH = 2000;
@@ -36,6 +38,10 @@ export type DrainOutboxOptions = {
   clock?: () => number;
   /** Só esta linha (o kick com id reclama o alvo antes de qualquer outra). */
   onlyId?: string;
+  /** Só as linhas deste agregado (os turnos seguintes da MESMA conversa, depois do alvo inline). */
+  aggregateId?: string;
+  /** Quem está drenando — vai no evento para o handler registrar a origem. Padrão: o cron. */
+  source?: OutboxSource;
 };
 
 export type DrainOutboxResult = {
@@ -48,6 +54,8 @@ export type DrainOutboxResult = {
   released: number;
   /** Ids devolvidos por falta de tempo — o kick pode pedir outra invocação para eles. */
   releasedIds: string[];
+  /** Ids que falharam neste lote (voltam pela política) — o kick só-alvo pede outra invocação para eles. */
+  failedIds: string[];
 };
 
 /**
@@ -81,6 +89,7 @@ export async function drainOutbox(
     dead: 0,
     released: 0,
     releasedIds: [],
+    failedIds: [],
   };
 
   // db.execute retorna { rows } no pg/PGlite e array no postgres.js — normalize.
@@ -144,6 +153,7 @@ export async function drainOutbox(
       WHERE status IN ('pending', 'failed')
         AND next_attempt_at <= now()
         ${options.onlyId ? sql`AND id = ${options.onlyId}` : sql``}
+        ${options.aggregateId ? sql`AND aggregate_id = ${options.aggregateId}` : sql``}
       ORDER BY next_attempt_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -187,6 +197,7 @@ export async function drainOutbox(
       payload: row.payload,
       attempts: row.attempts,
       createdAt: new Date(row.created_at),
+      source: options.source ?? "cron",
       // O handler pode se encolher para caber no que sobra da varredura.
       ...(options.budgetMs !== undefined ? { deadlineAt: new Date(startedAt + options.budgetMs) } : {}),
     };
@@ -206,6 +217,12 @@ export async function drainOutbox(
       `);
       result.done += 1;
     } catch (error) {
+      if (error instanceof HandlerOutOfTimeError) {
+        // Esperou e não sobrou tempo, antes de qualquer efeito: volta à fila
+        // sem contar tentativa; o kick pede outra invocação para ela.
+        await release([row.id]);
+        continue;
+      }
       const message = (
         error instanceof Error ? `${error.name}: ${error.message}` : String(error)
       ).slice(0, MAX_ERROR_LENGTH);
@@ -228,7 +245,8 @@ export async function drainOutbox(
         result.dead += 1;
       } else {
         const delayMs = nextAttemptDelayMs(policy, attempts);
-        const nextAttemptAt = new Date(now.getTime() + delayMs);
+        // Da hora da FALHA (o handler pode ter esperado dezenas de segundos), não do início do lote.
+        const nextAttemptAt = new Date((options.now ?? new Date()).getTime() + delayMs);
         await db.execute(sql`
           UPDATE outbox_events
           SET status = 'failed',
@@ -241,6 +259,7 @@ export async function drainOutbox(
             AND locked_by = ${workerId}
         `);
         result.failed += 1;
+        result.failedIds.push(row.id);
       }
     }
   }

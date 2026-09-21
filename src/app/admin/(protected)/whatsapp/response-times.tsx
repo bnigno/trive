@@ -2,6 +2,7 @@
 // balão, e onde o tempo foi (fila · preparo · modelo · entrega) — a barra usa
 // MÉDIAS, que somam; medianas de trechos não somam o total. Só apresenta o
 // que services/wa-insights mede a partir do audit dos turnos.
+import { OUTBOX_SOURCE_LABELS, OUTBOX_SOURCES } from "@/core/queue/outbox-source";
 import type { BotResponseTimes, BotTimingSplit } from "@/services/wa-insights";
 
 const SEGMENTS: ReadonlyArray<{ key: keyof BotTimingSplit; label: string; className: string }> = [
@@ -37,7 +38,22 @@ export function ResponseTimes({ times, sellerName }: { times: BotResponseTimes; 
           <dt className="text-xs text-zinc-500 dark:text-zinc-400">Nas 10% mais lentas (p90)</dt>
           <dd className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{seconds(times.p90.inboundToFirstBubbleMs)}</dd>
         </div>
+        <div>
+          <dt className="text-xs text-zinc-500 dark:text-zinc-400">Entregue no celular (mediana)</dt>
+          <dd className="text-lg font-semibold text-zinc-900 dark:text-zinc-100" data-delivered-p50="">{seconds(times.delivered.p50Ms)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500 dark:text-zinc-400">Entregue no celular (p90)</dt>
+          <dd className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{seconds(times.delivered.p90Ms)}</dd>
+        </div>
       </dl>
+      <p className="text-xs text-zinc-600 dark:text-zinc-300" data-by-source="">
+        Origem das respostas:{" "}
+        {[...OUTBOX_SOURCES, "unknown" as const]
+          .filter((source) => times.bySource[source] > 0)
+          .map((source) => `${times.bySource[source]} ${OUTBOX_SOURCE_LABELS[source]}`)
+          .join(" · ") || "—"}
+      </p>
       {total > 0 ? (
         <div>
           <div className="flex h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
@@ -59,7 +75,7 @@ export function ResponseTimes({ times, sellerName }: { times: BotResponseTimes; 
         </div>
       ) : null}
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        {times.turns} {times.turns === 1 ? "resposta" : "respostas"} em {times.windowDays} dias. A barra é a média de cada trecho de um turno inteiro: fila é o tempo entre a mensagem chegar e a {sellerName} começar; modelo inclui as ferramentas (catálogo, frete, pedido); entrega são todos os balões e a mídia.
+        {times.turns} {times.turns === 1 ? "resposta" : "respostas"} em {times.windowDays} dias. A barra é a média de cada trecho de um turno inteiro: fila é o tempo entre a mensagem chegar e a {sellerName} começar; modelo inclui as ferramentas (catálogo, frete, pedido); entrega são todos os balões e a mídia. &quot;Entregue no celular&quot; usa o recibo da Z-API ({times.delivered.turns} {times.delivered.turns === 1 ? "resposta" : "respostas"}) e inclui o &quot;digitando&quot; e a fila deles. &quot;Na hora&quot; = a resposta saiu na mesma chamada do webhook; pelo aviso ou pelo cron = a rede de segurança entrou.
       </p>
     </div>
   );

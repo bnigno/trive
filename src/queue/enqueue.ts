@@ -26,18 +26,38 @@ export type EnqueueOutboxEventInput = z.input<typeof enqueueOutboxEventSchema>;
  * Quem enfileira DENTRO de uma transação longa (webhook, turno da Lia)
  * chama isto depois do commit — o kick disparado antes não acha a linha.
  */
-export async function kickOutbox(outboxEventId?: string, options: { rekick?: boolean } = {}): Promise<void> {
+export const KICK_TIMEOUT_MS = 3_000;
+
+export async function kickOutbox(
+  outboxEventId?: string,
+  options: { rekick?: boolean; eventType?: string } = {},
+): Promise<void> {
+  // Best-effort com teto: o kick nunca segura quem enfileirou, e quando falha
+  // deixa rastro — a demora da Lia já foi investigada às cegas por causa de
+  // um catch mudo aqui. O cron de varredura entrega mesmo sem o kick.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await inngest.send({
-      name: "outbox/event.enqueued",
-      data: {
-        ...(outboxEventId ? { outboxEventId } : {}),
-        // Repetição pedida por um kick sem tempo: a próxima não pede de novo.
-        ...(options.rekick ? { rekick: true } : {}),
-      },
+    await Promise.race([
+      inngest.send({
+        name: "outbox/event.enqueued",
+        data: {
+          ...(outboxEventId ? { outboxEventId } : {}),
+          // Repetição pedida por um kick sem tempo: a próxima não pede de novo.
+          ...(options.rekick ? { rekick: true } : {}),
+        },
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`sem resposta em ${KICK_TIMEOUT_MS} ms`)), KICK_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn("[outbox] kick ao Inngest falhou", {
+      outboxEventId: outboxEventId ?? null,
+      eventType: options.eventType ?? null,
+      causa: error instanceof Error ? error.message : String(error),
     });
-  } catch {
-    // O cron de varredura entrega mesmo sem o kick.
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -79,6 +99,6 @@ export async function enqueueOutboxEvent(
   if (parsed.nextAttemptAt && parsed.nextAttemptAt.getTime() > Date.now() + 1_000) return id;
   if (options.kick === false) return id;
 
-  await kickOutbox(id);
+  await kickOutbox(id, { eventType: parsed.eventType });
   return id;
 }

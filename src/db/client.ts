@@ -24,9 +24,13 @@ export function getDb(): Db {
         "DATABASE_URL ausente. Defina a variável de ambiente antes de acessar o banco.",
       );
     }
+    // O DATABASE_URL de produção é o pooler do Supabase em transaction mode
+    // (porta 6543): conexão de cliente é barata. Com o turno da Lia rodando
+    // na própria chamada do webhook, uma instância (Fluid) segura uma
+    // conexão por turno por até ~45 s — 5 travava a 6ª mensagem simultânea.
     const pool = new Pool({
       connectionString: url,
-      max: 5,
+      max: 10,
       idleTimeoutMillis: 20_000,
       connectionTimeoutMillis: 15_000,
     });

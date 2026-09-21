@@ -40,9 +40,9 @@ import { handOffToHuman } from "@/services/bot/owner";
 import { isBotEnabled } from "@/services/wa-bot";
 import { isBotMediaEnabled } from "@/services/wa-media";
 import { firstNameOf, isOwnerPhone } from "@/services/wa-messaging";
+import { touchConversationOrDefer, withRowLockTimeout, type ConversationTouch } from "@/services/wa-conversation-touch";
 import { findActiveCourierByPhone } from "@/services/couriers";
 import { bridgeContextLine, extractBridgeCode } from "@/core/bot/site-bridge";
-import { mergeBridgeIntoState, parseBotState } from "@/core/bot/memory";
 import { cancelDropWaitlistByPhone } from "@/services/drop-waitlist";
 import { cancelStockAlertsByPhone } from "@/services/stock-alerts";
 import { consumeSiteCartByCode } from "@/services/site-carts";
@@ -156,21 +156,26 @@ export type ProcessZapiInboundResult =
   | { action: "ignored"; ignored: true; reason?: string }
   | { action: "duplicate"; duplicate: true }
   | { action: "status"; updated: number }
+  // `outboxEventId`: o evento que esta mensagem enfileirou (turno da Lia,
+  // aviso ao dono, transcrição, confirmação do SAIR) — quem chamou pode
+  // rodá-lo na mesma invocação, depois de responder à Z-API. Null quando o
+  // dedupe já tinha a linha.
   | {
       action: "opt_out";
       conversationId: string;
       waMessageId: string;
       /** true quando havia cliente cadastrado com esse telefone para desligar. */
       optedOut: boolean;
+      outboxEventId: string | null;
     }
-  | { action: "forwarded"; conversationId: string; waMessageId: string }
-  | { action: "bot_queued"; conversationId: string; waMessageId: string }
-  | { action: "transcribe_queued"; conversationId: string; waMessageId: string }
+  | { action: "forwarded"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "bot_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "transcribe_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   // Ateliê (mensagem do dono): chegada aberta, foto guardada no lote ou
   // orientação de como mandar.
-  | { action: "atelier_queued"; conversationId: string; waMessageId: string }
-  | { action: "atelier_photo"; conversationId: string; waMessageId: string }
-  | { action: "atelier_help"; conversationId: string; waMessageId: string }
+  | { action: "atelier_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "atelier_photo"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "atelier_help"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   // Resposta ao "Chegou bem?" que vai direto para a equipe (defeito / falar).
   | { action: "feedback_handoff"; conversationId: string; waMessageId: string }
   | { action: "look_consent"; conversationId: string; waMessageId: string };
@@ -301,7 +306,7 @@ export async function routeInboundMessage(
     waMessageId?: string;
     kind?: "audio";
   },
-): Promise<InboundRoute> {
+): Promise<{ route: InboundRoute; outboxEventId: string | null }> {
   const { conversation } = input;
 
   // Áudio do dono transcrito: recado com fotos recentes vira chegada; sem
@@ -330,7 +335,7 @@ export async function routeInboundMessage(
         body: input.text,
         now: input.now,
       });
-      return "atelier_queued";
+      return { route: "atelier_queued", outboxEventId: null };
     }
     if (decision.kind === "help") {
       await enqueueAtelierHelp(tx, {
@@ -338,7 +343,7 @@ export async function routeInboundMessage(
         zapiMessageId: input.zapiMessageId,
         reason: decision.reason,
       });
-      return "atelier_help";
+      return { route: "atelier_help", outboxEventId: null };
     }
   }
 
@@ -346,7 +351,7 @@ export async function routeInboundMessage(
   // recado para a dona — a Lia não vende para o motoboy.
   const courier = await findActiveCourierByPhone(tx, input.identityPhone);
   if (courier) {
-    await enqueueOutboxEvent(tx, {
+    const outboxEventId = await enqueueOutboxEvent(tx, {
       eventType: "wa.owner_forward",
       dedupeKey: `wa.fwd:${input.zapiMessageId}`,
       aggregateType: "wa_conversation",
@@ -357,7 +362,7 @@ export async function routeInboundMessage(
         customerName: `Motoboy ${firstNameOf(courier.name)}`,
       },
     });
-    return "forwarded";
+    return { route: "forwarded", outboxEventId };
   }
 
   const botEligible =
@@ -368,8 +373,9 @@ export async function routeInboundMessage(
 
   if (botEligible) {
     // Sem kick aqui: a transação de quem chama ainda está aberta e o kick
-    // chegaria antes do commit. Quem chama dá o kick depois de commitar.
-    await enqueueOutboxEvent(
+    // chegaria antes do commit. Quem chama dá o kick depois de commitar (e
+    // roda o turno na mesma invocação quando tem tempo).
+    const outboxEventId = await enqueueOutboxEvent(
       tx,
       {
         eventType: "wa.bot_turn",
@@ -380,10 +386,10 @@ export async function routeInboundMessage(
       },
       { kick: false },
     );
-    return "bot_queued";
+    return { route: "bot_queued", outboxEventId };
   }
 
-  await enqueueOutboxEvent(tx, {
+  const outboxEventId = await enqueueOutboxEvent(tx, {
     eventType: "wa.owner_forward",
     dedupeKey: `wa.fwd:${input.zapiMessageId}`,
     aggregateType: "wa_conversation",
@@ -394,7 +400,7 @@ export async function routeInboundMessage(
       ...(input.customerName ? { customerName: input.customerName } : {}),
     },
   });
-  return "forwarded";
+  return { route: "forwarded", outboxEventId };
 }
 
 /** Z-API manda '5511999998888' (sem '+'): normaliza BR; aceita E.164 estrangeiro. */
@@ -446,6 +452,41 @@ async function recordIgnoredInbound(
   });
 }
 
+/** Quanto a fila espera para repetir um recibo que chegou antes de a mensagem existir (o turno da Lia já commitou até lá). */
+export const STATUS_REPLAY_DELAY_MS = 20_000;
+export type MessageStatusTarget = "delivered" | "read";
+
+/**
+ * Aplica um recibo da Z-API à mensagem pelo zapi_message_id, de forma
+ * MONOTÔNICA (nunca regride). Devolve quantas linhas mudaram: 0 = a mensagem
+ * não existe (ainda) ou já estava adiante.
+ */
+export async function applyMessageStatus(db: DbOrTx, input: { zapiMessageId: string; target: MessageStatusTarget; at?: Date }): Promise<number> {
+  // A hora é a do RECIBO (o replay pela fila roda dezenas de segundos depois).
+  const at = input.at ?? new Date();
+  const res = await db
+    .update(waMessages)
+    .set(
+      input.target === "read"
+        ? // Lida implica entregue: READ que chegou antes do DELIVERED (ou DELIVERED perdido) não deixa delivered_at vazio.
+          { status: "read", readAt: at, deliveredAt: sql`coalesce(${waMessages.deliveredAt}, ${at})` }
+        : { status: "delivered", deliveredAt: at },
+    )
+    .where(
+      and(
+        eq(waMessages.zapiMessageId, input.zapiMessageId),
+        input.target === "read" ? inArray(waMessages.status, ["sent", "delivered"]) : eq(waMessages.status, "sent"),
+      ),
+    )
+    .returning({ id: waMessages.id });
+  return res.length;
+}
+
+export async function messageExists(db: DbOrTx, zapiMessageId: string): Promise<boolean> {
+  const [row] = await db.select({ id: waMessages.id }).from(waMessages).where(eq(waMessages.zapiMessageId, zapiMessageId)).limit(1);
+  return row !== undefined;
+}
+
 export async function processZapiInbound(
   db: DbOrTx,
   input: ProcessZapiInboundInput,
@@ -486,27 +527,33 @@ export async function processZapiInbound(
       : statusUpper === "READ" || statusUpper === "PLAYED"
         ? "read"
         : null;
+  // Só o callback de STATUS de verdade (type ou lista de ids): o "ao receber"
+  // de reação, contato, enquete e afins também vem com status RECEIVED e sem
+  // texto — esses seguem para "ignorado", não viram recibo.
   const statusIds = (parsed.ids ?? (messageId ? [messageId] : [])).map(String);
-  if (statusTarget && statusIds.length > 0 && !text) {
+  const isStatusCallback = parsed.type === "MessageStatusCallback" || (parsed.ids !== undefined && parsed.ids !== null);
+  if (statusTarget && isStatusCallback && statusIds.length > 0 && !text) {
+    const receivedAt = new Date();
     let updated = 0;
     for (const id of statusIds) {
-      const res = await db
-        .update(waMessages)
-        .set(
-          statusTarget === "read"
-            ? { status: "read", readAt: new Date() }
-            : { status: "delivered", deliveredAt: new Date() },
-        )
-        .where(
-          and(
-            eq(waMessages.zapiMessageId, id),
-            statusTarget === "read"
-              ? inArray(waMessages.status, ["sent", "delivered"])
-              : eq(waMessages.status, "sent"),
-          ),
-        )
-        .returning({ id: waMessages.id });
-      updated += res.length;
+      // Olha ANTES de aplicar: se a linha ainda não existe (o turno da Lia não
+      // commitou o balão que acabou de enviar), o recibo repete pela fila — é
+      // ele que alimenta o ✓✓ e "entregue no celular". Olhar antes fecha a
+      // janela em que o turno commita entre o UPDATE e a olhada.
+      const existed = await messageExists(db, id);
+      updated += await applyMessageStatus(db, { zapiMessageId: id, target: statusTarget, at: receivedAt });
+      if (!existed) {
+        await enqueueOutboxEvent(
+          db,
+          {
+            eventType: "wa.status_replay",
+            dedupeKey: `wa.status:${id}:${statusTarget}`,
+            payload: { zapiMessageId: id, status: statusTarget, at: receivedAt.toISOString() },
+            nextAttemptAt: new Date(Date.now() + STATUS_REPLAY_DELAY_MS),
+          },
+          { kick: false },
+        );
+      }
     }
     return { action: "status", updated };
   }
@@ -514,7 +561,8 @@ export async function processZapiInbound(
   // Sem texto nem mídia = status/ack — ignorados (não registram inbound,
   // senão o DELIVERED consumiria o dedupe do messageId). Ecos das nossas
   // próprias mensagens (fromMe) e grupos também não entram no fluxo.
-  if (!text || parsed.fromMe === true || parsed.isGroup === true) {
+  // Texto só de espaços também: viraria um bloco vazio para o modelo (400).
+  if (!text || text.trim() === "" || parsed.fromMe === true || parsed.isGroup === true) {
     return { action: "ignored", ignored: true };
   }
 
@@ -584,13 +632,19 @@ export async function processZapiInbound(
       if (lid) {
         const [stray] = await openConversation(eq(waConversations.phoneE164, lid));
         if (stray && stray.id !== byPhone.id) {
-          await tx.update(waConversations).set({ status: "closed", updatedAt: now }).where(eq(waConversations.id, stray.id));
+          // A conversa "stray" pode estar no meio de um turno da Lia: não se espera por ela — fecha na próxima mensagem.
+          await withRowLockTimeout(tx, (sp) => sp.update(waConversations).set({ status: "closed", updatedAt: now }).where(eq(waConversations.id, stray.id)));
         }
       }
     } else if (lidConversation) {
       if (realPhone && lidConversation.phoneE164 !== realPhone) {
-        await tx.update(waConversations).set({ phoneE164: realPhone, updatedAt: now }).where(eq(waConversations.id, lidConversation.id));
-        conversationAddress = realPhone;
+        // Religar o LID ao telefone mexe na chave (phone_e164): espera o turno em
+        // curso só 3 s; presa, a mensagem fica na conversa do LID desta vez e a
+        // próxima religa.
+        const relinked = await withRowLockTimeout(tx, (sp) =>
+          sp.update(waConversations).set({ phoneE164: realPhone, updatedAt: now }).where(eq(waConversations.id, lidConversation.id)),
+        );
+        conversationAddress = relinked ? realPhone : lidConversation.phoneE164;
       } else {
         conversationAddress = lidConversation.phoneE164;
       }
@@ -611,9 +665,20 @@ export async function processZapiInbound(
           .limit(1)
       : [];
 
-    // No máximo UMA conversa não-fechada por endereço (unique parcial):
-    // upsert reaproveita a aberta; conversa fechada não conflita e nasce outra.
-    const [conversation] = await tx
+    // No máximo UMA conversa não-fechada por endereço (unique parcial): a
+    // aberta é reaproveitada; conversa fechada não conflita e nasce outra.
+    // A conversa existente NÃO é atualizada aqui — só lida, sem esperar o
+    // lock que o turno da Lia segura enquanto responde: o que a mensagem
+    // muda nela (última entrada, LID, cliente, nome, ponte) é o "toque", que
+    // vai no fim da transação com um teto de espera (touchConversationOrDefer).
+    const conversationColumns = {
+      id: waConversations.id,
+      phoneE164: waConversations.phoneE164,
+      status: waConversations.status,
+      createdAt: waConversations.createdAt,
+      botDisabledUntil: waConversations.botDisabledUntil,
+    };
+    const [created] = await tx
       .insert(waConversations)
       .values({
         phoneE164: conversationAddress,
@@ -621,26 +686,22 @@ export async function processZapiInbound(
         customerId: customer?.id ?? null,
         lastInboundAt: now,
       })
-      .onConflictDoUpdate({
-        target: waConversations.phoneE164,
-        targetWhere: sql`${waConversations.status} <> 'closed'`,
-        set: {
-          lastInboundAt: now,
-          updatedAt: now,
-          ...(lid ? { lid: sql`coalesce(${waConversations.lid}, ${lid})` } : {}),
-          // Nunca sobrescreve um vínculo existente com outro cliente.
-          ...(customer
-            ? { customerId: sql`coalesce(${waConversations.customerId}, ${customer.id})` }
-            : {}),
-        },
-      })
-      .returning({
-        id: waConversations.id,
-        phoneE164: waConversations.phoneE164,
-        status: waConversations.status,
-        createdAt: waConversations.createdAt,
-        botDisabledUntil: waConversations.botDisabledUntil,
-      });
+      .onConflictDoNothing({ target: waConversations.phoneE164, where: sql`${waConversations.status} <> 'closed'` })
+      .returning(conversationColumns);
+    const [conversation] = created
+      ? [created]
+      : await tx
+          .select(conversationColumns)
+          .from(waConversations)
+          .where(and(eq(waConversations.phoneE164, conversationAddress), sql`${waConversations.status} <> 'closed'`))
+          .limit(1);
+    if (!conversation) throw new Error(`Conversa de ${conversationAddress} sumiu entre o insert e a leitura.`);
+    const touch: ConversationTouch = {
+      conversationId: conversation.id,
+      inboundAt: now.toISOString(),
+      ...(lid ? { lid } : {}),
+      ...(customer ? { customerId: customer.id } : {}),
+    };
     // Daqui em diante, o endereço é o da CONVERSA (telefone quando conhecido,
     // senão o LID): é para ele que a resposta volta. A IDENTIDADE (dono,
     // motoboy, opt-out, feedback) usa o telefone real quando o temos.
@@ -685,46 +746,37 @@ export async function processZapiInbound(
               (note): note is string => typeof note === "string",
             ) as string[])
           : [];
-      if (notes.length > 0) {
-        await tx
-          .update(waConversations)
-          .set({
-            botState: sql`coalesce(${waConversations.botState}, '{}'::jsonb) || jsonb_build_object('notes', ${JSON.stringify(notes)}::jsonb)`,
-          })
-          .where(eq(waConversations.id, conversation.id));
-      }
+      if (notes.length > 0) touch.notes = notes;
     }
 
     // Nome do perfil do WhatsApp: a vendedora chama a cliente pelo nome sem
     // precisar perguntar. Vai para o bot_state (jsonb livre), só se houver.
     const senderName = parsed.senderName?.trim();
-    if (senderName && senderName.length <= 80) {
-      await tx
-        .update(waConversations)
-        .set({
-          botState: sql`coalesce(${waConversations.botState}, '{}'::jsonb) || jsonb_build_object('displayName', ${senderName}::text)`,
-        })
-        .where(eq(waConversations.id, conversation.id));
-    }
+    if (senderName && senderName.length <= 80) touch.displayName = senderName;
 
     if (!message) {
+      await touchConversationOrDefer(tx, touch);
       return { action: "duplicate", duplicate: true } as const;
     }
 
-    const markDone = () =>
-      tx
+    // Fecha o evento inbound e dá o toque na conversa (ou o deixa na fila, se
+    // a linha estiver presa pelo turno): é o último passo de cada ramo.
+    const markDone = async () => {
+      await tx
         .update(inboundEvents)
         .set({ status: "done", processedAt: new Date() })
         .where(eq(inboundEvents.id, inboundId));
+      await touchConversationOrDefer(tx, touch);
+    };
 
-    const queueTranscription = async () => {
+    const queueTranscription = async (): Promise<string | null> => {
       await tx
         .update(waMessages)
         .set({
           mediaMeta: sql`coalesce(${waMessages.mediaMeta}, '{}'::jsonb) || '{"transcript":{"status":"pending"}}'::jsonb`,
         })
         .where(eq(waMessages.id, message.id));
-      await enqueueOutboxEvent(
+      return enqueueOutboxEvent(
         tx,
         {
           eventType: "wa.transcribe",
@@ -754,9 +806,9 @@ export async function processZapiInbound(
         now,
         waMessageId: message.id,
       });
-      const done = async (action: "atelier_queued" | "atelier_photo" | "atelier_help" | "transcribe_queued") => {
+      const done = async (action: "atelier_queued" | "atelier_photo" | "atelier_help" | "transcribe_queued", outboxEventId: string | null = null) => {
         await markDone();
-        return { action, conversationId: conversation.id, waMessageId: message.id } as const;
+        return { action, conversationId: conversation.id, waMessageId: message.id, outboxEventId } as const;
       };
       if (decision.kind === "intake") {
         await openAtelierIntake(tx, {
@@ -778,8 +830,7 @@ export async function processZapiInbound(
         return done("atelier_photo");
       }
       if (decision.kind === "transcribe") {
-        await queueTranscription();
-        return done("transcribe_queued");
+        return done("transcribe_queued", await queueTranscription());
       }
       if (decision.kind === "help") {
         await enqueueAtelierHelp(tx, { conversationId: conversation.id, zapiMessageId: messageId, reason: decision.reason });
@@ -813,7 +864,7 @@ export async function processZapiInbound(
 
       // Confirmação educada — resposta transacional a um pedido do próprio
       // cliente, portanto NÃO exige opt-in. Sai pela fila como tudo.
-      await enqueueOutboxEvent(tx, {
+      const ackEventId = await enqueueOutboxEvent(tx, {
         eventType: "wa.send",
         dedupeKey: `wa.optout_ack:${messageId}`,
         aggregateType: "wa_conversation",
@@ -832,6 +883,7 @@ export async function processZapiInbound(
         conversationId: conversation.id,
         waMessageId: message.id,
         optedOut: customer !== undefined,
+        outboxEventId: ackEventId,
       } as const;
     }
 
@@ -861,7 +913,7 @@ export async function processZapiInbound(
           await markDone();
           return { action: "feedback_handoff", conversationId: conversation.id, waMessageId: message.id } as const;
         }
-        const route = await routeInboundMessage(tx, {
+        const { route, outboxEventId } = await routeInboundMessage(tx, {
           conversation,
           phoneE164,
           identityPhone,
@@ -872,7 +924,7 @@ export async function processZapiInbound(
           now,
         });
         await markDone();
-        return { action: route, conversationId: conversation.id, waMessageId: message.id } as const;
+        return { action: route, conversationId: conversation.id, waMessageId: message.id, outboxEventId } as const;
       }
     }
 
@@ -904,16 +956,8 @@ export async function processZapiInbound(
     if (bridgeCode) {
       const bridge = await consumeSiteCartByCode(tx, { code: bridgeCode, conversationId: conversation.id, now });
       if (bridge) {
-        const [current] = await tx
-          .select({ botState: waConversations.botState })
-          .from(waConversations)
-          .where(eq(waConversations.id, conversation.id))
-          .limit(1);
-        const state = parseBotState(current?.botState);
-        await tx
-          .update(waConversations)
-          .set({ botState: mergeBridgeIntoState(state, bridge), updatedAt: now })
-          .where(eq(waConversations.id, conversation.id));
+        // A fusão com a sacola da conversa é parte do toque (a linha pode estar presa).
+        touch.bridge = bridge;
         // O texto da cliente vem primeiro e inteiro (o encaminhamento corta em
         // FORWARD_BODY_MAX_CHARS); a linha da ponte fecha, curta.
         const bridgeLine = bridgeContextLine(bridge, now).slice(0, 90);
@@ -931,18 +975,20 @@ export async function processZapiInbound(
       isTranscriptionConfigured() &&
       !(await findActiveCourierByPhone(tx, identityPhone))
     ) {
-      await queueTranscription();
+      const outboxEventId = await queueTranscription();
       await markDone();
       return {
         action: "transcribe_queued",
         conversationId: conversation.id,
         waMessageId: message.id,
+        outboxEventId,
       } as const;
     }
 
     // Texto comum (ou mídia sem transcrição): a rota decide entre o turno da
-    // vendedora (fila) e o encaminhamento ao dono — nunca inline no webhook.
-    const route = await routeInboundMessage(tx, {
+    // vendedora e o encaminhamento ao dono — ambos vão para o outbox dentro
+    // desta transação; quem roda é a rota do webhook (depois do 200) ou a fila.
+    const { route, outboxEventId } = await routeInboundMessage(tx, {
       conversation,
       phoneE164,
       identityPhone,
@@ -957,10 +1003,14 @@ export async function processZapiInbound(
       action: route,
       conversationId: conversation.id,
       waMessageId: message.id,
+      outboxEventId,
     } as const;
   });
-  // O kick só depois do commit: a linha do outbox já está visível para o
-  // outbox-kick e a resposta da Lia sai em segundos, não no cron seguinte.
-  if (result.action !== "duplicate") await kickOutbox();
+  // O kick só depois do commit — e com o id do evento que a mensagem gerou:
+  // é a rede de segurança do turno inline (a linha já está visível; se a
+  // invocação do webhook morrer no meio, o Inngest a acha pendente).
+  if (result.action !== "duplicate") {
+    await kickOutbox("outboxEventId" in result && result.outboxEventId ? result.outboxEventId : undefined);
+  }
   return result;
 }

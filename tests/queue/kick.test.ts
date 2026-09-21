@@ -7,12 +7,13 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import type { Db } from "@/db/client";
 import * as schema from "@/db/schema";
 import { KICK_POLL_BUDGET_MS, runOutboxKick } from "@/queue/kick";
 import { createTestDb, type TestDb } from "../helpers/db";
 
-const handlers: Record<string, (event: { id: string; deadlineAt?: Date }) => Promise<void>> = {};
+const handlers: Record<string, (event: { id: string; deadlineAt?: Date; source?: string }) => Promise<void>> = {};
 vi.mock("@/queue/handlers", () => ({
   resolveOutboxHandler: (eventType: string) => {
     const handler = handlers[eventType];
@@ -52,12 +53,13 @@ function fakeTime(startMs = Date.now()) {
   };
 }
 
-async function insertEvent(input: { eventType?: string; status?: string; nextAttemptInMs?: number; lockedBy?: string } = {}): Promise<string> {
+async function insertEvent(input: { eventType?: string; status?: string; nextAttemptInMs?: number; lockedBy?: string; aggregateId?: string } = {}): Promise<string> {
   const [row] = await db
     .insert(schema.outboxEvents)
     .values({
       eventType: input.eventType ?? "order.receipt",
       payload: {},
+      ...(input.aggregateId ? { aggregateType: "wa_conversation", aggregateId: input.aggregateId } : {}),
       status: input.status ?? "pending",
       nextAttemptAt: new Date(Date.now() + (input.nextAttemptInMs ?? 0)),
       ...(input.lockedBy ? { lockedBy: input.lockedBy, lockedAt: new Date() } : {}),
@@ -95,6 +97,82 @@ describe("runOutboxKick", () => {
     expect(new Set(runs)).toEqual(new Set([id, ...older]));
     expect(result).toMatchObject({ claimed: 11, done: 11, target: "processada", polls: 0, rekicked: [] });
     expect(await statusOf(id)).toBe("done");
+  });
+
+  it("inline (a própria invocação que enfileirou): reclama o alvo e os turnos pendentes da MESMA conversa, não o resto da fila; a origem chega ao handler", async () => {
+    const ran: { id: string; source: string }[] = [];
+    handlers["wa.bot_turn"] = async (event) => {
+      ran.push({ id: event.id, source: event.source ?? "?" });
+    };
+    handlers["order.receipt"] = async (event) => {
+      ran.push({ id: event.id, source: event.source ?? "?" });
+    };
+    const conversa = "11111111-1111-4111-8111-111111111111";
+    const outra = "22222222-2222-4222-8222-222222222222";
+    const other = await insertEvent({ nextAttemptInMs: -60_000 });
+    const outraConversa = await insertEvent({ eventType: "wa.bot_turn", aggregateId: outra, nextAttemptInMs: -60_000 });
+    const id = await insertEvent({ eventType: "wa.bot_turn", aggregateId: conversa });
+    // A mensagem seguinte da mesma cliente já enfileirou o turno dela.
+    const seguinte = await insertEvent({ eventType: "wa.bot_turn", aggregateId: conversa });
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), { outboxEventId: id, source: "inline", ...time });
+    expect(result).toMatchObject({ source: "inline", target: "processada", claimed: 2, done: 2, rekicked: [] });
+    expect(ran.map((r) => r.id)).toEqual([id, seguinte]);
+    expect(ran.every((r) => r.source === "inline")).toBe(true);
+    expect(await statusOf(seguinte)).toBe("done");
+    expect(await statusOf(other)).toBe("pending");
+    expect(await statusOf(outraConversa)).toBe("pending");
+  });
+
+  it("targetOnly com outra origem (turno aninhado na transcrição pelo cron): mesmo comportamento do inline, rótulo cron", async () => {
+    const sources: string[] = [];
+    handlers["wa.bot_turn"] = async (event) => {
+      sources.push(event.source ?? "?");
+    };
+    handlers["order.receipt"] = async () => {
+      sources.push("NÃO DEVIA");
+    };
+    const other = await insertEvent({ nextAttemptInMs: -60_000 });
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), { outboxEventId: id, source: "cron", targetOnly: true, ...time });
+    expect(result).toMatchObject({ source: "cron", target: "processada", claimed: 1, done: 1 });
+    expect(sources).toEqual(["cron"]);
+    expect(await statusOf(other)).toBe("pending");
+  });
+
+  it("alvo devolvido sem tempo (HandlerOutOfTimeError: esperou o lock da conversa) volta a pending sem contar tentativa e ganha outra invocação", async () => {
+    handlers["wa.bot_turn"] = async () => {
+      throw new HandlerOutOfTimeError(1_000);
+    };
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const requested: string[] = [];
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), { outboxEventId: id, source: "inline", requestKick: async (target) => { requested.push(target); }, ...time });
+    expect(result).toMatchObject({ target: "processada", released: 1, failed: 0, rekicked: [id] });
+    expect(requested).toEqual([id]);
+    const [row] = await db.select({ status: schema.outboxEvents.status, attempts: schema.outboxEvents.attempts }).from(schema.outboxEvents).where(eq(schema.outboxEvents.id, id));
+    expect(row).toEqual({ status: "pending", attempts: 0 });
+  });
+
+  it("inline cujo alvo falhou (turno sem tempo depois de esperar o lock, provedor fora) pede outra invocação — o kick com id já tinha passado", async () => {
+    handlers["wa.bot_turn"] = async () => {
+      throw new Error("sem tempo");
+    };
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const requested: string[] = [];
+    const time = fakeTime();
+    const result = await runOutboxKick(asDb(), {
+      outboxEventId: id,
+      source: "inline",
+      requestKick: async (target) => {
+        requested.push(target);
+      },
+      ...time,
+    });
+    expect(result).toMatchObject({ target: "processada", failed: 1, rekicked: [id] });
+    expect(requested).toEqual([id]);
+    expect(await statusOf(id)).toBe("failed");
   });
 
   it("linha que ainda não commitou: espera em pequenos passos até aparecer, depois roda", async () => {

@@ -6,12 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@/db/client";
 import * as schema from "@/db/schema";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import { drainOutbox } from "@/queue/worker";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 // Handlers injetados: o teste decide quem falha e quem demora. O módulo real
 // puxa todos os adapters; aqui só interessa o comportamento do varredor.
-const handlers: Record<string, (event: { id: string; eventType: string; createdAt: Date }) => Promise<void>> = {};
+const handlers: Record<string, (event: { id: string; eventType: string; createdAt: Date; source?: string }) => Promise<void>> = {};
 vi.mock("@/queue/handlers", () => ({
   resolveOutboxHandler: (eventType: string) => {
     const handler = handlers[eventType];
@@ -235,5 +236,47 @@ describe("drainOutbox — orçamento de tempo do lote", () => {
     await insertEvent({ eventType: "order.receipt" });
     const result = await drainOutbox(asDb(), { limit: 10 });
     expect(result).toMatchObject({ claimed: 2, done: 2, released: 0 });
+  });
+});
+
+describe("drainOutbox — origem", () => {
+  it("o evento leva a origem de quem drenou: cron por padrão; inline/kick quando informado", async () => {
+    const sources: string[] = [];
+    handlers["order.receipt"] = async (event) => {
+      sources.push(event.source ?? "?");
+    };
+    await insertEvent({ eventType: "order.receipt" });
+    await drainOutbox(asDb(), {});
+    await insertEvent({ eventType: "order.receipt" });
+    await drainOutbox(asDb(), { source: "inline" });
+    await insertEvent({ eventType: "order.receipt" });
+    await drainOutbox(asDb(), { source: "kick" });
+    expect(sources).toEqual(["cron", "inline", "kick"]);
+  });
+});
+
+describe("drainOutbox — sem tempo e hora da falha", () => {
+  it("HandlerOutOfTimeError devolve a linha a pending sem contar tentativa e a lista em releasedIds", async () => {
+    handlers["wa.bot_turn"] = async () => {
+      throw new HandlerOutOfTimeError(500);
+    };
+    const id = await insertEvent({ eventType: "wa.bot_turn" });
+    const result = await drainOutbox(asDb(), {});
+    expect(result).toMatchObject({ claimed: 1, done: 0, failed: 0, released: 1, releasedIds: [id] });
+    expect(await eventRow(id)).toMatchObject({ status: "pending", attempts: 0, lockedBy: null });
+  });
+
+  it("o backoff conta da hora da FALHA, não do início do lote (o handler pode ter esperado)", async () => {
+    handlers["order.receipt"] = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      throw new Error("provedor fora");
+    };
+    const id = await insertEvent({ eventType: "order.receipt" });
+    const before = Date.now();
+    await drainOutbox(asDb(), {});
+    const row = await eventRow(id);
+    expect(row.status).toBe("failed");
+    // Política padrão: 5 s × jitter [0,5; 1,5) a partir da falha (≥ 1,2 s depois do início).
+    expect(row.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 1_200 + 2_500);
   });
 });

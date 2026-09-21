@@ -46,6 +46,8 @@ export async function transcribeInboundAudio(
   provider: MessagingProvider,
   transcriber: Transcriber,
   input: z.input<typeof inputSchema>,
+  /** Roda o evento enfileirado (turno da Lia) na mesma invocação, depois do commit — quem tem orçamento injeta. */
+  deps: { runInline?: (outboxEventId: string) => Promise<void> } = {},
 ): Promise<TranscribeInboundAudioResult> {
   const { waMessageId, attempt } = inputSchema.parse(input);
 
@@ -116,13 +118,13 @@ export async function transcribeInboundAudio(
       ? { status: "done" as const, ms: durationMs, model: outcome.model, chars: outcome.text.length }
       : { status: (outcome.reason === "longo" ? "skipped" : "failed") as "skipped" | "failed", ms: durationMs, reason: outcome.reason };
 
-  const result = await db.transaction(async (tx): Promise<TranscribeInboundAudioResult> => {
+  const { result, outboxEventId } = await db.transaction(async (tx): Promise<{ result: TranscribeInboundAudioResult; outboxEventId: string | null }> => {
     await tx
       .update(waMessages)
       .set({ body, mediaMeta: { ...meta, transcript } })
       .where(eq(waMessages.id, row.id));
 
-    const route = await routeInboundMessage(tx, {
+    const { route, outboxEventId } = await routeInboundMessage(tx, {
       conversation: { id: row.conversationId, status: row.status, botDisabledUntil: row.botDisabledUntil },
       phoneE164: row.phoneE164,
       // A conversa guarda o telefone quando o conhece; um LID é o melhor que há.
@@ -155,11 +157,22 @@ export async function transcribeInboundAudio(
       },
     });
 
-    return outcome.kind === "done"
-      ? { transcribed: true, route, chars: outcome.text.length, durationMs }
-      : { fallback: outcome.reason, route };
+    const result: TranscribeInboundAudioResult =
+      outcome.kind === "done"
+        ? { transcribed: true, route, chars: outcome.text.length, durationMs }
+        : { fallback: outcome.reason, route };
+    return { result, outboxEventId };
   });
-  // Turno da Lia enfileirado dentro da transação: o kick só depois do commit.
-  await kickOutbox();
+  // O evento enfileirado dentro da transação (turno da Lia ou aviso ao dono):
+  // o kick, rede de segurança, só depois do commit — e, se quem chamou tem
+  // tempo, o turno roda aqui mesmo em vez de esperar o Inngest começar.
+  await kickOutbox(outboxEventId ?? undefined);
+  if (outboxEventId && deps.runInline) {
+    try {
+      await deps.runInline(outboxEventId);
+    } catch (error) {
+      console.error(`[wa-transcribe] turno inline ${outboxEventId} falhou; o kick e o cron cobrem`, error);
+    }
+  }
   return result;
 }

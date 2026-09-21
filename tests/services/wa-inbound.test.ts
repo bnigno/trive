@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
-import { OPT_OUT_ACK_BODY, processZapiInbound } from "@/services/wa-inbound";
+import { applyMessageStatus, OPT_OUT_ACK_BODY, processZapiInbound, STATUS_REPLAY_DELAY_MS } from "@/services/wa-inbound";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const SECRET = "segredo-webhook-zapi";
@@ -248,6 +248,51 @@ describe("processZapiInbound", () => {
     const messages = await db.select().from(schema.waMessages);
     expect(messages).toHaveLength(2);
     expect(messages.every((m) => m.conversationId === conversations[0].id)).toBe(true);
+  });
+
+  it("recibo que chega antes de a mensagem existir vira replay na fila (aplicado depois); READ antes do DELIVERED também preenche delivered_at", async () => {
+    // O balão do turno ainda não commitou: o DELIVERED não acha nada…
+    const orphan = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { type: "MessageStatusCallback", phone: PHONE_ZAPI, status: "DELIVERED", ids: ["MSG-ORFAO"] },
+    });
+    expect(orphan).toEqual({ action: "status", updated: 0 });
+    const [replay] = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.status_replay"));
+    expect(replay).toMatchObject({ dedupeKey: "wa.status:MSG-ORFAO:delivered", payload: { zapiMessageId: "MSG-ORFAO", status: "delivered" }, status: "pending" });
+    expect(replay.nextAttemptAt.getTime()).toBeGreaterThan(Date.now() + STATUS_REPLAY_DELAY_MS - 5_000);
+    // O payload leva a HORA DO RECIBO: aplicado depois, delivered_at é a hora real, não a do replay.
+    const receiptAt = new Date((replay.payload as { at: string }).at);
+    expect(Math.abs(receiptAt.getTime() - Date.now())).toBeLessThan(5_000);
+
+    // "Ao receber" de reação/contato/enquete (status RECEIVED sem texto, sem ids, sem type de status): ignorado, sem replay.
+    const reaction = await processZapiInbound(sdb, {
+      providedSecret: SECRET,
+      body: { messageId: "MSG-REACAO", phone: PHONE_ZAPI, status: "RECEIVED", reaction: { value: "❤️" } },
+    });
+    expect(reaction).toEqual({ action: "ignored", ignored: true });
+    expect(await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.status_replay"))).toHaveLength(1);
+
+    // …a linha aparece (o turno commitou) e o replay aplica o recibo.
+    const [conv] = await db.insert(schema.waConversations).values({ phoneE164: "+5511977775555" }).returning({ id: schema.waConversations.id });
+    const [msg] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: conv.id, direction: "outbound", body: "Oi", status: "sent", zapiMessageId: "MSG-ORFAO" })
+      .returning({ id: schema.waMessages.id });
+    expect(await applyMessageStatus(sdb, { zapiMessageId: "MSG-ORFAO", target: "delivered", at: receiptAt })).toBe(1);
+    const [applied] = await db.select({ status: schema.waMessages.status, deliveredAt: schema.waMessages.deliveredAt }).from(schema.waMessages).where(eq(schema.waMessages.id, msg.id));
+    expect(applied.status).toBe("delivered");
+    expect(applied.deliveredAt?.getTime()).toBe(receiptAt.getTime());
+
+    // READ antes do DELIVERED: lida implica entregue.
+    const [msg2] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: conv.id, direction: "outbound", body: "Oi 2", status: "sent", zapiMessageId: "MSG-LIDA" })
+      .returning({ id: schema.waMessages.id });
+    expect(await applyMessageStatus(sdb, { zapiMessageId: "MSG-LIDA", target: "read" })).toBe(1);
+    const [read] = await db.select({ status: schema.waMessages.status, deliveredAt: schema.waMessages.deliveredAt, readAt: schema.waMessages.readAt }).from(schema.waMessages).where(eq(schema.waMessages.id, msg2.id));
+    expect(read.status).toBe("read");
+    expect(read.deliveredAt).not.toBeNull();
+    expect(read.readAt).not.toBeNull();
   });
 
   it("callback de status atualiza a mensagem (sent → delivered → read, monotônico)", async () => {

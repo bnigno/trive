@@ -90,8 +90,8 @@ export function splitBotReply(text: string): string[] {
 // caracteres, curto no primeiro balão (ela já "pensou" enquanto o modelo
 // rodava) e um pouco mais nos seguintes.
 export const TYPING_CHARS_PER_SECOND = 40;
-export const TYPING_FIRST_MAX_SECONDS = 2;
-export const TYPING_NEXT_MAX_SECONDS = 3;
+export const TYPING_FIRST_MAX_SECONDS = 1;
+export const TYPING_NEXT_MAX_SECONDS = 2;
 /** "Gravando áudio…" antes da nota da curadora. */
 export const CURATOR_AUDIO_RECORDING_SECONDS = 3;
 
