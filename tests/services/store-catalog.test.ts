@@ -415,9 +415,9 @@ describe("getPublicProductBySlug", () => {
     // Todas as fotos voltam, na ordem de sort_order: quem escolhe o que
     // mostrar por cor é a vitrine, não o service.
     expect(detail!.images).toEqual([
-      { path: "products/p/verde-full.webp", color: "Verde" },
-      { path: "products/p/geral-full.webp", color: null },
-      { path: "products/p/azul-full.webp", color: "Azul" },
+      { path: "products/p/verde-full.webp", color: "Verde", origin: "upload" },
+      { path: "products/p/geral-full.webp", color: null, origin: "upload" },
+      { path: "products/p/azul-full.webp", color: "Azul", origin: "upload" },
     ]);
   });
 
