@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { isWaLid, toWaGroupId, toWaLid, waAddressForZapi } from "@/lib/phone";
+import { isWaLid, toWaGroupId, toWaLid, waAddressForZapi, zapiPhoneToE164 } from "@/lib/phone";
 
 import type {
   DownloadedMedia,
@@ -109,15 +109,6 @@ function isConnectedPayload(payload: {
 }): boolean {
   if (payload.connected === true || payload.connected === "true") return true;
   return typeof payload.status === "string" && payload.status.toUpperCase() === "CONNECTED";
-}
-
-/** Telefone como a Z-API entrega ('5591…', com ou sem '+', ou LID) → E.164; null para LID/vazio. */
-function zapiPhoneToE164(raw: string | number | null | undefined): string | null {
-  if (raw == null) return null;
-  const value = String(raw).trim();
-  if (!value || toWaLid(value)) return null;
-  const digits = value.replace(/\D/g, "");
-  return digits.length >= 8 ? `+${digits}` : null;
 }
 
 function parseGroupParticipant(raw: z.infer<typeof zapiGroupParticipantSchema>): GroupParticipant | null {
@@ -278,7 +269,9 @@ export class ZapiMessagingProvider implements MessagingProvider {
   }
 
   async listGroups(): Promise<GroupSummary[]> {
-    const raw = await this.request("/groups");
+    // page/pageSize são obrigatórios (como no /chats); uma operação pequena
+    // não passa de uma página.
+    const raw = await this.request("/groups?page=1&pageSize=100");
     const parsed = zapiGroupsResponseSchema.parse(raw);
     const groups: GroupSummary[] = [];
     for (const item of parsed) {
@@ -329,13 +322,14 @@ export class ZapiMessagingProvider implements MessagingProvider {
     });
   }
 
-  async removeGroupParticipants(groupId: string, phonesE164: string[]): Promise<void> {
-    if (phonesE164.length === 0) return;
+  async removeGroupParticipants(groupId: string, addresses: string[]): Promise<void> {
+    if (addresses.length === 0) return;
     await this.request("/remove-participant", {
       method: "POST",
       body: {
         groupId: waAddressForZapi(groupId),
-        phones: phonesE164.map((phone) => waAddressForZapi(phone)),
+        // E.164 sem o '+'; LID como está (é o único endereço de quem tem o número oculto).
+        phones: addresses.map((address) => waAddressForZapi(address)),
       },
     });
   }

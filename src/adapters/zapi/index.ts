@@ -196,8 +196,8 @@ export interface MessagingProvider {
   getGroupInvitationLink(groupId: string): Promise<string | null>;
   /** Preferências do grupo (POST /update-group-settings) — exige a sessão como admin. */
   updateGroupSettings(groupId: string, settings: GroupSettings): Promise<void>;
-  /** Remove participantes (POST /remove-participant) — telefones em E.164; exige admin. */
-  removeGroupParticipants(groupId: string, phonesE164: string[]): Promise<void>;
+  /** Remove participantes (POST /remove-participant) — endereços E.164 ou LID; exige admin. */
+  removeGroupParticipants(groupId: string, addresses: string[]): Promise<void>;
 }
 
 let instance: MessagingProvider | undefined;

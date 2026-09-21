@@ -1,3 +1,5 @@
+import { isWaGroupId } from "@/lib/phone";
+
 import type {
   DownloadedMedia,
   GroupMetadata,
@@ -75,13 +77,13 @@ export class FakeMessagingProvider implements MessagingProvider {
   readonly sentReactions: OutboundReaction[] = [];
   readonly pinnedMessages: { to: string; providerMessageId: string; duration: PinDuration }[] = [];
   readonly groupSettingsUpdates: { groupId: string; settings: GroupSettings }[] = [];
-  readonly removedParticipants: { groupId: string; phonesE164: string[] }[] = [];
+  readonly removedParticipants: { groupId: string; addresses: string[] }[] = [];
   /** Grupos "existentes" na sessão fake: os testes semeiam com setGroup(). */
   private readonly groups = new Map<string, GroupMetadata>();
 
   async sendPoll(message: OutboundPollMessage): Promise<SentMessage> {
     // Paridade com o real: a Z-API só aceita enquete em grupo.
-    if (!message.toGroupId.endsWith("-group")) {
+    if (!isWaGroupId(message.toGroupId)) {
       throw new Error("Z-API respondeu HTTP 400 em /send-poll.");
     }
     const providerMessageId = this.nextProviderMessageId();
@@ -133,15 +135,17 @@ export class FakeMessagingProvider implements MessagingProvider {
     });
   }
 
-  async removeGroupParticipants(groupId: string, phonesE164: string[]): Promise<void> {
-    if (phonesE164.length === 0) return;
+  async removeGroupParticipants(groupId: string, addresses: string[]): Promise<void> {
+    if (addresses.length === 0) return;
     const group = this.groups.get(groupId);
     if (!group) throw new Error("Z-API respondeu HTTP 404 em /remove-participant.");
-    this.removedParticipants.push({ groupId, phonesE164: [...phonesE164] });
-    const gone = new Set(phonesE164);
+    this.removedParticipants.push({ groupId, addresses: [...addresses] });
+    const gone = new Set(addresses);
     this.groups.set(groupId, {
       ...group,
-      participants: group.participants.filter((p) => !(p.phoneE164 && gone.has(p.phoneE164))),
+      participants: group.participants.filter(
+        (p) => !((p.phoneE164 && gone.has(p.phoneE164)) || (p.lid && gone.has(p.lid))),
+      ),
     });
   }
 

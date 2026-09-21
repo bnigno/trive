@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GroupMetadata, MessagingProvider } from "@/adapters/zapi";
 import { ZapiMessagingProvider } from "@/adapters/zapi/client";
 import { FakeMessagingProvider } from "@/adapters/zapi/fake";
-import { isWaGroupId, toWaGroupId, waAddressForZapi } from "@/lib/phone";
+import { isWaGroupId, toWaGroupId, waAddressForZapi, zapiPhoneToE164 } from "@/lib/phone";
 
 type RecordedCall = { url: string; method: string | undefined; body: unknown };
 
@@ -46,6 +46,19 @@ describe("id de grupo (lib/phone)", () => {
   it("waAddressForZapi deixa o id de grupo intacto (só o E.164 perde o '+')", () => {
     expect(waAddressForZapi(GROUP)).toBe(GROUP);
     expect(waAddressForZapi("+5591999991528")).toBe("5591999991528");
+  });
+
+  it("zapiPhoneToE164 usa a régua do webhook: celular legado ganha o nono dígito, estrangeiro fica E.164, LID/lixo viram null", () => {
+    expect(zapiPhoneToE164("5591999991528")).toBe("+5591999991528");
+    expect(zapiPhoneToE164("+5591999991528")).toBe("+5591999991528");
+    // Caso real de produção: conta antiga sem o 9 — tem de casar com a conversa dela.
+    expect(zapiPhoneToE164("559181037536")).toBe("+5591981037536");
+    expect(zapiPhoneToE164("351912345678")).toBe("+351912345678");
+    expect(zapiPhoneToE164(5511888888888)).toBe("+5511888888888");
+    expect(zapiPhoneToE164("220839349862480@lid")).toBeNull();
+    expect(zapiPhoneToE164("")).toBeNull();
+    expect(zapiPhoneToE164("abc")).toBeNull();
+    expect(zapiPhoneToE164(null)).toBeNull();
   });
 });
 
@@ -133,7 +146,7 @@ describe("ZapiMessagingProvider — grupos (client real com fetch fake)", () => 
     });
   });
 
-  it("listGroups lê GET /groups (formato do /chats) e ignora item sem id de grupo", async () => {
+  it("listGroups lê GET /groups com page/pageSize (obrigatórios na doc) e ignora item sem id de grupo", async () => {
     const { calls, fetchFn } = createFakeFetch([
       { isGroup: true, name: "Provador TRIVÉ", phone: GROUP, unread: "0", lastMessageTime: "1730918668000" },
       { isGroup: true, name: "sem id" },
@@ -141,7 +154,7 @@ describe("ZapiMessagingProvider — grupos (client real com fetch fake)", () => 
     ]);
     const provider = new ZapiMessagingProvider(fetchFn);
     const groups = await provider.listGroups();
-    expect(calls[0]?.url).toMatch(/\/groups$/);
+    expect(calls[0]?.url).toMatch(/\/groups\?page=1&pageSize=100$/);
     expect(groups).toEqual([{ groupId: GROUP, name: "Provador TRIVÉ" }]);
   });
 
@@ -160,7 +173,8 @@ describe("ZapiMessagingProvider — grupos (client real com fetch fake)", () => 
       isGroupAnnouncement: false,
       participants: [
         { phone: "5511888888888", isAdmin: false, isSuperAdmin: false },
-        { phone: "5591981037536", isAdmin: false, isSuperAdmin: true, short: "Fabi", name: "Fabiano" },
+        // Conta antiga sem o nono dígito: a Z-API entrega assim e o endereço tem de casar com o cadastro.
+        { phone: "559181037536", isAdmin: false, isSuperAdmin: true, short: "Fabi", name: "Fabiano" },
         { phone: "220839349862480@lid", isAdmin: false },
         { phone: "5511777777777", lid: "99988877766655@lid", isAdmin: true },
         { name: "sem telefone" },
@@ -205,7 +219,7 @@ describe("ZapiMessagingProvider — grupos (client real com fetch fake)", () => 
     expect(await new ZapiMessagingProvider(none.fetchFn).getGroupInvitationLink(GROUP)).toBeNull();
   });
 
-  it("updateGroupSettings manda as quatro flags obrigatórias; removeGroupParticipants manda groupId + phones sem '+' e pula lista vazia", async () => {
+  it("updateGroupSettings manda as quatro flags obrigatórias; removeGroupParticipants manda groupId + endereços (E.164 sem '+', LID como está) e pula lista vazia", async () => {
     const { calls, fetchFn } = createFakeFetch({ value: true });
     const provider = new ZapiMessagingProvider(fetchFn);
     await provider.updateGroupSettings(GROUP, {
@@ -215,7 +229,7 @@ describe("ZapiMessagingProvider — grupos (client real com fetch fake)", () => 
       adminOnlyAddMember: true,
     });
     await provider.removeGroupParticipants(GROUP, []);
-    await provider.removeGroupParticipants(GROUP, ["+5511888888888", "+5511777777777"]);
+    await provider.removeGroupParticipants(GROUP, ["+5511888888888", "220839349862480@lid"]);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.url).toContain("/update-group-settings");
     expect(calls[0]?.body).toEqual({
@@ -226,7 +240,7 @@ describe("ZapiMessagingProvider — grupos (client real com fetch fake)", () => 
       adminOnlyAddMember: true,
     });
     expect(calls[1]?.url).toContain("/remove-participant");
-    expect(calls[1]?.body).toEqual({ groupId: GROUP, phones: ["5511888888888", "5511777777777"] });
+    expect(calls[1]?.body).toEqual({ groupId: GROUP, phones: ["5511888888888", "220839349862480@lid"] });
   });
 
   it("HTTP >= 400 nos endpoints de grupo lança sem expor a URL com tokens", async () => {
@@ -270,7 +284,7 @@ describe("FakeMessagingProvider — grupos", () => {
     }
   });
 
-  it("sendPoll registra a enquete com o mesmo contador de ids e recusa destino que não é grupo (paridade com a Z-API)", async () => {
+  it("sendPoll registra a enquete com o mesmo contador de ids, aceita o id legado e recusa destino que não é grupo (paridade com a Z-API)", async () => {
     const provider = new FakeMessagingProvider();
     const text = await provider.sendText({ toE164: GROUP, body: "Passou pelo Provador hoje" });
     const poll = await provider.sendPoll({ toGroupId: GROUP, question: "Qual cor?", options: ["A", "B"] });
@@ -278,6 +292,9 @@ describe("FakeMessagingProvider — grupos", () => {
     expect(provider.sentPolls).toEqual([
       { toGroupId: GROUP, question: "Qual cor?", options: ["A", "B"], providerMessageId: poll.providerMessageId },
     ]);
+    await expect(
+      provider.sendPoll({ toGroupId: "5511999999999-1623281429", question: "?", options: ["A", "B"] }),
+    ).resolves.toMatchObject({ providerMessageId: expect.any(String) });
     await expect(
       provider.sendPoll({ toGroupId: "+5591999991528", question: "?", options: ["A", "B"] }),
     ).rejects.toThrow("/send-poll");
@@ -317,12 +334,14 @@ describe("FakeMessagingProvider — grupos", () => {
     expect((await provider.getGroupMetadata(GROUP)).adminOnlyMessage).toBe(true);
     expect(provider.groupSettingsUpdates).toHaveLength(1);
 
-    await provider.removeGroupParticipants(GROUP, ["+5511888888888"]);
+    // Remove por telefone E por LID (quem tem o número oculto só tem o LID).
+    await provider.removeGroupParticipants(GROUP, ["+5511888888888", "220839349862480@lid"]);
     expect((await provider.getGroupMetadata(GROUP)).participants.map((p) => p.phoneE164 ?? p.lid)).toEqual([
       "+5591981037536",
-      "220839349862480@lid",
     ]);
-    expect(provider.removedParticipants).toEqual([{ groupId: GROUP, phonesE164: ["+5511888888888"] }]);
+    expect(provider.removedParticipants).toEqual([
+      { groupId: GROUP, addresses: ["+5511888888888", "220839349862480@lid"] },
+    ]);
   });
 
   it("grupo desconhecido responde como a Z-API (4xx); reação e fixar registram; desconectado lança; reset limpa tudo", async () => {

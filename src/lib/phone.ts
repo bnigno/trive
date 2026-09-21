@@ -118,6 +118,22 @@ export function toE164BR(input: string): string | null {
 }
 
 /**
+ * Telefone como a Z-API entrega ('5591…', '+5591…', com máscara) → E.164
+ * pela mesma régua do webhook: brasileiro passa por toE164BR (o nono dígito
+ * de celular legado entra), estrangeiro fica '+dígitos' se for E.164 válido;
+ * null quando não é telefone (LID, vazio, lixo).
+ */
+export function zapiPhoneToE164(raw: string | number | null | undefined): string | null {
+  if (raw == null) return null;
+  const value = String(raw).trim();
+  if (value === "" || isWaLid(value) || toWaLid(value)) return null;
+  const br = toE164BR(value);
+  if (br) return br;
+  const candidate = `+${value.replace(/\D/g, "")}`;
+  return isValidE164(candidate) ? candidate : null;
+}
+
+/**
  * Dois telefones são o mesmo número? Compara em E.164 quando os dois
  * normalizam (o setting do dono pode vir '(91) 98103-7536'; a Z-API manda
  * '5591981037536'); senão, pelos dígitos.
