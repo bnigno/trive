@@ -22,13 +22,16 @@ import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { requireOwner } from "@/services/auth";
 import { listProducts } from "@/services/catalog";
 import { listPublicLooks } from "@/services/customer-looks";
+import { loadLookCouponSettings } from "@/services/look-coupons";
 import {
+  type CollectiveCouponOption,
   getGroup,
   getGroupPostStats,
   type GroupMemberView,
   type GroupPostStats,
   type GroupPostView,
   type GroupView,
+  listCollectiveCoupons,
   listGroupMembers,
   listGroupPosts,
   loadGroupPolicy,
@@ -76,6 +79,8 @@ type PageData = {
   joinedLast7: number;
   products: ProductOption[];
   looks: LookOption[];
+  coupons: CollectiveCouponOption[];
+  lookCouponPercent: number | null;
   defaults: RitualDefaults;
   windowLabel: string;
   groupsEnabled: boolean;
@@ -86,20 +91,25 @@ async function loadData(groupId: string): Promise<PageData | null> {
   const group = await getGroup(db, groupId);
   if (!group) return null;
   const now = new Date();
-  const [posts, members, allMembers, products, looks, policy] = await Promise.all([
+  const [posts, members, allMembers, products, looks, policy, coupons, lookCoupon] = await Promise.all([
     listGroupPosts(db, { groupId, limit: 30 }),
     listGroupMembers(db, { groupId }),
     listGroupMembers(db, { groupId, includeLeft: true }),
     listProducts(db, { status: "active" }),
     listPublicLooks(db),
     loadGroupPolicy(db),
+    listCollectiveCoupons(db, now),
+    loadLookCouponSettings(db),
   ]);
   const withStats = await Promise.all(posts.map(async (post) => ({ ...post, stats: await getGroupPostStats(db, post.id) })));
   const weekAgo = now.getTime() - 7 * 86_400_000;
   const defaults = Object.fromEntries(
-    (["chegadas", "enquete", "quem_vestiu", "livre"] as const).map((kind) => [
+    (["chegadas", "enquete", "quem_vestiu", "turma", "livre"] as const).map((kind) => [
       kind,
-      { day: nextRitualDay(kind as GroupPostKind, now, policy.cadence), time: `${String(ritualHour(kind as GroupPostKind)).padStart(2, "0")}:00` },
+      {
+        day: nextRitualDay((kind === "turma" ? "livre" : kind) as GroupPostKind, now, policy.cadence),
+        time: `${String(ritualHour((kind === "turma" ? "livre" : kind) as GroupPostKind)).padStart(2, "0")}:00`,
+      },
     ]),
   ) as RitualDefaults;
   return {
@@ -121,6 +131,8 @@ async function loadData(groupId: string): Promise<PageData | null> {
       })
       .sort((a, b) => Number(a.disabled) - Number(b.disabled) || a.name.localeCompare(b.name, "pt-BR")),
     looks: looks.map((look) => ({ id: look.id, label: `${look.displayName} veste ${look.productName}` })),
+    coupons,
+    lookCouponPercent: lookCoupon.enabled ? lookCoupon.percent : null,
     defaults,
     windowLabel: `${policy.cadence.window.startHour}h às ${policy.cadence.window.endHour}h`,
     groupsEnabled: policy.groupsEnabled,
@@ -223,7 +235,15 @@ export default async function ProvadorRoomPage({ params, searchParams }: { param
       </Card>
 
       <Card title="Agendar um ritual">
-        <ComposePostForm groupId={group.id} products={data.products} looks={data.looks} defaults={data.defaults} windowLabel={data.windowLabel} />
+        <ComposePostForm
+          groupId={group.id}
+          products={data.products}
+          looks={data.looks}
+          coupons={data.coupons}
+          lookCouponPercent={data.lookCouponPercent}
+          defaults={data.defaults}
+          windowLabel={data.windowLabel}
+        />
       </Card>
 
       <Card title="Posts">

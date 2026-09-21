@@ -7,12 +7,14 @@ import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import type { BotToolInputs } from "@/core/bot/tools";
 import { renderWelcomeCard } from "@/core/groups/rituals";
-import { auditLog, customers, waGroupMembers, waGroups } from "@/db/schema";
+import { auditLog, coupons, customers, waGroupMembers, waGroups } from "@/db/schema";
 import { spDayKey } from "@/lib/sp-day";
 import { type DbOrTx, enqueueOutboxEvent } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
+import { countCustomerPurchases } from "@/services/customer-lookup";
+import { issueCoupon } from "@/services/coupons";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
-import { loadGroupPolicy, PROVADOR_INVITE_ACTION } from "@/services/wa-groups";
+import { loadGroupPolicy, loadWelcomeGiftSettings, PROVADOR_INVITE_ACTION } from "@/services/wa-groups";
 
 import { DEFAULT_STORE_NAME, DRY_RUN_TEXT, readBotState, resolveConversationCustomerId } from "./shared";
 import type { BotExecutorContext, ToolResult } from "./shared";
@@ -113,6 +115,44 @@ export async function execEntrarNoProvador(
     windowEndHour: policy.cadence.window.endHour,
     postsPerWeek: policy.cadence.postsPerWeek,
   });
+  // Mimo de boas-vindas (ligado pela dona): cupom pessoal, UM por cliente
+  // para sempre (dedupe) — quem sai e volta reencontra o mesmo, e só o vê no
+  // cartão se ele ainda vale. Quem já comprou não pode ter "primeira compra":
+  // o mimo dela vale na próxima.
+  const gift = await loadWelcomeGiftSettings(db);
+  let giftLine = "";
+  if (gift.enabled) {
+    const purchases = await countCustomerPurchases(db, customerId);
+    const firstPurchaseOnly = purchases === 0;
+    const issued = await issueCoupon(db, {
+      dedupeKey: `provador_welcome:${customerId}`,
+      customerId,
+      origin: "provador_welcome",
+      type: "percent",
+      value: gift.percent,
+      expiresAt: new Date(now.getTime() + gift.days * 86_400_000),
+      note: firstPurchaseOnly ? "Mimo de boas-vindas do Provador (entrou pela Lia, primeira compra)" : "Mimo de boas-vindas do Provador (entrou pela Lia, cliente da casa)",
+      conversationId: ctx.conversationId,
+      firstPurchaseOnly,
+      now,
+    });
+    // O cartão fala do cupom como ele É (o de antes pode ter outro valor, ter vencido ou sido usado).
+    const [coupon] = await db
+      .select({ value: coupons.value, isActive: coupons.isActive, expiresAt: coupons.expiresAt, maxUses: coupons.maxUses, usedCount: coupons.usedCount, firstPurchaseOnly: coupons.firstPurchaseOnly })
+      .from(coupons)
+      .where(eq(coupons.id, issued.couponId))
+      .limit(1);
+    const alive =
+      coupon !== undefined &&
+      coupon.isActive &&
+      (coupon.expiresAt === null || coupon.expiresAt.getTime() > now.getTime()) &&
+      (coupon.maxUses === null || coupon.usedCount < coupon.maxUses);
+    if (alive) {
+      const until = coupon.expiresAt ? new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(coupon.expiresAt) : null;
+      giftLine = `\n\nSeu mimo de boas-vindas: ${issued.code} — ${coupon.value}% na ${coupon.firstPurchaseOnly ? "primeira" : "próxima"} compra${until ? `, até ${until}` : ""}. É só me dizer o código na hora de fechar.`;
+    }
+  }
+
   const dedupeKey = `${PROVADOR_INVITE_ACTION}:${ctx.phoneE164}:${spDayKey(now)}`;
   // Resposta a um pedido dela: não exige opt-in (que acabou de nascer) e sai pela fila como tudo.
   await enqueueOutboxEvent(
@@ -122,7 +162,7 @@ export async function execEntrarNoProvador(
       dedupeKey,
       aggregateType: "wa_conversation",
       aggregateId: ctx.conversationId,
-      payload: { templateKey: null, phoneE164: ctx.phoneE164, customerId, body: `${card}\n\nSeu convite: ${room.invitationLink}`, dedupeKey },
+      payload: { templateKey: null, phoneE164: ctx.phoneE164, customerId, body: `${card}\n\nSeu convite: ${room.invitationLink}${giftLine}`, dedupeKey },
     },
     { kick: false },
   );
@@ -136,6 +176,6 @@ export async function execEntrarNoProvador(
   });
   return {
     ok: true,
-    text: `[A loja enviou à cliente o cartão de boas-vindas do ${room.name} com o link do grupo — ela entra tocando nele.] Diga em 1 frase que o convite chegou logo abaixo e o que ela vai encontrar lá (terça as chegadas, quinta a enquete, sábado quem vestiu); não repita o link nem as regras, e não diga que ela "já está" no grupo.`,
+    text: `[A loja enviou à cliente o cartão de boas-vindas do ${room.name} com o link do grupo${giftLine ? " e o mimo de boas-vindas (cupom de primeira compra, já no cartão)" : ""} — ela entra tocando nele.] Diga em 1 frase que o convite chegou logo abaixo e o que ela vai encontrar lá (terça as chegadas, quinta a enquete, sábado quem vestiu)${giftLine ? "; pode citar que o mimo está no cartão, sem repetir o código" : ""}; não repita o link nem as regras, e não diga que ela "já está" no grupo.`,
   };
 }

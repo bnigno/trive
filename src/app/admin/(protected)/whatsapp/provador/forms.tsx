@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 
 import { Button, Field, FormError, FormSuccess, Input, Select, SubmitButton, TextArea } from "@/components/ui/form";
 
-import { composePostAction, registerGroupAction, type FormState } from "./actions";
+import { composePostAction, registerGroupAction, saveWelcomeGiftAction, type FormState } from "./actions";
 
 const INITIAL_STATE: FormState = {};
 
@@ -76,15 +76,38 @@ export function RegisterGroupForm({ groups }: { groups: ProviderGroupOption[] })
   );
 }
 
+export function WelcomeGiftForm({ defaults }: { defaults: { percent: number; days: number } }) {
+  const [state, formAction] = useActionState(saveWelcomeGiftAction, INITIAL_STATE);
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-4 sm:max-w-sm">
+        <Field label="Desconto (%)" hint="Na primeira compra dela.">
+          <Input type="number" name="percent" min={1} max={50} defaultValue={defaults.percent} required />
+        </Field>
+        <Field label="Validade (dias)">
+          <Input type="number" name="days" min={1} max={90} defaultValue={defaults.days} required />
+        </Field>
+      </div>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton>Salvar</SubmitButton>
+      </div>
+    </form>
+  );
+}
+
 export type ProductOption = { id: string; name: string; hint: string | null; disabled: boolean };
 export type LookOption = { id: string; label: string };
 
-export type RitualDefaults = Record<"chegadas" | "enquete" | "quem_vestiu" | "livre", { day: string; time: string }>;
+export type RitualDefaults = Record<"chegadas" | "enquete" | "quem_vestiu" | "turma" | "livre", { day: string; time: string }>;
+export type CollectiveCouponOption = { id: string; code: string; currentLabel: string; capLabel: string | null; redeemers: number };
 
 const KIND_LABELS: Record<keyof RitualDefaults, string> = {
   chegadas: "Passou pelo Provador (terça) — o que chegou",
   enquete: "Vocês decidem (quinta) — enquete",
   quem_vestiu: "Quem vestiu (sábado) — foto de cliente",
+  turma: "Monte sua turma — cupom que sobe a cada amiga (mensal)",
   livre: "Post livre — texto seu",
 };
 
@@ -152,7 +175,7 @@ type ComposeDraft = {
   voterHoldHours: string;
   pollProductId: string;
   lookIds: string[];
-  photoCoupon: boolean;
+  turmaCouponId: string;
   body: string;
   imageUrl: string;
 };
@@ -167,7 +190,7 @@ const EMPTY_DRAFT: ComposeDraft = {
   voterHoldHours: "24",
   pollProductId: "",
   lookIds: [],
-  photoCoupon: false,
+  turmaCouponId: "",
   body: "",
   imageUrl: "",
 };
@@ -176,12 +199,18 @@ export function ComposePostForm({
   groupId,
   products,
   looks,
+  coupons,
+  lookCouponPercent,
   defaults,
   windowLabel,
 }: {
   groupId: string;
   products: ProductOption[];
   looks: LookOption[];
+  /** Cupons da turma disponíveis (ativos, coletivos). */
+  coupons: CollectiveCouponOption[];
+  /** O mimo pela foto ligado: a frase "vira X%" entra sozinha no Quem vestiu; null = não entra. */
+  lookCouponPercent: number | null;
   defaults: RitualDefaults;
   windowLabel: string;
 }) {
@@ -289,12 +318,26 @@ export function ComposePostForm({
               emptyHint="Nenhum look aprovado ainda."
             />
           </Field>
-          <Field label="Cupom pela foto" hint="Só marque quando o cupom da foto (Onda 6) estiver ligado — o post promete.">
-            <label className="flex items-center gap-2 text-sm">
-              {draft.photoCoupon ? <input type="hidden" name="photoCoupon" value="on" /> : null}
-              <input type="checkbox" checked={draft.photoCoupon} onChange={(e) => set("photoCoupon", e.target.checked)} />
-              Dizer que foto vestindo a peça vira cupom
-            </label>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            {lookCouponPercent
+              ? `O mimo pela foto está ligado: o post diz que foto vestindo a peça vira ${lookCouponPercent}% na próxima compra.`
+              : "O mimo pela foto está desligado (Cupons › Mimo pela foto): o post não promete cupom."}
+          </p>
+        </div>
+      ) : null}
+
+      {kind === "turma" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Cupom da turma" hint="Um cupom coletivo criado em Cupons (sobe a cada amiga que usa). O post mostra o valor de hoje, quanto sobe e o teto, com o link que aplica sozinho — por isso só se agenda para as próximas 24 h.">
+            <Select name="turmaCouponId" value={draft.turmaCouponId} onChange={(e) => set("turmaCouponId", e.target.value)}>
+              <option value="">{coupons.length === 0 ? "Nenhum cupom da turma ativo" : "Escolha o cupom"}</option>
+              {coupons.map((coupon) => (
+                <option key={coupon.id} value={coupon.id}>
+                  {coupon.code} — hoje {coupon.currentLabel}
+                  {coupon.capLabel ? `, até ${coupon.capLabel}` : ""} · {coupon.redeemers} {coupon.redeemers === 1 ? "usou" : "usaram"}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
       ) : null}

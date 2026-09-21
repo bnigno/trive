@@ -8,6 +8,7 @@ import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { spDateTime, spDayKey } from "@/lib/sp-day";
 import { requireOwner } from "@/services/auth";
+import { updateSetting } from "@/services/settings";
 import {
   applyHouseRules,
   cancelGroupPost,
@@ -111,6 +112,29 @@ export async function setGroupActiveAction(formData: FormData): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Mimo de boas-vindas (% e validade; o interruptor é o ToggleSwitch)
+// ---------------------------------------------------------------------------
+
+const welcomeGiftSchema = z.object({
+  percent: z.coerce.number().int().min(1, "Entre 1% e 50%.").max(50, "Entre 1% e 50%."),
+  days: z.coerce.number().int().min(1, "Entre 1 e 90 dias.").max(90, "Entre 1 e 90 dias."),
+});
+
+export async function saveWelcomeGiftAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("whatsapp");
+  try {
+    const parsed = welcomeGiftSchema.parse({ percent: formData.get("percent"), days: formData.get("days") });
+    const db = getDb();
+    await updateSetting(db, { key: "provador_welcome_gift_percent", value: parsed.percent, userId: user.id });
+    await updateSetting(db, { key: "provador_welcome_gift_days", value: parsed.days, userId: user.id });
+    revalidate();
+    return { success: `Mimo de boas-vindas: ${parsed.percent}% na primeira compra, válido por ${parsed.days} dias.` };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Posts — pré-visualizar e agendar (o mesmo form, dois botões)
 // ---------------------------------------------------------------------------
 
@@ -122,7 +146,7 @@ const optionalText = z
 const composeFormSchema = z.object({
   groupId: z.uuid(),
   intent: z.enum(["preview", "schedule"]),
-  kind: z.enum(["chegadas", "enquete", "quem_vestiu", "livre"]),
+  kind: z.enum(["chegadas", "enquete", "quem_vestiu", "turma", "livre"]),
   /** 'YYYY-MM-DD' + 'HH:MM' no relógio de SP; vazio = agora. */
   day: z.string().trim(),
   time: z.string().trim(),
@@ -135,7 +159,7 @@ const composeFormSchema = z.object({
   voterHoldHours: z.coerce.number().int().min(0).max(168).default(24),
   pollProductId: z.union([z.literal(""), z.uuid()]).default(""),
   lookIds: z.array(z.uuid()).default([]),
-  photoCoupon: z.enum(["on"]).optional(),
+  turmaCouponId: z.union([z.literal(""), z.uuid()]).default(""),
   body: z.string().default(""),
   imageUrl: optionalText,
 });
@@ -156,7 +180,7 @@ function readComposeForm(formData: FormData): z.infer<typeof composeFormSchema> 
     voterHoldHours: formData.get("voterHoldHours") || 24,
     pollProductId: formData.get("pollProductId") ?? "",
     lookIds: formData.getAll("lookIds").map(String).filter((value) => value !== ""),
-    photoCoupon: formData.get("photoCoupon") ?? undefined,
+    turmaCouponId: formData.get("turmaCouponId") ?? "",
     body: formData.get("body") ?? "",
     imageUrl: formData.get("imageUrl") ?? "",
   });
@@ -180,7 +204,10 @@ function toComposeInput(form: z.infer<typeof composeFormSchema>): ComposeGroupPo
         ...(form.pollProductId ? { productId: form.pollProductId } : {}),
       };
     case "quem_vestiu":
-      return { kind: "quem_vestiu", lookIds: form.lookIds, photoCoupon: form.photoCoupon === "on" };
+      return { kind: "quem_vestiu", lookIds: form.lookIds };
+    case "turma":
+      if (!form.turmaCouponId) throw new z.ZodError([{ code: "custom", path: ["turmaCouponId"], message: "Escolha o cupom da turma." }]);
+      return { kind: "turma", couponId: form.turmaCouponId };
     case "livre":
       return { kind: "livre", body: form.body, ...(form.imageUrl ? { imageUrl: form.imageUrl } : {}) };
   }

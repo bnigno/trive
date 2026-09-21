@@ -1,0 +1,2 @@
+ALTER TABLE "coupons" DROP CONSTRAINT "coupons_origin_check";--> statement-breakpoint
+ALTER TABLE "coupons" ADD CONSTRAINT "coupons_origin_check" CHECK ("coupons"."origin" IN ('manual', 'late_delivery', 'price_protection', 'look_photo', 'paper_voucher', 'lia_gift', 'referral', 'referral_reward', 'provador_welcome'));

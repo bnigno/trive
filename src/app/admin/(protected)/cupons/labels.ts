@@ -11,6 +11,7 @@ export const ORIGIN_LABELS: Record<CouponOrigin, string> = {
   lia_gift: "Gentileza da Lia",
   referral: "Vale para uma amiga",
   referral_reward: "Prêmio da indicação",
+  provador_welcome: "Boas-vindas ao Provador",
 };
 
 const SCOPE_LABELS = { any: "", motoboy: " (motoboy)", correios: " (Correios)" } as const;

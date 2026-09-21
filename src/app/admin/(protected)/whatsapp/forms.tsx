@@ -54,7 +54,8 @@ export function ToggleSwitch({
     | "bot_audio_notes_enabled"
     | "groups_enabled"
     | "bot_group_mentions_enabled"
-    | "lia_gift_enabled";
+    | "lia_gift_enabled"
+    | "provador_welcome_gift_enabled";
   checked: boolean;
   label: string;
   hint: string;

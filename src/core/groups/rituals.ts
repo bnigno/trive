@@ -204,8 +204,8 @@ export function renderQuemVestiuPost(input: {
   liaLink: string;
   /** "21h" — até que hora a Lia fica no privado hoje. */
   until: string;
-  /** A foto vira cupom? (look_photo da Onda 6) */
-  photoCoupon?: boolean;
+  /** O mimo pela foto está ligado: quantos % a foto vale na próxima compra (null = a frase não entra). */
+  photoCouponPercent?: number | null;
 }): string {
   const looks = input.looks.slice(0, 2);
   if (looks.length === 0) throw new RangeError("Quem vestiu precisa de pelo menos um look.");
@@ -219,8 +219,38 @@ export function renderQuemVestiuPost(input: {
     `${openings.join(" ")} ${consent}`,
     `Tem ocasião chegando? Estou no privado até as ${input.until} montando look com data marcada — me diz o dia e eu cuido do resto: ${input.liaLink}`,
   ];
-  if (input.photoCoupon) parts.push("Mandou foto vestindo a peça? Vira cupom na próxima compra.");
+  if (input.photoCouponPercent) {
+    parts.push(`Mandou foto vestindo a peça? Vira ${input.photoCouponPercent}% na próxima compra — é só mandar no privado.`);
+  }
   return parts.join("\n\n");
+}
+
+/**
+ * "Monte sua turma": o Provador É a turma — um cupom coletivo que sobe a
+ * cada membra que usa. O valor de hoje e o teto vêm do cupom.
+ */
+export function renderTurmaPost(input: {
+  code: string;
+  /** "5%" — o que vale hoje. */
+  currentLabel: string;
+  /** "1 ponto" / "R$ 5,00" — quanto sobe por amiga. */
+  growthLabel: string;
+  /** "15%" — o teto; null = sem teto. */
+  capLabel: string | null;
+  /** Quantas já usaram. */
+  redeemers: number;
+  /** Link que aplica o cupom sozinho (/c/CÓDIGO). */
+  link: string;
+  /** Link rastreável da Lia (o funil do post). */
+  liaLink: string;
+}): string {
+  const who = input.redeemers === 0 ? "ninguém usou ainda — a primeira já sobe para todas" : input.redeemers === 1 ? "1 já usou" : `${input.redeemers} já usaram`;
+  const cap = input.capLabel ? `, até ${input.capLabel}` : "";
+  return [
+    `Vocês são uma turma. O cupom ${input.code} vale para todas daqui: está em ${input.currentLabel} (e só sobe) — ${input.growthLabel} a mais a cada uma de vocês que usar${cap}.`,
+    `${who[0]!.toUpperCase()}${who.slice(1)}. Pega o seu: ${input.link}`,
+    `Dúvida? Me chama no privado: ${input.liaLink}`,
+  ].join("\n\n");
 }
 
 export function renderWelcomeCard(input: {

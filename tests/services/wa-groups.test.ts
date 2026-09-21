@@ -15,6 +15,7 @@ import {
   composeGroupPost,
   getGroupPostStats,
   HOUSE_RULES,
+  listCollectiveCoupons,
   listGroupMembers,
   listGroupPosts,
   POLL_CLOSE_AFTER_HOURS,
@@ -28,6 +29,7 @@ import {
   cancelGroupPost,
 } from "@/services/wa-groups";
 import { processZapiInbound } from "@/services/wa-inbound";
+import { createCoupon } from "@/services/coupons";
 import { createTestCustomer, createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 const kicks: unknown[] = [];
@@ -249,6 +251,42 @@ describe("compor e agendar rituais", () => {
     await expect(composeGroupPost(sdb, { kind: "chegadas", productIds: ["00000000-0000-4000-8000-000000000009"] }, { day: "2026-09-22" })).rejects.toMatchObject({ code: "peca_inexistente" });
   });
 
+  it("Preço protegido: a frase só entra com a proteção ligada, com os dias da regra", async () => {
+    const terracota = await pricedProduct("Vestido Terracota", [{ size: "M", onHand: 3 }]);
+    await db.insert(schema.settings).values([{ key: "price_protection_enabled", value: true }, { key: "price_protection_days", value: 14 }]);
+    const on = await composeGroupPost(sdb, { kind: "chegadas", productIds: [terracota] }, { day: "2026-09-22" });
+    expect(on.body).toContain("Preço protegido: se baixar em 14 dias, a diferença volta em cupom.");
+    await db.update(schema.settings).set({ value: false }).where(eq(schema.settings.key, "price_protection_enabled"));
+    const off = await composeGroupPost(sdb, { kind: "chegadas", productIds: [terracota] }, { day: "2026-09-22" });
+    expect(off.body).not.toContain("Preço protegido");
+  });
+
+  it("Monte sua turma: um cupom coletivo ativo vira o post (valor de hoje, sobe, teto, link /c/); persiste como post livre; cupom comum ou vencido é recusado", async () => {
+    const turma = await createCoupon(sdb, { code: "PROVADOR", type: "percent", value: 5, growthPerRedeemer: 2, growthCap: 15, userId: FIXED_USER_ID });
+    const comum = await createCoupon(sdb, { code: "DEZ10", type: "percent", value: 10, userId: FIXED_USER_ID });
+    expect((await listCollectiveCoupons(sdb)).map((c) => [c.code, c.currentLabel, c.capLabel, c.redeemers])).toEqual([["PROVADOR", "5%", "15%", 0]]);
+    const composed = await composeGroupPost(sdb, { kind: "turma", couponId: turma.id }, { day: "2026-09-23" });
+    expect(composed.kind).toBe("livre");
+    expect(composed.slug).toBe("prov-20260923-post");
+    expect(composed.body).toContain("O cupom PROVADOR vale para todas daqui: está em 5% (e só sobe) — 2 pontos a mais a cada uma de vocês que usar, até 15%.");
+    expect(composed.body).toMatch(/\/c\/PROVADOR$/m);
+    // O link rastreável da Lia vai no post (o funil conta).
+    expect(composed.body).toContain(composed.link);
+    await expect(composeGroupPost(sdb, { kind: "turma", couponId: comum.id }, { day: "2026-09-23" })).rejects.toMatchObject({ code: "cupom_nao_e_turma" });
+    await expect(composeGroupPost(sdb, { kind: "turma", couponId: "00000000-0000-4000-8000-000000000000" }, { day: "2026-09-23" })).rejects.toMatchObject({ code: "cupom_inexistente" });
+
+    // Validade conferida na hora do POST: vencido lá, recusa; e mais de 24 h à frente também (o valor é de hoje).
+    const curto = await createCoupon(sdb, { code: "CURTO", type: "percent", value: 5, growthPerRedeemer: 1, growthCap: 10, expiresAt: new Date(Date.now() + 2 * 3_600_000), userId: FIXED_USER_ID });
+    await expect(composeGroupPost(sdb, { kind: "turma", couponId: curto.id }, { day: "2026-09-23", at: new Date(Date.now() + 3 * 3_600_000) })).rejects.toMatchObject({ code: "cupom_vencido" });
+    await expect(composeGroupPost(sdb, { kind: "turma", couponId: turma.id }, { day: "2026-09-30", at: new Date(Date.now() + 3 * 86_400_000) })).rejects.toMatchObject({ code: "turma_muito_a_frente" });
+
+    // Agendado para hoje mais tarde: o post é livre (conta na cadência como qualquer post).
+    const group = await registered();
+    const soon = new Date(Date.now() + 3_600_000);
+    const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: soon, userId: FIXED_USER_ID, post: { kind: "turma", couponId: turma.id } }, { now: new Date() });
+    expect(post).toMatchObject({ kind: "livre", status: "scheduled" });
+  });
+
   it("Quem vestiu só com look consentido e aprovado; enquete inválida diz o problema", async () => {
     const productId = await pricedProduct("Vestido Terracota", [{ size: "M", onHand: 3 }]);
     const [variant] = await db.select({ id: schema.productVariants.id }).from(schema.productVariants).where(eq(schema.productVariants.productId, productId));
@@ -256,10 +294,15 @@ describe("compor e agendar rituais", () => {
       .insert(schema.customerLooks)
       .values({ phoneE164: ANA, productId, productVariantId: variant.id, displayName: "Ana", consentAnswer: "sim", approvedAt: NOW })
       .returning({ id: schema.customerLooks.id });
-    const composed = await composeGroupPost(sdb, { kind: "quem_vestiu", lookIds: [look.id], photoCoupon: false }, { day: "2026-09-26" });
+    const composed = await composeGroupPost(sdb, { kind: "quem_vestiu", lookIds: [look.id] }, { day: "2026-09-26" });
     expect(composed.body).toContain("Ana, com Vestido Terracota em M. Ela mandou a foto e deixou a gente mostrar.");
     expect(composed.body).toContain("até as 21h");
+    expect(composed.body).not.toContain("Vira");
     expect(composed.lookIds).toEqual([look.id]);
+    // Mimo pela foto ligado: a frase entra sozinha, com o valor de verdade.
+    await db.insert(schema.settings).values([{ key: "look_coupon_enabled", value: true }, { key: "look_coupon_percent", value: 12 }]);
+    const withCoupon = await composeGroupPost(sdb, { kind: "quem_vestiu", lookIds: [look.id] }, { day: "2026-09-26" });
+    expect(withCoupon.body).toContain("Vira 12% na próxima compra");
 
     const [pending] = await db.insert(schema.customerLooks).values({ phoneE164: BIA, productId, displayName: "Bia" }).returning({ id: schema.customerLooks.id });
     await expect(composeGroupPost(sdb, { kind: "quem_vestiu", lookIds: [pending.id] }, { day: "2026-09-26" })).rejects.toMatchObject({ code: "look_sem_consentimento" });

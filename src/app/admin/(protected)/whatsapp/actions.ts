@@ -50,6 +50,7 @@ const toggleKeySchema = z.enum([
   "groups_enabled",
   "bot_group_mentions_enabled",
   "lia_gift_enabled",
+  "provador_welcome_gift_enabled",
 ]);
 
 export async function setToggleAction(
