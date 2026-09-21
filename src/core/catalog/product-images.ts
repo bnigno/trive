@@ -61,3 +61,43 @@ export function imagesForColor<T extends ColorTaggedImage>(
   );
   return [...ofColor, ...images.filter(isForWholeProduct)];
 }
+
+// ---------------------------------------------------------------------------
+// Foto no corpo (origin = 'ai'): onde ela aparece
+// ---------------------------------------------------------------------------
+
+/** Foto do catálogo vista pela proveniência: real (upload) ou ensaio (ai). */
+export interface OriginTaggedImage {
+  origin: string;
+}
+
+/**
+ * hide = só fotos reais (a vitrine, até a dona ligar ai_photos_in_store);
+ * prefer = a foto no corpo primeiro, as reais depois (post do Instagram,
+ * cartões da Lia, vitrine com o interruptor ligado).
+ */
+export const AI_PHOTO_POLICIES = ["hide", "prefer"] as const;
+export type AiPhotoPolicy = (typeof AI_PHOTO_POLICIES)[number];
+
+export function isAiImage(image: OriginTaggedImage): boolean {
+  return image.origin === "ai";
+}
+
+/** Aplica a política mantendo a ordem original dentro de cada grupo. */
+export function orderImagesByPolicy<T extends OriginTaggedImage>(images: readonly T[], policy: AiPhotoPolicy): T[] {
+  if (policy === "hide") return images.filter((image) => !isAiImage(image));
+  return [...images.filter(isAiImage), ...images.filter((image) => !isAiImage(image))];
+}
+
+/**
+ * A capa: com preferAi, a primeira foto no corpo (da cor pedida, quando há);
+ * sem foto no corpo, ou sem preferAi, a primeira foto real. null = sem foto.
+ */
+export function pickCoverImage<T extends OriginTaggedImage & ColorTaggedImage>(
+  images: readonly T[],
+  options: { preferAi: boolean; color?: string | null } = { preferAi: true },
+): T | null {
+  const byColor = imagesForColor(images, options.color ?? null);
+  const ordered = orderImagesByPolicy(byColor, options.preferAi ? "prefer" : "hide");
+  return ordered[0] ?? (options.preferAi ? null : (byColor.find((image) => !isAiImage(image)) ?? null));
+}

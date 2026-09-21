@@ -573,7 +573,14 @@ export default async function WhatsappPage() {
               </div>
               <div>
                 <dt className="text-xs text-zinc-500 dark:text-zinc-400">Custo estimado da IA</dt>
-                <dd className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{usdCents(summary.estimatedCostUsdCents)}</dd>
+                <dd className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                  {usdCents(summary.estimatedCostUsdCents)}
+                  {summary.studioImages > 0 ? (
+                    <span className="ml-1 text-xs font-normal text-zinc-500">
+                      + fotos no corpo {usdCents(summary.studioUsdCents)} ({summary.studioImages})
+                    </span>
+                  ) : null}
+                </dd>
               </div>
             </dl>
             {activity.length === 0 ? (

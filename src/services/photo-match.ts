@@ -218,6 +218,9 @@ async function listPublicItems(sdb: ServiceDb, customerId: string | null, scope:
     ...(scope.busca ? { q: scope.busca, includeDescription: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
     viewer: { customerId },
+    // A comparação visual é com a peça esticada (o que a cliente fotografa),
+    // nunca com a foto no corpo — mesmo com a vitrine mostrando a IA.
+    aiPhotos: "hide" as const,
     limit: 200,
   };
   const general = await listPublicProducts(sdb, base);

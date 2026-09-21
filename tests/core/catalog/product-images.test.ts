@@ -2,7 +2,7 @@
 // a página do produto é RSC e o componente cliente só apresenta.
 import { describe, expect, it } from "vitest";
 
-import { findColorAxis, imagesForColor } from "@/core/catalog/product-images";
+import { findColorAxis, imagesForColor, isAiImage, orderImagesByPolicy, pickCoverImage } from "@/core/catalog/product-images";
 
 type Photo = { id: string; color: string | null };
 
@@ -97,5 +97,32 @@ describe("imagesForColor", () => {
     const result = imagesForColor(photos, null);
     expect(result).not.toBe(photos);
     expect(result).toEqual(photos);
+  });
+});
+
+describe("foto no corpo: política de proveniência", () => {
+  const real1 = { id: "r1", origin: "upload", color: "Areia" };
+  const ai1 = { id: "a1", origin: "ai", color: "Areia" };
+  const real2 = { id: "r2", origin: "upload", color: null };
+  const ai2 = { id: "a2", origin: "ai", color: "Terracota" };
+  const all = [real1, ai1, real2, ai2];
+
+  it("hide tira as fotos de IA; prefer põe as de IA na frente, sem mudar a ordem dentro de cada grupo", () => {
+    expect(orderImagesByPolicy(all, "hide").map((image) => image.id)).toEqual(["r1", "r2"]);
+    expect(orderImagesByPolicy(all, "prefer").map((image) => image.id)).toEqual(["a1", "a2", "r1", "r2"]);
+    expect(orderImagesByPolicy([], "prefer")).toEqual([]);
+  });
+
+  it("a capa prefere a foto no corpo da cor; sem ela, a real; sem preferAi, sempre a real", () => {
+    expect(pickCoverImage(all, { preferAi: true })?.id).toBe("a1");
+    expect(pickCoverImage(all, { preferAi: true, color: "Terracota" })?.id).toBe("a2");
+    // Cor sem foto própria cai nas do produto inteiro: a real r2.
+    expect(pickCoverImage(all, { preferAi: true, color: "Verde" })?.id).toBe("r2");
+    expect(pickCoverImage(all, { preferAi: false })?.id).toBe("r1");
+    expect(pickCoverImage(all, { preferAi: false, color: "Terracota" })?.id).toBe("r2");
+    expect(pickCoverImage([real1, real2], { preferAi: true })?.id).toBe("r1");
+    expect(pickCoverImage([], { preferAi: true })).toBeNull();
+    expect(isAiImage(ai1)).toBe(true);
+    expect(isAiImage(real1)).toBe(false);
   });
 });

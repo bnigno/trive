@@ -8,6 +8,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
 import { OUTBOX_SOURCES, type OutboxSource } from "@/core/queue/outbox-source";
 import { BOT_UNAVAILABLE_REPLY } from "@/services/bot/shared";
+import { summarizeStudioCosts } from "@/services/studio";
 import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
@@ -39,6 +40,9 @@ export interface BotActivityWindow {
   orders: number;
   ordersCents: number;
   costUsdCents: number;
+  /** Foto no corpo na janela: imagens geradas (opções e fotos-base) e o gasto delas. */
+  studioImages: number;
+  studioUsdCents: number;
 }
 
 /** O que a vendedora fez entre `from` (inclusive) e `to` (exclusive). */
@@ -110,6 +114,8 @@ export async function summarizeBotActivity(
       ),
     );
 
+  const studio = await summarizeStudioCosts(db, window);
+
   return {
     conversations: Number(conversationsRow?.value ?? 0),
     turns,
@@ -117,6 +123,8 @@ export async function summarizeBotActivity(
     orders: Number(botOrders?.value ?? 0),
     ordersCents: Number(botOrders?.totalCents ?? 0),
     costUsdCents,
+    studioImages: studio.images,
+    studioUsdCents: studio.usdCents,
   };
 }
 
@@ -130,6 +138,9 @@ export interface BotActivitySummary {
   ordersByBot: number;
   ordersByBotCents: number;
   estimatedCostUsdCents: number;
+  /** Foto no corpo na janela: imagens geradas e o gasto delas (separado da Lia). */
+  studioImages: number;
+  studioUsdCents: number;
 }
 
 export async function getBotActivitySummary(db: DbOrTx): Promise<BotActivitySummary> {
@@ -156,6 +167,8 @@ export async function getBotActivitySummary(db: DbOrTx): Promise<BotActivitySumm
     ordersByBot: window.orders,
     ordersByBotCents: window.ordersCents,
     estimatedCostUsdCents: window.costUsdCents,
+    studioImages: window.studioImages,
+    studioUsdCents: window.studioUsdCents,
   };
 }
 

@@ -194,6 +194,8 @@ export async function execListarProdutos(
     ...(categorySlug ? { categorySlug } : {}),
     ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
+    // Cartões e listas da Lia preferem a foto no corpo (sempre, sem interruptor).
+    aiPhotos: "prefer",
     limit: 200,
   } as const;
   const hints = pieceType ? pieceTypeHints(pieceType) : [];
@@ -214,9 +216,9 @@ export async function execListarProdutos(
   // vazio ela repete com as dicas e o filtro em TS, sem teto que engane.
   const tipoTemPecaNaLoja = async (): Promise<boolean> => {
     if (!pieceType) return false;
-    const porSubstantivo = await listPublicProducts(db, { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true, viewer: base.viewer, limit: 1 });
+    const porSubstantivo = await listPublicProducts(db, { pieceType, nameAny: pieceTypeTerms(pieceType), untypedByName: true, viewer: base.viewer, aiPhotos: "prefer", limit: 1 });
     if (porSubstantivo.length > 0 || hints.length === 0) return porSubstantivo.length > 0;
-    return doTipo(await listPublicProducts(db, { ...filtroDoTipo, viewer: base.viewer, limit: 200 })).length > 0;
+    return doTipo(await listPublicProducts(db, { ...filtroDoTipo, viewer: base.viewer, aiPhotos: "prefer", limit: 200 })).length > 0;
   };
   const procurouEmTodas = pieceType !== undefined && items.length === 0 && (!busca && !editionSlug ? true : !(await tipoTemPecaNaLoja()));
   const peloNomeIds = new Set<string>();
@@ -581,7 +583,7 @@ export async function resolveProductDetail(
   if (trimmed.startsWith("produto:")) trimmed = trimmed.slice("produto:".length);
   if (trimmed === "") return { kind: "none" };
 
-  const bySlug = await getPublicProductBySlug(db, trimmed.toLowerCase());
+  const bySlug = await getPublicProductBySlug(db, trimmed.toLowerCase(), undefined, { aiPhotos: "prefer" });
   if (bySlug) return { kind: "found", detail: bySlug, matchedSku: null };
 
   const [bySku] = await db
@@ -596,11 +598,11 @@ export async function resolveProductDetail(
     )
     .limit(1);
   if (bySku) {
-    const detail = await getPublicProductBySlug(db, bySku.slug, viewer);
+    const detail = await getPublicProductBySlug(db, bySku.slug, viewer, { aiPhotos: "prefer" });
     if (detail) return { kind: "found", detail, matchedSku: bySku.sku };
   }
 
-  const list = await listPublicProducts(db, { limit: 200, viewer });
+  const list = await listPublicProducts(db, { limit: 200, viewer, aiPhotos: "prefer" });
   const lowered = trimmed.toLowerCase();
   const exact = list.filter((p) => p.name.toLowerCase() === lowered);
   const contains =
@@ -613,7 +615,7 @@ export async function resolveProductDetail(
       : list.filter((p) => lowered.includes(p.name.toLowerCase()));
   if (matches.length === 0) return { kind: "none" };
   if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
-  const detail = await getPublicProductBySlug(db, matches[0].slug, viewer);
+  const detail = await getPublicProductBySlug(db, matches[0].slug, viewer, { aiPhotos: "prefer" });
   return detail ? { kind: "found", detail, matchedSku: null } : { kind: "none" };
 }
 

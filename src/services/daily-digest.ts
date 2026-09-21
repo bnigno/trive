@@ -211,6 +211,7 @@ export function buildDigestVars(data: DailyDigestData): Record<string, string> {
     lia_conversas: String(data.bot.conversations),
     lia_pedidos: String(data.bot.orders),
     lia_custo: formatUsdCents(data.bot.costUsdCents),
+    fotos_custo: data.bot.studioImages > 0 ? `${formatUsdCents(data.bot.studioUsdCents)} (${data.bot.studioImages})` : "—",
     loja: data.storeName,
     // Traz a própria quebra de linha: sem edição, a legenda termina no 🤎 sem linha vazia.
     edicoes: (() => {

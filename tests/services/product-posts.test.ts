@@ -274,6 +274,40 @@ describe("carrossel das cores e pré-desenho", () => {
     return row.postCardPath;
   }
 
+  it("a foto no corpo (origin 'ai') vira a capa do post e do story; o carrossel fica só com as fotos reais", async () => {
+    const productId = await setupProduct();
+    await comCores(productId);
+    // A foto no corpo da cor Areia entra DEPOIS das reais (sort_order maior) e mesmo assim é a capa.
+    const aiPath = "products/dunas/areia-ai-full.webp";
+    await db.insert(schema.productImages).values({ productId, storagePath: aiPath, color: "Areia", sortOrder: 5, origin: "ai" });
+    await storage.upload({
+      path: aiPath,
+      data: await sharp({ create: { width: 900, height: 1200, channels: 3, background: "#4a6b3a" } }).webp().toBuffer(),
+      contentType: "image/webp",
+    });
+
+    const result = await publishProductPost(sdb, storage, render, { productId, userId: FIXED_USER_ID });
+    expect(result.carousel.map((entry) => entry.color)).toEqual(["Areia", "Terracota"]);
+    const calls = render.mock.calls.map((call) => call[0]);
+    const post = calls[0];
+    const story = calls[1];
+    const areia = calls[2];
+    if (post.kind !== "post" || story.kind !== "story" || areia.kind !== "post") throw new Error("cartões inesperados");
+    // Capa (post e story) = a foto no corpo (verde escuro); a lâmina da cor
+    // Areia = a foto real, esticada (areia). A moldura muda por formato, então
+    // a comparação é pela cor dominante, não pelo arquivo.
+    const fundo = async (dataUrl: string) => {
+      const { data } = await sharp(Buffer.from(dataUrl.split(",")[1] ?? "", "base64")).resize(1, 1).raw().toBuffer({ resolveWithObject: true });
+      return [data[0]!, data[1]!, data[2]!] as const;
+    };
+    for (const capa of [post, story]) {
+      const [r, g] = await fundo(capa.hero.imageDataUrl);
+      expect(g).toBeGreaterThan(r);
+    }
+    const [laminaR, laminaG] = await fundo(areia.hero.imageDataUrl);
+    expect(laminaR).toBeGreaterThan(laminaG);
+  });
+
   it("desenha um cartão por cor com o preço daquela cor, grava o caminho do post e serve cada cor pelo índice", async () => {
     const productId = await setupProduct();
     await comCores(productId, { terracotaCents: 34900 });

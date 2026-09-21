@@ -211,7 +211,7 @@ export async function getCampaignCurtain(db: DbOrTx, rawSlug: string): Promise<C
   if (!row) return null;
   const [settings, product] = await Promise.all([
     loadBridgeSettings(db),
-    row.productSlug ? getPublicProductBySlug(db, row.productSlug, undefined, { includeHidden: true }) : Promise.resolve(null),
+    row.productSlug ? getPublicProductBySlug(db, row.productSlug, undefined, { includeHidden: true, aiPhotos: "prefer" }) : Promise.resolve(null),
   ]);
   return {
     slug: row.link.slug,

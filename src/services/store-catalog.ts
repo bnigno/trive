@@ -8,6 +8,7 @@ import {
   parseMeasurements,
   type Measurements,
 } from "@/core/catalog/measurements";
+import { orderImagesByPolicy, type AiPhotoPolicy } from "@/core/catalog/product-images";
 import { compareSizeLabels, sizeMatches, sizeTokens } from "@/core/catalog/sizes";
 import { PIECE_TYPE_SLUGS, pieceTypePlural, type PieceType } from "@/core/catalog/piece-types";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import {
   categories,
   priceVersions,
   productImages,
+  settings,
   products,
   productVariants,
   shippingRates,
@@ -133,8 +135,32 @@ const listPublicProductsSchema = z.object({
   excludeProductId: z.uuid().optional(),
   /** Só as peças de uma Edição de Belém (slug). */
   editionSlug: z.string().trim().min(1).optional(),
+  /**
+   * Foto no corpo (origin 'ai'): "store" segue o interruptor
+   * ai_photos_in_store (padrão da vitrine); "prefer" põe a foto no corpo
+   * como capa (Lia, post, story, cortina); "hide" só fotos reais.
+   */
+  aiPhotos: z.enum(["hide", "prefer", "store"]).default("store"),
   limit: z.number().int().positive().max(200).default(60),
 });
+
+/** O interruptor da vitrine decide a política "store"; as outras são explícitas. */
+export async function resolveAiPhotoPolicy(db: ServiceDb, requested: "hide" | "prefer" | "store"): Promise<AiPhotoPolicy> {
+  if (requested !== "store") return requested;
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "ai_photos_in_store")).limit(1);
+  return row?.value === true ? "prefer" : "hide";
+}
+
+/** Ordem das fotos nas subconsultas de capa: com "prefer", a foto no corpo vem primeiro. */
+function coverOrderSql(policy: AiPhotoPolicy) {
+  return policy === "prefer"
+    ? sql`order by (pi.origin = 'ai') desc, pi.sort_order asc, pi.created_at asc`
+    : sql`order by pi.sort_order asc, pi.created_at asc`;
+}
+
+function coverFilterSql(policy: AiPhotoPolicy) {
+  return policy === "hide" ? sql`and pi.origin = 'upload'` : sql``;
+}
 
 export type ListPublicProductsInput = z.input<typeof listPublicProductsSchema>;
 
@@ -173,6 +199,7 @@ export async function listPublicProducts(
   input: ListPublicProductsInput = {},
 ): Promise<PublicProductListItem[]> {
   const parsed = listPublicProductsSchema.parse(input);
+  const policy = await resolveAiPhotoPolicy(db, parsed.aiPhotos);
 
   const filters = [eq(products.status, "active"), isNull(products.deletedAt)];
   if (!parsed.includeHidden) filters.push(publiclyVisible(parsed.viewer));
@@ -227,14 +254,14 @@ export async function listPublicProducts(
       availableSum: sql<string>`coalesce(sum(greatest(coalesce(${stockLevels.onHand}, 0) - coalesce(${stockLevels.reserved}, 0), 0)), 0)`,
       imagePath: sql<string | null>`(
         select pi.storage_path from product_images pi
-        where pi.product_id = ${products.id}
-        order by pi.sort_order asc, pi.created_at asc
+        where pi.product_id = ${products.id} ${coverFilterSql(policy)}
+        ${coverOrderSql(policy)}
         limit 1
       )`,
       hoverImagePath: sql<string | null>`(
         select pi.storage_path from product_images pi
-        where pi.product_id = ${products.id}
-        order by pi.sort_order asc, pi.created_at asc
+        where pi.product_id = ${products.id} ${coverFilterSql(policy)}
+        ${coverOrderSql(policy)}
         offset 1 limit 1
       )`,
     })
@@ -394,6 +421,8 @@ export interface PublicProductImage {
   path: string;
   /** Cor a que a foto pertence; null = foto do produto inteiro. */
   color: string | null;
+  /** 'upload' = foto real; 'ai' = a peça no corpo de uma modelo da casa. */
+  origin: string;
 }
 
 /** Cartão editorial do post: vira a prévia do link em WhatsApp e Instagram. */
@@ -421,8 +450,9 @@ export interface PublicProductDetail {
   /** Eixos de variação, ex.: ["cor", "tamanho"]. */
   attributesSchema: string[];
   /**
-   * Todas as imagens do produto, ordenadas por sort_order. Nada é filtrado
-   * aqui: a vitrine recebe a lista inteira e decide o que mostrar por cor.
+   * As imagens do produto na política de foto no corpo pedida (a vitrine,
+   * por padrão, só as reais; a Lia e o post preferem a foto no corpo),
+   * ordenadas por sort_order. A escolha por cor fica com quem apresenta.
    */
   images: PublicProductImage[];
   variants: PublicVariant[];
@@ -433,9 +463,10 @@ export async function getPublicProductBySlug(
   slug: string,
   viewer?: CatalogViewer,
   /** includeHidden: ignora visible_from (uso interno — ex.: peça que a dona amarrou a um link de story). */
-  opts: { includeHidden?: boolean } = {},
+  opts: { includeHidden?: boolean; aiPhotos?: "hide" | "prefer" | "store" } = {},
 ): Promise<PublicProductDetail | null> {
   const parsedSlug = z.string().trim().min(1).parse(slug);
+  const policy = await resolveAiPhotoPolicy(db, opts.aiPhotos ?? "store");
 
   const [row] = await db
     .select({
@@ -484,11 +515,14 @@ export async function getPublicProductBySlug(
   // Sem nenhuma variante vendável, o produto não existe para a vitrine.
   if (variantRows.length === 0) return null;
 
-  const imageRows = await db
-    .select({ path: productImages.storagePath, color: productImages.color })
-    .from(productImages)
-    .where(eq(productImages.productId, product.id))
-    .orderBy(asc(productImages.sortOrder), asc(productImages.createdAt));
+  const imageRows = orderImagesByPolicy(
+    await db
+      .select({ path: productImages.storagePath, color: productImages.color, origin: productImages.origin })
+      .from(productImages)
+      .where(eq(productImages.productId, product.id))
+      .orderBy(asc(productImages.sortOrder), asc(productImages.createdAt)),
+    policy,
+  );
 
   return {
     id: product.id,
@@ -507,7 +541,7 @@ export async function getPublicProductBySlug(
     categoryName: row.categoryName,
     categorySlug: row.categorySlug,
     attributesSchema: (product.attributesSchema ?? []) as string[],
-    images: imageRows.map((image) => ({ path: image.path, color: image.color })),
+    images: imageRows.map((image) => ({ path: image.path, color: image.color, origin: image.origin })),
     variants: variantRows.map((variant) => ({
       variantId: variant.variantId,
       sku: variant.sku,

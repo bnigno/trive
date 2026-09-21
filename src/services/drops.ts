@@ -792,7 +792,7 @@ export async function getDropForToken(db: DbOrTx, token: string, now = new Date(
   if (!row) return null;
   const phase = dropPhase(row.drop, now);
   const ids = (await db.select({ id: dropProducts.productId }).from(dropProducts).where(eq(dropProducts.dropId, row.drop.id))).map((p) => p.id);
-  const productsList = ids.length > 0 ? await listPublicProducts(db, { productIds: ids, includeHidden: true, limit: DROP_MAX_PRODUCTS }) : [];
+  const productsList = ids.length > 0 ? await listPublicProducts(db, { productIds: ids, includeHidden: true, aiPhotos: "prefer", limit: DROP_MAX_PRODUCTS }) : [];
   return {
     drop: { id: row.drop.id, name: row.drop.name, publishAt: row.drop.publishAt, phase, vipStartsAt: vipStartsAt(row.drop.publishAt, row.drop.vipWindowHours) },
     invite: { id: row.invite.id, firstName: firstName(row.customerName) },

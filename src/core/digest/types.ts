@@ -36,6 +36,9 @@ export interface DailyDigestData {
     orders: number;
     ordersCents: number;
     costUsdCents: number;
+    /** Foto no corpo no dia: imagens geradas e o gasto delas. */
+    studioImages: number;
+    studioUsdCents: number;
   };
   /** Até 3 variações no limiar ou abaixo, as mais vazias primeiro. */
   lowStock: { name: string; sku: string; available: number }[];

@@ -18,7 +18,7 @@ const full: DailyDigestData = {
   opening: "Meio de semana. Ontem rendeu isto.",
   sales: { paidOrders: 4, revenueCents: 124700, averageTicketCents: 31175, newOrders: 6 },
   waiting: { pendingPayment: 2, toPack: 1, toShip: 3, conversationsAwaitingOwner: 1, mustShipToday: 0 },
-  bot: { conversations: 6, turns: 19, handoffs: 1, orders: 2, ordersCents: 57800, costUsdCents: 42 },
+  bot: { conversations: 6, turns: 19, handoffs: 1, orders: 2, ordersCents: 57800, costUsdCents: 42, studioImages: 9, studioUsdCents: 99 },
   lowStock: [
     { name: "Vestido Dunas Preto M com um nome comprido demais para caber na linha", sku: "DUNAS-PRET-M", available: 0 },
     { name: "Blusa Linho Areia G", sku: "LINHO-AREI-G", available: 1 },
@@ -34,7 +34,7 @@ const empty: DailyDigestData = {
   opening: "Ontem foi dia de descanso. Hoje é dia de vender.",
   sales: { paidOrders: 0, revenueCents: 0, averageTicketCents: 0, newOrders: 0 },
   waiting: { pendingPayment: 0, toPack: 0, toShip: 0, conversationsAwaitingOwner: 0, mustShipToday: 0 },
-  bot: { conversations: 0, turns: 0, handoffs: 0, orders: 0, ordersCents: 0, costUsdCents: 0 },
+  bot: { conversations: 0, turns: 0, handoffs: 0, orders: 0, ordersCents: 0, costUsdCents: 0, studioImages: 0, studioUsdCents: 0 },
   lowStock: [],
   bestSeller: null,
     editions: [],

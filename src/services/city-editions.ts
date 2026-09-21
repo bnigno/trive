@@ -112,8 +112,10 @@ async function loadEditionProducts(db: DbOrTx, editionId: string): Promise<CityE
       slug: products.slug,
       status: products.status,
       sortOrder: cityEditionProducts.sortOrder,
+      // Só foto real: a capa da edição é da vitrine, que decide sozinha
+      // (ai_photos_in_store) o que mostra da foto no corpo.
       imagePath: sql<string | null>`(
-        select pi.storage_path from product_images pi where pi.product_id = ${products.id}
+        select pi.storage_path from product_images pi where pi.product_id = ${products.id} and pi.origin = 'upload'
         order by pi.sort_order asc, pi.created_at asc limit 1
       )`,
     })
