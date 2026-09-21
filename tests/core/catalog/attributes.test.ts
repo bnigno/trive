@@ -65,6 +65,16 @@ describe("normalizeAxisValue", () => {
   it("é idempotente", () => {
     const once = normalizeAxisValue("  azul   MARINHO ");
     expect(normalizeAxisValue(once)).toBe(once);
+    expect(normalizeAxisValue(normalizeAxisValue("38, 40"))).toBe("38/40");
+  });
+
+  it("etiqueta dupla com vírgula vira a forma com barra; cor com vírgula não", () => {
+    expect(normalizeAxisValue("38, 40")).toBe("38/40");
+    expect(normalizeAxisValue("38,40")).toBe("38/40");
+    expect(normalizeAxisValue("36 , 38")).toBe("36/38");
+    expect(normalizeAxisValue("p, m")).toBe("P/M");
+    expect(normalizeAxisValue("Azul, Verde")).toBe("Azul, Verde");
+    expect(normalizeAxisValue("38, 40, 42")).toBe("38, 40, 42");
   });
 
   it("colapsa a variação de caixa que duplicaria a variante", () => {

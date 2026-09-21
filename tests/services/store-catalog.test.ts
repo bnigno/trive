@@ -7,6 +7,8 @@ import {
   computeTotalWeightGrams,
   DEFAULT_ITEM_WEIGHT_GRAMS,
   getPublicProductBySlug,
+  getStoreMap,
+  listProductIdsWithVariant,
   listPublicCategories,
   listPublicProducts,
   listRelatedPublicProducts,
@@ -1058,5 +1060,46 @@ describe("ficha da peça e medidas na vitrine", () => {
       curatorAudioMime: "audio/webm",
       publicNow: true,
     });
+  });
+});
+
+describe("tamanho duplo (etiqueta 38/40)", () => {
+  it("listProductIdsWithVariant acha a peça 38/40 por 38 ou 40; cor continua exata", async () => {
+    const { productId: bermuda } = await createPublicProduct({
+      name: "Bermuda Estrela",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [{ sku: "BERM-EST", attributes: { cor: "Estrela", tamanho: "38/40" }, onHand: 1, priceCents: 9499 }],
+    });
+    const { productId: outra } = await createPublicProduct({
+      name: "Bermuda Nani",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [{ sku: "BERM-NANI", attributes: { cor: "Nani", tamanho: "40" }, onHand: 1, priceCents: 9499 }],
+    });
+    await createPublicProduct({
+      name: "Bermuda Esgotada",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [{ sku: "BERM-ESG", attributes: { cor: "Preta", tamanho: "38/40" }, onHand: 0, priceCents: 9499 }],
+    });
+
+    expect(await listProductIdsWithVariant(db, { tamanho: "40" })).toEqual(new Set([bermuda, outra]));
+    expect(await listProductIdsWithVariant(db, { tamanho: "38" })).toEqual(new Set([bermuda]));
+    expect(await listProductIdsWithVariant(db, { tamanho: "38/40" })).toEqual(new Set([bermuda]));
+    expect(await listProductIdsWithVariant(db, { tamanho: "42" })).toEqual(new Set());
+    expect(await listProductIdsWithVariant(db, { cor: "estrela", tamanho: "40" })).toEqual(new Set([bermuda]));
+    expect(await listProductIdsWithVariant(db, { cor: "Nani", tamanho: "38" })).toEqual(new Set());
+    expect(await listProductIdsWithVariant(db, {})).toBeNull();
+  });
+
+  it("a planta da loja lista 38 e 40, nunca o rótulo 38/40 (o quiz pergunta o tamanho DELA)", async () => {
+    await createPublicProduct({
+      name: "Bermuda Estrela",
+      attributesSchema: ["cor", "tamanho"],
+      variants: [
+        { sku: "BERM-EST", attributes: { cor: "Estrela", tamanho: "38/40" }, onHand: 1, priceCents: 9499 },
+        { sku: "BERM-MAR", attributes: { cor: "Mar", tamanho: "44" }, onHand: 1, priceCents: 9499 },
+        { sku: "BERM-ESG", attributes: { cor: "Céu", tamanho: "36/38" }, onHand: 0, priceCents: 9499 },
+      ],
+    });
+    expect((await getStoreMap(db)).sizes).toEqual(["38", "40", "44"]);
   });
 });

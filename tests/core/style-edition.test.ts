@@ -35,6 +35,12 @@ describe("scoreCandidate", () => {
     expect(bag.score).toBe(2);
     expect(bag.reasons).toEqual(["em Verde"]);
   });
+
+  it("etiqueta dupla (P/M) conta como o tamanho da cartela", () => {
+    const dual = scoreCandidate(profile, candidate({ id: "d", name: "Vestido Brisa", sizesAvailable: ["P/M"], colorsAvailable: ["Preto"] }));
+    expect(dual.score).toBe(3);
+    expect(dual.reasons).toEqual(["no seu M"]);
+  });
 });
 
 describe("buildEditionForProfile", () => {

@@ -22,12 +22,28 @@ export const VARIANT_LABEL_SEPARATOR = " · ";
  * que o dono quis dizer.
  */
 export function normalizeAxisValue(value: string): string {
-  return value
-    .trim()
+  return joinDualSize(value.trim())
     .split(/\s+/)
     .filter((word) => word.length > 0)
     .map(capitalizeWord)
     .join(" ");
+}
+
+/** Número de 1 a 3 dígitos ou sigla conhecida: o que pode ser um tamanho. */
+function isSizeToken(token: string): boolean {
+  return /^\d{1,3}$/.test(token) || SIZE_TOKENS.has(token.toUpperCase());
+}
+
+/**
+ * Etiqueta dupla ("38, 40" — uma peça que veste os dois) fica na forma com
+ * barra, a que o resto do catálogo lê (core/catalog/sizes). Com vírgula, a
+ * Lia e a cartela leriam dois tamanhos e não achariam nenhum. Só quando os
+ * dois lados são tamanho: "Azul, Verde" não é etiqueta dupla.
+ */
+function joinDualSize(value: string): string {
+  const match = /^(\S+?)\s*,\s*(\S+)$/.exec(value);
+  if (!match || !isSizeToken(match[1]!) || !isSizeToken(match[2]!)) return value;
+  return `${match[1]}/${match[2]}`;
 }
 
 function capitalizeWord(word: string): string {

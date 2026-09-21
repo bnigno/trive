@@ -108,6 +108,10 @@ describe("afinidade e público", () => {
     expect(scoreDropAffinity(bia, products)).toEqual({ score: 0, reasons: [] });
     const carla = candidate({ customerId: "carla", purchasedCategoryIds: ["cat-blusa"] });
     expect(scoreDropAffinity(carla, products)).toEqual({ score: 2, reasons: ["já comprou Blusas"] });
+    // Etiqueta dupla: a peça 38/40 tem o 40 dela.
+    const dual: DropAffinityProduct = { id: "p3", name: "Bermuda Jeans", categoryId: "cat-berm", categoryName: "Bermudas", sizesAvailable: ["38/40"], colorsAvailable: ["Azul"] };
+    const dora = candidate({ customerId: "dora", profile: mergeStyleProfile(EMPTY_PROFILE, { sizes: { calca: "40" } }) });
+    expect(scoreDropAffinity(dora, [dual])).toEqual({ score: 3, reasons: ["tem o 40 dela"] });
   });
 
   it("rankAudience filtra por 2 pontos, ordena por afinidade e respeita o limite", () => {
