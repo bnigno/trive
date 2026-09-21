@@ -1073,7 +1073,6 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   legenda. A fila do "Quem já vestiu" mostra "mimo: cupom …". Produção:
   `scripts/sync-seed.ts --settings look_coupon_enabled,look_coupon_percent,look_coupon_days`
   e a migração 0053.
-  e a migração 0052.
 - **Proteção de preço** (card em `/admin/cupons`) — quando um preço ativo
   cai, quem pagou mais nos últimos N dias (padrão 14) ganha a diferença ×
   quantidade em cupom fixo de 30 dias e a mensagem `price_protection_coupon`.
