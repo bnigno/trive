@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/form";
 import { toggleShippingRateAction } from "./actions";
 import {
   CorreiosAutoForm,
+  CorreiosProbeForm,
   ShippingRateCreateForm,
   ShippingRateEditForm,
   type RateFormDefaults,
@@ -254,7 +255,10 @@ export default async function FretePage() {
                 </code>{" "}
                 nas variáveis de ambiente do site (Vercel → Production). Só você tem acesso a esse painel.
               </li>
-              <li>Informe o CEP de origem, confira o acréscimo e ligue o toggle abaixo.</li>
+              <li>
+                Informe o CEP de origem (um CEP real — a SuperFrete recusa o genérico da cidade), confira o
+                acréscimo e salve; use <strong>Testar cotação</strong> e só então ligue o toggle.
+              </li>
             </ol>
           </div>
 
@@ -271,6 +275,18 @@ export default async function FretePage() {
               surcharge: centsToInput(correios.surchargeCents),
             }}
           />
+
+          <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 px-4 py-4 dark:border-zinc-800">
+            <div>
+              <p className="font-medium text-zinc-800 dark:text-zinc-200">Testar cotação</p>
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                Chama a SuperFrete de verdade com o CEP de origem salvo acima, mesmo
+                com o toggle desligado — não grava nada. Se falhar, a mensagem diz o
+                que falta (token, CEP de origem, SuperFrete fora do ar).
+              </p>
+            </div>
+            <CorreiosProbeForm simulated={correiosSimulated} />
+          </div>
         </div>
       </Card>
 

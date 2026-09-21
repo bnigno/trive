@@ -343,6 +343,17 @@ Castanhal** a entrega é **só por motoboy**; no resto do Brasil é pelos
   resposta bruta em `raw` para conferir a re-pesagem). Falha do provedor
   (timeout de 6 s, HTTP ≠ 2xx, sem token) = lista vazia = o fluxo pela
   equipe de sempre, com `console.warn("[correios] …")` nos logs da Vercel.
+  Para conferir a produção sem ler logs: **/admin/frete → Correios
+  automático → Testar cotação** (`probeCorreiosQuote`: chama a SuperFrete com
+  o CEP de origem salvo, ignora o toggle e o cache, não grava em
+  `shipping_quotes`; a falha traz o motivo — token ausente, HTTP 401 = token
+  recusado, HTTP 400 = CEP que não existe na base dos Correios, o genérico
+  da cidade inclusive) ou, no terminal, `npx tsx --env-file=.env.prod.local
+  scripts/smoke-superfrete.ts --de <CEP> --para <CEP> [--peso g]` (cliente
+  real direto, sem banco). Ligado em produção em 2026-09-20; smoke real de
+  Belém: SP PAC R$ 31,73 (7 d) / SEDEX R$ 69,68 (3 d), Manaus PAC R$ 23,71
+  (20 d) / SEDEX R$ 46,45 (4 d), Castanhal PAC R$ 18,91 (6 d) / SEDEX
+  R$ 24,28 (2 d), tudo para 300 g e antes do acréscimo.
   Regras do cache (`pickCachedQuotes`, core): por serviço vale a linha MAIS
   ANTIGA ainda reaproveitável (dois lotes nascidos quase juntos não trocam o
   id da cliente); resposta incompleta (só PAC) volta a perguntar pelo SEDEX

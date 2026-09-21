@@ -12,7 +12,12 @@ import { randomUUID } from "node:crypto";
 
 import { and, asc, eq, gt } from "drizzle-orm";
 
-import { CorreiosQuoteUnavailableError, isCorreiosQuotesConfigured, type CorreiosQuoter } from "@/adapters/superfrete";
+import {
+  CorreiosQuoteUnavailableError,
+  isCorreiosQuotesConfigured,
+  type CorreiosQuoteFailureReason,
+  type CorreiosQuoter,
+} from "@/adapters/superfrete";
 import {
   applySurcharge,
   billableWeightGrams,
@@ -23,6 +28,7 @@ import {
   quoteExpiresAt,
   quoteRequestKey,
   type CachedQuoteRow,
+  type CorreiosServiceName,
 } from "@/core/shipping/correios-package";
 import type { RateForOptions } from "@/core/shipping/delivery-windows";
 import { shippingQuotes } from "@/db/schema";
@@ -51,6 +57,107 @@ export async function getCorreiosAutoSettings(db: ServiceDb): Promise<CorreiosAu
     storeCep: typeof storeCep === "string" || typeof storeCep === "number" ? cepDigits(String(storeCep)) : null,
     surchargeCents: typeof surcharge === "number" && Number.isInteger(surcharge) && surcharge >= 0 ? surcharge : DEFAULT_SURCHARGE_CENTS,
   };
+}
+
+export type CorreiosProbeFailureReason = CorreiosQuoteFailureReason | "no_store_cep" | "no_service";
+
+export interface CorreiosProbeQuote {
+  service: CorreiosServiceName;
+  /** O que a SuperFrete cobrou, em centavos. */
+  providerPriceCents: number;
+  /** Provedor + acréscimo de embalagem: o valor que a cliente veria. */
+  priceCents: number;
+  deliveryDaysMin: number;
+  deliveryDaysMax: number;
+}
+
+export type CorreiosProbeResult =
+  | { ok: true; storeCep: string; weightGrams: number; surchargeCents: number; quotes: CorreiosProbeQuote[] }
+  | { ok: false; reason: CorreiosProbeFailureReason };
+
+export interface ProbeCorreiosInput {
+  /** 8 dígitos (o chamador já normalizou). */
+  cep: string;
+  weightGrams: number;
+}
+
+/**
+ * "Testar cotação" de /admin/frete: uma chamada de verdade ao provedor com o
+ * CEP de origem salvo, para a dona conferir token e configuração sem ler
+ * logs. Ignora o toggle (dá para testar antes de ligar), não lê nem grava
+ * shipping_quotes, e devolve o motivo em vez de esconder a falha.
+ */
+export async function probeCorreiosQuote(
+  db: ServiceDb,
+  quoter: CorreiosQuoter,
+  input: ProbeCorreiosInput,
+): Promise<CorreiosProbeResult> {
+  const settings = await getCorreiosAutoSettings(db);
+  if (!settings.storeCep) return { ok: false, reason: "no_store_cep" };
+  if (!isCorreiosQuotesConfigured()) return { ok: false, reason: "no_token" };
+
+  const weightGrams = billableWeightGrams(input.weightGrams);
+  let results;
+  try {
+    results = await quoter.quote({
+      fromCep: settings.storeCep,
+      toCep: input.cep,
+      weightGrams,
+      package: DEFAULT_PACKAGE_CM,
+      services: CORREIOS_SERVICES,
+    });
+  } catch (error) {
+    if (error instanceof CorreiosQuoteUnavailableError) return { ok: false, reason: error.reason };
+    throw error;
+  }
+  if (results.length === 0) return { ok: false, reason: "no_service" };
+
+  return {
+    ok: true,
+    storeCep: settings.storeCep,
+    weightGrams,
+    surchargeCents: settings.surchargeCents,
+    quotes: results.map((result) => ({
+      service: result.service,
+      providerPriceCents: result.priceCents,
+      priceCents: applySurcharge(result.priceCents, settings.surchargeCents),
+      deliveryDaysMin: result.deliveryDaysMin,
+      deliveryDaysMax: result.deliveryDaysMax,
+    })),
+  };
+}
+
+/**
+ * O motivo da falha do teste em português, dizendo o que a dona pode fazer.
+ * Fica aqui (e não no formulário) porque cita a variável de ambiente, que o
+ * check de segredos proíbe em arquivos de cliente.
+ */
+export function describeCorreiosProbeFailure(reason: CorreiosProbeFailureReason): string {
+  switch (reason) {
+    case "no_store_cep":
+      return "Informe e salve o CEP de origem acima antes de testar.";
+    case "no_token":
+      return "O token da SuperFrete (SUPERFRETE_TOKEN) não está configurado no site. Cadastre a variável na Vercel (Production) e faça um redeploy.";
+    case "timeout":
+      return "A SuperFrete não respondeu em 6 segundos. Tente de novo em instantes.";
+    case "network":
+      return "Sem conexão com a SuperFrete. Tente de novo em instantes.";
+    case "invalid_response":
+      return "A SuperFrete respondeu num formato inesperado. Se persistir, avise o suporte técnico.";
+    case "no_service":
+      return "A SuperFrete não tem PAC nem SEDEX para esse CEP com esse peso. Confira o CEP de destino.";
+    case "http_401":
+    case "http_403":
+      return `A SuperFrete recusou o token (HTTP ${reason.slice(5)}). Confira o valor na Vercel; se preciso, gere outro token no painel da SuperFrete.`;
+    case "http_400":
+    case "http_422":
+      // A SuperFrete responde 400 para CEP que não existe na base dos Correios (o genérico da cidade, ex.: 68740-000, não existe).
+      return `A SuperFrete recusou os dados (HTTP ${reason.slice(5)}): confira o CEP de destino e o CEP de origem — os dois precisam existir na base dos Correios.`;
+    case "http_429":
+      return "A SuperFrete limitou as chamadas (HTTP 429). Aguarde um minuto e tente de novo.";
+    default:
+      return `A SuperFrete respondeu HTTP ${reason.slice(5)}. Tente de novo; se persistir, confira o status em superfrete.com.`;
+  }
 }
 
 export interface QuoteCorreiosInput {

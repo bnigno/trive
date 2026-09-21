@@ -2,8 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { getCorreiosQuoter } from "@/adapters/superfrete";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
+import {
+  describeCorreiosProbeFailure,
+  probeCorreiosQuote,
+  type CorreiosProbeQuote,
+} from "@/services/correios-quotes";
 import {
   createShippingRate,
   listShippingRates,
@@ -11,6 +17,7 @@ import {
   updateShippingRate,
 } from "@/services/shipping";
 import { ServiceError as SettingsServiceError, updateSetting } from "@/services/settings";
+import { cepDigits } from "@/lib/cep";
 import { parseBRLToCents } from "@/lib/money";
 
 export type FormState = { error?: string; success?: string };
@@ -201,6 +208,62 @@ export async function updateCorreiosAutoAction(
     return {
       success:
         "Correios automático salvo. Sem o token da SuperFrete ou sem o CEP de origem, os CEPs sem faixa seguem com o frete calculado pela equipe.",
+    };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Testar cotação: uma chamada de verdade à SuperFrete, sem gravar nada.
+// ---------------------------------------------------------------------------
+
+export type CorreiosProbeFormState = {
+  error?: string;
+  result?: {
+    /** 8 dígitos. */
+    storeCep: string;
+    cep: string;
+    weightGrams: number;
+    surchargeCents: number;
+    quotes: CorreiosProbeQuote[];
+  };
+};
+
+const probeSchema = z.object({
+  cep: z
+    .string()
+    .refine((value) => cepDigits(value) !== null, "CEP de destino inválido. Informe os 8 dígitos, ex.: 01310-100.")
+    .transform((value) => cepDigits(value)!),
+  weightGrams: z.coerce
+    .number({ error: "Peso em gramas inteiros, ex.: 300." })
+    .int("Peso em gramas inteiros, ex.: 300.")
+    .min(1, "Peso em gramas inteiros, ex.: 300.")
+    .max(30_000, "Peso máximo dos Correios: 30 kg (30000 g)."),
+});
+
+export async function probeCorreiosQuoteAction(
+  _prev: CorreiosProbeFormState,
+  formData: FormData,
+): Promise<CorreiosProbeFormState> {
+  await requireOwner("frete");
+  try {
+    const weightRaw = String(formData.get("weightGrams") ?? "").trim();
+    const input = probeSchema.parse({
+      cep: String(formData.get("cep") ?? ""),
+      // Campo vazio = o mínimo cobrado (z.coerce transformaria "" em 0).
+      weightGrams: weightRaw === "" ? "300" : weightRaw,
+    });
+    const result = await probeCorreiosQuote(getDb(), getCorreiosQuoter(), input);
+    if (!result.ok) return { error: describeCorreiosProbeFailure(result.reason) };
+    return {
+      result: {
+        storeCep: result.storeCep,
+        cep: input.cep,
+        weightGrams: result.weightGrams,
+        surchargeCents: result.surchargeCents,
+        quotes: result.quotes,
+      },
     };
   } catch (error) {
     return { error: toErrorMessage(error) };
