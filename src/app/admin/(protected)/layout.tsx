@@ -42,7 +42,7 @@ export default async function AdminLayout({
   // Navegação e rodapé de usuário são os mesmos na barra lateral (md+) e na
   // gaveta do celular — o dono opera a loja pelo telefone.
   const userFooter = (
-    <div className="flex items-center gap-3 border-t border-white/10 p-3">
+    <div className="relative flex items-center gap-3 border-t border-white/10 p-3">
       <Avatar
         name={user.fullName}
         fallback={user.email}

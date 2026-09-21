@@ -308,6 +308,8 @@ const ATTENTION_ICONS: Record<string, LucideIcon> = {
   "atelier-failed": Camera,
   "pending-looks": Camera,
   "low-stock": Boxes,
+  "wa-awaiting": MessageCircle,
+  "wa-new": MessageCircle,
   emails: Mail,
 };
 

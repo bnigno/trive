@@ -129,7 +129,7 @@ export function buildAttentionRows(dashboard: AdminDashboard): AttentionRow[] {
     const awaiting = shared.attention.conversationsAwaiting;
     rows.push({
       key: "wa-awaiting",
-      label: "Esperando por você no WhatsApp",
+      label: "WhatsApp: esperando você",
       count: awaiting,
       hint: `${plural(awaiting, "Conversa transferida", "Conversas transferidas")} com mensagem que você ainda não viu.`,
       href: "/admin/whatsapp/conversas?f=nao-lidas",
@@ -140,9 +140,9 @@ export function buildAttentionRows(dashboard: AdminDashboard): AttentionRow[] {
   if (withSeller > 0) {
     rows.push({
       key: "wa-new",
-      label: "Mensagem nova com a vendedora",
+      label: "WhatsApp: com a vendedora",
       count: withSeller,
-      hint: "A vendedora está respondendo; abra se quiser acompanhar.",
+      hint: "Mensagem nova que a vendedora está respondendo; abra se quiser acompanhar.",
       href: "/admin/whatsapp/conversas?f=nao-lidas",
       severity: "neutral",
     });

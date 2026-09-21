@@ -23,8 +23,10 @@ export function NotifyPrefsMenu() {
   // Lido a cada render (o navegador pode ter mudado a permissão por fora).
   const permission = useSyncExternalStore(emptySubscribe, readPermission, () => "unsupported" as const);
 
+  // O painel ancora no rodapé (o pai `relative`), não no sino: a lateral tem
+  // 256 px e um painel preso ao ícone sairia pela esquerda.
   return (
-    <details className="relative">
+    <details>
       <summary
         aria-label="Avisos de mensagem nova"
         title="Avisos de mensagem nova"
@@ -32,7 +34,7 @@ export function NotifyPrefsMenu() {
       >
         <Bell aria-hidden="true" className="size-4" strokeWidth={1.75} />
       </summary>
-      <div className="absolute bottom-full right-0 z-40 mb-2 w-64 rounded-xl border border-white/10 bg-noir-900 p-3 text-sm text-zinc-200 shadow-lg">
+      <div className="absolute bottom-full left-3 right-3 z-40 mb-1 rounded-xl border border-white/10 bg-noir-900 p-3 text-sm text-zinc-200 shadow-lg">
         <p className="font-medium text-zinc-100">Mensagem nova no WhatsApp</p>
         <label className="mt-2 flex items-center gap-2">
           <input

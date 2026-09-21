@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 
 import { cx } from "@/components/ui/cx";
 import { ConversationItem } from "./conversation-item";
@@ -84,6 +85,15 @@ export function ConversationList({
 }) {
   const searching = query.trim() !== "";
 
+  // A fileira de filtros rola de lado na coluna de 340 px: o filtro ativo
+  // (vindo da URL, por exemplo) aparece em vez de ficar escondido à direita.
+  const filtersRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    filtersRef.current
+      ?.querySelector<HTMLButtonElement>("[aria-pressed=true]")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [filter]);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-ivory-50 dark:bg-ink-950">
       <header className="shrink-0 border-b border-ivory-300 px-3 pb-2 pt-3 dark:border-ink-800">
@@ -112,6 +122,7 @@ export function ConversationList({
           />
         </label>
         <div
+          ref={filtersRef}
           role="group"
           aria-label="Filtrar conversas"
           className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]"
