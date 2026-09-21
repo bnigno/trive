@@ -5,7 +5,8 @@ import { z } from "zod";
 import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import { ServiceError } from "@/services/orders";
-import { createCoupon, updateCoupon } from "@/services/coupons";
+import { createCoupon, deleteCoupon, updateCoupon, type CreateCouponInput } from "@/services/coupons";
+import { parseProductRefs, parseTimeToMinutes, parseWeekdays } from "@/lib/coupon-fields";
 import { parseBRLToCents } from "@/lib/money";
 
 export type FormState = { error?: string; success?: string };
@@ -61,22 +62,89 @@ function parseDatetimeField(raw: string, label: string): Date | null {
 }
 
 /** Inteiro >= 1; vazio -> null (sem limite). */
-function parseMaxUsesField(raw: string): number | null {
+function parsePositiveIntField(raw: string, label: string): number | null {
   const value = raw.trim();
   if (!value) return null;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new ServiceError(
       "limite_invalido",
-      "Limite de usos: informe um número inteiro maior que zero (ou deixe vazio para ilimitado).",
+      `${label}: informe um número inteiro maior que zero (ou deixe vazio).`,
     );
   }
   return parsed;
 }
 
-const typeSchema = z.enum(["percent", "fixed"], {
+/** "14:00" -> 840; vazio -> null; inválido -> erro. */
+function parseTimeField(raw: string, label: string): number | null {
+  const value = raw.trim();
+  if (!value) return null;
+  const minutes = parseTimeToMinutes(value);
+  if (minutes === null) {
+    throw new ServiceError("horario_invalido", `${label}: informe a hora como 14:00.`);
+  }
+  return minutes;
+}
+
+const typeSchema = z.enum(["percent", "fixed", "free_shipping"], {
   message: "Tipo de desconto inválido.",
 });
+const scopeSchema = z.enum(["any", "motoboy", "correios"], {
+  message: "Escopo do frete grátis inválido.",
+});
+
+function text(formData: FormData, name: string): string {
+  return String(formData.get(name) ?? "");
+}
+
+/** Os campos de regra do cupom, compartilhados por criar e editar. */
+function readRuleFields(formData: FormData): Omit<CreateCouponInput, "code" | "userId" | "isActive"> {
+  const type = typeSchema.parse(formData.get("type"));
+  const rawValue = text(formData, "value");
+  const value =
+    type === "free_shipping"
+      ? 0
+      : type === "percent"
+        ? parsePercentField(rawValue, "Valor do desconto (%)")
+        : parseMoneyField(rawValue, "Valor do desconto (R$)");
+  if (type === "fixed" && value <= 0) {
+    throw new ServiceError("valor_invalido", "Valor do desconto (R$): informe um valor maior que zero.");
+  }
+  const rawMin = text(formData, "minOrder").trim();
+  const minOrderCents = rawMin ? parseMoneyField(rawMin, "Pedido mínimo (R$)") : 0;
+  const startsAt = parseDatetimeField(text(formData, "startsAt"), "Início da vigência");
+  const expiresAt = parseDatetimeField(text(formData, "expiresAt"), "Fim da vigência");
+  if (startsAt && expiresAt && expiresAt.getTime() <= startsAt.getTime()) {
+    throw new ServiceError("vigencia_invalida", "O fim da vigência deve ser depois do início.");
+  }
+  const validFromMinute = parseTimeField(text(formData, "validFrom"), "Horário de início");
+  const validToMinute = parseTimeField(text(formData, "validTo"), "Horário de fim");
+  if ((validFromMinute === null) !== (validToMinute === null)) {
+    throw new ServiceError("horario_invalido", "Informe o horário de início e o de fim (ou deixe os dois vazios).");
+  }
+  if (validFromMinute !== null && validToMinute !== null && validFromMinute >= validToMinute) {
+    throw new ServiceError("horario_invalido", "O fim do horário deve ser depois do início.");
+  }
+  const customerPhone = text(formData, "customerPhone").trim();
+  return {
+    type,
+    value,
+    minOrderCents,
+    startsAt,
+    expiresAt,
+    maxUses: parsePositiveIntField(text(formData, "maxUses"), "Limite de usos"),
+    perCustomerLimit: parsePositiveIntField(text(formData, "perCustomerLimit"), "Limite por cliente"),
+    customerPhone: customerPhone === "" ? null : customerPhone,
+    firstPurchaseOnly: formData.get("firstPurchaseOnly") === "on",
+    freeShippingScope: type === "free_shipping" ? scopeSchema.parse(formData.get("freeShippingScope") ?? "any") : "any",
+    validWeekdays: parseWeekdays(formData.getAll("weekdays").map(String)),
+    validFromMinute,
+    validToMinute,
+    productRefs: parseProductRefs(text(formData, "productRefs")),
+    categoryIds: formData.getAll("categoryIds").map(String).filter((id) => id !== ""),
+    note: text(formData, "note").trim() || null,
+  };
+}
 
 export async function createCouponAction(
   _prev: FormState,
@@ -84,55 +152,14 @@ export async function createCouponAction(
 ): Promise<FormState> {
   const user = await requireOwner("cupons");
   try {
-    const code = String(formData.get("code") ?? "").trim().toUpperCase();
+    const code = text(formData, "code").trim().toUpperCase();
     if (!code) {
       throw new ServiceError("codigo_obrigatorio", "Informe o código do cupom.");
     }
-    const type = typeSchema.parse(formData.get("type"));
-    const rawValue = String(formData.get("value") ?? "");
-    const value =
-      type === "percent"
-        ? parsePercentField(rawValue, "Valor do desconto (%)")
-        : parseMoneyField(rawValue, "Valor do desconto (R$)");
-    if (type === "fixed" && value <= 0) {
-      throw new ServiceError(
-        "valor_invalido",
-        "Valor do desconto (R$): informe um valor maior que zero.",
-      );
-    }
-    const rawMin = String(formData.get("minOrder") ?? "").trim();
-    const minOrderCents = rawMin
-      ? parseMoneyField(rawMin, "Pedido mínimo (R$)")
-      : 0;
-    const startsAt = parseDatetimeField(
-      String(formData.get("startsAt") ?? ""),
-      "Início da vigência",
-    );
-    const expiresAt = parseDatetimeField(
-      String(formData.get("expiresAt") ?? ""),
-      "Fim da vigência",
-    );
-    if (startsAt && expiresAt && expiresAt.getTime() <= startsAt.getTime()) {
-      throw new ServiceError(
-        "vigencia_invalida",
-        "O fim da vigência deve ser depois do início.",
-      );
-    }
-    const maxUses = parseMaxUsesField(String(formData.get("maxUses") ?? ""));
-
-    await createCoupon(getDb(), {
-      code,
-      type,
-      value,
-      minOrderCents,
-      startsAt,
-      expiresAt,
-      maxUses,
-      userId: user.id,
-    });
+    await createCoupon(getDb(), { code, ...readRuleFields(formData), userId: user.id });
     revalidatePath("/admin/cupons");
     return {
-      success: `Cupom ${code} criado. Divulgue o código para seus clientes!`,
+      success: `Cupom ${code} criado. Divulgue o código — ou o link /c/${code} — para suas clientes!`,
     };
   } catch (error) {
     return { error: toErrorMessage(error) };
@@ -141,7 +168,11 @@ export async function createCouponAction(
 
 const idSchema = z.uuid();
 
-/** Edita vigência (fim) e limite de usos — campos vazios removem o limite. */
+/**
+ * Edita o cupom. mode=limited (cupom já usado): só fim da vigência, limite
+ * de usos e nota; mode=full: tudo. O serviço recusa regras em cupom usado
+ * mesmo que o form minta.
+ */
 export async function updateCouponAction(
   _prev: FormState,
   formData: FormData,
@@ -149,18 +180,17 @@ export async function updateCouponAction(
   const user = await requireOwner("cupons");
   try {
     const couponId = idSchema.parse(formData.get("id"));
-    const expiresAt = parseDatetimeField(
-      String(formData.get("expiresAt") ?? ""),
-      "Fim da vigência",
-    );
-    const maxUses = parseMaxUsesField(String(formData.get("maxUses") ?? ""));
-
-    await updateCoupon(getDb(), {
-      couponId,
-      expiresAt,
-      maxUses,
-      userId: user.id,
-    });
+    if (formData.get("mode") === "full") {
+      await updateCoupon(getDb(), { couponId, ...readRuleFields(formData), userId: user.id });
+    } else {
+      await updateCoupon(getDb(), {
+        couponId,
+        expiresAt: parseDatetimeField(text(formData, "expiresAt"), "Fim da vigência"),
+        maxUses: parsePositiveIntField(text(formData, "maxUses"), "Limite de usos"),
+        note: text(formData, "note").trim() || null,
+        userId: user.id,
+      });
+    }
     revalidatePath("/admin/cupons");
     return { success: "Cupom salvo." };
   } catch (error) {
@@ -179,4 +209,20 @@ export async function toggleCouponAction(formData: FormData): Promise<void> {
     userId: user.id,
   });
   revalidatePath("/admin/cupons");
+}
+
+/** Apaga um cupom que ninguém usou (o serviço recusa os demais). */
+export async function deleteCouponAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("cupons");
+  try {
+    const couponId = idSchema.parse(formData.get("id"));
+    await deleteCoupon(getDb(), { couponId, userId: user.id });
+    revalidatePath("/admin/cupons");
+    return { success: "Cupom excluído." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
 }

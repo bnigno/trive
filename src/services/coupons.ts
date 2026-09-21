@@ -579,8 +579,10 @@ export async function issueCoupon(tx: DbOrTx, input: IssueCouponInput): Promise<
 // ---------------------------------------------------------------------------
 
 export interface CouponListItem extends Coupon {
-  /** Resgates ativos (não devolvidos). */
+  /** Resgates ativos (não devolvidos) — "quem usou". */
   redemptionsCount: number;
+  /** Já passou por algum pedido (mesmo devolvido): tipo, valor e regras ficam travados. */
+  everRedeemed: boolean;
 }
 
 /** Todos os cupons, mais recentes primeiro. */
@@ -588,12 +590,19 @@ export async function listCoupons(db: DbOrTx): Promise<CouponListItem[]> {
   const rows = await db.select().from(coupons).orderBy(desc(coupons.createdAt), desc(coupons.id));
   const list = await toCoupons(db, rows);
   const counts = await db
-    .select({ couponId: couponRedemptions.couponId, count: sql<number>`count(*)::int` })
+    .select({
+      couponId: couponRedemptions.couponId,
+      active: sql<number>`count(*) filter (where ${couponRedemptions.releasedAt} is null)::int`,
+      total: sql<number>`count(*)::int`,
+    })
     .from(couponRedemptions)
-    .where(isNull(couponRedemptions.releasedAt))
     .groupBy(couponRedemptions.couponId);
-  const countById = new Map(counts.map((row) => [row.couponId, row.count]));
-  return list.map((coupon) => ({ ...coupon, redemptionsCount: countById.get(coupon.id) ?? 0 }));
+  const countById = new Map(counts.map((row) => [row.couponId, row]));
+  return list.map((coupon) => ({
+    ...coupon,
+    redemptionsCount: countById.get(coupon.id)?.active ?? 0,
+    everRedeemed: (countById.get(coupon.id)?.total ?? 0) > 0,
+  }));
 }
 
 export async function getCoupon(db: DbOrTx, couponId: string): Promise<Coupon | null> {
@@ -965,10 +974,20 @@ export async function updateCoupon(db: DbOrTx, input: UpdateCouponInput): Promis
       set.validWeekdays = parseWeekdays(rule.validWeekdays);
       set.validFromMinute = rule.validFromMinute ?? null;
       set.validToMinute = rule.validToMinute ?? null;
+      // Vínculo pessoal: só muda quando o telefone muda de verdade. Telefone
+      // igual ao de antes não re-resolve (não perde o cadastro); vazio só
+      // solta o vínculo quando ele era por telefone — um cupom preso ao
+      // cadastro (emitido pela casa) não vira aberto porque o form veio vazio.
       if (parsed.customerPhone !== undefined) {
-        const personal = await resolvePersonalIdentity(tx, parsed.customerPhone);
-        set.customerId = personal.customerId;
-        set.phoneE164 = personal.phoneE164;
+        const nextPhone = parsed.customerPhone ? toE164BR(parsed.customerPhone) : null;
+        if (parsed.customerPhone && !nextPhone) {
+          throw new ServiceError("COUPON_PHONE_INVALID", "Telefone da cliente inválido: use DDD + número, ex.: (91) 99999-0000.");
+        }
+        if (nextPhone !== before.phoneE164 && (nextPhone !== null || before.phoneE164 !== null)) {
+          const personal = await resolvePersonalIdentity(tx, nextPhone);
+          set.customerId = personal.customerId;
+          set.phoneE164 = personal.phoneE164;
+        }
       }
     }
 
