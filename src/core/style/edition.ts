@@ -2,6 +2,7 @@
 // cartela — tamanho dela com estoque, cor amada, nunca só cores evitadas,
 // categorias variadas — e explica cada escolha numa frase curta. Puro.
 import { lookFamilyOf } from "@/core/bot/look";
+import { sizeMatches } from "@/core/catalog/sizes";
 
 import { sizeKeyForCategory, type StyleProfile } from "./profile";
 
@@ -49,7 +50,7 @@ export function scoreCandidate(profile: StyleProfile, candidate: EditionCandidat
   let score = 0;
   const sizeKey = sizeKeyForCategory(candidate.categoryName, candidate.name);
   const wanted = sizeKey ? profile.sizes[sizeKey] : undefined;
-  if (wanted && candidate.sizesAvailable.some((size) => fold(size) === fold(wanted))) {
+  if (wanted && candidate.sizesAvailable.some((size) => sizeMatches(size, wanted))) {
     score += 3;
     reasons.push(`no seu ${wanted}`);
   }

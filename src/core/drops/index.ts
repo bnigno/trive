@@ -2,6 +2,7 @@
 // publicação e, algumas horas antes, as clientes cuja cartela conversa com
 // elas recebem o convite. Puro: fases, regras para agendar, pontuação de
 // afinidade e o ranking do público.
+import { sizeMatches } from "@/core/catalog/sizes";
 import type { StyleProfile } from "@/core/style/profile";
 import { sizeKeyForCategory } from "@/core/style/profile";
 
@@ -160,7 +161,7 @@ export function scoreProductAffinity(candidate: AudienceCandidate, product: Drop
   if (profile) {
     const sizeKey = sizeKeyForCategory(product.categoryName, product.name);
     const wanted = sizeKey ? profile.sizes[sizeKey] : undefined;
-    if (wanted && product.sizesAvailable.some((size) => fold(size) === fold(wanted))) {
+    if (wanted && product.sizesAvailable.some((size) => sizeMatches(size, wanted))) {
       score += 3;
       reasons.push(`tem o ${wanted} dela`);
     }

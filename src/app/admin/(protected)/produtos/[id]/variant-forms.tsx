@@ -11,7 +11,7 @@ import {
 import { addVariantAction, updateVariantAction, type FormState } from "./actions";
 
 /** O que o dono digita vira o padrão do catálogo (é a chave que liga foto, Lia e vitrine à variação). */
-const AXIS_VALUE_HINT = "Fica no padrão do catálogo: Rajado, Verde Musgo; tamanhos P, M, G.";
+const AXIS_VALUE_HINT = "Fica no padrão do catálogo: Rajado, Verde Musgo; tamanhos P, M, G — etiqueta dupla como 38/40.";
 
 const initialState: FormState = {};
 

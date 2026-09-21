@@ -5,10 +5,10 @@
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
-  compareSizeLabels,
   parseMeasurements,
   type Measurements,
 } from "@/core/catalog/measurements";
+import { compareSizeLabels, sizeMatches, sizeTokens } from "@/core/catalog/sizes";
 import { PIECE_TYPE_SLUGS, pieceTypePlural, type PieceType } from "@/core/catalog/piece-types";
 import { z } from "zod";
 
@@ -968,7 +968,9 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
   for (const row of axisRows) {
     if (Number(row.available) <= 0) continue;
     if (row.color) colors.add(row.color);
-    if (row.size) sizes.add(row.size);
+    // Etiqueta dupla ("38/40") entra como 38 e 40: o quiz pergunta o tamanho
+    // DELA, e a planta da Lia lista o que existe.
+    if (row.size) for (const token of sizeTokens(row.size)) sizes.add(token);
   }
 
   const mapped = categoryRows.map((row) => ({
@@ -993,8 +995,8 @@ export async function getStoreMap(db: ServiceDb): Promise<StoreMap> {
   };
 }
 
-// A ordem de tamanhos mora no core (src/core/catalog/measurements.ts):
-// a fita métrica e a Lia usam a mesma.
+// A ordem de tamanhos mora no core (src/core/catalog/sizes.ts):
+// a fita métrica, a vitrine e a Lia usam a mesma.
 const compareSizes = compareSizeLabels;
 
 /**
@@ -1019,20 +1021,24 @@ export async function listProductIdsWithVariant(
   if (cor) {
     filters.push(sql`lower(trim(${productVariants.attributes} ->> 'cor')) = lower(${cor})`);
   }
-  if (tamanho) {
-    filters.push(
-      sql`lower(trim(${productVariants.attributes} ->> 'tamanho')) = lower(${tamanho})`,
-    );
-  }
 
+  // Tamanho casa em TS: etiqueta dupla ("38/40") serve quem pede 38 ou 40, e
+  // a regra mora num lugar só (core/catalog/sizes), não repetida em SQL.
   const rows = await db
-    .selectDistinct({ id: products.id })
+    .selectDistinct({
+      id: products.id,
+      size: sql<string | null>`${productVariants.attributes} ->> 'tamanho'`,
+    })
     .from(products)
     .innerJoin(productVariants, sellableVariantJoin())
     .innerJoin(priceVersions, activePriceJoin())
     .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
     .where(and(...filters));
-  return new Set(rows.map((row) => row.id));
+  return new Set(
+    rows
+      .filter((row) => !tamanho || sizeMatches(row.size ?? "", tamanho))
+      .map((row) => row.id),
+  );
 }
 
 /** Termos de tipo são palavras simples; escapar é só por garantia (o "." de "t-shirt" não é problema). */
