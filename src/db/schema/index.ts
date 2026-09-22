@@ -36,3 +36,4 @@ export { waSuggestions } from "./suggestions";
 export { couriers, deliveryPositions, deliveryRuns, deliveryStops } from "./delivery";
 export { waGroupMembers, waGroupPosts, waGroups, waGroupSignals } from "./groups";
 export { studioBasePhotos, studioCandidates, studioRequests } from "./studio";
+export { pushSubscriptions } from "./push";

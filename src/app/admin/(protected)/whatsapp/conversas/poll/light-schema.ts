@@ -30,9 +30,4 @@ export const lightPollResponseSchema = z.object({
 export type LightPollResponse = z.infer<typeof lightPollResponseSchema>;
 export type LightPollUnseen = z.infer<typeof lightPollUnseenSchema>;
 
-/** Prévia curta para toast e aviso de sistema: uma linha, sem quebra, no máximo 120 caracteres. */
-export function inboundPreview(body: string | null | undefined): string | null {
-  const oneLine = (body ?? "").replace(/\s+/g, " ").trim();
-  if (oneLine === "") return null;
-  return oneLine.length > 120 ? `${oneLine.slice(0, 119).trimEnd()}…` : oneLine;
-}
+export { inboundPreview } from "@/lib/wa-preview";
