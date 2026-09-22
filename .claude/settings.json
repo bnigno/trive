@@ -4,7 +4,16 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Skill(claude-api)",
-      "Skill(claude-api:*)"
+      "Skill(claude-api:*)",
+      "Bash(git fetch *)",
+      "Read(//Users/fabiano/.claude/projects/-Users-fabiano-TRIV-/memory/**)",
+      "Bash(python3 -)",
+      "Bash(git checkout *)",
+      "Bash(git -C /Users/fabiano/TRIVË status --short -- package.json pnpm-lock.yaml)",
+      "Bash(git -C /Users/fabiano/TRIVË rev-parse --short HEAD)",
+      "Bash(git -C /Users/fabiano/TRIVË branch --show-current)",
+      "Bash(ADAPTER_MODE=fake NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=x pnpm build)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

@@ -8,7 +8,7 @@ import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { countLiaGiftsToday, loadLiaGiftPolicy, offerLiaGift, type LiaGiftInput } from "@/services/lia-gifts";
 import { buildToolExecutor } from "@/services/wa-bot";
-import { createTestCustomer, createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
+import { createTestCustomer, createTestDb, createTestVariant, type TestDb } from "../helpers/db";
 
 let db: TestDb;
 let close: () => Promise<void>;

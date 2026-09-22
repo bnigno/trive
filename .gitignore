@@ -46,3 +46,10 @@ next-env.d.ts
 
 # Worktrees de sessões de IA (cada um é um checkout completo)
 .claude/worktrees/
+
+# Saídas de prévia dos scripts (imagens geradas, custo.txt): são para olhar e
+# descartar, não para versionar — um `git add .` distraído levaria megabytes.
+.preview/
+
+# Arquivo de workspace do editor: pessoal de cada máquina.
+*.code-workspace

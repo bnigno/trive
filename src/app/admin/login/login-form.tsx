@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-// TODO: habilitar MFA/TOTP quando o projeto Supabase existir.
+// MFA/TOTP segue desligado: o Supabase suporta, mas ligar obriga toda a
+// equipe a um segundo fator — decisão do dono, ainda em aberto.
 
 function translateAuthError(message: string): string {
   if (message.includes("Invalid login credentials")) {

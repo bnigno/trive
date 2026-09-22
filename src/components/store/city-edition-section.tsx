@@ -28,7 +28,7 @@ export function EditionCover({
   return (
     <div className={cx("relative overflow-hidden rounded-(--radius-hair) border border-ivory-300 bg-ivory-50", className)}>
       {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
+         
         <img
           src={src}
           alt={edition.openingLine ? `${edition.name} — ${edition.openingLine}` : edition.name}
