@@ -281,9 +281,12 @@ describe("compor e agendar rituais", () => {
     await expect(composeGroupPost(sdb, { kind: "turma", couponId: turma.id }, { day: "2026-09-30", at: new Date(Date.now() + 3 * 86_400_000) })).rejects.toMatchObject({ code: "turma_muito_a_frente" });
 
     // Agendado para hoje mais tarde: o post é livre (conta na cadência como qualquer post).
+    // Relógio fixo dentro da janela 9–21 de São Paulo: com o relógio de verdade,
+    // o teste falhava à noite ("fora da janela de envio").
     const group = await registered();
-    const soon = new Date(Date.now() + 3_600_000);
-    const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: soon, userId: FIXED_USER_ID, post: { kind: "turma", couponId: turma.id } }, { now: new Date() });
+    const morning = new Date("2026-09-22T13:00:00Z");
+    const soon = new Date(morning.getTime() + 3_600_000);
+    const post = await scheduleGroupPost(sdb, { groupId: group.id, scheduledAt: soon, userId: FIXED_USER_ID, post: { kind: "turma", couponId: turma.id } }, { now: morning });
     expect(post).toMatchObject({ kind: "livre", status: "scheduled" });
   });
 
