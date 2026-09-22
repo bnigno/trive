@@ -264,25 +264,49 @@ export class FashnImageStudio implements ImageStudio {
       throw networkError(error);
     }
     if (!response.ok) {
-      // Nunca o corpo: pode ecoar o prompt ou a imagem. O status diz o bastante.
+      // Do corpo, só o NOME do erro (nunca a mensagem: pode ecoar o prompt).
+      // A FASHN responde 429 tanto para "muitas chamadas" quanto para "sem
+      // crédito" — e sem crédito não melhora com o tempo (achado em produção).
       const status = response.status;
+      const errorName = await readErrorName(response);
+      const outOfCredits = /credit|balance|quota|insufficient/i.test(errorName);
       const reason =
         status === 401 || status === 403
           ? "no_key"
-          : status === 402
+          : status === 402 || ((status === 429 || status === 400) && outOfCredits)
             ? "no_credits"
             : status === 429
               ? "rate_limited"
               : status < 500
                 ? "rejected"
                 : "unavailable";
-      throw new StudioUnavailableError(`A FASHN respondeu HTTP ${status}.`, reason, status);
+      throw new StudioUnavailableError(
+        `A FASHN respondeu HTTP ${status}${errorName ? ` (${errorName})` : ""}.`,
+        reason,
+        status,
+      );
     }
     try {
       return await response.json();
     } catch {
       throw new StudioUnavailableError("A FASHN devolveu uma resposta inválida.", "invalid_response");
     }
+  }
+}
+
+/**
+ * `error.name` do corpo de erro da FASHN ("OutOfCredits", "RateLimit"…);
+ * vazio quando não há. Só um identificador (letras, sem espaço) passa: uma
+ * frase seria a mensagem, e mensagem pode ecoar o prompt.
+ */
+async function readErrorName(response: Response): Promise<string> {
+  try {
+    const raw: unknown = await response.json();
+    const error = (raw as { error?: unknown })?.error;
+    const candidate = typeof error === "string" ? error : (error as { name?: unknown })?.name;
+    return typeof candidate === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,59}$/.test(candidate) ? candidate : "";
+  } catch {
+    return "";
   }
 }
 

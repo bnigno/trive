@@ -68,9 +68,10 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // horas depois no grupo é ruído); 3 tentativas curtas.
   "wa.group_mention": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 180_000 },
   // Foto no corpo: só a falha ANTES de gastar volta à fila (rede, 429, 5xx
-  // do vendor); 3 tentativas espaçadas e a dona vê o pedido "falhou" no painel.
-  "product.ai_photo": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 300_000 },
-  "studio.base_photo": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 300_000 },
+  // do vendor). O 429 da FASHN é limite de chamadas simultâneas da conta:
+  // espera de 1 min dobrando, 4 tentativas, e a dona vê "falhou" no painel.
+  "product.ai_photo": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+  "studio.base_photo": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
   // Push: servidor da Apple/Google fora do ar volta em segundos; depois de
   // 3 tentativas o aviso perdeu o sentido (a próxima mensagem gera outro).
   "push.new_message": { maxAttempts: 3, baseDelayMs: 15_000, maxDelayMs: 60_000 },

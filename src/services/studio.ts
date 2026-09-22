@@ -109,11 +109,16 @@ export function studioBasePhotoStoragePath(input: { modelKey: string; sceneKey: 
   return `studio/models/${input.modelKey}/${input.sceneKey}-${input.sizeKey}-${input.at.getTime()}-${input.index + 1}.jpg`;
 }
 
-/** Pede N candidatas de foto-base pela fila (a geração leva dezenas de segundos). */
+/**
+ * Pede N candidatas de foto-base pela fila (a geração leva dezenas de
+ * segundos). `nextAttemptAt` espaça vários pedidos: a FASHN limita chamadas
+ * simultâneas da conta e a fila pegaria todos de uma vez.
+ */
 export async function enqueueStudioBasePhotos(
   db: DbOrTx,
   input: Omit<StudioBasePhotoPayload, "userId"> & { userId: string | null },
   now = new Date(),
+  options: { nextAttemptAt?: Date } = {},
 ): Promise<string | null> {
   const payload = studioBasePhotoPayloadSchema.parse(input);
   return enqueueOutboxEvent(db, {
@@ -121,6 +126,7 @@ export async function enqueueStudioBasePhotos(
     dedupeKey: `${STUDIO_BASE_PHOTO_EVENT}:${payload.modelKey}:${payload.sceneKey}:${payload.sizeKey}:${now.getTime()}`,
     aggregateType: "studio_base_photo",
     payload,
+    ...(options.nextAttemptAt ? { nextAttemptAt: options.nextAttemptAt } : {}),
   });
 }
 
