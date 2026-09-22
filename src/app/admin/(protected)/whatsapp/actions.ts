@@ -65,6 +65,13 @@ export async function setToggleAction(
     await updateSetting(getDb(), { key: parsedKey, value, userId: user.id });
     revalidatePath("/admin/whatsapp");
     revalidatePath("/admin/whatsapp/provador");
+    if (parsedKey === "ai_photos_in_store") {
+      // A vitrine tem ISR: a foto no corpo entra (ou sai) da loja na hora.
+      revalidatePath("/");
+      revalidatePath("/produtos");
+      revalidatePath("/(store)/produto/[slug]", "page");
+      revalidatePath("/(store)/belem/[slug]", "page");
+    }
     return { ok: true };
   } catch (error) {
     return { error: toErrorMessage(error) };

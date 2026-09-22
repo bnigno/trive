@@ -23,8 +23,8 @@ function fakeData(date: string, empty: boolean): DailyDigestData {
       : { paidOrders: 4, revenueCents: 124700, averageTicketCents: 31175, newOrders: 6 },
     waiting: { pendingPayment: 2, toPack: 1, toShip: 3, conversationsAwaitingOwner: 1, mustShipToday: 1 },
     bot: empty
-      ? { conversations: 0, turns: 0, handoffs: 0, orders: 0, ordersCents: 0, costUsdCents: 0 }
-      : { conversations: 6, turns: 19, handoffs: 1, orders: 2, ordersCents: 57800, costUsdCents: 42 },
+      ? { conversations: 0, turns: 0, handoffs: 0, orders: 0, ordersCents: 0, costUsdCents: 0, studioImages: 0, studioUsdCents: 0 }
+      : { conversations: 6, turns: 19, handoffs: 1, orders: 2, ordersCents: 57800, costUsdCents: 42, studioImages: 9, studioUsdCents: 99 },
     lowStock: empty
       ? []
       : [

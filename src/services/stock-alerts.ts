@@ -3,7 +3,7 @@
 // (stock.restocked), os avisos abertos viram UM evento cada, escalonados na
 // janela de envio, e a cliente recebe UMA mensagem (foto da peça + texto).
 // Quem deu SAIR não recebe; quem não tem estoque de novo espera o próximo.
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
@@ -358,7 +358,8 @@ export async function notifyRestockAlert(
     .from(productImages)
     .innerJoin(productVariants, eq(productVariants.productId, productImages.productId))
     .where(eq(productVariants.id, alert.variantId))
-    .orderBy(asc(productImages.sortOrder), asc(productImages.createdAt))
+    // A foto no corpo primeiro (é uma mensagem da Lia); sem ela, a real.
+    .orderBy(desc(sql`(${productImages.origin} = 'ai')`), asc(productImages.sortOrder), asc(productImages.createdAt))
     .limit(1);
   let imageUrl: string | null = null;
   if (image) {

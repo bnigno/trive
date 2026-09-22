@@ -80,7 +80,7 @@ export async function buildDropStoryInput(
     throw new ServiceError("sem_fotos", "Nenhuma peça do lançamento está ativa, com preço e foto.");
   }
   const priced = new Map(
-    (await listPublicProducts(db, { productIds: withPhoto.map((p) => p.id), includeHidden: true, limit: withPhoto.length })).map((p) => [
+    (await listPublicProducts(db, { productIds: withPhoto.map((p) => p.id), includeHidden: true, aiPhotos: "prefer", limit: withPhoto.length })).map((p) => [
       p.id,
       priceLabelOf(p.priceFromCents, p.priceToCents),
     ]),

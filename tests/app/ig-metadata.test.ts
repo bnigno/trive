@@ -24,7 +24,7 @@ const PRODUCT: PublicProductDetail = {
   categoryName: null,
   categorySlug: null,
   attributesSchema: [],
-  images: [{ path: "p1/foto-full.webp", color: null }],
+  images: [{ path: "p1/foto-full.webp", color: null, origin: "upload" }],
   variants: [],
 };
 

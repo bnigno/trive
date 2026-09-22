@@ -13,7 +13,7 @@ import {
   postEyebrow,
   type CarouselEntry,
 } from "@/core/cards/post";
-import { fold } from "@/core/catalog/product-images";
+import { fold, orderImagesByPolicy, pickCoverImage } from "@/core/catalog/product-images";
 import { categories, products } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -91,7 +91,9 @@ async function loadBasis(db: DbOrTx, productId: string): Promise<PostBasis> {
     }
     throw error;
   }
-  const photo = detail.images[0];
+  // A capa é a foto no corpo (a primeira, por ordem) quando existe; o
+  // carrossel fica com as fotos reais, uma por cor — a esticada ao lado.
+  const photo = pickCoverImage(detail.images, { preferAi: true });
   if (!photo) {
     throw new ServiceError(
       "sem_foto",
@@ -143,7 +145,7 @@ async function loadBasis(db: DbOrTx, productId: string): Promise<PostBasis> {
   const plan = carouselColors({
     attributesSchema: detail.attributesSchema,
     variants: detail.variants,
-    images: detail.images,
+    images: orderImagesByPolicy(detail.images, "hide"),
   });
 
   return {

@@ -261,7 +261,7 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           />
         </Section>
         <div style={{ marginTop: 8, fontSize: 20, color: C.ink500 }}>
-          {`Custo estimado da IA no dia: ${formatUsdCents(bot.costUsdCents)}`}
+          {`Custo estimado da IA no dia: ${formatUsdCents(bot.costUsdCents)}${bot.studioImages > 0 ? ` · fotos no corpo: ${formatUsdCents(bot.studioUsdCents)} (${bot.studioImages})` : ""}`}
         </div>
 
         <Section title="ESTOQUE BAIXO">
