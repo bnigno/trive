@@ -16,11 +16,13 @@ export type StudioCall = "tryon" | "model_photo";
 
 /**
  * Créditos por imagem de saída. Econômica: try-on v1.6 (1) e foto-base em
- * 1K balanced (2). Alta: try-on max 2K balanced (3) e foto-base em 2K quality (4).
+ * 1K balanced (2). Alta: try-on max 2K balanced (3) e foto-base em 2K
+ * balanced (3) — o modo "quality" leva ~55 s e não cabe no orçamento da
+ * varredura da fila.
  */
 export const FASHN_CREDITS_PER_IMAGE: Record<StudioCall, Record<StudioQuality, number>> = {
   tryon: { economica: 1, alta: 3 },
-  model_photo: { economica: 2, alta: 4 },
+  model_photo: { economica: 2, alta: 3 },
 };
 
 export function creditsFor(call: StudioCall, quality: StudioQuality, count: number): number {

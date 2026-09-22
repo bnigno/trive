@@ -68,9 +68,9 @@ describe("custo do ensaio", () => {
 
   it("a tabela por chamada segue a doc da FASHN", () => {
     expect(FASHN_CREDITS_PER_IMAGE.tryon).toEqual({ economica: 1, alta: 3 });
-    expect(FASHN_CREDITS_PER_IMAGE.model_photo).toEqual({ economica: 2, alta: 4 });
+    expect(FASHN_CREDITS_PER_IMAGE.model_photo).toEqual({ economica: 2, alta: 3 });
     expect(creditsFor("tryon", "economica", 3)).toBe(3);
-    expect(creditsFor("model_photo", "alta", 2)).toBe(8);
+    expect(creditsFor("model_photo", "alta", 2)).toBe(6);
   });
 
   it("a estimativa de um pedido conta a retentativa média do portão e o julgamento", () => {

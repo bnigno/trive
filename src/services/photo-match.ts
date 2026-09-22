@@ -52,7 +52,17 @@ export async function listIndexedPhotos(db: DbOrTx, viewer?: CatalogViewer): Pro
     .select({ phash: productImages.phash, slug: products.slug, name: products.name, color: productImages.color })
     .from(productImages)
     .innerJoin(products, eq(products.id, productImages.productId))
-    .where(and(isNotNull(productImages.phash), eq(products.status, "active"), isNull(products.deletedAt), publiclyVisible(viewer)))
+    // Só foto real: a foto de IA (a peça no corpo da modela) não é o que a
+    // cliente fotografa — e casaria a foto dela com a modela.
+    .where(
+      and(
+        isNotNull(productImages.phash),
+        eq(productImages.origin, "upload"),
+        eq(products.status, "active"),
+        isNull(products.deletedAt),
+        publiclyVisible(viewer),
+      ),
+    )
     .orderBy(products.slug, productImages.sortOrder);
   return rows.flatMap((row) => (row.phash ? [{ phash: row.phash, slug: row.slug, name: row.name, color: row.color }] : []));
 }

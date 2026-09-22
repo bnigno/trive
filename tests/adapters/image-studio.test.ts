@@ -132,10 +132,10 @@ describe("FashnImageStudio (client real com fetch fake)", () => {
     const images = await client(server).createModelPhoto({ prompt: "a woman", aspectRatio: "3:4", count: 2, quality: "alta", seed: 3 });
     // A resposta de mentira tem uma saída só; devolve o que veio, com o custo da tabela.
     expect(images).toHaveLength(1);
-    expect(images[0]).toMatchObject({ vendorModel: "model-create", creditsUsed: 4, usdCents: 30, seed: 3 });
+    expect(images[0]).toMatchObject({ vendorModel: "model-create", creditsUsed: 3, usdCents: 23, seed: 3 });
     const body = JSON.parse(server.calls[0]?.init?.body ?? "{}") as { model_name: string; inputs: Record<string, unknown> };
     expect(body.model_name).toBe("model-create");
-    expect(body.inputs).toMatchObject({ prompt: "a woman", aspect_ratio: "3:4", resolution: "2k", generation_mode: "quality", num_images: 2, seed: 3 });
+    expect(body.inputs).toMatchObject({ prompt: "a woman", aspect_ratio: "3:4", resolution: "2k", generation_mode: "balanced", num_images: 2, seed: 3 });
     const cheap = fashnServer();
     await client(cheap).createModelPhoto({ prompt: "a woman", aspectRatio: "9:16", count: 9, quality: "economica" });
     const cheapBody = JSON.parse(cheap.calls[0]?.init?.body ?? "{}") as { inputs: Record<string, unknown> };
@@ -264,7 +264,7 @@ describe("FakeImageStudio + seleção por ADAPTER_MODE", () => {
 
     const photos = await fake.createModelPhoto({ prompt: "x", aspectRatio: "9:16", count: 2, quality: "alta" });
     expect(photos).toHaveLength(2);
-    expect(photos[0]).toMatchObject({ vendorModel: "fake-model-create", creditsUsed: 4, usdCents: 30 });
+    expect(photos[0]).toMatchObject({ vendorModel: "fake-model-create", creditsUsed: 3, usdCents: 23 });
     expect((await sharp(photos[0]!.data).metadata()).height).toBe(1920);
     expect(fake.modelPhotos).toHaveLength(1);
 

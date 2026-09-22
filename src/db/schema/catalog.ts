@@ -170,6 +170,11 @@ export const productImages = pgTable(
     // busca é varredura em memória (centenas de fotos). NULL = ainda não
     // calculada (scripts/backfill-image-hashes.ts preenche).
     phash: text("phash"),
+    // Proveniência: 'upload' = foto real subida pela equipe; 'ai' = ensaio
+    // gerado (a peça no corpo de uma modela da casa). A vitrine só mostra
+    // 'ai' com o setting ai_photos_in_store; o post do Instagram e os
+    // cartões da Lia preferem a 'ai'; a busca por foto (phash) ignora 'ai'.
+    origin: text("origin").notNull().default("upload"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -182,5 +187,10 @@ export const productImages = pgTable(
       table.color,
     ),
     index("product_images_phash_idx").on(table.phash),
+    index("product_images_product_id_origin_idx").on(table.productId, table.origin),
+    check("product_images_origin_check", sql`${table.origin} IN ('upload', 'ai')`),
   ],
 );
+
+export const PRODUCT_IMAGE_ORIGINS = ["upload", "ai"] as const;
+export type ProductImageOrigin = (typeof PRODUCT_IMAGE_ORIGINS)[number];

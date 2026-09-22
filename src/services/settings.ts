@@ -8,6 +8,7 @@ import { z } from "zod";
 import { debutLetterProblem, debutSignatureProblem, normalizeDebutLetter } from "@/core/edition/debut";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/core/orders/payment-methods";
 import { cityDatesSchema } from "@/core/shipping/needed-by";
+import { HOUSE_MODEL_KEYS, SCENE_KEYS, STUDIO_QUALITIES } from "@/core/studio/presets";
 import * as schema from "@/db/schema";
 import { auditLog, paymentFeeRules, pricingPolicies, settings } from "@/db/schema";
 import { normalizeInstagramHandle, STORE_NAME_DEFAULT } from "@/lib/brand";
@@ -569,6 +570,21 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
    */
   bot_photo_match_enabled: z.boolean(),
   bot_cards_enabled: z.boolean(),
+  // --- Foto no corpo (ensaio com modelas da casa; Marco 1 do marketing) ---
+  /**
+   * Como bot_enabled: o toggle sozinho não basta — a geração também exige a
+   * chave da FASHN no ambiente (ou ADAPTER_MODE fake) e uma foto-base
+   * escolhida para a modela × cena × corpo pedidos.
+   */
+  ai_photos_enabled: z.boolean(),
+  /** Imagens geradas por dia (contadas pelas candidatas, o fato do vendor), 1–200. */
+  ai_photos_daily_quota: z.number().int().min(1, "No mínimo 1 por dia.").max(200, "No máximo 200 por dia."),
+  /** economica = try-on leve (1 crédito por foto); alta = try-on em 2K (3 créditos). */
+  ai_photos_quality: z.enum(STUDIO_QUALITIES, { error: "Qualidade inválida. Escolha entre economica e alta." }),
+  ai_photos_default_scene: z.enum(SCENE_KEYS, { error: "Cena desconhecida." }),
+  ai_photos_default_model: z.enum(HOUSE_MODEL_KEYS, { error: "Modela desconhecida." }),
+  /** Foto de IA também na vitrine (padrão: só no post do Instagram e nos cartões da Lia). */
+  ai_photos_in_store: z.boolean(),
   /** Janela de envio em lote (avisos de "voltou", convites VIP), horas de São Paulo. */
   wa_send_window_start: z.number().int().min(0).max(23),
   wa_send_window_end: z.number().int().min(1).max(24),

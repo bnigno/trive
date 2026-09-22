@@ -7,6 +7,7 @@ import { getRetryPolicy, handlerReserveMs } from "@/core/queue/retry-policy";
 import { isWaLid } from "@/lib/phone";
 
 import { getSalesAssistant } from "@/adapters/assistant";
+import { getImageStudio } from "@/adapters/image-studio";
 import { getEmailProvider } from "@/adapters/email";
 import { getMailboxProvider } from "@/adapters/mailbox";
 import { getPaymentGateway } from "@/adapters/mercadopago";
@@ -14,6 +15,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
+import { runStudioBasePhotos, runStudioOption } from "@/queue/handlers/studio";
 import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderVoucherPng } from "@/receipts/render-voucher";
@@ -425,6 +427,21 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // "nada a desenhar" — concluído, não retry (senão vira "Fila com problemas").
   "product.published": prerenderProductCards,
   "product.card_refresh": prerenderProductCards,
+  // Foto no corpo: uma opção por evento (try-on + portão + acabamento).
+  // Falha do vendor passageira relança antes de gastar; depois da geração
+  // paga o serviço nunca relança — a candidata fica para a dona ver.
+  "product.ai_photo": async (event) => {
+    await runStudioOption(
+      { db: getDb(), studio: getImageStudio(), assistant: getSalesAssistant(), storage: getFileStorage() },
+      event,
+    );
+  },
+  "studio.base_photo": async (event) => {
+    await runStudioBasePhotos(
+      { db: getDb(), studio: getImageStudio(), assistant: getSalesAssistant(), storage: getFileStorage() },
+      event,
+    );
+  },
   // Cartão editorial fora do cache: desenha, publica e manda logo depois do
   // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).
   "wa.card_render": async (event) => {

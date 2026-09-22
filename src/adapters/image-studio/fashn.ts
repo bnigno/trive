@@ -89,9 +89,11 @@ export class FashnImageStudio implements ImageStudio {
 
   async createModelPhoto(input: CreateModelPhotoInput): Promise<StudioImage[]> {
     const count = clampStudioCount(input.count);
+    // Sempre "balanced": o modo "quality" da doc leva ~55 s, além do prazo
+    // de quem chama pela fila; a resolução é o que muda com a qualidade.
     const inputs =
       input.quality === "alta"
-        ? { resolution: "2k", generation_mode: "quality" }
+        ? { resolution: "2k", generation_mode: "balanced" }
         : { resolution: "1k", generation_mode: "balanced" };
     return this.run({
       call: "model_photo",

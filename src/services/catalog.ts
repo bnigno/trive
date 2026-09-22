@@ -21,6 +21,7 @@ import {
   categories,
   orderItems,
   priceVersions,
+  PRODUCT_IMAGE_ORIGINS,
   productImages,
   products,
   productVariants,
@@ -1062,6 +1063,7 @@ export async function getProductDetail(db: ServiceDb, productId: string) {
       altText: productImages.altText,
       color: productImages.color,
       sortOrder: productImages.sortOrder,
+      origin: productImages.origin,
       createdAt: productImages.createdAt,
     })
     .from(productImages)
@@ -1182,6 +1184,8 @@ const addProductImageSchema = z.object({
   altText: z.string().trim().min(1).optional(),
   // Cor a que a foto pertence; ausente = foto do produto inteiro.
   color: z.string().trim().min(1).optional(),
+  // Proveniência: 'ai' só pelo ensaio (services/studio), nunca pelo upload.
+  origin: z.enum(PRODUCT_IMAGE_ORIGINS).default("upload"),
   userId: z.uuid(),
 });
 
@@ -1275,6 +1279,7 @@ export async function addProductImage(
         color,
         sortOrder: Number(nextSortOrder),
         phash,
+        origin: parsed.origin,
       })
       .returning();
 
@@ -1288,6 +1293,7 @@ export async function addProductImage(
         variantId: parsed.variantId ?? null,
         storagePath: fullPath,
         color,
+        origin: parsed.origin,
       },
     });
 

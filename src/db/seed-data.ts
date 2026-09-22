@@ -51,6 +51,14 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   // A Lia reconhece a peça do catálogo na foto da cliente (hash + visão).
   { key: "bot_photo_match_enabled", value: true },
   { key: "bot_cards_enabled", value: true },
+  // Foto no corpo (ensaio com modelas da casa): nasce desligado — a dona liga
+  // depois de escolher as fotos-base e de ver o smoke real de uma peça.
+  { key: "ai_photos_enabled", value: false },
+  { key: "ai_photos_daily_quota", value: 30 },
+  { key: "ai_photos_quality", value: "economica" },
+  { key: "ai_photos_default_scene", value: "sala_clara" },
+  { key: "ai_photos_default_model", value: "modelo_a" },
+  { key: "ai_photos_in_store", value: false },
   { key: "wa_send_window_start", value: 9 },
   { key: "wa_send_window_end", value: 21 },
   { key: "wa_bulk_interval_seconds", value: 20 },

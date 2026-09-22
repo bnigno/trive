@@ -67,6 +67,10 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // A Lia chamada no grupo: resposta em minutos ou nada (uma resposta duas
   // horas depois no grupo é ruído); 3 tentativas curtas.
   "wa.group_mention": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 180_000 },
+  // Foto no corpo: só a falha ANTES de gastar volta à fila (rede, 429, 5xx
+  // do vendor); 3 tentativas espaçadas e a dona vê o pedido "falhou" no painel.
+  "product.ai_photo": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 300_000 },
+  "studio.base_photo": { maxAttempts: 3, baseDelayMs: 30_000, maxDelayMs: 300_000 },
   // wa.bot_turn fica na política padrão (banco/provedor fora do ar continuam
   // tentando por até 1 h); o teto do MODELO é próprio e menor
   // (services/wa-bot BOT_TURN_MODEL_ATTEMPTS), com plano B na última.
@@ -114,6 +118,10 @@ export const HANDLER_RESERVE_MS: Record<string, number> = {
   // Até 8 paradas × (1,1 s de pausa + consulta): começar com menos que isso
   // é parar na 2ª parada e re-enfileirar à toa.
   "delivery_run.geocode": 30_000,
+  // Try-on (~10 s) + julgamento (~5 s) + acabamento + Storage: começar com
+  // menos é ser morto no meio de uma geração já paga.
+  "product.ai_photo": 30_000,
+  "studio.base_photo": 30_000,
 };
 
 export function handlerReserveMs(eventType: string): number {
