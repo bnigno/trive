@@ -64,6 +64,16 @@ export const FAKE_ARRIVAL_JSON = {
   warnings: [],
 };
 
+/** Portão de fidelidade sem roteiro: aprovada com folga (os testes reprovam enfileirando o JSON). */
+export const FAKE_FIDELITY_JSON = {
+  mesma_peca: true,
+  cor_ok: true,
+  estampa_ok: true,
+  corte_ok: true,
+  artefatos: [],
+  nota: 8,
+};
+
 export class FakeSalesAssistant implements SalesAssistant {
   /** Um Error na fila faz o próximo respondTurn lançar (modelo fora do ar). */
   private readonly scripts: Array<FakeTurnScript | Error> = [];
@@ -88,10 +98,17 @@ export class FakeSalesAssistant implements SalesAssistant {
     const scripted = this.extractionScripts.shift();
     if (scripted instanceof Error) throw scripted;
     // Sem roteiro, responde no formato que o schema pediu: a chegada do
-    // Ateliê (costBasis), a comparação de fotos (matches: nenhuma bate) ou a
-    // ficha pela foto.
+    // Ateliê (costBasis), a comparação de fotos (matches: nenhuma bate), o
+    // portão de fidelidade do ensaio (mesma_peca) ou a ficha pela foto.
     const properties = (input.jsonSchema as { properties?: Record<string, unknown> }).properties ?? {};
-    const fallback = "costBasis" in properties ? FAKE_ARRIVAL_JSON : "matches" in properties ? { matches: [] } : FAKE_PRODUCT_DRAFT_JSON;
+    const fallback =
+      "costBasis" in properties
+        ? FAKE_ARRIVAL_JSON
+        : "matches" in properties
+          ? { matches: [] }
+          : "mesma_peca" in properties
+            ? FAKE_FIDELITY_JSON
+            : FAKE_PRODUCT_DRAFT_JSON;
     return {
       json: scripted === undefined ? fallback : scripted,
       usage: { inputTokens: 4200, outputTokens: 800, cacheReadTokens: 0, cacheWriteTokens: 0 },

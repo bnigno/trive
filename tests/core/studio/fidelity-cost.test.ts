@@ -8,6 +8,7 @@ import {
   creditsToUsdCents,
   estimateRequestUsdCents,
   FASHN_CREDITS_PER_IMAGE,
+  studioCostTable,
   usdCentsToBrlCents,
 } from "@/core/studio/cost";
 import {
@@ -84,5 +85,14 @@ describe("custo do ensaio", () => {
     expect(estimateRequestUsdCents({ options: 1, quality: "economica", retryShare: 0 }).totalUsdCents).toBe(10);
     expect(usdCentsToBrlCents(38)).toBe(209);
     expect(usdCentsToBrlCents(100, 500)).toBe(500);
+  });
+
+  it("a conta da dona: por foto, por cor, por peça e por mês, em US$ e R$", () => {
+    const economica = studioCostTable({ quality: "economica" });
+    expect(economica.map((line) => line.usdCents)).toEqual([10, 38, 114, 4560]);
+    expect(economica[3]).toEqual({ label: "1 mês, 40 peças novas", usdCents: 4560, brlCents: 25080 });
+    const alta = studioCostTable({ quality: "alta", brlPerUsdCents: 500 });
+    expect(alta.map((line) => line.usdCents)).toEqual([25, 98, 294, 11760]);
+    expect(alta[0]?.brlCents).toBe(125);
   });
 });
