@@ -407,6 +407,13 @@
       "when": 1790037448157,
       "tag": "0057_push_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1790120715960,
+      "tag": "0058_rls_e_privilegios",
+      "breakpoints": true
     }
   ]
 }
