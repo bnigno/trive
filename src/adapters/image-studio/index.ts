@@ -1,10 +1,10 @@
 // Ensaio da peça no corpo: gerador de imagem atrás de interface própria.
 // real = FASHN (fashn.ts): try-on que TRANSFERE a peça para a foto-base da
-// modela sem redesenhar estampa, e model-create para as fotos-base das
-// modelas da casa. fake = devolve a própria foto com faixa "FAKE" (fake.ts),
+// modelo sem redesenhar estampa, e model-create para as fotos-base das
+// modelos da casa. fake = devolve a própria foto com faixa "FAKE" (fake.ts),
 // para o fluxo inteiro rodar em dev e nos testes. Seleção por ADAPTER_MODE.
 //
-// A interface é neutra de propósito: peça + foto da modela + texto da cena.
+// A interface é neutra de propósito: peça + foto da modelo + texto da cena.
 // Outro vendor (Gemini, gpt-image) entra como outro client sem tocar em
 // core/service/UI.
 import type { StudioQuality } from "@/core/studio/presets";
@@ -36,7 +36,7 @@ export type StudioImage = {
 };
 
 export type CreateModelPhotoInput = {
-  /** Texto completo (core/studio/prompts: modela + corpo + cena + regra da casa). */
+  /** Texto completo (core/studio/prompts: modelo + corpo + cena + regra da casa). */
   prompt: string;
   aspectRatio: StudioAspectRatio;
   /** 1–4 candidatas numa chamada só. */
@@ -50,7 +50,7 @@ export type CreateModelPhotoInput = {
 export type GenerateOnModelInput = {
   /** A foto real da peça (esticada/cabide) — é ela que o try-on transfere. */
   garment: StudioImageInput;
-  /** A foto-base da modela da casa, na cena e no corpo escolhidos. */
+  /** A foto-base da modelo da casa, na cena e no corpo escolhidos. */
   model: StudioImageInput;
   category: StudioGarmentCategory | "auto";
   /** Só o vendor de qualidade alta lê; o econômico mantém a cena da foto-base. */

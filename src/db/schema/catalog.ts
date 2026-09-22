@@ -171,7 +171,7 @@ export const productImages = pgTable(
     // calculada (scripts/backfill-image-hashes.ts preenche).
     phash: text("phash"),
     // Proveniência: 'upload' = foto real subida pela equipe; 'ai' = ensaio
-    // gerado (a peça no corpo de uma modela da casa). A vitrine só mostra
+    // gerado (a peça no corpo de uma modelo da casa). A vitrine só mostra
     // 'ai' com o setting ai_photos_in_store; o post do Instagram e os
     // cartões da Lia preferem a 'ai'; a busca por foto (phash) ignora 'ai'.
     origin: text("origin").notNull().default("upload"),

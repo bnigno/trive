@@ -16,6 +16,8 @@ import {
   type FeeRule,
 } from "@/services/settings";
 import { getStoreFacts } from "@/services/store-facts";
+import { loadStudioSettings, type StudioSettings } from "@/services/studio-settings";
+import { HOUSE_MODELS, SCENE_PRESETS } from "@/core/studio/presets";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +33,7 @@ import {
   MercadoPagoForm,
   PolicyForm,
   StockSettingsForm,
+  StudioSettingsForm,
   StoreDataForm,
   StoreFactsForm,
   StorefrontForm,
@@ -90,6 +93,8 @@ type SettingsData = {
   };
   cityDates: CityDate[];
   mpEnabled: boolean;
+  /** Foto no corpo: cota do dia, qualidade e a combinação padrão do formulário da peça. */
+  studio: StudioSettings;
   /** O que a Lia sabe da loja (ficha do prompt) e a prévia do bloco como ela o lê. */
   storeFacts: { hours: string; pickup: string; about: string };
   storeFactsPreview: string;
@@ -102,7 +107,7 @@ function asString(value: unknown): string {
 async function loadSettings(): Promise<SettingsData | null> {
   try {
     const db = getDb();
-    const [feeRules, policy, map, storeFactsPreview] = await Promise.all([
+    const [feeRules, policy, map, storeFactsPreview, studio] = await Promise.all([
       getFeeRules(db),
       getDefaultPolicy(db),
       getSettingsMap(db, [
@@ -129,11 +134,13 @@ async function loadSettings(): Promise<SettingsData | null> {
         "mp_enabled",
       ]),
       getStoreFacts(db),
+      loadStudioSettings(db),
     ]);
     return {
       feeRules,
       policy,
       mpEnabled: map.mp_enabled === true,
+      studio,
       storeFacts: { hours: asString(map.store_hours), pickup: asString(map.store_pickup), about: asString(map.store_about) },
       storeFactsPreview,
       store: {
@@ -525,6 +532,23 @@ export default async function ConfiguracoesPage() {
             }}
           />
         </div>
+      </Card>
+
+      <Card
+        id="foto-no-corpo"
+        title="Foto no corpo"
+        description="O ensaio das peças no corpo das modelos da casa: quantas imagens por dia, a qualidade e a combinação que o formulário da peça já traz preenchida. Liga e desliga em Vendedora & WhatsApp."
+      >
+        <StudioSettingsForm
+          defaults={{
+            dailyQuota: data.studio.dailyQuota,
+            quality: data.studio.quality,
+            defaultScene: data.studio.defaultScene,
+            defaultModel: data.studio.defaultModel,
+          }}
+          scenes={SCENE_PRESETS.map((scene) => ({ key: scene.key, label: scene.label }))}
+          models={HOUSE_MODELS.map((model) => ({ key: model.key, label: model.label }))}
+        />
       </Card>
 
       <Card title="Estoque">

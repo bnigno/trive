@@ -52,8 +52,8 @@ export async function listIndexedPhotos(db: DbOrTx, viewer?: CatalogViewer): Pro
     .select({ phash: productImages.phash, slug: products.slug, name: products.name, color: productImages.color })
     .from(productImages)
     .innerJoin(products, eq(products.id, productImages.productId))
-    // Só foto real: a foto de IA (a peça no corpo da modela) não é o que a
-    // cliente fotografa — e casaria a foto dela com a modela.
+    // Só foto real: a foto de IA (a peça no corpo da modelo) não é o que a
+    // cliente fotografa — e casaria a foto dela com a modelo.
     .where(
       and(
         isNotNull(productImages.phash),

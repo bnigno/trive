@@ -1,5 +1,5 @@
 // Handlers do ensaio "foto no corpo": uma opção por evento (product.ai_photo)
-// e as fotos-base das modelas (studio.base_photo). Recebem as dependências
+// e as fotos-base das modelos (studio.base_photo). Recebem as dependências
 // (banco, gerador, visão, storage) para serem testáveis fora do Inngest.
 import type { SalesAssistant } from "@/adapters/assistant";
 import type { ImageStudio } from "@/adapters/image-studio";
@@ -10,7 +10,7 @@ import {
   generateStudioOption,
   type StudioBasePhotoResult,
   type StudioOptionResult,
-} from "@/services/studio";
+} from "@/services/studio-generate";
 
 export type StudioHandlerDeps = {
   db: DbOrTx;

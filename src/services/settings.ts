@@ -570,11 +570,11 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
    */
   bot_photo_match_enabled: z.boolean(),
   bot_cards_enabled: z.boolean(),
-  // --- Foto no corpo (ensaio com modelas da casa; Marco 1 do marketing) ---
+  // --- Foto no corpo (ensaio com modelos da casa; Marco 1 do marketing) ---
   /**
    * Como bot_enabled: o toggle sozinho não basta — a geração também exige a
    * chave da FASHN no ambiente (ou ADAPTER_MODE fake) e uma foto-base
-   * escolhida para a modela × cena × corpo pedidos.
+   * escolhida para a modelo × cena × corpo pedidos.
    */
   ai_photos_enabled: z.boolean(),
   /** Imagens geradas por dia (contadas pelas candidatas, o fato do vendor), 1–200. */
@@ -582,7 +582,7 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   /** economica = try-on leve (1 crédito por foto); alta = try-on em 2K (3 créditos). */
   ai_photos_quality: z.enum(STUDIO_QUALITIES, { error: "Qualidade inválida. Escolha entre economica e alta." }),
   ai_photos_default_scene: z.enum(SCENE_KEYS, { error: "Cena desconhecida." }),
-  ai_photos_default_model: z.enum(HOUSE_MODEL_KEYS, { error: "Modela desconhecida." }),
+  ai_photos_default_model: z.enum(HOUSE_MODEL_KEYS, { error: "Modelo desconhecido." }),
   /** Foto de IA também na vitrine (padrão: só no post do Instagram e nos cartões da Lia). */
   ai_photos_in_store: z.boolean(),
   /** Janela de envio em lote (avisos de "voltou", convites VIP), horas de São Paulo. */

@@ -26,8 +26,6 @@ import {
   discardStudioCandidate,
   enqueueStudioBasePhotos,
   estimateStudioRequest,
-  generateStudioBasePhotos,
-  generateStudioOption,
   getChosenBasePhoto,
   listStudioBasePhotos,
   listStudioRequestsForProduct,
@@ -37,6 +35,7 @@ import {
   STUDIO_OPTION_EVENT,
   summarizeStudioCosts,
 } from "@/services/studio";
+import { generateStudioBasePhotos, generateStudioOption } from "@/services/studio-generate";
 import { createTestDb, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 vi.mock("@/inngest/client", () => ({ inngest: { send: async () => ({ ids: [] }) } }));
@@ -318,8 +317,8 @@ describe("chooseStudioCandidate — a escolha vira foto da peça", () => {
   });
 });
 
-describe("fotos-base das modelas da casa", () => {
-  it("pede pela fila, gera N candidatas no Storage, escolhe uma por modela × cena × corpo e troca sem perder a anterior", async () => {
+describe("fotos-base das modelos da casa", () => {
+  it("pede pela fila, gera N candidatas no Storage, escolhe uma por modelo × cena × corpo e troca sem perder a anterior", async () => {
     const eventId = await enqueueStudioBasePhotos(sdb, { ...BASE_KEYS, quality: "alta", count: 2, userId: FIXED_USER_ID }, NOW);
     expect(eventId).toBeTruthy();
     const [event] = await outbox("studio.base_photo");

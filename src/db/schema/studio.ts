@@ -1,5 +1,5 @@
-// Ensaio "foto no corpo": as fotos-base das modelas da casa (uma escolhida
-// por modela × cena × corpo), os pedidos de ensaio de uma peça e as
+// Ensaio "foto no corpo": as fotos-base das modelos da casa (uma escolhida
+// por modelo × cena × corpo), os pedidos de ensaio de uma peça e as
 // candidatas que cada pedido gerou (aprovadas ou não pelo portão de
 // fidelidade). A escolhida vira product_images com origin = 'ai'; a
 // proveniência e o custo ficam aqui e no audit_log, mesmo que a loja não
@@ -35,7 +35,7 @@ export const studioBasePhotos = pgTable(
   },
   (table) => [
     index("studio_base_photos_keys_idx").on(table.modelKey, table.sceneKey, table.sizeKey),
-    // Uma foto-base escolhida por modela × cena × corpo: o árbitro é o banco.
+    // Uma foto-base escolhida por modelo × cena × corpo: o árbitro é o banco.
     uniqueIndex("studio_base_photos_chosen_unique_idx")
       .on(table.modelKey, table.sceneKey, table.sizeKey)
       .where(sql`${table.status} = 'chosen'`),

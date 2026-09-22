@@ -58,7 +58,7 @@ export class FakeImageStudio implements ImageStudio {
     for (let index = 0; index < clampStudioCount(input.count); index += 1) {
       const seed = (input.seed ?? 42) + index;
       const data = await sharp({ create: { width, height, channels: 3, background: { r: 176, g: 168, b: 158 } } })
-        .composite([{ input: bandSvg(width, height, ["FAKE", `modela · semente ${seed}`]) }])
+        .composite([{ input: bandSvg(width, height, ["FAKE", `modelo · semente ${seed}`]) }])
         .jpeg({ quality: 80 })
         .toBuffer();
       images.push({ data, mimeType: "image/jpeg", vendor: "fake", vendorModel: "fake-model-create", creditsUsed: credits, usdCents: creditsToUsdCents(credits), elapsedMs: 5, seed });

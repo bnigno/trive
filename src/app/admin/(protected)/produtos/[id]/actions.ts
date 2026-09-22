@@ -26,11 +26,18 @@ import {
 } from "@/services/catalog";
 import { CARE_SYMBOL_KEYS, formatCareNotes } from "@/core/catalog/care";
 import { MEASUREMENT_KEYS, type Measurements } from "@/core/catalog/measurements";
+import { BODY_SIZE_KEYS, HOUSE_MODEL_KEYS, SCENE_KEYS, STUDIO_QUALITIES } from "@/core/studio/presets";
+import {
+  chooseStudioCandidate,
+  discardStudioCandidate,
+  requestStudioPhotos,
+  ServiceError as StudioServiceError,
+} from "@/services/studio";
 
 export type FormState = { error?: string; success?: string };
 
 function toErrorState(error: unknown): FormState {
-  if (error instanceof ServiceError) return { error: error.message };
+  if (error instanceof ServiceError || error instanceof StudioServiceError) return { error: error.message };
   if (error instanceof ZodError) {
     return { error: error.issues[0]?.message ?? "Dados inválidos." };
   }
@@ -492,4 +499,80 @@ export async function removeCuratorAudioAction(
   } catch (error) {
     return toErrorState(error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Foto no corpo (ensaio)
+// ---------------------------------------------------------------------------
+
+const requestStudioSchema = z.object({
+  productId: z.uuid("Não foi possível identificar este produto."),
+  color: z.string().trim().optional(),
+  sceneKey: z.enum(SCENE_KEYS, { error: "Cena desconhecida." }),
+  modelKey: z.enum(HOUSE_MODEL_KEYS, { error: "Modelo desconhecido." }),
+  sizeKey: z.enum(BODY_SIZE_KEYS, { error: "Corpo desconhecido." }),
+  quality: z.enum(STUDIO_QUALITIES, { error: "Qualidade inválida." }),
+  options: z.coerce.number().int().min(1).max(4),
+});
+
+export async function requestStudioPhotosAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const parsed = requestStudioSchema.safeParse({
+    productId: String(formData.get("productId") ?? ""),
+    color: formData.get("color") == null ? undefined : String(formData.get("color")),
+    sceneKey: String(formData.get("sceneKey") ?? ""),
+    modelKey: String(formData.get("modelKey") ?? ""),
+    sizeKey: String(formData.get("sizeKey") ?? ""),
+    quality: String(formData.get("quality") ?? ""),
+    options: String(formData.get("options") ?? "3"),
+  });
+  if (!parsed.success) return toErrorState(parsed.error);
+  try {
+    const created = await requestStudioPhotos(getDb(), {
+      productId: parsed.data.productId,
+      color: parsed.data.color ? parsed.data.color : null,
+      sceneKey: parsed.data.sceneKey,
+      modelKey: parsed.data.modelKey,
+      sizeKey: parsed.data.sizeKey,
+      quality: parsed.data.quality,
+      options: parsed.data.options,
+      userId: user.id,
+      source: "admin",
+    });
+    revalidatePath(`/admin/produtos/${parsed.data.productId}`);
+    return { success: `${created.eventIds.length === 1 ? "1 opção" : `${created.eventIds.length} opções`} na fila — cada uma leva perto de meio minuto. Recarregue a página para ver.` };
+  } catch (error) {
+    return toErrorState(error);
+  }
+}
+
+const candidateSchema = z.object({
+  candidateId: z.uuid("Não foi possível identificar esta opção."),
+  productId: z.uuid("Não foi possível identificar este produto."),
+});
+
+export async function chooseStudioCandidateAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const parsed = candidateSchema.safeParse({ candidateId: String(formData.get("candidateId") ?? ""), productId: String(formData.get("productId") ?? "") });
+  if (!parsed.success) return toErrorState(parsed.error);
+  try {
+    await chooseStudioCandidate(getDb(), getFileStorage(), { candidateId: parsed.data.candidateId, userId: user.id });
+  } catch (error) {
+    return toErrorState(error);
+  }
+  revalidateProduct(parsed.data.productId);
+  return { success: "Guardada como foto da peça (depois das reais)." };
+}
+
+export async function discardStudioCandidateAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const parsed = candidateSchema.safeParse({ candidateId: String(formData.get("candidateId") ?? ""), productId: String(formData.get("productId") ?? "") });
+  if (!parsed.success) return toErrorState(parsed.error);
+  try {
+    await discardStudioCandidate(getDb(), { candidateId: parsed.data.candidateId, userId: user.id });
+  } catch (error) {
+    return toErrorState(error);
+  }
+  revalidatePath(`/admin/produtos/${parsed.data.productId}`);
+  return { success: "Descartada." };
 }
