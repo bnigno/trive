@@ -156,6 +156,10 @@ describe("FashnImageStudio (client real com fetch fake)", () => {
     expect(await reasonOf(client(fashnServer({ runStatus: 401, runBody: { error: "segredo" } })))).toBe("no_key");
     expect(await reasonOf(client(fashnServer({ runStatus: 402 })))).toBe("no_credits");
     expect(await reasonOf(client(fashnServer({ runStatus: 429 })))).toBe("rate_limited");
+    // A FASHN responde 429 também quando os créditos acabaram: o nome do erro decide.
+    expect(await reasonOf(client(fashnServer({ runStatus: 429, runBody: { error: { name: "OutOfCredits", message: "segredo" } } })))).toBe("no_credits");
+    expect(await reasonOf(client(fashnServer({ runStatus: 429, runBody: { error: "InsufficientBalance" } })))).toBe("no_credits");
+    expect(await reasonOf(client(fashnServer({ runStatus: 429, runBody: { error: { name: "RateLimitExceeded", message: "x" } } })))).toBe("rate_limited");
     expect(await reasonOf(client(fashnServer({ runStatus: 422 })))).toBe("rejected");
     expect(await reasonOf(client(fashnServer({ runStatus: 503 })))).toBe("unavailable");
     expect(await reasonOf(client(fashnServer({ runBody: { nope: 1 } })))).toBe("invalid_response");
@@ -167,6 +171,10 @@ describe("FashnImageStudio (client real com fetch fake)", () => {
     const error = await failureOf(client(fashnServer({ runStatus: 401, runBody: { error: "segredo do corpo" } })).generateOnModel(input));
     expect(error.message).toContain("401");
     expect(error.message).not.toContain("segredo");
+    const credits = await failureOf(client(fashnServer({ runStatus: 429, runBody: { error: { name: "OutOfCredits", message: "segredo do corpo" } } })).generateOnModel(input));
+    expect(credits.message).toContain("OutOfCredits");
+    expect(credits.message).not.toContain("segredo");
+    expect(credits.retryable).toBe(false);
     expect(error.status).toBe(401);
     expect(error.retryable).toBe(false);
     const failed = await failureOf(
