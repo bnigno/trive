@@ -289,9 +289,11 @@ export function CheckoutClient({
   const [, startCouponQuote] = useTransition();
   const lastCouponKeyRef = useRef<string | null>(null);
   const couponIdentity = (() => {
-    const doc = normalizeDocument(documentValue);
+    // O telefone é a identidade; o CPF é opcional e só refina a busca.
     const phone = toE164BR(phoneValue);
-    return doc && phone ? { document: doc.digits, phone } : null;
+    if (!phone) return null;
+    const doc = documentValue.trim() === "" ? null : normalizeDocument(documentValue);
+    return { document: doc?.digits ?? "", phone };
   })();
   const couponShipping =
     selectedQuote && shippingCents !== null ? { cents: shippingCents, kind: selectedQuote.kind } : null;
@@ -431,8 +433,11 @@ export function CheckoutClient({
     const errors: typeof fieldErrors = {};
 
     // Validação client-side ANTES de enviar (o servidor revalida tudo).
-    const doc = normalizeDocument(documentValue);
-    if (!doc) errors.document = "CPF ou CNPJ inválido. Confira os dígitos.";
+    // O CPF é opcional: só confere quem digitou alguma coisa.
+    const documentTyped = documentValue.trim();
+    if (documentTyped !== "" && !normalizeDocument(documentTyped)) {
+      errors.document = "CPF ou CNPJ inválido. Confira os dígitos.";
+    }
     const phoneE164 = toE164BR(phoneValue);
     if (!phoneE164) errors.phone = "Telefone inválido. Informe DDD + número.";
     if (cepDigits.length !== 8) errors.cep = "CEP inválido. Use 8 dígitos.";
@@ -468,7 +473,7 @@ export function CheckoutClient({
     const payload: CreateStoreOrderInput = {
       customer: {
         fullName: String(form.get("fullName") ?? "").trim(),
-        document: documentValue,
+        ...(documentTyped ? { document: documentTyped } : {}),
         phone: phoneValue,
         ...(email ? { email } : {}),
         marketingOptIn: form.get("marketingOptIn") === "on",
@@ -722,14 +727,13 @@ export function CheckoutClient({
                 />
               </Field>
               <Field
-                label="CPF ou CNPJ"
-                hint="Usado para a emissão da nota fiscal."
+                label="CPF ou CNPJ (opcional)"
+                hint="Só se você quiser que fique no seu cadastro — não é preciso para comprar."
                 error={fieldErrors.document}
               >
                 <input
                   id="document"
                   name="document"
-                  required
                   inputMode="numeric"
                   autoComplete="off"
                   placeholder="000.000.000-00"

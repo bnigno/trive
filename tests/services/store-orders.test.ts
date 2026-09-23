@@ -246,6 +246,59 @@ describe("createStoreOrder", () => {
     expect(allOrders.every((o) => o.customerId === alive[0].id)).toBe(true);
   });
 
+  it("CPF é opcional: fecha sem documento, não apaga o que o cadastro já tinha e ainda recusa documento inválido informado", async () => {
+    const { variantId, rate } = await setupStore();
+
+    // 1. Primeira compra SEM CPF: cliente e pedido nascem normalmente.
+    const semCpf = await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, {
+        customer: {
+          fullName: "Maria da Silva",
+          phone: "(11) 99999-8888",
+          marketingOptIn: false,
+        },
+      }),
+    );
+    expect(semCpf.orderId).toBeTruthy();
+    let [cliente] = await db.select().from(schema.customers);
+    expect(cliente.documentType).toBeNull();
+    expect(cliente.documentNumber).toBeNull();
+
+    // 2. A mesma cliente volta e resolve informar o CPF: fica gravado.
+    await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, {
+        customer: {
+          fullName: "Maria da Silva",
+          document: VALID_CPF,
+          phone: "(11) 99999-8888",
+          marketingOptIn: false,
+        },
+      }),
+    );
+    [cliente] = await db.select().from(schema.customers);
+    expect(cliente.documentNumber).toBe("52998224725");
+
+    // 3. A terceira compra vem sem CPF: o documento do cadastro FICA.
+    await createStoreOrder(
+      sdb,
+      baseInput(variantId, rate.id, {
+        customer: {
+          fullName: "Maria da Silva",
+          document: "",
+          phone: "(11) 99999-8888",
+          marketingOptIn: false,
+        },
+      }),
+    );
+    const clientes = await db.select().from(schema.customers);
+    expect(clientes).toHaveLength(1);
+    expect(clientes[0].documentNumber).toBe("52998224725");
+    expect(clientes[0].documentType).toBe("cpf");
+    expect(await db.select().from(schema.orders)).toHaveLength(3);
+  });
+
   it("preço divergente lança PriceChangedError com TODOS os itens e nada persiste", async () => {
     const { variantId, rate } = await setupStore();
     const { variantId: variantB } = await createTestVariant(db, {

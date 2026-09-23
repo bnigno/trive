@@ -64,7 +64,7 @@ export async function execCriarPedido(
     if (!registration) {
       return {
         ok: false,
-        text: "Não consegui reaproveitar o cadastro deste telefone (não existe). Colete nome, CPF e endereço com o cliente, um dado por vez, e chame criar_pedido com os campos preenchidos.",
+        text: "Não consegui reaproveitar o cadastro deste telefone (não existe). Colete nome e endereço com o cliente, um dado por vez (o CPF é opcional: ofereça uma vez e siga sem se ele não quiser), e chame criar_pedido com os campos preenchidos.",
       };
     }
     if (input.cep !== undefined) {
@@ -102,8 +102,9 @@ export async function execCriarPedido(
     };
   }
 
-  // CPF com dígito verificador válido — a nota fiscal depende disso.
-  if (!isValidCpf(identity.documentDigits)) {
+  // CPF é opcional (a loja não emite nota): só confere quando a cliente quis
+  // informar. Cadastro antigo sem documento fecha pedido normalmente.
+  if (identity.documentDigits !== "" && !isValidCpf(identity.documentDigits)) {
     return {
       ok: false,
       text: "CPF inválido — confira os 11 dígitos com o cliente e tente de novo.",
