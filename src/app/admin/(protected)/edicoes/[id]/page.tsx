@@ -83,7 +83,7 @@ export default async function EdicaoPage({ params }: { params: Promise<{ id: str
         <div className="flex flex-col gap-6">
           <Card title="Capa">
             {coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
+               
               <img src={coverUrl} alt={`Capa da ${edition.name}`} className="mb-3 aspect-[4/3] w-full rounded-md object-cover" />
             ) : (
               <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400">Sem capa ainda — a home usa a primeira peça no lugar.</p>

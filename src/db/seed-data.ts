@@ -6,8 +6,6 @@ export type SeedSetting = { key: string; value: unknown };
 export type SeedWaTemplate = { key: string; label: string; bodyTemplate: string; variables: string[] };
 
 export const initialSettings: Array<{ key: string; value: unknown }> = [
-  { key: "approval_price_change_pct", value: 0.1 },
-  { key: "approval_below_min_margin", value: true },
   { key: "stock_reservation_ttl_minutes", value: 120 },
   { key: "owner_whatsapp_phone", value: null },
   // Fase 1

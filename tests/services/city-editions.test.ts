@@ -151,7 +151,7 @@ describe("leitura pública", () => {
     const past = await createCityEdition(sdb, { isActive: true, fields: { name: "Natal 2025", startsOn: "2025-12-01", endsOn: "2025-12-25" }, userId: FIXED_USER_ID });
     // Só com fim + faixa de hora: aparece na lista mesmo fora da hora (só some quando encerra).
     await createCityEdition(sdb, { isActive: true, fields: { name: "Chuva até 12 out", endsOn: "2026-10-12", hourStart: 14, hourEnd: 16, sortOrder: 20 }, userId: FIXED_USER_ID });
-    const off = await createCityEdition(sdb, { fields: { name: "Escondida" }, userId: FIXED_USER_ID });
+    await createCityEdition(sdb, { fields: { name: "Escondida" }, userId: FIXED_USER_ID });
 
     const morning = await listPublicCityEditions(sdb, { now: IN_CIRIO });
     expect(morning.map((e) => [e.name, e.isCurrent])).toEqual([

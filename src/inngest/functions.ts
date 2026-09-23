@@ -4,7 +4,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { getMessagingProvider } from "@/adapters/zapi";
 import { getDb } from "@/db/client";
 import { inngest } from "@/inngest/client";
-import { enqueueOutboxEvent, kickOutbox } from "@/queue/enqueue";
+import { kickOutbox } from "@/queue/enqueue";
 import { runOutboxKick } from "@/queue/kick";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { enqueueDailyDigest } from "@/services/daily-digest";
