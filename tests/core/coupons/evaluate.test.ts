@@ -262,3 +262,58 @@ describe("evaluateCoupon — cupom da turma", () => {
     expect(expectOk(evaluateCoupon(turma, ctx({ items: [VESTIDO] }))).appliedValue).toBe(5);
   });
 });
+
+describe("evaluateCoupon — force (a dona aplica mesmo assim no painel)", () => {
+  it("sem force nada muda: as recusas continuam recusando e forced vem vazio", () => {
+    expect(evaluateCoupon(rule({ isActive: false }), ctx())).toEqual({ ok: false, code: "COUPON_INACTIVE" });
+    expect(expectOk(evaluateCoupon(rule(), ctx())).forced).toEqual([]);
+  });
+
+  it("cada regra pulada volta em forced, e o desconto sai igual ao de um cupom válido", () => {
+    const vencido = rule({ expiresAt: new Date("2026-09-01T00:00:00.000Z") });
+    const semForce = evaluateCoupon(vencido, ctx());
+    expect(semForce).toEqual({ ok: false, code: "COUPON_EXPIRED" });
+
+    const comForce = expectOk(evaluateCoupon(vencido, ctx(), { force: true }));
+    expect(comForce.forced).toEqual(["COUPON_EXPIRED"]);
+    // 199,00 + 2 × 89,00 = 377,00 → 10% = 37,70
+    expect(comForce.discountCents).toBe(3770);
+  });
+
+  it("várias regras quebradas de uma vez entram todas em forced, na ordem das regras", () => {
+    const esgotadoEDeOutra = rule({
+      isActive: false,
+      maxUses: 1,
+      usedCount: 1,
+      customerId: "cust-outra",
+      perCustomerLimit: 1,
+    });
+    const r = expectOk(
+      evaluateCoupon(esgotadoEDeOutra, ctx({ priorRedemptionsByThisCustomer: 3 }), { force: true }),
+    );
+    expect(r.forced).toEqual([
+      "COUPON_INACTIVE",
+      "COUPON_EXHAUSTED",
+      "COUPON_NOT_YOURS",
+      "COUPON_CUSTOMER_LIMIT",
+    ]);
+    expect(r.discountCents).toBe(3770);
+  });
+
+  it("forçado sem nenhuma peça do cupom: o desconto passa a valer para o pedido inteiro", () => {
+    const soVestidoDeOutraLinha = rule({ productIds: ["p-que-nao-esta-na-sacola"] });
+    expect(evaluateCoupon(soVestidoDeOutraLinha, ctx())).toEqual({ ok: false, code: "COUPON_NO_ELIGIBLE_ITEMS" });
+    const r = expectOk(evaluateCoupon(soVestidoDeOutraLinha, ctx(), { force: true }));
+    expect(r.forced).toEqual(["COUPON_NO_ELIGIBLE_ITEMS"]);
+    expect(r.discountCents).toBe(3770);
+  });
+
+  it("frete grátis com escopo errado: forçado, perdoa o frete que veio", () => {
+    const soCorreios = rule({ type: "free_shipping", value: 0, freeShippingScope: "correios" });
+    expect(evaluateCoupon(soCorreios, ctx())).toEqual({ ok: false, code: "COUPON_SHIPPING_SCOPE" });
+    const r = expectOk(evaluateCoupon(soCorreios, ctx(), { force: true }));
+    expect(r.forced).toEqual(["COUPON_SHIPPING_SCOPE"]);
+    expect(r.freeShipping).toBe(true);
+    expect(r.shippingDiscountCents).toBe(1500);
+  });
+});
