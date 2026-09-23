@@ -167,7 +167,14 @@ export default async function PedidoDetalhePage({
                 </dd>
               </div>
               <div className="flex justify-between gap-8">
-                <dt className="text-zinc-500 dark:text-zinc-400">Desconto</dt>
+                <dt className="text-zinc-500 dark:text-zinc-400">
+                  Desconto
+                  {order.couponCode ? (
+                    <span className="ml-1 text-xs text-zinc-400 dark:text-zinc-500">
+                      cupom {order.couponCode}
+                    </span>
+                  ) : null}
+                </dt>
                 <dd className="text-zinc-900 dark:text-zinc-100">
                   − <Money cents={order.discountCents} />
                 </dd>

@@ -198,6 +198,12 @@ function couponError(code: CouponErrorCode, rule: Pick<CouponRule, "code" | "min
 const quoteItemSchema = z.object({
   variantId: z.uuid(),
   quantity: z.number().int().positive().max(999),
+  /**
+   * Preço que ESTE pedido vai cobrar, quando não é o preço ativo (venda
+   * manual do painel deixa a dona digitar outro valor). Ausente = o preço
+   * ativo do catálogo, como no site.
+   */
+  unitPriceCentsOverride: z.number().int().nonnegative().optional(),
 });
 
 const quoteCouponSchema = z.object({
@@ -221,6 +227,12 @@ const quoteCouponSchema = z.object({
     .nullable()
     .optional(),
   now: z.date().optional(),
+  /**
+   * Venda manual do painel: a dona mandou honrar o cupom apesar da regra
+   * (vencido, já usado, de outra cliente). As regras puladas voltam em
+   * `forced` — nada é escondido. Só o painel passa true.
+   */
+  force: z.boolean().optional(),
 });
 
 export type QuoteCouponInput = z.input<typeof quoteCouponSchema>;
@@ -237,6 +249,8 @@ export interface CouponQuote {
   shippingDiscountCents: number;
   /** O que só o fechamento confirma (sacola anônima ou sem entrega escolhida). */
   pending: PendingCheck[];
+  /** Regras que a dona mandou pular na venda manual; vazio na cotação normal. */
+  forced: CouponErrorCode[];
   /** Cupom que muda com o tempo ou da turma: "Hoje vale 10%. Em 9 dias…" / "Cupom da turma: 9% hoje…"; null nos demais. */
   hint: string | null;
   /** Cupom da turma: texto pronto para mandar a uma amiga (com o link /c/CÓDIGO); null nos demais. */
@@ -246,9 +260,11 @@ export interface CouponQuote {
 /** Preço ATIVO, produto e categoria de cada linha — nunca o que veio do navegador. */
 async function loadCouponItems(
   db: DbOrTx,
-  items: { variantId: string; quantity: number }[],
+  items: { variantId: string; quantity: number; unitPriceCentsOverride?: number }[],
 ): Promise<CouponContextItem[]> {
   if (items.length === 0) return [];
+  // leftJoin no preço: a variante sempre traz produto e categoria (é o que as
+  // restrições do cupom olham); o preço ativo pode faltar.
   const rows = await db
     .select({
       variantId: productVariants.id,
@@ -258,17 +274,20 @@ async function loadCouponItems(
     })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
-    .innerJoin(
+    .leftJoin(
       priceVersions,
       and(eq(priceVersions.productVariantId, productVariants.id), eq(priceVersions.status, "active")),
     )
     .where(inArray(productVariants.id, items.map((item) => item.variantId)));
   const byVariant = new Map(rows.map((row) => [row.variantId, row]));
-  // Variante sem preço ativo não soma (o checkout a barra com NO_ACTIVE_PRICE).
+  // Variante sem preço ativo não soma (o checkout a barra com NO_ACTIVE_PRICE)
+  // — a menos que quem chama já saiba o preço que vai cobrar (venda manual).
   return items.flatMap((item) => {
     const row = byVariant.get(item.variantId);
     if (!row) return [];
-    return [{ productId: row.productId, categoryId: row.categoryId, unitPriceCents: row.priceCents, quantity: item.quantity }];
+    const unitPriceCents = item.unitPriceCentsOverride ?? row.priceCents;
+    if (unitPriceCents === null || unitPriceCents === undefined) return [];
+    return [{ productId: row.productId, categoryId: row.categoryId, unitPriceCents, quantity: item.quantity }];
   });
 }
 
@@ -355,15 +374,19 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
   // sobe, e o que a cliente viu é o que ela paga; não vale um lock a mais).
   const distinctRedeemers = isCollective(coupon) ? await countDistinctRedeemers(db, coupon.id) : undefined;
 
-  const result = evaluateCoupon(coupon, {
-    now,
-    items,
-    shipping: parsed.shipping ?? null,
-    identity,
-    priorPurchases,
-    priorRedemptionsByThisCustomer,
-    distinctRedeemers,
-  });
+  const result = evaluateCoupon(
+    coupon,
+    {
+      now,
+      items,
+      shipping: parsed.shipping ?? null,
+      identity,
+      priorPurchases,
+      priorRedemptionsByThisCustomer,
+      distinctRedeemers,
+    },
+    { force: parsed.force === true },
+  );
   if (!result.ok) throw couponError(result.code, coupon);
   const collective = distinctRedeemers !== undefined;
 
@@ -376,6 +399,7 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     freeShipping: result.freeShipping,
     shippingDiscountCents: result.shippingDiscountCents,
     pending: result.pending,
+    forced: result.forced,
     hint: collective ? collectiveCustomerHint(coupon, distinctRedeemers) : scheduleCustomerHint(coupon, now),
     shareText: collective ? await shareTextFor(db, coupon, distinctRedeemers) : null,
   };
@@ -415,12 +439,22 @@ export interface RedeemCouponInput {
  * pedidos simultâneos da mesma cliente contam um de cada vez — o segundo vê o
  * primeiro e a transação dele desfaz o pedido.
  */
-export async function redeemCouponInTx(tx: DbOrTx, input: RedeemCouponInput): Promise<void> {
+export async function redeemCouponInTx(
+  tx: DbOrTx,
+  input: RedeemCouponInput,
+  options: { force?: boolean } = {},
+): Promise<void> {
+  // force: a dona honrou o cupom no painel apesar da regra. O uso continua
+  // sendo contado (o relatório do cupom mostra a verdade), mas sem o guard —
+  // é ela quem decide passar do limite, e o pedido não pode falhar por isso.
+  const force = options.force === true;
   const [updated] = await tx
     .update(coupons)
     .set({ usedCount: sql`${coupons.usedCount} + 1`, updatedAt: new Date() })
     .where(
-      sql`${coupons.id} = ${input.couponId} AND (${coupons.maxUses} IS NULL OR ${coupons.usedCount} < ${coupons.maxUses})`,
+      force
+        ? sql`${coupons.id} = ${input.couponId}`
+        : sql`${coupons.id} = ${input.couponId} AND (${coupons.maxUses} IS NULL OR ${coupons.usedCount} < ${coupons.maxUses})`,
     )
     .returning({ id: coupons.id, perCustomerLimit: coupons.perCustomerLimit });
 
@@ -439,7 +473,7 @@ export async function redeemCouponInTx(tx: DbOrTx, input: RedeemCouponInput): Pr
     appliedValue: input.appliedValue > 0 ? input.appliedValue : null,
   });
 
-  if (updated.perCustomerLimit !== null) {
+  if (!force && updated.perCustomerLimit !== null) {
     const used = await countActiveRedemptions(tx, input.couponId, {
       customerId: input.customerId,
       phoneE164: input.phoneE164,

@@ -106,8 +106,20 @@ export type CouponEvaluation =
       eligibleSubtotalCents: number;
       subtotalCents: number;
       pending: PendingCheck[];
+      /**
+       * Regras que SERIAM recusa e a dona mandou aplicar mesmo assim (só no
+       * modo force da venda manual). Vazio em toda cotação normal.
+       */
+      forced: CouponErrorCode[];
     }
   | { ok: false; code: CouponErrorCode };
+
+/**
+ * force: a dona, no painel, decidiu honrar o cupom apesar da regra (vencido,
+ * já usado, não é dela…). Nada é escondido — cada regra pulada volta em
+ * `forced` para a tela mostrar e o audit registrar.
+ */
+export type EvaluateCouponOptions = { force?: boolean };
 
 export function isPersonal(rule: Pick<CouponRule, "customerId" | "phoneE164">): boolean {
   return rule.customerId !== null || rule.phoneE164 !== null;
@@ -159,52 +171,94 @@ function identityMatches(rule: CouponRule, identity: CouponIdentity): boolean {
   return false;
 }
 
-export function evaluateCoupon(rule: CouponRule, ctx: CouponContext): CouponEvaluation {
-  if (!rule.isActive) return { ok: false, code: "COUPON_INACTIVE" };
+export function evaluateCoupon(
+  rule: CouponRule,
+  ctx: CouponContext,
+  options: EvaluateCouponOptions = {},
+): CouponEvaluation {
+  const force = options.force === true;
+  const forced: CouponErrorCode[] = [];
+  /** Recusa normal; no modo force, anota a regra pulada e segue. */
+  const deny = (code: CouponErrorCode): { ok: false; code: CouponErrorCode } | null => {
+    if (!force) return { ok: false, code };
+    forced.push(code);
+    return null;
+  };
+
+  if (!rule.isActive) {
+    const denied = deny("COUPON_INACTIVE");
+    if (denied) return denied;
+  }
   if (rule.startsAt !== null && ctx.now.getTime() < rule.startsAt.getTime()) {
-    return { ok: false, code: "COUPON_NOT_STARTED" };
+    const denied = deny("COUPON_NOT_STARTED");
+    if (denied) return denied;
   }
   if (rule.expiresAt !== null && ctx.now.getTime() > rule.expiresAt.getTime()) {
-    return { ok: false, code: "COUPON_EXPIRED" };
+    const denied = deny("COUPON_EXPIRED");
+    if (denied) return denied;
   }
   if (rule.maxUses !== null && rule.usedCount >= rule.maxUses) {
-    return { ok: false, code: "COUPON_EXHAUSTED" };
+    const denied = deny("COUPON_EXHAUSTED");
+    if (denied) return denied;
   }
 
   const schedule = isWithinSchedule(rule, ctx.now);
-  if (!schedule.weekday) return { ok: false, code: "COUPON_WRONG_WEEKDAY" };
-  if (!schedule.hours) return { ok: false, code: "COUPON_OUTSIDE_HOURS" };
+  if (!schedule.weekday) {
+    const denied = deny("COUPON_WRONG_WEEKDAY");
+    if (denied) return denied;
+  }
+  if (!schedule.hours) {
+    const denied = deny("COUPON_OUTSIDE_HOURS");
+    if (denied) return denied;
+  }
 
   const pending: PendingCheck[] = [];
 
   if (isPersonal(rule)) {
     if (ctx.identity === null) pending.push("personal");
-    else if (!identityMatches(rule, ctx.identity)) return { ok: false, code: "COUPON_NOT_YOURS" };
+    else if (!identityMatches(rule, ctx.identity)) {
+      const denied = deny("COUPON_NOT_YOURS");
+      if (denied) return denied;
+    }
   }
 
   if (rule.firstPurchaseOnly) {
     if (ctx.priorPurchases === null) pending.push("first_purchase");
-    else if (ctx.priorPurchases > 0) return { ok: false, code: "COUPON_FIRST_PURCHASE_ONLY" };
+    else if (ctx.priorPurchases > 0) {
+      const denied = deny("COUPON_FIRST_PURCHASE_ONLY");
+      if (denied) return denied;
+    }
   }
 
   if (rule.perCustomerLimit !== null) {
     if (ctx.priorRedemptionsByThisCustomer === null) pending.push("customer_limit");
     else if (ctx.priorRedemptionsByThisCustomer >= rule.perCustomerLimit) {
-      return { ok: false, code: "COUPON_CUSTOMER_LIMIT" };
+      const denied = deny("COUPON_CUSTOMER_LIMIT");
+      if (denied) return denied;
     }
   }
 
   const subtotalCents = subtotalOf(ctx.items);
-  if (subtotalCents < rule.minOrderCents) return { ok: false, code: "COUPON_MIN_ORDER" };
+  if (subtotalCents < rule.minOrderCents) {
+    const denied = deny("COUPON_MIN_ORDER");
+    if (denied) return denied;
+  }
 
-  const eligible = eligibleSubtotalCents(rule, ctx.items);
-  if (hasItemRestriction(rule) && eligible === 0) return { ok: false, code: "COUPON_NO_ELIGIBLE_ITEMS" };
+  let eligible = eligibleSubtotalCents(rule, ctx.items);
+  if (hasItemRestriction(rule) && eligible === 0) {
+    const denied = deny("COUPON_NO_ELIGIBLE_ITEMS");
+    if (denied) return denied;
+    // Forçado sem nenhuma peça do cupom: a dona disse que vale para ESTE
+    // pedido, então o desconto incide sobre o pedido inteiro.
+    eligible = subtotalCents;
+  }
 
   if (rule.type === "free_shipping") {
     if (rule.freeShippingScope !== "any") {
       if (ctx.shipping === null) pending.push("shipping_scope");
       else if (ctx.shipping.kind !== rule.freeShippingScope) {
-        return { ok: false, code: "COUPON_SHIPPING_SCOPE" };
+        const denied = deny("COUPON_SHIPPING_SCOPE");
+        if (denied) return denied;
       }
     }
     return {
@@ -216,6 +270,7 @@ export function evaluateCoupon(rule: CouponRule, ctx: CouponContext): CouponEval
       eligibleSubtotalCents: eligible,
       subtotalCents,
       pending,
+      forced,
     };
   }
 
@@ -236,5 +291,6 @@ export function evaluateCoupon(rule: CouponRule, ctx: CouponContext): CouponEval
     eligibleSubtotalCents: eligible,
     subtotalCents,
     pending,
+    forced,
   };
 }

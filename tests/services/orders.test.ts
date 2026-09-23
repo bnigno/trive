@@ -160,6 +160,109 @@ describe("createManualOrder", () => {
     expect(level.reserved).toBe(0);
   });
 
+  it("cupom: aplica o desconto, guarda o código, conta o uso e soma ao desconto à mão", async () => {
+    const { customerId, variantId } = await setupOrder({ priceCents: 10_000 });
+    await createCoupon(sdb, { code: "DEZ", type: "percent", value: 10, userId: FIXED_USER_ID });
+
+    const created = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 2 }],
+      couponCode: "dez",
+      discountCents: 500,
+      shippingCents: 1500,
+      userId: FIXED_USER_ID,
+    });
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, created.orderId));
+    // 20.000 de subtotal: 10% do cupom (2.000) + 5,00 à mão.
+    expect(order).toMatchObject({
+      subtotalCents: 20_000,
+      discountCents: 2_500,
+      couponCode: "DEZ",
+      shippingCents: 1_500,
+      totalCents: 19_000,
+    });
+    expect(order.couponId).not.toBeNull();
+
+    const [redemption] = await db.select().from(schema.couponRedemptions).where(eq(schema.couponRedemptions.orderId, created.orderId));
+    expect(redemption).toMatchObject({ code: "DEZ", discountCents: 2_000, customerId, releasedAt: null });
+    const [coupon] = await db.select().from(schema.coupons).where(eq(schema.coupons.code, "DEZ"));
+    expect(coupon.usedCount).toBe(1);
+
+    const [audit] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.entityId, created.orderId));
+    expect(audit.after).toMatchObject({ couponCode: "DEZ", couponDiscountCents: 2_000, manualDiscountCents: 500 });
+
+    // Cancelar sem pagar devolve o uso — agora pelo caminho de verdade.
+    await transitionOrder(sdb, { orderId: created.orderId, to: "pending_payment", userId: FIXED_USER_ID });
+    await transitionOrder(sdb, { orderId: created.orderId, to: "canceled", userId: FIXED_USER_ID });
+    const [devolvido] = await db.select().from(schema.coupons).where(eq(schema.coupons.code, "DEZ"));
+    expect(devolvido.usedCount).toBe(0);
+  });
+
+  it("cupom recusado derruba a venda inteira; com 'aplicar mesmo assim' ela passa e o audit registra quem forçou", async () => {
+    const { customerId, variantId } = await setupOrder({ priceCents: 10_000 });
+    await createCoupon(sdb, {
+      code: "ONTEM",
+      type: "percent",
+      value: 10,
+      expiresAt: new Date(Date.now() - 86_400_000),
+      userId: FIXED_USER_ID,
+    });
+
+    await expect(
+      createManualOrder(sdb, { customerId, items: [{ variantId, quantity: 1 }], couponCode: "ONTEM", userId: FIXED_USER_ID }),
+    ).rejects.toMatchObject({ code: "COUPON_EXPIRED" });
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+
+    const forced = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1 }],
+      couponCode: "ONTEM",
+      forceCoupon: true,
+      userId: FIXED_USER_ID,
+    });
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, forced.orderId));
+    expect(order).toMatchObject({ couponCode: "ONTEM", discountCents: 1_000, totalCents: 9_000 });
+    const [audit] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.entityId, forced.orderId));
+    expect(audit.after).toMatchObject({ forced: ["COUPON_EXPIRED"], forcedBy: FIXED_USER_ID });
+    // O uso é contado mesmo forçado: o relatório do cupom mostra a verdade.
+    const [coupon] = await db.select().from(schema.coupons).where(eq(schema.coupons.code, "ONTEM"));
+    expect(coupon.usedCount).toBe(1);
+  });
+
+  it("cupom de frete grátis abate o frete digitado e guarda o perdoado no resgate", async () => {
+    const { customerId, variantId } = await setupOrder({ priceCents: 10_000 });
+    await createCoupon(sdb, { code: "FRETEGRATIS", type: "free_shipping", value: 0, userId: FIXED_USER_ID });
+
+    const created = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1 }],
+      couponCode: "FRETEGRATIS",
+      shippingCents: 2_000,
+      userId: FIXED_USER_ID,
+    });
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, created.orderId));
+    expect(order).toMatchObject({ shippingCents: 0, discountCents: 0, totalCents: 10_000, couponCode: "FRETEGRATIS" });
+    const [redemption] = await db.select().from(schema.couponRedemptions).where(eq(schema.couponRedemptions.orderId, created.orderId));
+    expect(redemption.shippingDiscountCents).toBe(2_000);
+  });
+
+  it("cupom percentual incide sobre o preço DIGITADO, não sobre o preço ativo", async () => {
+    const { customerId, variantId } = await setupOrder({ priceCents: 10_000 });
+    await createCoupon(sdb, { code: "DEZ", type: "percent", value: 10, userId: FIXED_USER_ID });
+
+    const created = await createManualOrder(sdb, {
+      customerId,
+      items: [{ variantId, quantity: 1, unitPriceCentsOverride: 5_000 }],
+      couponCode: "DEZ",
+      userId: FIXED_USER_ID,
+    });
+
+    const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, created.orderId));
+    expect(order).toMatchObject({ subtotalCents: 5_000, discountCents: 500, totalCents: 4_500 });
+  });
+
   it("sem preço ativo e sem override falha com mensagem clara e não cria nada", async () => {
     const customerId = await createTestCustomer(db);
     const { variantId } = await createTestVariant(db, {

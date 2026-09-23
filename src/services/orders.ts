@@ -23,7 +23,13 @@ import {
   productVariants,
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
-import { releaseCouponRedemptionInTx } from "@/services/coupons";
+import {
+  quoteCoupon,
+  redeemCouponInTx,
+  releaseCouponRedemptionInTx,
+  ServiceError as CouponServiceError,
+  type CouponQuote,
+} from "@/services/coupons";
 import { applyStockEffectTx, ServiceError } from "@/services/stock";
 
 export { ServiceError };
@@ -43,8 +49,18 @@ const createManualOrderSchema = z.object({
       }),
     )
     .min(1, "Informe ao menos um item para o pedido."),
+  /** Desconto digitado à mão (fora de cupom); soma ao desconto do cupom. */
   discountCents: z.number().int().nonnegative().default(0),
   shippingCents: z.number().int().nonnegative().default(0),
+  /** Cupom honrado nesta venda (as mesmas regras do site). */
+  couponCode: z.string().trim().optional(),
+  /**
+   * A dona mandou aplicar o cupom apesar da regra (vencido, já usado, de
+   * outra cliente). Fica registrado no audit com as regras puladas.
+   */
+  forceCoupon: z.boolean().default(false),
+  /** Tipo da entrega cobrada — só serve ao escopo do cupom de frete grátis. */
+  shippingKind: z.enum(["motoboy", "correios"]).default("motoboy"),
   note: z.string().max(2000).optional(),
   userId: z.uuid(),
 });
@@ -58,8 +74,10 @@ export async function createManualOrder(
   const parsed = createManualOrderSchema.parse(input);
 
   return db.transaction(async (tx) => {
+    // O telefone vem junto: as regras por cliente do cupom (pessoal, primeira
+    // compra, limite) precisam saber quem está comprando.
     const [customer] = await tx
-      .select({ id: customers.id })
+      .select({ id: customers.id, phoneE164: customers.phoneE164 })
       .from(customers)
       .where(eq(customers.id, parsed.customerId));
     if (!customer) {
@@ -129,13 +147,46 @@ export async function createManualOrder(
       });
     }
 
+    // Cupom: cotado ANTES de qualquer escrita, com o preço que ESTE pedido vai
+    // cobrar (a venda manual pode ter preço digitado). Recusa derruba tudo com
+    // a frase do motor; `forceCoupon` pula a regra e registra qual foi.
+    let coupon: CouponQuote | null = null;
+    if (parsed.couponCode !== undefined && parsed.couponCode !== "") {
+      try {
+        coupon = await quoteCoupon(tx, {
+          code: parsed.couponCode,
+          items: itemRows.map((r) => ({
+            variantId: r.productVariantId,
+            quantity: r.quantity,
+            unitPriceCentsOverride: r.unitPriceCents,
+          })),
+          identity: { customerId: customer.id, phoneE164: customer.phoneE164 },
+          shipping:
+            parsed.shippingCents > 0 ? { cents: parsed.shippingCents, kind: parsed.shippingKind } : null,
+          force: parsed.forceCoupon,
+        });
+      } catch (error) {
+        if (error instanceof CouponServiceError) {
+          throw new ServiceError(error.code, error.message);
+        }
+        throw error;
+      }
+    }
+
+    // Frete grátis do cupom abate o frete digitado; o perdoado fica no resgate.
+    const shippingDiscountCents = Math.min(coupon?.shippingDiscountCents ?? 0, parsed.shippingCents);
+    const chargedShippingCents = parsed.shippingCents - shippingDiscountCents;
+    // Os dois descontos convivem: o do cupom e o que a dona digitou.
+    const couponDiscountCents = coupon?.discountCents ?? 0;
+    const discountCents = couponDiscountCents + parsed.discountCents;
+
     const totals = computeOrderTotals(
       itemRows.map((r) => ({
         unitPriceCents: r.unitPriceCents,
         quantity: r.quantity,
       })),
-      parsed.discountCents,
-      parsed.shippingCents,
+      discountCents,
+      chargedShippingCents,
     );
 
     const [order] = await tx
@@ -145,8 +196,10 @@ export async function createManualOrder(
         status: "draft",
         channel: "manual",
         subtotalCents: totals.subtotalCents,
-        discountCents: parsed.discountCents,
-        shippingCents: parsed.shippingCents,
+        discountCents,
+        couponId: coupon?.couponId ?? null,
+        couponCode: coupon?.code ?? null,
+        shippingCents: chargedShippingCents,
         totalCents: totals.totalCents,
         note: parsed.note ?? null,
         createdBy: parsed.userId,
@@ -156,6 +209,32 @@ export async function createManualOrder(
     await tx
       .insert(orderItems)
       .values(itemRows.map((r) => ({ ...r, orderId: order.id })));
+
+    // Consome 1 uso na MESMA transação: se o guard falhar (último uso perdido
+    // para outro pedido), o pedido inteiro desfaz.
+    if (coupon) {
+      try {
+        await redeemCouponInTx(
+          tx,
+          {
+            couponId: coupon.couponId,
+            orderId: order.id,
+            customerId: customer.id,
+            phoneE164: customer.phoneE164,
+            code: coupon.code,
+            discountCents: couponDiscountCents,
+            shippingDiscountCents,
+            appliedValue: coupon.appliedValue,
+          },
+          { force: parsed.forceCoupon },
+        );
+      } catch (error) {
+        if (error instanceof CouponServiceError) {
+          throw new ServiceError(error.code, error.message);
+        }
+        throw error;
+      }
+    }
 
     await tx.insert(orderStatusHistory).values({
       orderId: order.id,
@@ -176,9 +255,17 @@ export async function createManualOrder(
         channel: "manual",
         customerId: parsed.customerId,
         subtotalCents: totals.subtotalCents,
-        discountCents: parsed.discountCents,
-        shippingCents: parsed.shippingCents,
+        discountCents,
+        couponCode: coupon?.code ?? null,
+        couponDiscountCents,
+        manualDiscountCents: parsed.discountCents,
+        shippingCents: chargedShippingCents,
+        shippingDiscountCents,
         totalCents: totals.totalCents,
+        // Regras que a dona mandou pular (vazio quando o cupom valia mesmo).
+        ...(coupon && coupon.forced.length > 0
+          ? { forced: coupon.forced, forcedBy: parsed.userId }
+          : {}),
         items: itemRows.map((r) => ({
           sku: r.skuSnapshot,
           quantity: r.quantity,

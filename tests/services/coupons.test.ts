@@ -394,6 +394,87 @@ describe("redeemCouponInTx", () => {
   });
 });
 
+describe("cotação e resgate com force (venda manual do painel)", () => {
+  it("cota com o preço DIGITADO, mesmo em variação sem preço ativo", async () => {
+    const { variantId } = await createTestVariant(db, { sku: "SEM-PRECO-MANUAL" });
+    await createCoupon(sdb, { code: "DEZ", type: "percent", value: 10, userId: FIXED_USER_ID });
+
+    // Sem preço ativo e sem preço informado, a linha não soma: o cupom não acha
+    // subtotal nenhum e o mínimo (0) passa, mas o desconto é zero.
+    const semPreco = await quoteCoupon(sdb, { code: "DEZ", items: [{ variantId, quantity: 1 }] });
+    expect(semPreco.discountCents).toBe(0);
+
+    const comPreco = await quoteCoupon(sdb, {
+      code: "DEZ",
+      items: [{ variantId, quantity: 2, unitPriceCentsOverride: 5_000 }],
+    });
+    expect(comPreco.discountCents).toBe(1_000);
+    expect(comPreco.forced).toEqual([]);
+  });
+
+  it("force: cota cupom vencido devolvendo a regra pulada", async () => {
+    const { variantId } = await sellable(10_000, { sku: "CAM-FORCE" });
+    await createCoupon(sdb, {
+      code: "ONTEM",
+      type: "percent",
+      value: 20,
+      expiresAt: new Date(Date.now() - 86_400_000),
+      userId: FIXED_USER_ID,
+    });
+
+    await expect(quoteCoupon(sdb, { code: "ONTEM", items: [{ variantId, quantity: 1 }] })).rejects.toMatchObject({
+      code: "COUPON_EXPIRED",
+    });
+    const forcado = await quoteCoupon(sdb, { code: "ONTEM", items: [{ variantId, quantity: 1 }], force: true });
+    expect(forcado.forced).toEqual(["COUPON_EXPIRED"]);
+    expect(forcado.discountCents).toBe(2_000);
+  });
+
+  it("force no resgate: passa do limite de usos sem estourar e não checa o limite por cliente", async () => {
+    const customerId = await createTestCustomer(db, "Cliente do Force");
+    await sellable(5_000, { sku: "CAM-RESGATE-FORCE" });
+    const coupon = await createCoupon(sdb, {
+      code: "UNICO",
+      type: "percent",
+      value: 10,
+      maxUses: 1,
+      perCustomerLimit: 1,
+      userId: FIXED_USER_ID,
+    });
+    const order = async () => {
+      const [row] = await db
+        .insert(schema.orders)
+        .values({ customerId, status: "draft", channel: "manual", subtotalCents: 5_000, totalCents: 5_000 })
+        .returning({ id: schema.orders.id });
+      return row.id;
+    };
+    const redeem = (orderId: string, force: boolean) =>
+      redeemCouponInTx(
+        sdb,
+        {
+          couponId: coupon.id,
+          orderId,
+          customerId,
+          phoneE164: null,
+          code: "UNICO",
+          discountCents: 500,
+          shippingDiscountCents: 0,
+          appliedValue: 10,
+        },
+        { force },
+      );
+
+    await redeem(await order(), false);
+    // Sem force, o segundo bate no guard atômico do último uso.
+    await expect(redeem(await order(), false)).rejects.toMatchObject({ code: "COUPON_EXHAUSTED" });
+    // Com force, a dona passa do limite de propósito — e o uso é contado.
+    await redeem(await order(), true);
+    const [row] = await db.select().from(schema.coupons).where(eq(schema.coupons.id, coupon.id));
+    expect(row.usedCount).toBe(2);
+    expect(await db.select().from(schema.couponRedemptions)).toHaveLength(2);
+  });
+});
+
 describe("createCoupon", () => {
   it("cria com code UPPERCASE, grava audit e valida percent 1..100", async () => {
     const created = await makeCoupon({ code: "bemvindo", type: "percent", value: 15 });
