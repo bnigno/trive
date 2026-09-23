@@ -1,21 +1,24 @@
-// O "prompt de fotografia" da casa é FIXO e vive aqui: realismo é regra, não
-// enfeite. A foto-base da modelo nasce deste texto + cena + modelo + corpo;
-// a peça entra depois, por try-on, sem redesenhar a estampa. PURO.
+// O "prompt de fotografia" da casa é FIXO e vive aqui. A TRIVÉ é uma maison:
+// a foto tem de parecer campanha de moda, não retrato casual — mas fotografia
+// de verdade, nunca aquele acabamento plástico de IA. A foto-base da modelo
+// nasce deste texto + cena + modelo + corpo; a peça entra depois, por try-on,
+// sem redesenhar a estampa. PURO.
 import type { PieceType } from "@/core/catalog/piece-types";
 
 import { bodySizeByKey, houseModelByKey, sceneByKey } from "./presets";
 
 /**
- * Como a foto tem de parecer: foto boa de celular numa tarde em Belém. A
- * modelo veste básicos neutros e justos para o try-on poder trocar blusa,
- * parte de baixo ou peça inteira depois.
+ * Como a foto tem de parecer: editorial de moda, com luz desenhada e acabamento
+ * de catálogo de grife. "Pele real, levemente retocada" segura o realismo sem
+ * devolver a estética de foto de celular. A modelo veste básicos neutros e
+ * justos para o try-on poder trocar blusa, parte de baixo ou peça inteira.
  */
 export const PHOTOGRAPHY_PROMPT =
-  "Photorealistic candid photo taken with a phone camera, natural light only, real skin texture with visible pores and a little shine, a few loose flyaway hairs, natural fabric wrinkles, background with depth and everyday imperfection, eye-level 35mm-equivalent framing, three-quarter body shot standing naturally with arms relaxed, subtle film grain, slightly muted colors. She wears a plain light-grey fitted tank top and plain fitted mid-thigh shorts, simple flat sandals.";
+  "Photorealistic professional fashion editorial photograph, shot on a full-frame camera with an 85mm portrait lens at f/2, large soft key light with gentle falloff and a delicate rim light separating her from the background, real skin texture lightly retouched to a clean finish, hair styled and smooth, elegant three-quarter body shot standing tall with relaxed shoulders and a poised composed expression, refined colour with deep blacks, luxury e-commerce campaign quality. She wears well-fitted plain light-grey basics — a simple tank top and mid-thigh shorts — with simple flat sandals.";
 
 /** O que NÃO pode aparecer — o gerador recebe isto como instrução negativa. */
 export const NEGATIVE_PROMPT =
-  "plastic skin, airbrushed face, perfect symmetry, studio grey backdrop, professional fashion campaign look, extra or deformed hands or fingers, text, logos, watermark, jewelry covering the neckline, hat, sunglasses, bag, coat";
+  "plastic or waxy skin, heavy airbrushing, harsh direct flash, amateur snapshot look, cluttered or busy background, oversaturated colours, extra or deformed hands or fingers, text, logos, watermark, jewelry covering the neckline, hat, sunglasses, bag, coat";
 
 export type ModelPhotoPromptInput = {
   modelKey: string;
@@ -41,7 +44,7 @@ export function buildModelPhotoPrompt(input: ModelPhotoPromptInput): string {
 export function buildScenePrompt(sceneKey: string): string {
   const scene = sceneByKey(sceneKey);
   if (!scene) throw new Error(`Cena desconhecida: ${sceneKey}`);
-  return `Keep the same person, pose and setting: ${scene.prompt}. Natural light, real skin texture, subtle film grain.`;
+  return `Keep the same person, pose and setting: ${scene.prompt}. Soft editorial lighting, real skin texture, refined campaign finish.`;
 }
 
 export type StudioGarmentCategory = "tops" | "bottoms" | "one-pieces";
