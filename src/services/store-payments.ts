@@ -111,6 +111,8 @@ export async function ensurePaymentPreference(
       channel: orders.channel,
       publicToken: orders.publicToken,
       shippingCents: orders.shippingCents,
+      discountCents: orders.discountCents,
+      totalCents: orders.totalCents,
       mpPreferenceId: orders.mpPreferenceId,
       customerId: orders.customerId,
       paymentMethod: orders.paymentMethod,
@@ -156,15 +158,50 @@ export async function ensurePaymentPreference(
     );
   }
 
-  const items: CheckoutPreferenceItem[] = rows.map((row) => ({
-    title: row.title,
-    quantity: row.quantity,
-    unitPriceCents: row.unitPriceCents,
-  }));
-  // Frete entra como item próprio: o total cobrado no MP TEM de bater com
-  // orders.total_cents (itens + frete).
-  if (order.shippingCents > 0) {
-    items.push({ title: "Frete", quantity: 1, unitPriceCents: order.shippingCents });
+  // O MP cobra a SOMA dos itens que recebe: a preferência não tem campo de
+  // desconto e recusa unit_price negativo. Por isso pedido COM desconto vai
+  // como uma linha só, no valor exato de orders.total_cents — senão o desconto
+  // simplesmente não chegaria à cobrança. Sem desconto, a cliente continua
+  // vendo as peças e o frete discriminados na tela do MP.
+  const items: CheckoutPreferenceItem[] =
+    order.discountCents > 0
+      ? [
+          {
+            title: `Pedido #${order.orderNumber}`,
+            quantity: 1,
+            unitPriceCents: order.totalCents,
+          },
+        ]
+      : [
+          ...rows.map((row) => ({
+            title: row.title,
+            quantity: row.quantity,
+            unitPriceCents: row.unitPriceCents,
+          })),
+          ...(order.shippingCents > 0
+            ? [
+                {
+                  title: "Frete",
+                  quantity: 1,
+                  unitPriceCents: order.shippingCents,
+                },
+              ]
+            : []),
+        ];
+
+  // Trava: o que o MP vai cobrar TEM de ser orders.total_cents, centavo a
+  // centavo. Não bateu, não cobra — cobrar a mais de uma cliente é pior do
+  // que ela não conseguir pagar agora. O CHECK do banco garante a identidade
+  // (total = subtotal - desconto + frete), então isto só dispara em corrupção.
+  const chargedCents = items.reduce(
+    (total, item) => total + item.quantity * item.unitPriceCents,
+    0,
+  );
+  if (chargedCents !== order.totalCents) {
+    throw new ServiceError(
+      "ORDER_TOTAL_MISMATCH",
+      "O valor a cobrar não bate com o total do pedido. Confira o pedido antes de enviar o link de pagamento.",
+    );
   }
 
   const [customer] = await db

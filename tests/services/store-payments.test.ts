@@ -188,6 +188,59 @@ describe("ensurePaymentPreference", () => {
     expect(sum).toBe(order.totalCents);
   });
 
+  it("pedido COM desconto cobra o total do pedido, não itens + frete", async () => {
+    // O defeito real (pedido #1007): 28,99 + 5,00 iam ao MP e o desconto de
+    // 2,89 ficava de fora — a cliente veria um Pix de 33,99 num pedido de
+    // 31,10. O MP cobra a soma dos itens, então o desconto TEM de estar nela.
+    const order = await createPendingStoreOrder({ shippingCents: 1990 });
+    const row = await getOrderRow(order.orderId);
+    expect(row.subtotalCents).toBe(9980);
+    await db
+      .update(schema.orders)
+      .set({ discountCents: 1000, totalCents: 10970 })
+      .where(eq(schema.orders.id, order.orderId));
+    const gateway = new RecordingGateway();
+
+    await ensurePaymentPreference(sdb, gateway, { orderId: order.orderId });
+
+    const input = gateway.lastInput;
+    expect(input).not.toBeNull();
+    if (!input) return;
+    expect(input.items).toEqual([
+      {
+        title: `Pedido #${order.orderNumber}`,
+        quantity: 1,
+        unitPriceCents: 10970,
+      },
+    ]);
+    const sum = input.items.reduce(
+      (total, item) => total + item.quantity * item.unitPriceCents,
+      0,
+    );
+    expect(sum).toBe(10970);
+  });
+
+  it("o valor mandado ao MP nunca diverge do total: pedido adulterado não cobra", async () => {
+    // A trava que faltava. Um item some do pedido sem o cabeçalho acompanhar:
+    // antes, a preferência sairia com o valor errado; agora não sai nenhuma.
+    const order = await createPendingStoreOrder({ shippingCents: 1990 });
+    const [item] = await db
+      .select()
+      .from(schema.orderItems)
+      .where(eq(schema.orderItems.orderId, order.orderId));
+    await db
+      .update(schema.orderItems)
+      .set({ quantity: 1, totalCents: item.unitPriceCents })
+      .where(eq(schema.orderItems.id, item.id));
+    const gateway = new RecordingGateway();
+
+    await expect(
+      ensurePaymentPreference(sdb, gateway, { orderId: order.orderId }),
+    ).rejects.toMatchObject({ code: "ORDER_TOTAL_MISMATCH" });
+    // Não cobrar é melhor do que cobrar errado: o gateway nem foi chamado.
+    expect(gateway.calls).toBe(0);
+  });
+
   it("não inclui item de frete quando o frete é grátis", async () => {
     const order = await createPendingStoreOrder({ shippingCents: 0 });
     const gateway = new RecordingGateway();

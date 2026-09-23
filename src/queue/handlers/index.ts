@@ -84,6 +84,7 @@ import { sendQueuedEmail } from "@/services/email-inbox";
 import { sendOrderEmail } from "@/services/notifications";
 import {
   notifyOwnerChargeback,
+  notifyOwnerAmountDivergent,
   notifyOwnerFeeDivergent,
   sendOrderCanceledWa,
   sendOrderRefundedWa,
@@ -108,6 +109,11 @@ const mpPaymentEventPayloadSchema = z.object({
 
 // Avisos de pedido (cancelado/reembolsado/chargeback) só precisam do id.
 const orderNoticePayloadSchema = z.object({ orderId: z.uuid() });
+const amountDivergentPayloadSchema = orderNoticePayloadSchema.extend({
+  expectedCents: z.number().int().min(0),
+  paidCents: z.number().int().min(0),
+});
+
 const feeDivergentPayloadSchema = orderNoticePayloadSchema.extend({
   estimatedCents: z.number().int().min(0),
   actualCents: z.number().int().min(0),
@@ -747,6 +753,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const payload = feeDivergentPayloadSchema.parse(event.payload);
     const result = await notifyOwnerFeeDivergent(getDb(), getMessagingProvider(), payload);
     console.info(`[mp.fee_divergent] ${payload.orderId}:`, result);
+  },
+  // Valor pago diferente do total do pedido: o dono recebe os dois valores e
+  // a diferença no WhatsApp (uma vez por pedido).
+  "mp.amount_divergent": async (event) => {
+    const payload = amountDivergentPayloadSchema.parse(event.payload);
+    const result = await notifyOwnerAmountDivergent(getDb(), getMessagingProvider(), payload);
+    console.info(`[mp.amount_divergent] ${payload.orderId}:`, result);
   },
   // Chargeback sinalizado: sem transição automática, mas o dono fica sabendo.
   "payment.chargeback": async (event) => {

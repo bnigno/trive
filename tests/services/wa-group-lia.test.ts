@@ -266,8 +266,11 @@ describe("só privado e SAIR", () => {
 
     expect(await removeFromGroups(sdb, provider, { phoneE164: ANA })).toEqual({ removed: 1 });
     expect(provider.removedParticipants).toEqual([{ groupId: GROUP, addresses: [ANA] }]);
-    // Saída antiga (mais de 7 dias) não é refeita.
-    expect(await removeFromGroups(sdb, provider, { phoneE164: ANA, now: new Date(NOW.getTime() + 8 * 86_400_000) })).toEqual({ removed: 0 });
+    // Saída antiga (mais de 7 dias) não é refeita. O `leftAt` foi gravado por
+    // processZapiInbound, que usa o relógio REAL (é a porta do webhook, não
+    // tem now injetável) — então os 8 dias contam a partir dele, não do NOW
+    // fixo, senão o teste passa ou falha conforme a hora em que roda.
+    expect(await removeFromGroups(sdb, provider, { phoneE164: ANA, now: new Date(Date.now() + 8 * 86_400_000) })).toEqual({ removed: 0 });
 
     // Quem não está em grupo nenhum recebe outra frase.
     const again = await processZapiInbound(sdb, { providedSecret: "segredo", body: { ...base, messageId: "W-2", phone: "5591999990001", text: { message: "só privado" } } });

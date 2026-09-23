@@ -199,6 +199,70 @@ describe("processPaymentEvent", () => {
     expect(await outboxOfType("order.paid")).toHaveLength(1);
     // Sem payment_fee_rules de pix → sem estimativa → sem divergência.
     expect(await outboxOfType("mp.fee_divergent")).toHaveLength(0);
+    // Valor pago = total do pedido → nada a avisar.
+    expect(await outboxOfType("mp.amount_divergent")).toHaveLength(0);
+  });
+
+  it("pagamento PENDENTE não grava taxa nem avisa divergência", async () => {
+    // O Pix pendente do pedido #1007: o MP não tem taxa a informar, mas o
+    // webhook 'payment.created' chega do mesmo jeito. Gravar aqui punha o
+    // valor da transação no lugar da taxa e mandava alerta falso ao dono.
+    await createTestFeeRuleAndPolicy(db);
+    const pending = await createPendingStoreOrder();
+    const stub = new StubPaymentGateway({
+      paymentId: "mp-pend-1",
+      status: "pending",
+      externalReference: pending.orderId,
+      amountCents: pending.totalCents,
+      feeCents: pending.totalCents, // o que o adapter quebrado devolvia
+      installments: 1,
+      paymentMethod: "pix",
+    });
+
+    await processPaymentEvent(sdb, stub, { mpPaymentId: "mp-pend-1" });
+
+    const order = await getOrder(pending.orderId);
+    expect(order.status).toBe("pending_payment");
+    // O id do pagamento é sincronizado; a taxa, não.
+    expect(order.mpPaymentId).toBe("mp-pend-1");
+    expect(order.mpFeeCents).toBeNull();
+    expect(await outboxOfType("mp.fee_divergent")).toHaveLength(0);
+    expect(await outboxOfType("mp.amount_divergent")).toHaveLength(0);
+  });
+
+  it("aprovado com valor diferente do pedido: marca pago E avisa o dono", async () => {
+    // A cliente pagou um link antigo, de antes da correção. O dinheiro entrou
+    // de verdade, então o pedido é pago; travar aqui a deixaria no limbo.
+    const pending = await createPendingStoreOrder();
+    const stub = new StubPaymentGateway({
+      paymentId: "mp-div-1",
+      status: "approved",
+      externalReference: pending.orderId,
+      amountCents: pending.totalCents + 289,
+      feeCents: 100,
+      installments: 1,
+      paymentMethod: "pix",
+    });
+
+    const result = await processPaymentEvent(sdb, stub, {
+      mpPaymentId: "mp-div-1",
+    });
+    expect(result).toEqual({ orderId: pending.orderId, action: "paid" });
+    expect((await getOrder(pending.orderId)).status).toBe("paid");
+
+    const avisos = await outboxOfType("mp.amount_divergent");
+    expect(avisos).toHaveLength(1);
+    expect(avisos[0].dedupeKey).toBe(`mp.amount_divergent:${pending.orderId}`);
+    expect(avisos[0].payload).toMatchObject({
+      expectedCents: pending.totalCents,
+      paidCents: pending.totalCents + 289,
+    });
+    expect(await auditOfAction("payment.amount_divergent")).toHaveLength(1);
+
+    // Reenvio do webhook: dedupe segura — continua 1 aviso.
+    await processPaymentEvent(sdb, stub, { mpPaymentId: "mp-div-1" });
+    expect(await outboxOfType("mp.amount_divergent")).toHaveLength(1);
+    expect(await auditOfAction("payment.amount_divergent")).toHaveLength(1);
   });
 
   it("reprocessar o mesmo evento aprovado é no-op idempotente", async () => {
