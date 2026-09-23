@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { ZodError } from "zod";
+import { redirect } from "next/navigation";
+import { z, ZodError } from "zod";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
 import {
@@ -11,6 +12,7 @@ import {
   setCategoryCover,
   updateCategoryCoverFocus,
 } from "@/services/catalog";
+import { deleteProduct, restoreProduct } from "@/services/catalog-delete";
 import { requireOwner } from "@/services/auth";
 
 export type FormState = { error?: string; success?: string };
@@ -111,4 +113,75 @@ export async function removeCategoryCoverAction(formData: FormData): Promise<voi
   const storage = getFileStorage();
   await removeCategoryCover(db, storage, { categoryId, userId: user.id });
   revalidateCategoryCover();
+}
+
+// ---------------------------------------------------------------------------
+// Excluir e restaurar peça
+//
+// Excluir marca deleted_at (a peça some de tudo e pode voltar) e apaga as
+// fotos de verdade. O aviso do que vai acontecer mora na tela
+// /admin/produtos/[id]/excluir — aqui só se executa o que ela já explicou.
+// ---------------------------------------------------------------------------
+
+/** A peça pode estar na vitrine e nos cartões: revalida painel e loja. */
+function revalidateProductEverywhere(productId: string): void {
+  revalidatePath("/admin/produtos");
+  revalidatePath(`/admin/produtos/${productId}`);
+  revalidatePath("/");
+  revalidatePath("/produtos");
+  // A tag da página leva o grupo de rota: sem "(store)" nada é invalidado.
+  revalidatePath("/(store)/produto/[slug]", "page");
+}
+
+export async function deleteProductAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const productId = z.uuid().safeParse(formData.get("productId"));
+  if (!productId.success) return { error: "Algo deu errado, tente novamente." };
+
+  let result;
+  try {
+    result = await deleteProduct(getDb(), getFileStorage(), {
+      productId: productId.data,
+      userId: user.id,
+    });
+  } catch (error) {
+    return toErrorState(error);
+  }
+
+  revalidateProductEverywhere(productId.data);
+  const params = new URLSearchParams({ status: "excluidas", excluida: result.name });
+  // O banco já está certo; arquivo que resistiu é recado, não erro.
+  if (result.filesFailed.length > 0) {
+    params.set("arquivos", String(result.filesFailed.length));
+  }
+  redirect(`/admin/produtos?${params.toString()}`);
+}
+
+export async function restoreProductAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const productId = z.uuid().safeParse(formData.get("productId"));
+  if (!productId.success) return { error: "Algo deu errado, tente novamente." };
+
+  let result;
+  try {
+    result = await restoreProduct(getDb(), {
+      productId: productId.data,
+      userId: user.id,
+    });
+  } catch (error) {
+    return toErrorState(error);
+  }
+
+  revalidateProductEverywhere(productId.data);
+  return {
+    success: result.restored
+      ? `«${result.name}» voltou como rascunho. Suba as fotos antes de ativar.`
+      : `«${result.name}» já estava no catálogo.`,
+  };
 }

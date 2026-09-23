@@ -48,6 +48,8 @@ const OWNER_ONLY_DIRS: Array<{ dir: string; skipDirs?: string[] }> = [
   { dir: path.join("produtos", "quem-vestiu") },
   // Fotos-base das modelos da casa: custo e vendor são dado do dono.
   { dir: path.join("produtos", "modelos-da-casa") },
+  // Excluir tira a peça de tudo e apaga as fotos: só o dono.
+  { dir: path.join("produtos", "[id]", "excluir") },
 ];
 
 /**
