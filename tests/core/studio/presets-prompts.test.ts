@@ -23,7 +23,7 @@ describe("presets do ensaio", () => {
     expect(new Set(SCENE_KEYS).size).toBe(SCENE_PRESETS.length);
     expect(new Set(HOUSE_MODEL_KEYS).size).toBe(HOUSE_MODELS.length);
     expect(new Set(BODY_SIZE_KEYS).size).toBe(BODY_SIZES.length);
-    expect(SCENE_PRESETS).toHaveLength(4);
+    expect(SCENE_PRESETS).toHaveLength(5);
     expect(HOUSE_MODELS).toHaveLength(3);
     expect(BODY_SIZE_KEYS).toEqual(["P", "M", "G", "GG"]);
     expect(STUDIO_QUALITIES).toEqual(["economica", "alta"]);
