@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
 import { imagePhash } from "@/services/image-fingerprint";
-import { and, eq, ilike, isNull, like, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -144,12 +144,22 @@ function pickUniqueSlug(taken: ReadonlySet<string>, base: string): string {
   return `${base}-${suffix}`;
 }
 
+/**
+ * Peça excluída não segura o endereço: o unique do banco é parcial
+ * (deleted_at is null), então recadastrar a peça que a dona errou devolve o
+ * slug limpo, sem o "-2" pendurado.
+ */
 async function uniqueProductSlug(db: ServiceDb, name: string): Promise<string> {
   const base = slugify(name);
   const rows = await db
     .select({ slug: products.slug })
     .from(products)
-    .where(or(eq(products.slug, base), like(products.slug, `${base}-%`)));
+    .where(
+      and(
+        or(eq(products.slug, base), like(products.slug, `${base}-%`)),
+        isNull(products.deletedAt),
+      ),
+    );
   return pickUniqueSlug(new Set(rows.map((row) => row.slug)), base);
 }
 
@@ -927,6 +937,8 @@ export async function setProductMeasurementsBySize(
 const listProductsSchema = z.object({
   search: z.string().trim().min(1).optional(),
   status: z.enum(["draft", "active", "archived"]).optional(),
+  /** true = a lista das EXCLUÍDAS (a de sempre nunca mostra peça excluída). */
+  deleted: z.boolean().optional(),
 });
 
 export type ListProductsInput = z.input<typeof listProductsSchema>;
@@ -942,6 +954,8 @@ export type ProductListItem = {
   maxActivePriceCents: number | null;
   totalOnHand: number;
   totalReserved: number;
+  /** Quando a peça foi excluída; null nas vivas. */
+  deletedAt: Date | null;
 };
 
 export async function listProducts(
@@ -950,7 +964,10 @@ export async function listProducts(
 ): Promise<ProductListItem[]> {
   const parsed = listProductsSchema.parse(input);
 
-  const filters = [isNull(products.deletedAt)];
+  const onlyDeleted = parsed.deleted === true;
+  const filters = [
+    onlyDeleted ? isNotNull(products.deletedAt) : isNull(products.deletedAt),
+  ];
   if (parsed.status) filters.push(eq(products.status, parsed.status));
   if (parsed.search) {
     const pattern = `%${parsed.search}%`;
@@ -958,11 +975,13 @@ export async function listProducts(
       or(
         ilike(products.name, pattern),
         ilike(products.brand, pattern),
+        // A variação segue o estado da peça: numa peça excluída TODAS estão
+        // excluídas, e procurar pelo código ali é como o dono a reconhece.
         sql`exists (
           select 1 from product_variants pv
           where pv.product_id = ${products.id}
             and pv.sku ilike ${pattern}
-            and pv.deleted_at is null
+            and pv.deleted_at is ${sql.raw(onlyDeleted ? "not null" : "null")}
         )`,
       )!,
     );
@@ -975,6 +994,7 @@ export async function listProducts(
       slug: products.slug,
       status: products.status,
       brand: products.brand,
+      deletedAt: products.deletedAt,
       variantCount: sql<string>`count(distinct ${productVariants.id})`,
       minActivePriceCents: sql<string | null>`min(${priceVersions.priceCents})`,
       maxActivePriceCents: sql<string | null>`max(${priceVersions.priceCents})`,
@@ -986,7 +1006,9 @@ export async function listProducts(
       productVariants,
       and(
         eq(productVariants.productId, products.id),
-        isNull(productVariants.deletedAt),
+        onlyDeleted
+          ? isNotNull(productVariants.deletedAt)
+          : isNull(productVariants.deletedAt),
       ),
     )
     .leftJoin(stockLevels, eq(stockLevels.productVariantId, productVariants.id))
@@ -999,7 +1021,8 @@ export async function listProducts(
     )
     .where(and(...filters))
     .groupBy(products.id)
-    .orderBy(products.name);
+    // Nas excluídas, a mais recente primeiro: é a que o dono pode ter errado.
+    .orderBy(onlyDeleted ? desc(products.deletedAt) : products.name);
 
   return rows.map((row) => ({
     id: row.id,
@@ -1007,6 +1030,7 @@ export async function listProducts(
     slug: row.slug,
     status: row.status,
     brand: row.brand,
+    deletedAt: row.deletedAt,
     variantCount: Number(row.variantCount),
     minActivePriceCents:
       row.minActivePriceCents === null ? null : Number(row.minActivePriceCents),

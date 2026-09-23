@@ -26,6 +26,7 @@ import { findColorAxis } from "@/core/catalog/product-images";
 import { listSuppliers } from "@/services/suppliers";
 import { LowStockBadge } from "@/components/admin/low-stock-alert";
 import { Badge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button-link";
 import { Card } from "@/components/ui/card";
 import { CuratorNoteForm } from "./curator-note-form";
 import { ConfirmButton } from "@/components/ui/confirm-button";
@@ -357,7 +358,21 @@ export default async function ProdutoDetalhePage({
                   </ConfirmButton>
                 </form>
               ) : null}
+              {/* Link, não ação: o estrago só acontece depois do aviso. */}
+              <ButtonLink
+                href={`/admin/produtos/${detail.id}/excluir`}
+                variant="outline"
+                size="sm"
+                className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+              >
+                Excluir peça
+              </ButtonLink>
             </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              Arquivar tira a peça da loja e ela continua aqui no painel.
+              Excluir tira de tudo — e apaga as fotos. A próxima tela mostra o
+              que vai acontecer antes de você confirmar.
+            </p>
           </OwnerOnly>
         </div>
       </Card>

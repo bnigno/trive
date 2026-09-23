@@ -46,7 +46,9 @@ export const products = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
-    slug: text("slug").unique().notNull(),
+    // Sem unique de coluna: o endereço só é único entre as peças VIVAS
+    // (índice parcial abaixo), senão excluir uma peça prenderia o slug.
+    slug: text("slug").notNull(),
     description: text("description"),
     // Ficha da peça (Onda 5): o que a placa de museu, o cartão da caixa e a
     // Lia contam sobre tecido, cuidados e caimento. Texto livre; os cuidados
@@ -93,6 +95,12 @@ export const products = pgTable(
   (table) => [
     index("products_category_id_idx").on(table.categoryId),
     index("products_supplier_id_idx").on(table.supplierId),
+    // Excluir uma peça devolve o endereço dela: quem recadastrar a peça certa
+    // usa o mesmo slug. Peça excluída sai da vitrine, então não há colisão de
+    // URL — e o parcial é o único jeito de o banco concordar com o service.
+    uniqueIndex("products_slug_unique_idx")
+      .on(table.slug)
+      .where(sql`${table.deletedAt} is null`),
     check(
       "products_status_check",
       sql`${table.status} IN ('draft', 'active', 'archived')`,
@@ -107,7 +115,10 @@ export const productVariants = pgTable(
     productId: uuid("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "restrict" }),
-    sku: text("sku").unique().notNull(),
+    // Sem unique de coluna: o código só é único entre as variações VIVAS
+    // (índice parcial abaixo). Quem já foi vendido continua barrado pelo
+    // service (assertSkuAvailable olha order_items.sku_snapshot).
+    sku: text("sku").notNull(),
     // NOT NULL é o que dá dente ao unique (product_id, attributes): em SQL,
     // NULL nunca conflita com NULL, então duas variantes sem atributos
     // duplicariam a grade cor×tamanho em silêncio.
@@ -141,9 +152,9 @@ export const productVariants = pgTable(
     // O bot do WhatsApp procura o código sem diferenciar caixa (ilike): dois
     // códigos que só diferem em maiúsculas fechariam o pedido na variação
     // errada. O árbitro é o banco (regra 6), não a memória.
-    uniqueIndex("product_variants_sku_lower_unique_idx").on(
-      sql`lower(${table.sku})`,
-    ),
+    uniqueIndex("product_variants_sku_lower_unique_idx")
+      .on(sql`lower(${table.sku})`)
+      .where(sql`${table.deletedAt} is null`),
   ],
 );
 

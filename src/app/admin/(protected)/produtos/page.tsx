@@ -33,6 +33,8 @@ import {
 } from "./category-cover-form";
 import { CategoryForm } from "./category-form";
 import { LiaIssueLinks, ReadinessBadge } from "./readiness-badge";
+import { RestoreProductForm } from "./restore-form";
+import { formatDateTimeSP } from "@/emails/templates";
 import { LIA_ISSUES, LIA_READINESS_CODES, type LiaReadinessCode } from "@/core/catalog/readiness";
 
 export const dynamic = "force-dynamic";
@@ -41,11 +43,16 @@ export const metadata: Metadata = {
   title: "Produtos",
 };
 
+// "Excluídas" não é um status da peça, é o outro lado da lista: as peças com
+// deleted_at, que nenhum dos outros filtros mostra.
+const DELETED_FILTER = "excluidas";
+
 const STATUS_FILTERS = [
   { value: "", label: "Todos" },
   { value: "draft", label: "Rascunhos" },
   { value: "active", label: "Ativos" },
   { value: "archived", label: "Arquivados" },
+  { value: DELETED_FILTER, label: "Excluídas" },
 ] as const;
 
 type ProductStatus = "draft" | "active" | "archived";
@@ -107,13 +114,24 @@ function PriceRange({ item }: { item: ProductListItem }) {
 export default async function ProdutosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; prontidao?: string; lia?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    status?: string;
+    prontidao?: string;
+    lia?: string;
+    excluida?: string;
+    arquivos?: string;
+  }>;
 }) {
   await requireUser();
   const params = await searchParams;
   const q = (params.q ?? "").trim();
   const statusParam = (params.status ?? "").trim();
+  const showDeleted = statusParam === DELETED_FILTER;
   const status = parseStatus(statusParam);
+  // Recado de quem acabou de excluir (a action redireciona para cá).
+  const justDeleted = (params.excluida ?? "").trim();
+  const orphanFiles = Number.parseInt(params.arquivos ?? "", 10);
   const readinessParam = (params.prontidao ?? "").trim();
   const readinessFilter = parseReadinessFilter(readinessParam);
   const liaParam = (params.lia ?? "").trim();
@@ -123,7 +141,11 @@ export default async function ProdutosPage({
   const storage = getFileStorage();
 
   const [allItems, categoryRows] = await Promise.all([
-    listProducts(db, { search: q || undefined, status }),
+    listProducts(db, {
+      search: q || undefined,
+      status,
+      ...(showDeleted ? { deleted: true } : {}),
+    }),
     db.select().from(categories).orderBy(asc(categories.name)),
   ]);
   const [readiness, liaSummary] = await Promise.all([
@@ -186,7 +208,7 @@ export default async function ProdutosPage({
     }
   }
 
-  const hasFilters = Boolean(q || status || readinessFilter || liaFilter);
+  const hasFilters = Boolean(q || status || showDeleted || readinessFilter || liaFilter);
 
   return (
     <div className="flex flex-col gap-6">
@@ -287,7 +309,8 @@ export default async function ProdutosPage({
 
         <div className="flex flex-wrap items-center gap-1">
           {STATUS_FILTERS.map((filter) => {
-            const isCurrent = filter.value === (status ?? "");
+            const isCurrent =
+              filter.value === (showDeleted ? DELETED_FILTER : (status ?? ""));
             return (
               <Link
                 key={filter.value || "todos"}
@@ -303,8 +326,11 @@ export default async function ProdutosPage({
               </Link>
             );
           })}
-          <span className="mx-1 hidden h-4 w-px bg-zinc-200 sm:block dark:bg-zinc-700" />
-          {READINESS_FILTERS.map((filter) => {
+          {/* Prontidão é sobre vender: peça excluída não vende. */}
+          {showDeleted ? null : (
+            <span className="mx-1 hidden h-4 w-px bg-zinc-200 sm:block dark:bg-zinc-700" />
+          )}
+          {(showDeleted ? [] : READINESS_FILTERS).map((filter) => {
             const isCurrent = filter.value === readinessFilter;
             return (
               <Link
@@ -324,17 +350,42 @@ export default async function ProdutosPage({
         </div>
       </div>
 
+      {justDeleted ? (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+        >
+          «{justDeleted}» foi excluída. Ela está aqui embaixo e pode voltar
+          enquanto você quiser.
+          {Number.isFinite(orphanFiles) && orphanFiles > 0
+            ? ` (${orphanFiles} arquivo(s) de foto não saíram do armazenamento; a peça saiu do ar mesmo assim.)`
+            : ""}
+        </p>
+      ) : null}
+
+      {showDeleted ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Peças excluídas não aparecem na loja, na Lia, nas buscas nem nas
+          outras listas. Restaurar traz a peça de volta como rascunho — sem as
+          fotos, que foram apagadas.
+        </p>
+      ) : null}
+
       {items.length === 0 ? (
         <EmptyState
           title={
-            hasFilters
-              ? "Nenhum produto encontrado com esses filtros."
-              : "Você ainda não cadastrou nenhum produto."
+            showDeleted
+              ? "Nenhuma peça excluída."
+              : hasFilters
+                ? "Nenhum produto encontrado com esses filtros."
+                : "Você ainda não cadastrou nenhum produto."
           }
           hint={
-            hasFilters
-              ? "Tente mudar a busca ou o filtro de status."
-              : "Comece cadastrando seu primeiro produto — leva menos de um minuto."
+            showDeleted
+              ? "Quando você excluir uma peça, ela fica guardada aqui."
+              : hasFilters
+                ? "Tente mudar a busca ou o filtro de status."
+                : "Comece cadastrando seu primeiro produto — leva menos de um minuto."
           }
           action={
             hasFilters ? (
@@ -388,24 +439,34 @@ export default async function ProdutosPage({
                   )}
                 </Td>
                 <Td>
-                  <Link
-                    href={`/admin/produtos/${item.id}`}
-                    className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
-                  >
-                    {item.name}
-                  </Link>
+                  {/* A ficha da peça excluída dá 404 de propósito: aqui ela é
+                      só um nome para reconhecer e restaurar. */}
+                  {showDeleted ? (
+                    <span className="font-medium text-zinc-500 dark:text-zinc-400">
+                      {item.name}
+                    </span>
+                  ) : (
+                    <Link
+                      href={`/admin/produtos/${item.id}`}
+                      className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+                    >
+                      {item.name}
+                    </Link>
+                  )}
                   {item.brand ? (
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       {item.brand}
                     </p>
                   ) : null}
                   {/* O selo mora embaixo do nome: no celular, a última coluna fica fora da tela. */}
-                  <div className="mt-1">
-                    <ReadinessBadge productId={item.id} readiness={readiness.get(item.id)} />
-                    <OwnerOnly>
-                      <LiaIssueLinks productId={item.id} issues={readiness.get(item.id)?.lia ?? []} />
-                    </OwnerOnly>
-                  </div>
+                  {showDeleted ? null : (
+                    <div className="mt-1">
+                      <ReadinessBadge productId={item.id} readiness={readiness.get(item.id)} />
+                      <OwnerOnly>
+                        <LiaIssueLinks productId={item.id} issues={readiness.get(item.id)?.lia ?? []} />
+                      </OwnerOnly>
+                    </div>
+                  )}
                 </Td>
                 <Td>{item.variantCount}</Td>
                 <Td>
@@ -420,7 +481,22 @@ export default async function ProdutosPage({
                   ) : null}
                 </Td>
                 <Td>
-                  {itemStatus ? (
+                  {showDeleted ? (
+                    <div className="flex flex-col items-start gap-1.5">
+                      <StatusPill label="Excluída" tone="danger" />
+                      {item.deletedAt ? (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {formatDateTimeSP(item.deletedAt)}
+                        </span>
+                      ) : null}
+                      <OwnerOnly>
+                        <RestoreProductForm
+                          productId={item.id}
+                          productName={item.name}
+                        />
+                      </OwnerOnly>
+                    </div>
+                  ) : itemStatus ? (
                     <StatusPill
                       label={STATUS_LABELS[itemStatus]}
                       tone={STATUS_TONES[itemStatus]}

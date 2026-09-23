@@ -1,6 +1,7 @@
 // Geração de SKU a partir do nome do produto e dos valores dos eixos.
-// O SKU é UNIQUE GLOBAL (product_variants_sku_unique), não único por produto:
-// a colisão a resolver é contra a tabela inteira.
+// O SKU é UNIQUE GLOBAL entre as variações vivas
+// (product_variants_sku_lower_unique_idx, parcial em deleted_at is null), não
+// único por produto: a colisão a resolver é contra a tabela inteira.
 
 const SKU_BASE_MAX_LENGTH = 24;
 const SKU_AXIS_MAX_LENGTH = 4;
