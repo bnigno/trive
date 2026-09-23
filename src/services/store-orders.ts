@@ -96,14 +96,24 @@ const DEFAULT_RESERVATION_TTL_MINUTES = 120;
 
 const storeCustomerSchema = z.object({
   fullName: z.string().trim().min(3, "Informe o nome completo."),
-  document: z.string().transform((value, ctx) => {
-    const doc = normalizeDocument(value);
-    if (!doc) {
-      ctx.addIssue({ code: "custom", message: "CPF ou CNPJ inválido" });
-      return z.NEVER;
-    }
-    return doc;
-  }),
+  /**
+   * Opcional: a loja não emite nota fiscal, e muita cliente não quer dar o
+   * CPF. Vazio/ausente = null (o cadastro que já tem documento nunca é
+   * zerado por isso); informado, continua tendo de ser válido.
+   */
+  document: z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      const raw = (value ?? "").trim();
+      if (raw === "") return null;
+      const doc = normalizeDocument(raw);
+      if (!doc) {
+        ctx.addIssue({ code: "custom", message: "CPF ou CNPJ inválido" });
+        return z.NEVER;
+      }
+      return doc;
+    }),
   phone: z.string().transform((value, ctx) => {
     const e164 = toE164BR(value);
     if (!e164) {
@@ -495,11 +505,15 @@ export async function createStoreOrder(
     }
 
     // (c) Cliente: procura por documento (dígitos), senão por telefone E.164.
+    // Sem documento (é opcional), o telefone é a única chave.
     // Só leitura aqui — o cupom precisa saber quem compra (cupom pessoal,
     // primeira compra, limite por cliente); o cadastro é gravado mais abaixo.
     const doc = parsed.customer.document;
     const phone = parsed.customer.phone;
-    const existing = await findCustomerByDocumentOrPhone(tx, { documentDigits: doc.digits, phoneE164: phone });
+    const existing = await findCustomerByDocumentOrPhone(tx, {
+      ...(doc ? { documentDigits: doc.digits } : {}),
+      phoneE164: phone,
+    });
 
     // (b2) Cupom: cotação ANTES de qualquer escrita — cupom inválido derruba
     // o checkout com mensagem clara sem criar nada. O CONSUMO (used_count +
@@ -552,11 +566,15 @@ export async function createStoreOrder(
       customerId = existing.id;
       const updateSet: Partial<typeof customers.$inferInsert> = {
         fullName: parsed.customer.fullName,
-        documentType: doc.type,
-        documentNumber: doc.digits,
         phoneE164: phone,
         updatedAt: new Date(),
       };
+      // Documento só quando informado: pedido sem CPF não apaga o que o
+      // cadastro já tinha.
+      if (doc) {
+        updateSet.documentType = doc.type;
+        updateSet.documentNumber = doc.digits;
+      }
       if (parsed.customer.email !== undefined) {
         updateSet.email = parsed.customer.email;
       }
@@ -574,7 +592,7 @@ export async function createStoreOrder(
         entityId: customerId,
         after: {
           fullName: parsed.customer.fullName,
-          documentType: doc.type,
+          documentType: doc?.type ?? null,
           marketingOptIn: parsed.customer.marketingOptIn || existing.marketingOptIn,
         },
       });
@@ -585,8 +603,8 @@ export async function createStoreOrder(
           fullName: parsed.customer.fullName,
           email: parsed.customer.email ?? null,
           phoneE164: phone,
-          documentType: doc.type,
-          documentNumber: doc.digits,
+          documentType: doc?.type ?? null,
+          documentNumber: doc?.digits ?? null,
           marketingOptIn: parsed.customer.marketingOptIn,
         })
         .returning({ id: customers.id });
@@ -600,7 +618,7 @@ export async function createStoreOrder(
         entityId: customerId,
         after: {
           fullName: parsed.customer.fullName,
-          documentType: doc.type,
+          documentType: doc?.type ?? null,
           marketingOptIn: parsed.customer.marketingOptIn,
         },
       });

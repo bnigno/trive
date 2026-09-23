@@ -126,9 +126,12 @@ const quoteCouponActionSchema = z.object({
     .object({ cents: z.number().int().min(0), kind: z.enum(["motoboy", "correios"]) })
     .nullable()
     .optional(),
-  /** Só o checkout manda: CPF/CNPJ e telefone válidos confirmam as regras por cliente. */
+  /**
+   * Só o checkout manda: o telefone válido confirma as regras por cliente.
+   * O CPF é opcional na compra — quando vem, ajuda a achar o cadastro.
+   */
   customer: z
-    .object({ document: z.string().trim().min(1), phone: z.string().trim().min(1) })
+    .object({ document: z.string().trim().optional(), phone: z.string().trim().min(1) })
     .nullable()
     .optional(),
 });
@@ -162,9 +165,11 @@ export async function quoteCouponAction(
 
     let identity: { documentDigits: string | null; phoneE164: string | null } | null = null;
     if (parsed.customer) {
-      const document = normalizeDocument(parsed.customer.document);
+      // O telefone é a identidade; o CPF, quando a cliente quis informar,
+      // entra como pista extra para achar o cadastro.
       const phone = toE164BR(parsed.customer.phone);
-      if (document && phone) identity = { documentDigits: document.digits, phoneE164: phone };
+      const document = parsed.customer.document ? normalizeDocument(parsed.customer.document) : null;
+      if (phone) identity = { documentDigits: document?.digits ?? null, phoneE164: phone };
     }
 
     const quote = await quoteCoupon(db, {

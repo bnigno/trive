@@ -69,8 +69,9 @@ export default async function PrivacyPage() {
             entrega;
           </li>
           <li>
-            <strong>CPF (ou CNPJ)</strong> — exigido para a emissão da nota
-            fiscal;
+            <strong>CPF (ou CNPJ)</strong> — opcional: você compra sem
+            informar. Quando informa, ele fica no seu cadastro e no relatório
+            que entregamos à contabilidade;
           </li>
           <li>
             <strong>Telefone/WhatsApp e e-mail</strong> — para combinar o

@@ -66,7 +66,10 @@ describe("buildBotSystemPrompt", () => {
     expect(prompt).toContain("criar_pedido");
     expect(prompt).toContain("transferir_para_atendente");
     expect(prompt).toContain("SAIR");
-    expect(prompt).toContain("nota fiscal");
+    // O CPF é OPCIONAL na compra (a loja não emite nota): a Lia oferece uma
+    // vez e nunca segura o pedido por causa dele.
+    expect(prompt).toContain("CPF (OPCIONAL");
+    expect(prompt).not.toContain("nota fiscal");
     // Numeradas do 1 ao 22, sem buraco (os testes ancoram nos títulos, não nos números).
     const regras = prompt.slice(prompt.indexOf("REGRAS DURAS"));
     expect(regras.match(/^(\d+)\. /gm)?.map((m) => Number(m))).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
@@ -293,6 +296,16 @@ describe("BOT_TOOL_INPUT_SCHEMAS (validação de runtime)", () => {
         cupom: "BEMVINDA10",
       }).success,
     ).toBe(true);
+  });
+
+  it("criar_pedido: o CPF é opcional — pedido sem ele passa; com ele, ainda tem de ter 11 dígitos", () => {
+    const schema = BOT_TOOL_INPUT_SCHEMAS.criar_pedido;
+    const { cpf: _cpf, ...semCpf } = pedidoValido;
+    expect(schema.safeParse(semCpf).success).toBe(true);
+    // Os outros dados do cadastro continuam obrigatórios sem cadastro salvo.
+    const { nome_completo: _nome, ...semNome } = semCpf;
+    expect(schema.safeParse(semNome).success).toBe(false);
+    expect(schema.safeParse({ ...semCpf, cpf: "1234567890" }).success).toBe(false);
   });
 
   it("criar_pedido: rejeita CPF, quantidade, itens e UF inválidos", () => {

@@ -375,7 +375,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
         cpf: {
           type: "string",
           description:
-            "CPF da cliente, somente os 11 dígitos, sem pontos ou traço (ex.: '12345678901'). Necessário para a nota fiscal.",
+            "CPF da cliente, somente os 11 dígitos, sem pontos ou traço (ex.: '12345678901'). OPCIONAL: a loja não emite nota fiscal — envie só se a cliente quiser deixá-lo no cadastro. Nunca segure o pedido por causa dele.",
           pattern: "^[0-9]{11}$",
         },
         cep: {
@@ -931,9 +931,9 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
         }
         return;
       }
+      // O CPF ficou de fora: é opcional na compra (a loja não emite nota).
       const obrigatorios = [
         "nome_completo",
-        "cpf",
         "cep",
         "rua",
         "numero",
