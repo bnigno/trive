@@ -1,7 +1,10 @@
 -- Numerada 0059, não 0058: a 0058_rls_e_privilegios nasceu da mesma 0057 em
--- outra branch e JÁ ESTÁ APLICADA em produção. O `when` desta é posterior ao
--- da 0058, então a ordem de aplicação fica certa; o vão no índice fecha quando
--- aquela branch for mesclada.
+-- outra branch e já estava aplicada em produção quando esta nasceu. O `when`
+-- desta é posterior ao daquela, então a ordem de aplicação fica certa.
+--
+-- Não cria tabela: só troca UNIQUE de coluna por índice parcial. Por isso não
+-- há RLS a declarar aqui (regra da 0058: tabela nova exige RLS na mesma
+-- migração, senão o banco reabre sozinho).
 --
 -- Excluir peças: o endereço (slug) e o código (SKU) passam a ser únicos só
 -- entre as peças VIVAS. Sem isto, excluir uma peça cadastrada errado prenderia

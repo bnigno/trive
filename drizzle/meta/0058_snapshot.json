@@ -1,6 +1,6 @@
 {
-  "id": "9377e0c0-90e0-4b1c-8ca1-2817f031a024",
-  "prevId": "24b5ac35-bfab-4417-bf37-99325c7e1f74",
+  "id": "24b5ac35-bfab-4417-bf37-99325c7e1f74",
+  "prevId": "2e591cca-917b-4e33-9460-94652e17c220",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -816,7 +816,6 @@
             }
           ],
           "isUnique": true,
-          "where": "\"product_variants\".\"deleted_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -839,6 +838,13 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "product_variants_sku_unique": {
+          "name": "product_variants_sku_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "sku"
+          ]
+        },
         "product_variants_product_id_attributes_unique": {
           "name": "product_variants_product_id_attributes_unique",
           "nullsNotDistinct": false,
@@ -1030,22 +1036,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "products_slug_unique_idx": {
-          "name": "products_slug_unique_idx",
-          "columns": [
-            {
-              "expression": "slug",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"products\".\"deleted_at\" is null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -1077,7 +1067,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "products_slug_unique": {
+          "name": "products_slug_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "slug"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "products_status_check": {

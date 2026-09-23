@@ -409,6 +409,13 @@
       "breakpoints": true
     },
     {
+      "idx": 58,
+      "version": "7",
+      "when": 1790120715960,
+      "tag": "0058_rls_e_privilegios",
+      "breakpoints": true
+    },
+    {
       "idx": 59,
       "version": "7",
       "when": 1790139173215,

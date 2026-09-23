@@ -61,6 +61,15 @@ falharia (e apagar destruiria o rastro de quem lançou cada custo).
 - Travas: não dá para desativar/rebaixar o **último proprietário ativo**, nem
   para desativar ou rebaixar a si mesmo.
 
+### Quem entrou por último
+
+**/admin/usuarios** mostra o **último acesso** de cada pessoa, além de busca,
+filtros e ações rápidas. Serve para achar conta parada antes de desativar.
+
+> Pegadinha de deploy: a coluna é lida **na sessão**, a cada request. A
+> migração 0054 precisa estar aplicada **antes** do deploy que a usa — fora
+> dessa ordem, todo mundo cai no login.
+
 ### 4. O e-mail de recuperação não chega
 
 Depende de `RESEND_API_KEY` + `EMAIL_FROM` (`isEmailConfigured()`). Sem elas,
@@ -580,6 +589,37 @@ da imagem e a linha `{{edicoes}}` na legenda — template em produção:
 (confira antes se a dona editou o texto).
 
 
+## Provador: as salas de WhatsApp da marca
+
+O Provador é um grupo de WhatsApp **da TRIVÉ**, que você cria no celular (com
+você como admin) e registra em **/admin/whatsapp/provador**. A casa nunca
+adiciona ninguém: a porta de entrada é um link `wa.me` que a página mostra
+para copiar — a cliente chama a Lia, e quem convida é você.
+
+- **Interruptor geral**: `groups_enabled`. Desligado, nada é postado e os
+  sinais da sala não são lidos.
+- **A Lia só fala quando chamada** (`bot_group_mentions_enabled`): no grupo
+  ela responde a menção (@) e mais nada — conversa de verdade continua no
+  privado. Regra em `src/services/wa-groups.ts:114-115` e
+  `src/services/wa-bot.ts:391`.
+- **Os rituais**, agendados dentro da sala: "Passou pelo Provador" (terça, o
+  que chegou), "Vocês decidem" (quinta, enquete), "Quem vestiu" (sábado, foto
+  de cliente), "Monte sua turma" (cupom que sobe a cada amiga, mensal) e o
+  post livre. A cadência é `group_posts_per_week` (padrão 3) e os posts
+  respeitam a mesma janela de envio do resto (`wa_send_window_start/end`).
+- **Freio automático**: se mais de `group_kill_switch_pct`% das membras
+  saírem (padrão 2; 0 desliga), a sala **pausa sozinha**. Retomar é um botão
+  na página da sala.
+- **Mimo de boas-vindas** (`provador_welcome_gift_enabled`, padrão 10% por 30
+  dias): cupom pessoal para quem entra pela Lia.
+
+A sala não aparece para registrar: só entram grupos de que **o número da loja
+participa**. Crie o grupo no celular primeiro e use **Sincronizar**.
+
+Produção: migrações 0051 e 0055 e `scripts/sync-seed.ts --settings groups_enabled,bot_group_mentions_enabled,group_posts_per_week,group_kill_switch_pct,provador_welcome_gift_enabled,provador_welcome_gift_percent,provador_welcome_gift_days`.
+Em 22/09/2026, em produção: Provador e menções **ligados**, mimo de
+boas-vindas **desligado** — falta o grupo existir.
+
 ## O que a Lia sabe da loja e onde editar
 
 A Lia lê três coisas, nesta ordem de "peso":
@@ -930,7 +970,53 @@ Produção: migração 0046 (`product_images.phash`), `scripts/sync-seed.ts
 `ADAPTER_MODE=real npx tsx --env-file=.env.prod.local scripts/backfill-image-hashes.ts --relatorio`
 (idempotente — só quem está sem hash; `--force` recalcula tudo). Entre o
 deploy e o backfill a camada por hash não acha nada e a visual responde
-sozinha. O ensaio do painel ainda não aceita foto (PR seguinte).
+sozinha. O ensaio do painel (**/admin/whatsapp**) aceita foto e áudio:
+dá para testar o reconhecimento sem gastar uma conversa de verdade.
+
+## Foto no corpo (o ensaio com as modelos da casa)
+
+A peça fotografada no cabide vira foto **no corpo** de uma modelo que não
+existe. As três modelos e as quatro cenas são listas fixas em
+`src/core/studio/presets.ts` — a mesma modelo, na mesma cena, na edição
+inteira é o que dá unidade ao feed. Nenhuma é parecida com pessoa real, e
+rosto ou corpo de cliente nunca entram.
+
+O caminho, na ordem:
+
+1. **/admin/produtos/modelos-da-casa** — gerar a **foto-base** de cada modelo
+   (é ela que o ensaio veste). Sem foto-base, nenhuma peça ensaia.
+2. Na ficha da peça, o bloco **Foto no corpo**: pedir o ensaio, ver as opções
+   e escolher a que vale.
+3. A escolhida aparece no post e nos cartões da Lia — e, **só com o segundo
+   interruptor ligado**, na vitrine.
+
+São dois interruptores de propósito: `ai_photos_enabled` liga o ensaio (post e
+cartões) e `ai_photos_in_store` deixa a foto de IA aparecer **na vitrine**
+(leitura em `src/services/studio-settings.ts:32,37` e
+`src/services/store-catalog.ts:150`).
+
+**O que custa.** A FASHN cobra em créditos (US$ 0,075 cada). Com
+`ai_photos_quality` = `economica`, uma foto no corpo é **1 crédito** e uma
+foto-base, 2; em `alta`, **3 e 3** — três vezes mais caro por imagem
+(`src/core/studio/cost.ts`). O freio do dia é `ai_photos_daily_quota` (padrão
+30), e o custo estimado entra no "Bom dia".
+
+**Não sai foto:**
+
+- *"Falta a chave da FASHN na hospedagem"* na própria página: `FASHN_API_KEY`
+  não está na Vercel (`docs/setup-externo.md` §10).
+- *Acabou o crédito*: a FASHN responde 429 tanto para "muitas chamadas" quanto
+  para "sem saldo". Quando a mensagem fala em crédito/saldo/quota (ou vem
+  402), a fila marca `no_credits` e **para de tentar** — esperar não resolve,
+  é comprar crédito (`src/adapters/image-studio/fashn.ts:268-278`).
+- Antes de gastar em série: `scripts/preview-ensaio.ts` roda um ensaio com
+  teto de custo.
+
+Produção: migração 0056 e `scripts/sync-seed.ts --settings ai_photos_enabled,ai_photos_in_store,ai_photos_daily_quota,ai_photos_quality,ai_photos_default_scene,ai_photos_default_model`.
+Em 22/09/2026, em produção: os dois interruptores **desligados** e
+`ai_photos_quality` em **`alta`** — mudada à mão (o seed traz `economica`),
+então cada foto custa 3 créditos. Falta comprar crédito, gerar as fotos-base e
+ligar.
 
 ## A Lia passou a conversa com "Assistente de IA indisponível"
 
@@ -1010,6 +1096,38 @@ Números ocultos aparecem no painel como "número oculto": a Lia responde
 normalmente, mas não consegue reservar/fechar pedido sem o telefone — ela
 pede à cliente.
 
+## Aviso de mensagem nova: no painel e no celular
+
+Mensagem nova de cliente acende em **três lugares**, independentes entre si:
+
+1. **Em qualquer página do painel**: crachá no menu do WhatsApp, `(N)` no
+   título da aba e o bloco "Atenção agora" no dashboard.
+2. **Com o painel aberto, fora de Conversas**: toast e bipe.
+3. **Com o painel fechado**: o aviso no celular (Web Push) — no máximo um por
+   conversa a cada 2 minutos.
+
+O terceiro é **por pessoa e por aparelho**: cada usuário liga no sino do
+rodapé, em cada celular ou navegador que quiser. A permissão do navegador só é
+pedida quando se liga — nunca sozinha.
+
+**Não chega no celular**: o próprio menu do sino diz em que degrau parou
+(`src/app/admin/(protected)/notify-prefs-menu.tsx`).
+
+- *"…ainda não estão configurados (chaves na Vercel)"* — faltam as **três**
+  chaves VAPID, que só valem juntas: `WEB_PUSH_VAPID_PUBLIC_KEY`,
+  `WEB_PUSH_VAPID_PRIVATE_KEY` e `WEB_PUSH_SUBJECT`
+  (`src/adapters/push/index.ts:38`). Passo a passo em `docs/setup-externo.md`
+  §11.
+- *"No iPhone: Compartilhar → Adicionar à Tela de Início"* — no iPhone o aviso
+  só funciona com o painel instalado como app.
+- *"O navegador bloqueou os avisos deste site"* — liberar nas configurações do
+  navegador e ligar de novo.
+- Ligado e ainda assim nada: a inscrição pode ter morrido (app desinstalado,
+  permissão revogada). O envio devolve 404/410, a casa **apaga** a inscrição e
+  não insiste — basta ligar outra vez naquele aparelho.
+
+Produção: migração 0057. Sem setting: quem controla é cada usuário, no sino.
+
 ## WhatsApp desconectou
 
 **/admin/whatsapp** → escanear o QR code (WhatsApp → Aparelhos conectados).
@@ -1063,7 +1181,8 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   conversa"). No ensaio nada é emitido (`ENSAIO-CARINHO`). Produção:
   `scripts/sync-seed.ts --settings lia_gift_enabled,lia_gift_percent,lia_gift_daily_quota,lia_gift_min_purchases,lia_gift_min_cart_cents,lia_gift_days,lia_gift_cooldown_days`
 
-  e a migração 0052.
+  e a migração 0052. Em 22/09/2026 essas chaves **ainda não existiam** em
+  produção: o recurso está desligado e salvar pelo painel cria a linha.
 - **Mimo pela foto** (card em `/admin/cupons`) — quando a cliente manda a
   foto dela com uma peça que comprou e a Lia registra no "Quem já vestiu", ela
   ganha um cupom pessoal (padrão 10%, 60 dias), uma vez por peça, só com
@@ -1081,6 +1200,8 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   emitir um cupom por cliente recente — ligue sabendo disso. A ficha do
   pedido mostra o card **Cupons deste pedido**. Produção:
   `scripts/sync-seed.ts --settings price_protection_enabled,price_protection_days --templates price_protection_coupon`.
+  Em 22/09/2026 essas duas chaves **ainda não existiam** em produção: o
+  recurso está desligado e salvar pelo painel cria a linha.
 - **Vales de papel na caixa** (card em `/admin/cupons`) — ao gerar os
   cartões da edição de um pedido pago, saem dois cartões de 15 × 10 cm (o
   papel da carta de estreia) com o QR do WhatsApp da Lia: **para você**
@@ -1198,6 +1319,44 @@ das edições e dos links de story.
   cliente. A limpeza fica registrada em `audit_log`
   (`maintenance.launch_reset`) com todas as contagens.
 
+## A porta do banco: por que RLS está ligado e nunca deve sair
+
+Desde 22/09/2026 as tabelas têm **Row-Level Security** ligado e os papéis públicos
+do Supabase (`anon`, `authenticated`) não têm privilégio nenhum. Isso não é
+enfeite: até essa data qualquer pessoa com o endereço do projeto lia e apagava
+tudo pela API REST do Supabase, usando a chave anônima que vai no navegador de
+quem abre a página de login. O registro completo está em
+`docs/incidente-rls-2026-09-22.md`.
+
+**A loja não sente.** O aplicativo não usa a API REST do Supabase: fala com o
+banco por Drizzle na `DATABASE_URL`, como `postgres`, que é dono das tabelas e
+ignora RLS. O Supabase só serve para login e arquivos.
+
+**A pegadinha que importa.** O Supabase concede acesso a `anon` em **toda tabela
+nova** criada no schema `public` (é um privilégio padrão, `pg_default_acl`). A
+migração 0058 desfez isso, mas a regra para quem escreve migração continua:
+
+> Tabela nova exige `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` na mesma migração.
+
+O teste `tests/db/rls.test.ts` falha se alguém esquecer — ele lista as tabelas
+descobertas. Não contorne: sem RLS a tabela nasce pública.
+
+**Conferir a qualquer momento** (deve dar `0`):
+
+```sh
+psql "$DATABASE_URL" -c "select count(*) from pg_tables where schemaname='public' and not rowsecurity"
+```
+
+E o teste de fora, que é o que vale (deve responder 401, nunca uma linha):
+
+```sh
+curl -s -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
+  "$SUPABASE_URL/rest/v1/customers?select=id&limit=1"
+```
+
+No painel Supabase, **Advisors → Security** roda a mesma checagem sozinho e é de
+onde veio o alerta original.
+
 ## Backup e restauração
 
 - Backup diário automático: workflow **Backup** em
@@ -1205,6 +1364,22 @@ das edições e dos links de story.
   `trive-backup` retido por 30 dias.
 - Depende do secret **DATABASE_URL** do repositório (Settings → Secrets and
   variables → Actions). Se a senha do banco mudar, atualizar o secret.
+- **Sem o secret, o workflow falha todo dia e ninguém é avisado**: ele
+  roda, morre em ~15 s com `ERRO: secret DATABASE_URL não cadastrado no
+  repositório` e o dia passa sem cópia. Confira de tempos em tempos —
+  dez `failure` seguidos são dez dias sem backup:
+
+  ```sh
+  gh run list --workflow=backup.yml --limit 10
+  ```
+
+  Rede de segurança enquanto isso não anda (roda na sua máquina, com o
+  `DATABASE_URL` de produção no ambiente):
+
+  ```sh
+  pg_dump "$DATABASE_URL" --no-owner --format=custom \
+    --file="$HOME/TRIVE-backups/trive-prod-$(date +%F).dump"
+  ```
 - Restauração: `scripts/restore-backup.ts` (ver abaixo). O script trava se o
   destino parecer produção e exige digitar `RESTAURAR PRODUCAO`.
 
