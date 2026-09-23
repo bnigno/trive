@@ -1637,7 +1637,9 @@ describe("buscar_cadastro + usar_cadastro_salvo", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("Colete nome, CPF e endereço");
+    // O CPF é opcional na compra: a instrução manda coletar nome e endereço.
+    expect(result.text).toContain("Colete nome e endereço");
+    expect(result.text).toContain("o CPF é opcional");
     expect(await db.select().from(schema.orders)).toHaveLength(0);
   });
 });
