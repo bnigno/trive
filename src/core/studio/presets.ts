@@ -36,6 +36,13 @@ export const SCENE_PRESETS = [
     prompt:
       "in a bright living room with white walls and a large window with sheer curtains, daylight from the side, a rattan chair and a plant partly visible, calm and simple",
   },
+  {
+    key: "estudio",
+    label: "Estúdio",
+    description: "Fundo infinito neutro e luz de campanha: nada disputa com a peça. É a cena mais próxima de catálogo de grife.",
+    prompt:
+      "in a professional photography studio against a seamless warm greige backdrop, large soft key light from the side with gentle falloff and a subtle shadow at the feet, clean editorial campaign lighting, no props and nothing else in the frame",
+  },
 ] as const;
 
 export type SceneKey = (typeof SCENE_PRESETS)[number]["key"];
@@ -45,23 +52,23 @@ export const HOUSE_MODELS = [
   {
     key: "modelo_a",
     label: "Modelo A",
-    description: "Amazônida de uns 28 anos, pele morena quente, cabelo escuro ondulado solto, sorriso tranquilo.",
+    description: "Modelo profissional de uns 27 anos, pele clara, cabelo castanho-escuro liso e brilhante na altura dos ombros. Porte de campanha.",
     prompt:
-      "a Brazilian woman from the Amazon region in her late twenties, warm brown skin, long dark wavy hair worn loose, natural face with no heavy makeup, relaxed easy smile",
+      "a professional high-fashion editorial model in her late twenties, fair skin with a warm undertone, glossy dark brown hair falling straight to the shoulders, refined bone structure with high cheekbones and a long elegant neck, polished natural makeup with luminous skin, defined brows and a soft neutral lip, poised upright posture, calm confident gaze, luxury campaign photography",
   },
   {
     key: "modelo_b",
     label: "Modelo B",
-    description: "Mulher negra de uns 32 anos, pele retinta, cabelo crespo curto, expressão calma e segura.",
+    description: "Modelo profissional de uns 32 anos, pele clara, cabelo castanho-claro em coque baixo impecável. Traços alongados, ar sereno.",
     prompt:
-      "a Black Brazilian woman in her early thirties, deep brown skin, short natural coily hair, calm confident expression, small gold hoop earrings",
+      "a professional high-fashion editorial model in her early thirties, fair skin, light brown hair pulled back into a sleek impeccable low chignon, elongated elegant features with a defined jawline, discreet luminous makeup and a neutral lip, small fine gold earrings, serene composed expression, graceful runway posture, luxury campaign photography",
   },
   {
     key: "modelo_c",
     label: "Modelo C",
-    description: "Mulher de uns 25 anos, descendência indígena e portuguesa, pele parda clara, cabelo liso em coque baixo, sardas leves.",
+    description: "Modelo profissional brasileira de uns 26 anos, pele parda clara, chanel curto e reto na altura do queixo. Presença moderna, de editorial.",
     prompt:
-      "a Brazilian woman in her mid-twenties of Indigenous and Portuguese descent, light brown skin, straight black hair in a low bun, soft neutral expression, light freckles",
+      "a professional Brazilian high-fashion editorial model in her mid-twenties, light brown skin, sleek blunt jaw-length bob with a sharp clean line, refined symmetrical features with high cheekbones, glowing skin with polished minimal makeup, long graceful neck left bare by the short hair, confident modern presence, luxury campaign photography",
   },
 ] as const;
 

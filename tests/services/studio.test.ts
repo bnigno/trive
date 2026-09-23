@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantUnavailableError } from "@/adapters/assistant";
 import { FakeSalesAssistant } from "@/adapters/assistant/fake";
 import { StudioUnavailableError } from "@/adapters/image-studio";
+import { houseModelByKey, sceneByKey } from "@/core/studio/presets";
 import { FakeImageStudio } from "@/adapters/image-studio/fake";
 import { FakeFileStorage } from "@/adapters/storage/fake";
 import * as schema from "@/db/schema";
@@ -329,7 +330,8 @@ describe("fotos-base das modelos da casa", () => {
     const ids = (result as { ids: string[] }).ids;
     expect(ids).toHaveLength(2);
     expect(studio.modelPhotos[0]).toMatchObject({ aspectRatio: "3:4", count: 2, quality: "alta" });
-    expect(studio.modelPhotos[0]?.prompt).toContain("Brazilian woman");
+    expect(studio.modelPhotos[0]?.prompt).toContain(houseModelByKey("modelo_a")!.prompt);
+    expect(studio.modelPhotos[0]?.prompt).toContain(sceneByKey("sala_clara")!.prompt);
     const rows = await listStudioBasePhotos(sdb);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ ...BASE_KEYS, status: "candidate", vendor: "fake", credits: 3, usdCents: 23, createdBy: FIXED_USER_ID });
