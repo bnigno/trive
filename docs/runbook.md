@@ -1198,6 +1198,44 @@ das edições e dos links de story.
   cliente. A limpeza fica registrada em `audit_log`
   (`maintenance.launch_reset`) com todas as contagens.
 
+## A porta do banco: por que RLS está ligado e nunca deve sair
+
+Desde 22/09/2026 as tabelas têm **Row-Level Security** ligado e os papéis públicos
+do Supabase (`anon`, `authenticated`) não têm privilégio nenhum. Isso não é
+enfeite: até essa data qualquer pessoa com o endereço do projeto lia e apagava
+tudo pela API REST do Supabase, usando a chave anônima que vai no navegador de
+quem abre a página de login. O registro completo está em
+`docs/incidente-rls-2026-09-22.md`.
+
+**A loja não sente.** O aplicativo não usa a API REST do Supabase: fala com o
+banco por Drizzle na `DATABASE_URL`, como `postgres`, que é dono das tabelas e
+ignora RLS. O Supabase só serve para login e arquivos.
+
+**A pegadinha que importa.** O Supabase concede acesso a `anon` em **toda tabela
+nova** criada no schema `public` (é um privilégio padrão, `pg_default_acl`). A
+migração 0058 desfez isso, mas a regra para quem escreve migração continua:
+
+> Tabela nova exige `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` na mesma migração.
+
+O teste `tests/db/rls.test.ts` falha se alguém esquecer — ele lista as tabelas
+descobertas. Não contorne: sem RLS a tabela nasce pública.
+
+**Conferir a qualquer momento** (deve dar `0`):
+
+```sh
+psql "$DATABASE_URL" -c "select count(*) from pg_tables where schemaname='public' and not rowsecurity"
+```
+
+E o teste de fora, que é o que vale (deve responder 401, nunca uma linha):
+
+```sh
+curl -s -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
+  "$SUPABASE_URL/rest/v1/customers?select=id&limit=1"
+```
+
+No painel Supabase, **Advisors → Security** roda a mesma checagem sozinho e é de
+onde veio o alerta original.
+
 ## Backup e restauração
 
 - Backup diário automático: workflow **Backup** em

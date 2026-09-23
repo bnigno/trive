@@ -28,6 +28,14 @@ Convenção de nomes usada abaixo: **trive-prod** (produção, a loja real) e **
 
 > **A service_role virou peça do painel de usuários.** Além do acesso ao banco, ela é a credencial que o sistema usa para criar contas de acesso, gerar link de convite/recuperação, definir senha e bloquear quem sai da equipe (`src/adapters/identity/`). Se ela faltar ou estiver errada em Production, **/admin/usuarios e a recuperação de senha param** com o aviso "provedor de acesso não configurado" — e ninguém novo consegue entrar no painel. Ela é de servidor: nunca colar em código de tela (o CI bloqueia).
 
+> **Projeto novo nasce com o banco aberto.** No Supabase, toda tabela criada no
+> schema `public` fica legível e apagável pela chave anônima até alguém ligar o
+> *Row-Level Security* — e a chave anônima é pública por natureza. Foi assim que a
+> TRIVÉ ficou exposta até 22/09/2026 (`docs/incidente-rls-2026-09-22.md`). A
+> migração `0058` fecha isso e vale para qualquer banco novo que receba as
+> migrações do projeto; depois de criar um projeto, confira em **Advisors →
+> Security** que não sobrou nenhum aviso crítico.
+
 ## 3. Vercel — onde o site roda
 
 1. Crie uma conta em <https://vercel.com/signup> entrando **com o GitHub**.
