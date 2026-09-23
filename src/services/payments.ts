@@ -9,7 +9,10 @@
 // - A taxa REAL do MP fecha o ciclo da precificação: gravamos em
 //   orders.mp_fee_cents e comparamos com a estimativa da payment_fee_rules
 //   vigente — divergência relevante vira evento 'mp.fee_divergent' (1x por
-//   pedido) para o dono revisar a margem.
+//   pedido) para o dono revisar a margem. Só DEPOIS de aprovado: antes disso
+//   o MP não tem taxa a informar.
+// - O valor que o MP recebeu é conferido contra orders.total_cents; diferente
+//   vira 'mp.amount_divergent' (1x por pedido) e o pedido segue como pago.
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, ne } from "drizzle-orm";
 import { z } from "zod";
 
@@ -76,8 +79,10 @@ export type ProcessPaymentEventInput = z.input<
  *   (dedupe por pedido) e o dono decide no admin;
  * - rejected/cancelled && pending_payment → nada (o cliente pode tentar de
  *   novo; a reserva expira sozinha pelo cron).
- * Sempre sincroniza mp_payment_id, payment_method, installments e mp_fee_cents
- * quando presentes, e compara a taxa real com a estimada (divergência → outbox).
+ * Sempre sincroniza mp_payment_id, payment_method e installments quando
+ * presentes; mp_fee_cents e a comparação com a taxa estimada só com o
+ * pagamento APROVADO. Aprovado também confere o valor pago contra o total do
+ * pedido (divergência → outbox).
  */
 export async function processPaymentEvent(
   db: DbOrTx,
@@ -141,7 +146,11 @@ export async function processPaymentEvent(
     if (method !== null) syncField("paymentMethod", method);
     if (payment.installments !== null)
       syncField("installments", payment.installments);
-    if (payment.feeCents !== null) syncField("mpFeeCents", payment.feeCents);
+    // A taxa só EXISTE depois de aprovado. Num Pix pendente o MP não devolve
+    // fee_details e o líquido é zero — gravar aqui grava o valor da transação
+    // como se fosse taxa (e estraga a margem real na tela do pedido).
+    if (payment.status === "approved" && payment.feeCents !== null)
+      syncField("mpFeeCents", payment.feeCents);
 
     if (Object.keys(updateSet).length > 0) {
       await tx
@@ -160,7 +169,13 @@ export async function processPaymentEvent(
     }
 
     // (2) Divergência entre taxa real e estimada (fecha o ciclo da precificação).
-    if (payment.feeCents !== null && method !== null) {
+    // Também só faz sentido com o pagamento aprovado: antes disso não há taxa
+    // real com que comparar, e o alerta iria ao dono à toa.
+    if (
+      payment.status === "approved" &&
+      payment.feeCents !== null &&
+      method !== null
+    ) {
       await checkFeeDivergence(tx, {
         orderId: order.id,
         orderNumber: order.orderNumber,
@@ -168,6 +183,18 @@ export async function processPaymentEvent(
         method,
         installments: payment.installments,
         actualCents: payment.feeCents,
+      });
+    }
+
+    // (2b) O que o MP recebeu tem de ser o total do pedido. Divergiu, o pedido
+    // segue sendo marcado como pago — a cliente pagou de verdade, travar aqui
+    // a deixaria no limbo —, mas o dono é avisado para acertar a diferença.
+    if (payment.status === "approved") {
+      await checkAmountDivergence(tx, {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        expectedCents: order.totalCents,
+        paidCents: payment.amountCents,
       });
     }
 
@@ -472,6 +499,49 @@ async function checkFeeDivergence(
         estimatedCents,
         actualCents: input.actualCents,
         toleranceCents,
+      },
+    });
+  }
+}
+
+/**
+ * O valor que o Mercado Pago recebeu × o total do pedido. Divergem quando a
+ * cliente paga uma preferência antiga (o link é reemitido a cada clique) ou
+ * quando alguma cobrança saiu errada. Um aviso por pedido.
+ */
+async function checkAmountDivergence(
+  tx: DbOrTx,
+  input: {
+    orderId: string;
+    orderNumber: number;
+    expectedCents: number;
+    paidCents: number;
+  },
+): Promise<void> {
+  if (input.paidCents === input.expectedCents) return;
+
+  const enqueuedId = await enqueueOutboxEvent(tx, {
+    eventType: "mp.amount_divergent",
+    dedupeKey: `mp.amount_divergent:${input.orderId}`,
+    aggregateType: "order",
+    aggregateId: input.orderId,
+    payload: {
+      orderId: input.orderId,
+      expectedCents: input.expectedCents,
+      paidCents: input.paidCents,
+    },
+  });
+  if (enqueuedId !== null) {
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "payment.amount_divergent",
+      entityType: "order",
+      entityId: input.orderId,
+      after: {
+        orderNumber: input.orderNumber,
+        expectedCents: input.expectedCents,
+        paidCents: input.paidCents,
       },
     });
   }

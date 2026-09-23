@@ -329,6 +329,17 @@ export const initialWaTemplates: Array<{
     variables: ["pedido", "metodo", "estimada", "real", "diferenca"],
   },
   {
+    // O MP recebeu valor diferente do total do pedido (ex.: link antigo pago).
+    key: "owner_amount_divergent",
+    label: "[interno] Valor pago diferente do pedido",
+    bodyTemplate:
+      "Valor pago diferente no pedido #{{pedido}} ⚠️\n" +
+      "Cliente: {{cliente}}\n" +
+      "Pedido: {{esperado}} · Pago: {{pago}} · Diferença: {{diferenca}}\n" +
+      "Confira no painel e acerte a diferença com a cliente.",
+    variables: ["pedido", "cliente", "esperado", "pago", "diferenca"],
+  },
+  {
     key: "owner_low_stock",
     label: "[interno] Estoque baixo",
     bodyTemplate:

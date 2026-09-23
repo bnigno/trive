@@ -91,8 +91,14 @@ function mapPaymentMethod(
  * Taxa REAL do MP em centavos: soma de fee_details quando presente; senão
  * bruto − líquido (transaction_details.net_received_amount); senão null
  * (pagamento ainda sem taxa conhecida).
+ *
+ * O atalho bruto − líquido só vale com o dinheiro JÁ LIQUIDADO: num Pix
+ * pendente o MP devolve fee_details vazio e net_received_amount = 0, e a
+ * conta daria o valor cheio da transação como se fosse taxa (foi o que
+ * gravou R$ 33,99 de "taxa" num pedido de R$ 31,10). Líquido zerado = ainda
+ * não há taxa a saber, e o campo é null por contrato.
  */
-function extractFeeCents(
+export function extractFeeCents(
   payment: z.infer<typeof mpPaymentResponseSchema>,
 ): number | null {
   const feeDetails = payment.fee_details ?? [];
@@ -104,7 +110,7 @@ function extractFeeCents(
   }
   const gross = payment.transaction_amount;
   const net = payment.transaction_details?.net_received_amount;
-  if (typeof gross === "number" && typeof net === "number") {
+  if (typeof gross === "number" && typeof net === "number" && net > 0) {
     return reaisToCents(gross - net);
   }
   return null;

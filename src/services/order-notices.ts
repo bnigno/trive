@@ -22,6 +22,7 @@ export const ORDER_CANCELED_TEMPLATE_KEY = "order_canceled";
 export const ORDER_REFUNDED_TEMPLATE_KEY = "order_refunded";
 export const OWNER_CHARGEBACK_TEMPLATE_KEY = "owner_chargeback";
 export const OWNER_FEE_DIVERGENT_TEMPLATE_KEY = "owner_fee_divergent";
+export const OWNER_AMOUNT_DIVERGENT_TEMPLATE_KEY = "owner_amount_divergent";
 
 export type OrderNoticeResult =
   | SendWaMessageResult
@@ -154,5 +155,32 @@ export async function notifyOwnerFeeDivergent(
       diferenca: `${difference > 0 ? "+" : difference < 0 ? "-" : ""}${formatCentsBRL(Math.abs(difference))}`,
     },
     dedupeKey: `wa.owner_fee_divergent:${parsed.orderId}`,
+  });
+}
+
+const amountDivergentSchema = orderIdSchema.extend({
+  expectedCents: z.number().int().min(0),
+  paidCents: z.number().int().min(0),
+});
+
+/** Dono: o Mercado Pago recebeu valor diferente do total do pedido. */
+export async function notifyOwnerAmountDivergent(
+  db: DbOrTx,
+  provider: MessagingProvider,
+  input: { orderId: string; expectedCents: number; paidCents: number },
+): Promise<OrderNoticeResult> {
+  const parsed = amountDivergentSchema.parse(input);
+  const ctx = await loadOrderNoticeContext(db, parsed.orderId);
+  if (!ctx) return { skipped: "pedido_inexistente" };
+  const difference = parsed.paidCents - parsed.expectedCents;
+  return sendToOwner(db, provider, {
+    templateKey: OWNER_AMOUNT_DIVERGENT_TEMPLATE_KEY,
+    vars: {
+      ...ctx.vars,
+      esperado: formatCentsBRL(parsed.expectedCents),
+      pago: formatCentsBRL(parsed.paidCents),
+      diferenca: `${difference > 0 ? "+" : difference < 0 ? "-" : ""}${formatCentsBRL(Math.abs(difference))}`,
+    },
+    dedupeKey: `wa.owner_amount_divergent:${parsed.orderId}`,
   });
 }
