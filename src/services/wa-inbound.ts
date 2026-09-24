@@ -34,6 +34,7 @@ import {
   routeOwnerInbound,
 } from "@/services/atelier";
 import { receiveInterviewTranscript, routeInterviewReply } from "@/services/curator-interviews";
+import { cancelFriendRoundsForConversation } from "@/services/friend-rounds";
 import { lookConsentHistoryText, parseLookRowId } from "@/core/looks/consent";
 import { feedbackHandledBy, feedbackHistoryText, parseFeedbackRowId } from "@/core/orders/feedback";
 import { recordLookConsent } from "@/services/customer-looks";
@@ -976,6 +977,8 @@ export async function processZapiInbound(
       await cancelDropWaitlistByPhone(tx, identityPhone, now);
       await cancelStockAlertsByPhone(tx, identityPhone, now);
       await cancelBotFollowupsByPhone(tx, { phoneE164: identityPhone, reason: "sair", now });
+      // A votação das amigas desta conversa para sem mandar mais placar a ela.
+      await cancelFriendRoundsForConversation(tx, { conversationId: conversation.id, now });
       // "SAIR desliga tudo" (cartão do Provador): sai das salas também (a loja a remove).
       await leaveGroupsByPhone(tx, { phoneE164: identityPhone, reason: "removida", now });
       if (customer) {

@@ -1,6 +1,6 @@
 {
-  "id": "99610d5b-9f77-400f-9330-d2ebbf57a91b",
-  "prevId": "61433674-3725-4ea9-b298-11d76191bd2c",
+  "id": "3e1d6417-279d-4750-9181-05c3b64caf9c",
+  "prevId": "26be88a3-397a-4d44-b860-19299b230deb",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -371,6 +371,12 @@
         },
         "decided_by_message": {
           "name": "decided_by_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decision_note": {
+          "name": "decision_note",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -4733,6 +4739,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "forwarded_at": {
+          "name": "forwarded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4854,6 +4866,12 @@
         },
         "closed_at": {
           "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "canceled_at": {
+          "name": "canceled_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

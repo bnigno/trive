@@ -661,7 +661,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "pedir_opiniao_das_amigas",
     description:
-      "A cliente está em dúvida entre 2 ou 3 peças e quer (ou aceitou) a opinião das amigas: cria uma votação e manda o cartão \"Qual fica melhor?\" com o link para ela encaminhar. As amigas votam com um toque, sem cadastro; o placar volta para ela aqui, 10 min depois do primeiro voto e ao fim de 24 h. Ofereça quando ela disser que está em dúvida ou que vai perguntar para alguém — nunca na abertura. Chame só depois do sim dela e com o primeiro nome como ela quer aparecer para as amigas. Repita o link como veio e diga que o placar chega por aqui; não prometa desconto. Nada fica reservado durante a votação.",
+      "\"Me ajuda a escolher?\": quando ela está em dúvida entre 2 ou 3 PEÇAS DIFERENTES (ou a mesma peça em cores diferentes) e já viu as peças, ofereça UMA vez na conversa a votação das amigas — nunca na abertura, nunca para dúvida de tamanho ou de preço; se ela recusar, não volte ao assunto. Com o sim dela, chame com o PRIMEIRO nome dela (confirme: \"vou pôr 'Qual fica melhor na Ana?'\"). A ferramenta manda o cartão com o link para ela encaminhar; quem recebe vota com um toque, sem cadastro, e o placar volta para ela aqui. Diga o que a ferramenta devolver; não prometa desconto nem reserva.",
     input_schema: {
       type: "object",
       properties: {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  closesLabel,
   closingLine,
   isRoundOpen,
   normalizeDisplayName,
@@ -23,10 +24,20 @@ describe("o que a amiga escreve", () => {
     expect(normalizeNote("a".repeat(200))).toHaveLength(140);
     expect(normalizeNote("   ")).toBeNull();
   });
-  it("nome e apelido curtos e com letra", () => {
-    expect(normalizeDisplayName("  Ana  Paula ")).toBe("Ana Paula");
+  it("só o primeiro nome aparece; apelido só com letras e nunca se passando pela loja", () => {
+    expect(normalizeDisplayName("  Ana  Paula Ferreira ")).toBe("Ana");
+    expect(normalizeDisplayName("🌸 Ana 🌸 Moda Fit")).toBe("Ana");
     expect(normalizeDisplayName("🙂🙂")).toBeNull();
     expect(normalizeNickname("x".repeat(50))).toHaveLength(30);
+    expect(normalizeNickname("Carla 91988887777")).toBe("Carla");
+    expect(normalizeNickname("Equipe TRIVÉ")).toBeNull();
+    expect(normalizeNickname("lia")).toBeNull();
+  });
+
+  it("recado sem domínio (mesmo sem http), telefone ou @perfil", () => {
+    expect(normalizeNote("paga aqui bit.ly/pix ou site.com.br agora")).toBe("paga aqui ou agora");
+    expect(normalizeNote("me chama no (91) 98888-7777 ou @perfil_x")).toBe("me chama no ou");
+    expect(normalizeNote("a B, com 2 peças")).toBe("a B, com 2 peças");
   });
 });
 
@@ -54,19 +65,30 @@ describe("placar", () => {
       "B, Longo Dunas (areia): 2 votos · A, Kimono Maré: 1 voto",
     );
   });
-  it("até dois recados, com a letra votada", () => {
+  it("até três recados, com a letra votada, e sem assumir o gênero de quem votou", () => {
     expect(
       notesBlock(options, [
         { nickname: "Carla", note: "combina com teu cabelo", choice: 1 },
         { nickname: null, note: "a A é mais fresca", choice: 0 },
-        { nickname: "Bia", note: "terceiro não entra", choice: 1 },
+        { nickname: "Bia", note: "terceiro entra", choice: 1 },
+        { nickname: "Duda", note: "quarto não", choice: 1 },
       ]),
-    ).toBe("\n💬 Carla (B): combina com teu cabelo\n💬 Uma amiga (A): a A é mais fresca");
+    ).toBe("\n\nRecados de quem votou:\n💬 Carla (B): combina com teu cabelo\n💬 Alguém (A): a A é mais fresca\n💬 Bia (B): terceiro entra");
     expect(notesBlock(options, [])).toBe("");
   });
-  it("fecho: vencedora, empate ou ninguém votou", () => {
-    expect(closingLine(options, tallyRound(2, [{ choice: 1 }]))).toContain("escolheram a B: Longo Dunas (areia)");
+
+  it("fecho: a mais votada, empate (A, B e C) ou ninguém votou", () => {
+    expect(closingLine(options, tallyRound(2, [{ choice: 1 }]))).toContain("A mais votada foi a B: Longo Dunas (areia)");
     expect(closingLine(options, tallyRound(2, [{ choice: 1 }, { choice: 0 }]))).toContain("empate entre A e B");
-    expect(closingLine(options, tallyRound(2, []))).toContain("Ninguém votou");
+    const three = [...options, optionLabel(2, "Saia Rio", null)];
+    expect(closingLine(three, tallyRound(3, [{ choice: 0 }, { choice: 1 }, { choice: 2 }]))).toContain("empate entre A, B e C");
+    expect(closingLine(options, tallyRound(2, []))).toBe("Ninguém votou a tempo. Se quiser, eu te ajudo a escolher por aqui.");
+  });
+
+  it("o prazo por extenso no relógio de São Paulo", () => {
+    const now = new Date("2026-10-05T15:00:00.000Z"); // 12h em SP
+    expect(closesLabel(new Date("2026-10-05T23:00:00.000Z"), now)).toBe("hoje às 20h");
+    expect(closesLabel(new Date("2026-10-06T12:30:00.000Z"), now)).toBe("amanhã às 9h30");
+    expect(closesLabel(new Date("2026-10-08T13:00:00.000Z"), now)).toBe("08/10 às 10h");
   });
 });

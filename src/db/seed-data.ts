@@ -454,14 +454,14 @@ export const initialWaTemplates: Array<{
   {
     key: "friends_summary",
     label: "Me ajuda a escolher?: placar parcial",
-    bodyTemplate: "Suas amigas já estão votando 🗳️\n{{placar}}{{recados}}\n\nA votação fica aberta até amanhã: {{link}}",
-    variables: ["placar", "recados", "link"],
+    bodyTemplate: "Já tem voto na sua dúvida 🗳️\n{{placar}}{{recados}}\n\nA votação fica aberta até {{fecha}}: {{link}}",
+    variables: ["placar", "recados", "fecha", "link"],
   },
   {
     key: "friends_closed",
     label: "Me ajuda a escolher?: resultado",
-    bodyTemplate: "A votação acabou ✨\n{{placar}}\n\n{{fecho}}",
-    variables: ["placar", "fecho"],
+    bodyTemplate: "A votação da sua dúvida acabou.{{placar}}{{recados}}\n\n{{fecho}}",
+    variables: ["placar", "recados", "fecho"],
   },
   {
     key: "owner_interview_ask",

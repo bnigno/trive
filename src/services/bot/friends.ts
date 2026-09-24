@@ -4,13 +4,25 @@
 // a mesma rodada pela mensagem que pediu. O cartão "Qual fica melhor?" vai
 // pelo mesmo caminho dos cartões da vitrine.
 import { pickImagePath } from "@/core/bot/variants";
-import type { BotToolInputs } from "@/core/bot/tools";
+import { BOT_TOOL_NAMES, type BotToolInputs, type BotToolName } from "@/core/bot/tools";
 import { normalizeDisplayName, optionLabel } from "@/core/friends/decision";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
-import { createDecisionRound, FriendRoundError, isFriendsVoteEnabled } from "@/services/friend-rounds";
+import { createDecisionRound, FriendRoundError, isFriendsVoteEnabled, roundCreateKey } from "@/services/friend-rounds";
 
-import { DRY_RUN_TEXT, type ExecutorCtx, type ToolResult } from "./shared";
+import { DRY_RUN_TEXT, formatPriceRange, type ExecutorCtx, type ToolResult } from "./shared";
+
+const TOOLS_WITHOUT_FRIENDS: readonly BotToolName[] = BOT_TOOL_NAMES.filter((name) => name !== "pedir_opiniao_das_amigas");
+
+/**
+ * As ferramentas do turno: com "Me ajuda a escolher?" desligado, a
+ * ferramenta nem vai ao modelo (a descrição dela manda oferecer — ligada ou
+ * não, a Lia ofereceria). A lista é a mesma em todos os turnos enquanto o
+ * interruptor não muda, então o cache do prefixo continua valendo.
+ */
+export async function turnToolsFor(db: DbOrTx): Promise<readonly BotToolName[] | undefined> {
+  return (await isFriendsVoteEnabled(db)) ? undefined : TOOLS_WITHOUT_FRIENDS;
+}
 
 export async function execPedirOpiniaoDasAmigas(
   db: DbOrTx,
@@ -41,12 +53,14 @@ export async function execPedirOpiniaoDasAmigas(
       };
     }
     const detail = input.detalhes?.[index]?.trim() || null;
+    const prices = resolved.detail.variants.map((variant) => variant.priceCents);
     options.push({
       productId: resolved.detail.id,
       name: resolved.detail.name,
       detail,
       slug: resolved.detail.slug,
       imagePath: pickImagePath(resolved.detail.images, detail),
+      priceLabel: prices.length > 0 ? formatPriceRange(Math.min(...prices), Math.max(...prices)) : "",
     });
   }
 
@@ -54,9 +68,9 @@ export async function execPedirOpiniaoDasAmigas(
   try {
     round = await createDecisionRound(db, {
       conversationId: ctx.conversationId,
-      createKey: `turn:${ctx.lastInboundId}`,
+      createKey: roundCreateKey(ctx.lastInboundId, options),
       displayName,
-      options,
+      options: options.map(({ priceLabel: _price, ...option }) => option),
       now: ctx.now ?? new Date(),
     });
   } catch (error) {
@@ -65,26 +79,32 @@ export async function execPedirOpiniaoDasAmigas(
   }
 
   const labels = options.map((option, index) => optionLabel(index, option.name, option.detail));
+  // O cartão da vitrine exige preço em cada peça (o handler do render valida):
+  // sem preço ou sem foto, vai só o link.
   const withPhoto = options.flatMap((option, index) =>
-    option.imagePath ? [{ slug: option.slug, name: `${labels[index].letter} · ${labels[index].name}`, priceLabel: "", imagePath: option.imagePath }] : [],
+    option.imagePath && option.priceLabel
+      ? [{ slug: option.slug, name: `${labels[index].letter} · ${labels[index].name}`, priceLabel: option.priceLabel, imagePath: option.imagePath }]
+      : [],
   );
   const card =
     withPhoto.length === options.length
       ? await ctx.emitCard({
           kind: "catalog",
           eyebrow: "ME AJUDA A ESCOLHER?",
-          title: `Qual fica melhor na ${displayName}?`,
+          title: `Qual fica melhor na ${round.displayName}?`,
           items: withPhoto,
-          caption: `Qual fica melhor na ${displayName}? Vota aqui: ${round.url}`,
+          caption: `Qual fica melhor na ${round.displayName}? Vota aqui: ${round.url}`,
         })
       : false;
 
   return {
     ok: true,
     text: [
-      `Votação criada (${labels.map((label) => `${label.letter}: ${label.name}`).join(" · ")}). Link: ${round.url}`,
-      card ? "O cartão \"Qual fica melhor?\" com o link vai junto: diga a ela para encaminhar às amigas." : "Mande o link e diga a ela para encaminhar às amigas.",
-      "Diga que o placar chega aqui 10 min depois do primeiro voto e o resultado em 24 h. Nada fica reservado durante a votação.",
+      `Votação criada para "${round.displayName}" (${labels.map((label) => `${label.letter}: ${label.name}`).join(" · ")}).`,
+      card
+        ? `O cartão "Qual fica melhor?" já leva o link na legenda: diga a ela para ENCAMINHAR o cartão às amigas (não repita o link). Link, se ela pedir: ${round.url}`
+        : `Mande este link para ela encaminhar às amigas: ${round.url}`,
+      "O placar chega para ela aqui 10 min depois do primeiro voto e o resultado quando a votação fechar (mensagens só das 9h às 21h). Nada fica reservado durante a votação.",
     ].join("\n"),
   };
 }

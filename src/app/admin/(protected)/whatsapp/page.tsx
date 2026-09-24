@@ -457,7 +457,7 @@ export default async function WhatsappPage() {
             settingKey="friends_vote_enabled"
             checked={data.friendsVoteEnabled}
             label="Me ajuda a escolher? (votação das amigas)"
-            hint={`Quando a cliente fica em dúvida entre 2 ou 3 peças, a ${sellerName} oferece uma votação: ela manda o cartão com o link às amigas, cada amiga vota com um toque (sem cadastro, sem telefone) e o placar volta para ela aqui, 10 minutos depois do primeiro voto e ao fim de 24 h. Quem votou pode abrir uma conversa com a ${sellerName} — a loja nunca escreve primeiro para a amiga. Nada fica reservado durante a votação.`}
+            hint={`Quando a cliente fica em dúvida entre 2 ou 3 peças, a ${sellerName} oferece (uma vez) uma votação. A CLIENTE encaminha o cartão com o link às amigas; cada uma vota com um toque, sem cadastro e sem telefone, e pode deixar um recado. O placar volta para a cliente pelo WhatsApp da loja — 10 minutos depois do primeiro voto e quando a votação fecha, com os recados e o nome de quem quis assinar (sem link nem telefone); fora das 9h às 21h, espera a manhã. Quem votou pode abrir uma conversa com a ${sellerName}; a loja nunca escreve primeiro para ninguém. Nada fica reservado durante a votação, e SAIR da cliente encerra a votação dela.`}
           />
           <ToggleSwitch
             settingKey="bot_cards_enabled"

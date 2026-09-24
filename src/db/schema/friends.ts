@@ -28,6 +28,8 @@ export const friendRounds = pgTable(
       .notNull(),
     closesAt: timestamp("closes_at", { withTimezone: true }).notNull(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** SAIR da cliente: a rodada para sem mandar mais nada a ela. */
+    canceledAt: timestamp("canceled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -50,6 +52,8 @@ export const friendAnswers = pgTable(
     choice: integer("choice").notNull(),
     note: text("note"),
     nickname: text("nickname"),
+    /** Quando o recado foi à cliente (resumo ou fechamento): nenhum fica esquecido, nenhum vai duas vezes. */
+    forwardedAt: timestamp("forwarded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

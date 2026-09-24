@@ -105,8 +105,8 @@ export function buildBridgeMessage(input: BridgeMessageInput): string {
     return `${oi} minha sacola no site: ${lista}${entrega} ${tag}`;
   }
   if (input.source === "amigas") {
-    const quem = input.friendName?.trim() ? `da ${input.friendName.trim()}` : "de uma amiga";
-    return `${oi} votei na dúvida ${quem} e quero ver peças no meu estilo ${tag}`;
+    const quem = input.friendName?.trim() ? `da ${input.friendName.trim()}` : "das amigas";
+    return `${oi} vim pela votação ${quem} e quero ver peças no meu estilo ${tag}`;
   }
   const viaProvador = input.source === "campaign" && isProvadorCampaign(input.campaignSlug);
   if (input.product) {
@@ -136,7 +136,7 @@ export function originLabel(source: BridgeSource, campaign?: string | null, camp
       return campaign?.trim() ? `${where} «${campaign.trim()}»` : where;
     }
     case "amigas":
-      return campaign?.trim() ? `votou na dúvida da ${campaign.trim()}` : "votação das amigas";
+      return campaign?.trim() ? `votação da ${campaign.trim()}` : "votação das amigas";
   }
 }
 

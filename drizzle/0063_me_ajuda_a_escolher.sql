@@ -1,8 +1,9 @@
 -- "Me ajuda a escolher?": a cliente em dúvida entre 2 ou 3 peças manda às
 -- amigas um link com a votação; cada amiga vota com um toque (sem telefone:
 -- voter_key é o hash de um identificador aleatório do aparelho, UNIQUE por
--- rodada). Os votos somem 30 dias depois do fim (fila friends.purge). A
--- ponte do site ganha a origem 'amigas' e a rodada de onde a amiga veio.
+-- rodada). Recados vão à cliente uma vez (forwarded_at); SAIR cancela a
+-- rodada (canceled_at); votos somem 30 dias depois do fim (friends.purge).
+-- A ponte do site ganha a origem 'amigas' e a rodada de onde a amiga veio.
 -- Tabelas novas nascem com RLS (incidente de 22/09).
 CREATE TABLE "friend_answers" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -11,6 +12,7 @@ CREATE TABLE "friend_answers" (
 	"choice" integer NOT NULL,
 	"note" text,
 	"nickname" text,
+	"forwarded_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "friend_answers_choice_check" CHECK ("friend_answers"."choice" BETWEEN 0 AND 2),
 	CONSTRAINT "friend_answers_note_check" CHECK ("friend_answers"."note" IS NULL OR char_length("friend_answers"."note") <= 140),
@@ -27,6 +29,7 @@ CREATE TABLE "friend_rounds" (
 	"options" jsonb NOT NULL,
 	"closes_at" timestamp with time zone NOT NULL,
 	"closed_at" timestamp with time zone,
+	"canceled_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "friend_rounds_token_unique" UNIQUE("token"),
 	CONSTRAINT "friend_rounds_create_key_unique" UNIQUE("create_key"),

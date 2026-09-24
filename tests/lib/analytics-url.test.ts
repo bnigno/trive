@@ -22,3 +22,9 @@ describe("anonymizeAnalyticsUrl", () => {
     );
   });
 });
+
+describe("votação das amigas", () => {
+  it("o token da votação não sai do navegador", () => {
+    expect(anonymizeAnalyticsUrl("https://trivemaison.com.br/v/AbC123_xYz-98765")).toBe("https://trivemaison.com.br/v");
+  });
+});
