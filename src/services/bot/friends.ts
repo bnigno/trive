@@ -102,7 +102,7 @@ export async function execPedirOpiniaoDasAmigas(
     text: [
       `Votação criada para "${round.displayName}" (${labels.map((label) => `${label.letter}: ${label.name}`).join(" · ")}).`,
       card
-        ? `O cartão "Qual fica melhor?" já leva o link na legenda: diga a ela para ENCAMINHAR o cartão às amigas (não repita o link). Link, se ela pedir: ${round.url}`
+        ? `O cartão "Qual fica melhor?" vai logo depois com o link na legenda: diga a ela para ENCAMINHAR o cartão às amigas. Mande também o link, numa linha só, para o caso de o cartão demorar: ${round.url}`
         : `Mande este link para ela encaminhar às amigas: ${round.url}`,
       "O placar chega para ela aqui 10 min depois do primeiro voto e o resultado quando a votação fechar (mensagens só das 9h às 21h). Nada fica reservado durante a votação.",
     ].join("\n"),

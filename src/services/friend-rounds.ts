@@ -22,6 +22,7 @@ import {
   normalizeNickname,
   normalizeNote,
   notesBlock,
+  NOTES_IN_CLOSING,
   NOTES_PER_MESSAGE,
   optionLabel,
   ROUND_MAX_VOTES,
@@ -157,12 +158,15 @@ export async function createDecisionRound(
   return { roundId: round.id, token, url: roundPublicUrl(token), closesAt, displayName };
 }
 
-/** SAIR da cliente: as rodadas abertas param sem mandar mais nada a ela. */
+/**
+ * SAIR da cliente: as rodadas dela param sem mandar mais nada — inclusive a
+ * que já fechou de noite e está com o resultado esperando a manhã.
+ */
 export async function cancelFriendRoundsForConversation(tx: DbOrTx, input: { conversationId: string; now: Date }): Promise<number> {
   const canceled = await tx
     .update(friendRounds)
-    .set({ canceledAt: input.now, closedAt: input.now })
-    .where(and(eq(friendRounds.conversationId, input.conversationId), isNull(friendRounds.canceledAt), isNull(friendRounds.closedAt)))
+    .set({ canceledAt: input.now, closedAt: sql`coalesce(${friendRounds.closedAt}, ${input.now.toISOString()}::timestamptz)` })
+    .where(and(eq(friendRounds.conversationId, input.conversationId), isNull(friendRounds.canceledAt)))
     .returning({ id: friendRounds.id });
   return canceled.length;
 }
@@ -253,7 +257,9 @@ const voteSchema = z.object({
 
 export type VoteResult =
   | { ok: true; tally: RoundTally }
-  | { ok: false; reason: "inexistente" | "fechada" | "opcao_invalida" | "ja_votou" | "cheia"; tally?: RoundTally };
+  /** ja_votou traz a escolha que ficou gravada (o aparelho mostra a verdadeira). */
+  | { ok: false; reason: "ja_votou"; choice: number; tally: RoundTally }
+  | { ok: false; reason: "inexistente" | "fechada" | "opcao_invalida" | "cheia"; tally?: RoundTally };
 
 function voterKeyFor(roundId: string, voterId: string): string {
   return createHash("sha256").update(`${roundId}:${voterId}`).digest("hex");
@@ -265,6 +271,9 @@ export async function voteInRound(db: DbOrTx, input: z.input<typeof voteSchema>)
   if (!round || isPurged(round, parsed.now)) return { ok: false, reason: "inexistente" };
   const current = await loadAnswers(db, round.id);
   const tallyNow = tallyRound(round.options.length, current);
+  const voterKey = voterKeyFor(round.id, parsed.voterId);
+  const previous = await existingChoice(db, round.id, voterKey);
+  if (previous !== null) return { ok: false, reason: "ja_votou", choice: previous, tally: tallyNow };
   if (!isRoundOpen(round, parsed.now) || round.canceledAt !== null) return { ok: false, reason: "fechada", tally: tallyNow };
   if (parsed.choice >= round.options.length) return { ok: false, reason: "opcao_invalida" };
   if (current.length >= ROUND_MAX_VOTES) return { ok: false, reason: "cheia", tally: tallyNow };
@@ -272,7 +281,7 @@ export async function voteInRound(db: DbOrTx, input: z.input<typeof voteSchema>)
   const inserted = await db.transaction(async (tx) => {
     const rows = await tx
       .insert(friendAnswers)
-      .values({ roundId: round.id, voterKey: voterKeyFor(round.id, parsed.voterId), choice: parsed.choice, createdAt: parsed.now })
+      .values({ roundId: round.id, voterKey, choice: parsed.choice, createdAt: parsed.now })
       .onConflictDoNothing()
       .returning({ id: friendAnswers.id });
     if (rows.length === 0) return false;
@@ -288,7 +297,18 @@ export async function voteInRound(db: DbOrTx, input: z.input<typeof voteSchema>)
     return true;
   });
   const tally = tallyRound(round.options.length, await loadAnswers(db, round.id));
-  return inserted ? { ok: true, tally } : { ok: false, reason: "ja_votou", tally };
+  if (inserted) return { ok: true, tally };
+  // Dois toques quase juntos: o outro gravou primeiro.
+  return { ok: false, reason: "ja_votou", choice: (await existingChoice(db, round.id, voterKey)) ?? parsed.choice, tally };
+}
+
+async function existingChoice(db: DbOrTx, roundId: string, voterKey: string): Promise<number | null> {
+  const [row] = await db
+    .select({ choice: friendAnswers.choice })
+    .from(friendAnswers)
+    .where(and(eq(friendAnswers.roundId, roundId), eq(friendAnswers.voterKey, voterKey)))
+    .limit(1);
+  return row?.choice ?? null;
 }
 
 const noteSchema = z.object({
@@ -299,7 +319,7 @@ const noteSchema = z.object({
   now: z.date(),
 });
 
-export type NoteResult = { ok: true } | { ok: false; reason: "inexistente" | "fechada" | "vazio" | "sem_voto" };
+export type NoteResult = { ok: true } | { ok: false; reason: "inexistente" | "fechada" | "vazio" | "sem_voto" | "ja_deixou" };
 
 /**
  * Depois do voto, o recado (opcional) — vai para a cliente pelo WhatsApp da
@@ -312,12 +332,14 @@ export async function addNoteToVote(db: DbOrTx, input: z.input<typeof noteSchema
   if (!isRoundOpen(round, parsed.now) || round.canceledAt !== null) return { ok: false, reason: "fechada" };
   const note = normalizeNote(parsed.note);
   if (!note) return { ok: false, reason: "vazio" };
+  const voterKey = voterKeyFor(round.id, parsed.voterId);
   const updated = await db
     .update(friendAnswers)
     .set({ note, nickname: normalizeNickname(parsed.nickname) })
-    .where(and(eq(friendAnswers.roundId, round.id), eq(friendAnswers.voterKey, voterKeyFor(round.id, parsed.voterId)), isNull(friendAnswers.note)))
+    .where(and(eq(friendAnswers.roundId, round.id), eq(friendAnswers.voterKey, voterKey), isNull(friendAnswers.note)))
     .returning({ id: friendAnswers.id });
-  return updated.length > 0 ? { ok: true } : { ok: false, reason: "sem_voto" };
+  if (updated.length > 0) return { ok: true };
+  return { ok: false, reason: (await existingChoice(db, round.id, voterKey)) === null ? "sem_voto" : "ja_deixou" };
 }
 
 /** "Quero ver peças no meu estilo" abre o WhatsApp DELA com a Lia. */
@@ -351,8 +373,8 @@ function labelsOf(round: { options: RoundOptionInput[] }): RoundOptionLabel[] {
 }
 
 /** Os recados ainda não repassados (os mais recentes primeiro). */
-function pendingNotes(answers: Awaited<ReturnType<typeof loadAnswers>>) {
-  return answers.filter((answer) => answer.note && !answer.forwardedAt).slice(0, NOTES_PER_MESSAGE);
+function pendingNotes(answers: Awaited<ReturnType<typeof loadAnswers>>, limit: number) {
+  return answers.filter((answer) => answer.note && !answer.forwardedAt).slice(0, limit);
 }
 
 async function markForwarded(db: DbOrTx, ids: string[], now: Date): Promise<void> {
@@ -361,7 +383,11 @@ async function markForwarded(db: DbOrTx, ids: string[], now: Date): Promise<void
 }
 
 function notesVar(labels: RoundOptionLabel[], notes: ReturnType<typeof pendingNotes>): string {
-  return notesBlock(labels, notes.map((answer) => ({ nickname: answer.nickname, note: answer.note as string, choice: answer.choice })));
+  return notesBlock(
+    labels,
+    notes.map((answer) => ({ nickname: answer.nickname, note: answer.note as string, choice: answer.choice })),
+    notes.length,
+  );
 }
 
 /** 10 min depois do primeiro voto: o placar parcial (se a rodada ainda estiver aberta). */
@@ -389,7 +415,7 @@ export async function sendRoundSummary(
   const answers = await loadAnswers(db, roundId);
   const labels = labelsOf(row.round);
   const tally = tallyRound(labels.length, answers);
-  const notes = pendingNotes(answers);
+  const notes = pendingNotes(answers, NOTES_PER_MESSAGE);
   const result = await sendTemplateMessage(db, provider, {
     templateKey: FRIENDS_SUMMARY_TEMPLATE,
     phoneE164: row.phoneE164,
@@ -452,7 +478,7 @@ export async function closeFriendRound(
   const answers = await loadAnswers(db, roundId);
   const labels = labelsOf(row.round);
   const tally = tallyRound(labels.length, answers);
-  const notes = pendingNotes(answers);
+  const notes = pendingNotes(answers, NOTES_IN_CLOSING);
   const result = await sendTemplateMessage(db, provider, {
     templateKey: FRIENDS_CLOSED_TEMPLATE,
     phoneE164: row.phoneE164,
@@ -502,7 +528,9 @@ export async function friendRoundMemoryLines(db: DbOrTx, input: { conversationId
     const tally = tallyRound(labels.length, await loadAnswers(db, round.id));
     const options = round.options.map((option, index) => `${labels[index].letter} = ${labels[index].name} (${option.slug})`).join("; ");
     if (isRoundOpen(round, input.now)) {
-      lines.push(`Votação das amigas aberta até ${closesLabel(round.closesAt, input.now)}: ${options}. Placar: ${tally.total > 0 ? scoreboardLine(labels, tally) : "nenhum voto ainda"}.`);
+      lines.push(
+        `Votação das amigas aberta até ${closesLabel(round.closesAt, input.now)} (link: ${roundPublicUrl(round.token)}): ${options}. Placar: ${tally.total > 0 ? scoreboardLine(labels, tally) : "nenhum voto ainda"}. Se ela pedir o link de novo, é este — não abra outra votação.`,
+      );
       continue;
     }
     if (tally.leader !== null) {

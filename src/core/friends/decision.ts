@@ -22,6 +22,8 @@ export const NOTE_MAX = 140;
 export const NICKNAME_MAX = 30;
 /** Recados que entram numa mensagem para a cliente. */
 export const NOTES_PER_MESSAGE = 3;
+/** O fechamento é a última mensagem: leva mais recados, para nenhum ficar para trás. */
+export const NOTES_IN_CLOSING = 5;
 
 function squash(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -54,10 +56,12 @@ export function normalizeNote(raw: string | null | undefined): string | null {
   const note = squash(
     raw
       .replace(/https?:\/\/\S+/gi, "")
-      // Domínio sem "http" (bit.ly/x, site.com.br) o WhatsApp também transforma em link.
-      .replace(/\b[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:\/\S*)?/gi, "")
-      // Telefone, Pix e @perfil não passam pelo número da loja.
-      .replace(/\(?\+?\d[\d\s().-]{6,}\d/g, "")
+      // Domínio sem "http" (bit.ly/x, site.com.br) o WhatsApp também transforma em
+      // link — só com terminação de domínio de verdade: "linda.Amei" é recado.
+      .replace(DOMAIN, "")
+      // Telefone (10+ dígitos: DDD + número) e @perfil não passam pelo número da
+      // loja; "38 40 42" ou "12.10.2026" ficam.
+      .replace(/\(?\+?\d[\d\s().-]{6,}\d/g, (match) => (match.replace(/\D/g, "").length >= 10 ? "" : match))
       .replace(/@\w+/g, ""),
   )
     .slice(0, NOTE_MAX)
@@ -65,8 +69,11 @@ export function normalizeNote(raw: string | null | undefined): string | null {
   return hasLetters(note) ? note : null;
 }
 
-/** Palavras que fariam o recado parecer da própria loja. */
-const RESERVED_NICKNAME = /\b(trive|triv[eéë]|loja|equipe|atendimento|oficial|lia|vendedora|suporte)\b/iu;
+const DOMAIN =
+  /\b[\w-]+(?:\.[\w-]+)*\.(?:com|net|org|br|me|ly|io|co|app|link|site|shop|store|online|xyz|info|gl|gg|to|cc|tv|page|bio)\b(?:\/\S*)?/gi;
+
+/** Palavras que fariam o recado parecer da própria loja ("Lia" fica: é nome comum de amiga). */
+const RESERVED_NICKNAME = /\b(trive|loja|equipe|atendimento|oficial|suporte)\b/iu;
 
 /** O nome de quem deixou o recado: só letras, e nunca se passando pela loja. */
 export function normalizeNickname(raw: string | null | undefined): string | null {
@@ -125,9 +132,13 @@ export function scoreboardLine(options: readonly RoundOptionLabel[], tally: Roun
 }
 
 /** Recados (os mais recentes primeiro): "💬 Carla (B): combina com teu cabelo". São de quem votou, não da loja. */
-export function notesBlock(options: readonly RoundOptionLabel[], notes: readonly { nickname: string | null; note: string; choice: number }[]): string {
+export function notesBlock(
+  options: readonly RoundOptionLabel[],
+  notes: readonly { nickname: string | null; note: string; choice: number }[],
+  limit: number = NOTES_PER_MESSAGE,
+): string {
   const lines = notes
-    .slice(0, NOTES_PER_MESSAGE)
+    .slice(0, limit)
     .map((entry) => `💬 ${entry.nickname ?? "Alguém"} (${options[entry.choice]?.letter ?? "?"}): ${entry.note}`);
   return lines.length > 0 ? `\n\nRecados de quem votou:\n${lines.join("\n")}` : "";
 }

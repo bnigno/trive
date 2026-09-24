@@ -49,12 +49,14 @@ export function VoteBoard({
   const [nickname, setNickname] = useState("");
   const [noteSent, setNoteSent] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [closedNow, setClosedNow] = useState(false);
   const [voting, startVote] = useTransition();
   const [sendingNote, startNote] = useTransition();
   const [bridging, startBridge] = useTransition();
 
   const chosen = myChoice ?? storedChoice;
-  const showResult = !open || chosen !== null;
+  const isOpen = open && !closedNow;
+  const showResult = !isOpen || chosen !== null;
 
   function vote(choice: number) {
     if (voting) return;
@@ -62,9 +64,15 @@ export function VoteBoard({
     startVote(async () => {
       try {
         const result = await withTimeout(voteAction({ token, choice, voterId: getVoterId() }), { ok: false as const, reason: "inexistente" as const });
-        if (result.ok || result.reason === "ja_votou") {
+        if (result.ok) {
           writeVotedChoice(token, choice);
           setMyChoice(choice);
+        } else if (result.reason === "ja_votou") {
+          // O voto que vale é o que ficou gravado (um toque anterior pode ter chegado).
+          writeVotedChoice(token, result.choice);
+          setMyChoice(result.choice);
+        } else if (result.reason === "fechada") {
+          setClosedNow(true);
         }
         if (result.tally) {
           setCounts(result.tally.counts);
@@ -98,6 +106,9 @@ export function VoteBoard({
         if (result.ok) {
           setNoteSent(true);
           setStatus(`Recado guardado: vai para a ${displayName} junto com o próximo placar.`);
+        } else if (result.reason === "ja_deixou") {
+          setNoteSent(true);
+          setStatus("Você já deixou um recado nesta votação.");
         } else {
           setStatus(
             result.reason === "vazio"
@@ -194,7 +205,7 @@ export function VoteBoard({
         })}
       </ul>
 
-      {open && chosen !== null && !noteSent ? (
+      {isOpen && chosen !== null && !noteSent ? (
         <div className="flex flex-col gap-3 rounded-(--radius-hair) border border-ivory-300 bg-ivory-50 px-4 py-5">
           <p className="font-display text-lg text-ink-950">Quer mandar um recado para a {displayName}?</p>
           <label htmlFor="friends-note" className="flex flex-col gap-1 font-store text-xs text-ink-700">

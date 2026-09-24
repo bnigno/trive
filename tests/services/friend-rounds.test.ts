@@ -128,7 +128,8 @@ describe("o voto e o recado", () => {
   it("um por aparelho; o recado vem depois do voto, sem link, telefone nem nome da loja", async () => {
     const { round } = await seedRound();
     expect(await voteInRound(sdb, { token: round.token, choice: 1, voterId: VOTER_A, now: NOW })).toMatchObject({ ok: true, tally: { counts: [0, 1], total: 1 } });
-    expect(await voteInRound(sdb, { token: round.token, choice: 0, voterId: VOTER_A, now: NOW })).toMatchObject({ ok: false, reason: "ja_votou" });
+    // Toque repetido (em outra peça): vale o voto gravado, e o aparelho fica sabendo qual.
+    expect(await voteInRound(sdb, { token: round.token, choice: 0, voterId: VOTER_A, now: NOW })).toMatchObject({ ok: false, reason: "ja_votou", choice: 1 });
     expect(
       await addNoteToVote(sdb, { token: round.token, voterId: VOTER_A, note: "a B! paga aqui bit.ly/trive-pix ou 91 98888-7777 @loja_fake combina com teu cabelo", nickname: "Equipe TRIVÉ", now: NOW }),
     ).toEqual({ ok: true });
@@ -136,8 +137,9 @@ describe("o voto e o recado", () => {
     expect(answer.note).toBe("a B! paga aqui ou combina com teu cabelo");
     expect(answer.nickname).toBeNull();
     expect(answer.voterKey).toMatch(/^[0-9a-f]{64}$/);
-    // Recado sem voto (outro aparelho) não entra.
+    // Recado sem voto (outro aparelho) não entra; segundo recado do mesmo voto também não.
     expect(await addNoteToVote(sdb, { token: round.token, voterId: VOTER_B, note: "oi", now: NOW })).toEqual({ ok: false, reason: "sem_voto" });
+    expect(await addNoteToVote(sdb, { token: round.token, voterId: VOTER_A, note: "de novo", now: NOW })).toEqual({ ok: false, reason: "ja_deixou" });
     const summaries = await outbox("friends.summary");
     expect(summaries).toHaveLength(1);
     expect(summaries[0].nextAttemptAt.getTime()).toBe(NOW.getTime() + SUMMARY_DELAY_MS);
@@ -217,11 +219,35 @@ describe("o placar pela Lia", () => {
     expect(await voteInRound(sdb, { token: round.token, choice: 1, voterId: VOTER_B, now: NOW })).toMatchObject({ ok: false, reason: "fechada" });
   });
 
+  it("SAIR depois de a votação fechar de noite: o resultado adiado para a manhã não sai", async () => {
+    const { round, conversation } = await seedRound();
+    await voteInRound(sdb, { token: round.token, choice: 0, voterId: VOTER_A, now: NOW });
+    const night = new Date("2026-10-07T01:00:00.000Z"); // 22h em SP: fecha e adia
+    expect(await closeFriendRound(sdb, provider, { roundId: round.roundId, now: night })).toEqual({ skipped: "fora_da_janela" });
+    expect(await cancelFriendRoundsForConversation(sdb, { conversationId: conversation.id, now: night })).toBe(1);
+    const morning = new Date("2026-10-07T12:00:00.000Z");
+    expect(await closeFriendRound(sdb, provider, { roundId: round.roundId, now: morning })).toEqual({ skipped: "cancelada" });
+    expect(provider.sentMessages).toHaveLength(0);
+  });
+
+  it("o fechamento leva até 5 recados pendentes", async () => {
+    const { round } = await seedRound();
+    const voters = ["a", "b", "c", "d", "e", "f"].map((letter) => `${letter.repeat(8)}-aaaa-4aaa-8aaa-${letter.repeat(12)}`);
+    for (const [index, voterId] of voters.entries()) {
+      await voteInRound(sdb, { token: round.token, choice: index % 2, voterId, now: NOW });
+      await addNoteToVote(sdb, { token: round.token, voterId, note: `recado ${index + 1}`, now: NOW });
+    }
+    await closeFriendRound(sdb, provider, { roundId: round.roundId, now: new Date(NOW.getTime() + 24 * 3600_000) });
+    const body = provider.sentMessages[0].body;
+    expect((body.match(/💬/g) ?? []).length).toBe(5);
+  });
+
   it("o caderninho da Lia sabe a vencedora com o slug", async () => {
     const { round, conversation } = await seedRound();
     await voteInRound(sdb, { token: round.token, choice: 1, voterId: VOTER_A, now: NOW });
     const open = await friendRoundMemoryLines(sdb, { conversationId: conversation.id, now: NOW });
     expect(open[0]).toContain("Votação das amigas aberta até amanhã às 12h");
+    expect(open[0]).toContain(round.url);
     const closed = await friendRoundMemoryLines(sdb, { conversationId: conversation.id, now: new Date(NOW.getTime() + 25 * 3600_000) });
     expect(closed[0]).toContain("ganhou B = Longo Dunas (areia) (dunas-m)");
   });

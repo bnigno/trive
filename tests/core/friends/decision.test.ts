@@ -31,7 +31,14 @@ describe("o que a amiga escreve", () => {
     expect(normalizeNickname("x".repeat(50))).toHaveLength(30);
     expect(normalizeNickname("Carla 91988887777")).toBe("Carla");
     expect(normalizeNickname("Equipe TRIVÉ")).toBeNull();
-    expect(normalizeNickname("lia")).toBeNull();
+    expect(normalizeNickname("Lia")).toBe("Lia");
+    expect(normalizeNickname("atendimento")).toBeNull();
+  });
+
+  it("recado normal com ponto sem espaço, tamanhos e datas fica inteiro", () => {
+    for (const note of ["linda.Amei", "vai na B.kkkk", "Não.Prefiro a A", "vai de 38 40 42", "casamento dia 12.10.2026", "das 10.30-11.30"]) {
+      expect(normalizeNote(note)).toBe(note);
+    }
   });
 
   it("recado sem domínio (mesmo sem http), telefone ou @perfil", () => {
