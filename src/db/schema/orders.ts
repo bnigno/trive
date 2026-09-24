@@ -137,6 +137,12 @@ export const orders = pgTable(
     receivedBy: text("received_by"),
     /** Quem confirmou a entrega: a dona (owner), a cliente (customer) ou a Lia. */
     deliveryConfirmedBy: text("delivery_confirmed_by"),
+    /**
+     * Origem do pedido do site (core/store/attribution): o último link de
+     * story ou de cupom tocado no navegador, até 7 dias antes. Null = sem
+     * origem rastreável. O pedido da Lia é atribuído pela ponte (site_carts).
+     */
+    attribution: jsonb("attribution").$type<{ kind: "campaign" | "coupon"; ref: string; touchedOn: string }>(),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     cancelReason: text("cancel_reason"),
     createdBy: uuid("created_by"),

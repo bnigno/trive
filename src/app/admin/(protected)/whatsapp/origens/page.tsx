@@ -13,7 +13,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
-import { siteBridgeFunnel, type BridgeFunnel } from "@/services/site-carts";
+import { siteBridgeFunnel, siteOrdersByOrigin, type BridgeFunnel, type SiteOrderOriginRow } from "@/services/site-carts";
 
 export const dynamic = "force-dynamic";
 
@@ -46,16 +46,28 @@ async function loadFunnel(days: Period): Promise<BridgeFunnel | null> {
   }
 }
 
+/** Carga separada: se só esta falhar, o funil da Lia continua na tela. */
+async function loadSiteOrders(days: Period): Promise<SiteOrderOriginRow[] | null> {
+  try {
+    const to = new Date();
+    const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+    return await siteOrdersByOrigin(getDb(), { from, to });
+  } catch {
+    return null;
+  }
+}
+
 export default async function OrigensPage({ searchParams }: { searchParams: Promise<{ dias?: string }> }) {
   await requireOwner("whatsapp");
   const { dias } = await searchParams;
   const days = parsePeriod(dias);
   const funnel = await loadFunnel(days);
+  const siteOrders = await loadSiteOrders(days);
 
   const header = (
     <PageHeader
       title="De onde vieram"
-      subtitle="Quem tocou em “Falar com a Lia” (no site ou num link de story), quantas chegaram à conversa e quantas compraram."
+      subtitle="Quem tocou em “Falar com a Lia” (no site ou num link de story), quantas chegaram à conversa e quantas compraram — e, embaixo, os pedidos feitos direto no site."
       actions={
         <div className="flex items-center gap-1 rounded-md border border-zinc-300 p-0.5 text-xs dark:border-zinc-700">
           {PERIODS.map((period) => (
@@ -86,6 +98,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
           title="Não foi possível carregar as origens"
           hint="O banco de dados está indisponível no momento. Tente recarregar a página."
         />
+        <SiteOrdersCard siteOrders={siteOrders} days={days} />
       </div>
     );
   }
@@ -113,7 +126,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
         />
       </div>
 
-      <Card title="Por origem">
+      <Card title="Pela Lia — por origem">
         {rows.length === 0 ? (
           <EmptyState
             title={`Nenhum toque em ${days} dias`}
@@ -152,6 +165,53 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
           </div>
         )}
       </Card>
+
+      <SiteOrdersCard siteOrders={siteOrders} days={days} />
     </div>
+  );
+}
+
+/** Os pedidos feitos direto no site, por origem — independente do funil da Lia. */
+function SiteOrdersCard({ siteOrders, days }: { siteOrders: SiteOrderOriginRow[] | null; days: Period }) {
+  return (
+    <Card title="Pedidos feitos no site">
+      {siteOrders === null ? (
+        <EmptyState
+          title="Não foi possível carregar os pedidos do site"
+          hint="Tente recarregar a página em instantes."
+        />
+      ) : siteOrders.length === 0 ? (
+        <EmptyState
+          title={`Nenhum pedido pelo site em ${days} dias`}
+          hint="Quando alguém comprar direto no site (sem passar pela Lia), aparece aqui com o link de story ou de cupom que trouxe a cliente."
+        />
+      ) : (
+        <div className="flex flex-col gap-4">
+          <Table headers={["Origem", "Pedidos", "Pagos", "Vendido"]}>
+            {siteOrders.map((row) => (
+              <Tr key={`${row.kind ?? "none"}:${row.ref ?? ""}`}>
+                <Td>
+                  <span
+                    className={cx(
+                      "font-medium",
+                      row.kind ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400",
+                    )}
+                  >
+                    {row.label}
+                  </span>
+                  {row.path ? <span className="block font-mono text-xs text-zinc-500 dark:text-zinc-400">{row.path}</span> : null}
+                </Td>
+                <Td className="tabular-nums">{row.orders}</Td>
+                <Td className="tabular-nums">{row.paidOrders}</Td>
+                <Td className="whitespace-nowrap tabular-nums">{row.paidCents > 0 ? formatCentsBRL(row.paidCents) : "—"}</Td>
+              </Tr>
+            ))}
+          </Table>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            A origem é o último link de story (/ig/) ou de cupom (/c/) que a cliente tocou <strong>no mesmo navegador</strong> em que comprou, até 7 dias antes. “Link de cupom” é o link que ela tocou, não o cupom que usou. Quem tocou no link dentro do Instagram e depois abriu o site pelo Safari ou pelo Chrome aparece como “sem origem conhecida”: o Instagram guarda o que ela tocou num navegador próprio. Pedidos feitos antes de a origem começar a ser anotada também ficam “sem origem conhecida”. Cada toque conta para um pedido do site; a venda que a Lia fechou pelo mesmo link aparece no card de cima.
+          </p>
+        </div>
+      )}
+    </Card>
   );
 }

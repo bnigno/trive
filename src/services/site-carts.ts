@@ -20,6 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
+import { attributionPath, type OriginKind } from "@/core/store/attribution";
 import { campaignLinks, orders, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -369,6 +370,63 @@ export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date
     paidCents: Number(overall?.paidCents ?? 0),
   };
   return { rows: list, totals };
+}
+
+export type SiteOrderOriginRow = {
+  /** null = pedido do site sem origem rastreável. */
+  kind: OriginKind | null;
+  ref: string | null;
+  /** "story «Dunas»", "Provador «chegadas»", "link de cupom" ou "sem origem conhecida" — o mesmo jeito do funil da Lia. */
+  label: string;
+  /** "/ig/dunas" ou "/c/AMIGA7K" (a linha mono embaixo do rótulo); null sem origem. */
+  path: string | null;
+  orders: number;
+  paidOrders: number;
+  paidCents: number;
+};
+
+/**
+ * Pedidos feitos no CHECKOUT DO SITE no período, por origem guardada no
+ * navegador (orders.attribution). É a metade que a ponte não vê: a cliente
+ * tocou no link, foi ao site e comprou sem passar pela Lia.
+ */
+export async function siteOrdersByOrigin(db: DbOrTx, input: { from: Date; to: Date }): Promise<SiteOrderOriginRow[]> {
+  const kind = sql<string | null>`${orders.attribution}->>'kind'`;
+  const ref = sql<string | null>`${orders.attribution}->>'ref'`;
+  const rows = await db
+    .select({
+      kind,
+      ref,
+      campaignLabel: campaignLinks.label,
+      orders: sql<number>`count(*)::int`,
+      paidOrders: sql<number>`count(*) filter (where ${paidOrder()})::int`,
+      paidCents: sql<number>`coalesce(sum(${orders.totalCents}) filter (where ${paidOrder()}), 0)::int`,
+    })
+    .from(orders)
+    .leftJoin(campaignLinks, and(sql`${orders.attribution}->>'kind' = 'campaign'`, eq(campaignLinks.slug, ref)))
+    .where(and(eq(orders.channel, "store"), gte(orders.createdAt, input.from), lt(orders.createdAt, input.to)))
+    .groupBy(kind, ref, campaignLinks.label);
+  return rows
+    .map((row): SiteOrderOriginRow => {
+      const originKind: OriginKind | null = (row.kind === "campaign" || row.kind === "coupon") && row.ref ? row.kind : null;
+      const ref = originKind ? row.ref : null;
+      const label =
+        originKind === "campaign"
+          ? originLabel("campaign", row.campaignLabel ?? ref, ref)
+          : originKind === "coupon"
+            ? "link de cupom"
+            : "sem origem conhecida";
+      return {
+        kind: originKind,
+        ref,
+        label,
+        path: originKind && ref ? attributionPath({ kind: originKind, ref }) : null,
+        orders: Number(row.orders),
+        paidOrders: Number(row.paidOrders),
+        paidCents: Number(row.paidCents),
+      };
+    })
+    .sort((a, b) => (a.kind === null ? 1 : 0) - (b.kind === null ? 1 : 0) || b.orders - a.orders || a.label.localeCompare(b.label, "pt-BR"));
 }
 
 /** Quantas pontes há por conversa (o funil e o painel). */

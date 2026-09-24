@@ -428,6 +428,13 @@
       "when": 1790225360317,
       "tag": "0060_estorno_mercado_pago",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1790228271461,
+      "tag": "0061_atribuicao_do_site",
+      "breakpoints": true
     }
   ]
 }

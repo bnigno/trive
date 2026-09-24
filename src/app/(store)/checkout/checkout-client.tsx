@@ -51,6 +51,7 @@ import type { DeliveryOption } from "@/core/shipping/delivery-windows";
 import { assessNeededBy, isValidNeededBy, OCCASION_MAX } from "@/core/shipping/needed-by";
 import { writeStoredCep } from "@/lib/cep-storage";
 import { readStoredCoupon, writeStoredCoupon } from "@/lib/coupon-storage";
+import { clearOrigin, readOrigin } from "@/lib/origin-storage";
 import { spDayKey } from "@/lib/sp-day";
 import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
@@ -392,6 +393,8 @@ export function CheckoutClient({
           clear();
           // O cupom foi gasto com o pedido: a próxima sacola começa sem ele.
           writeStoredCoupon(null);
+          // E o link que trouxe a cliente já ganhou este pedido: a recompra de outro dia não é dele.
+          clearOrigin();
           if (result.initPointUrl) {
             // Mercado Pago habilitado: vai DIRETO para o Checkout Pro pagar
             // agora. O back_url do MP traz o cliente de volta para
@@ -498,6 +501,7 @@ export function CheckoutClient({
       paymentMethod,
       ...(couponCode ? { couponCode } : {}),
       ...(readStoredStyle()?.token ? { styleToken: readStoredStyle()?.token } : {}),
+      ...(readOrigin() ? { origin: readOrigin() } : {}),
       ...(isGift
         ? {
             gift: {

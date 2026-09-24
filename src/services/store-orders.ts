@@ -10,6 +10,8 @@ import { InsufficientStockError } from "@/core/stock/ledger";
 import { computeOrderTotals } from "@/core/orders/totals";
 import {
   auditLog,
+  campaignLinks,
+  coupons,
   customerAddresses,
   customers,
   financialEntries,
@@ -42,6 +44,7 @@ import { billableWeightGrams, isQuoteValid } from "@/core/shipping/correios-pack
 import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
 import { isValidNeededBy, neededByLabel, OCCASION_MAX, shipByFor } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
+import { attributionFrom, storedOriginSchema, type OrderAttribution } from "@/core/store/attribution";
 import { findShippingQuoteById, getCorreiosAutoSettings } from "@/services/correios-quotes";
 import { parseWindows } from "@/services/shipping";
 import { activeMotoboyCoversCep, computeTotalWeightGrams } from "@/services/store-catalog";
@@ -195,6 +198,12 @@ const createStoreOrderSchema = z.object({
    */
   /** Token da cartela de estilo guardada no navegador: vincula ao cadastro. */
   styleToken: z.uuid().optional(),
+  /**
+   * De onde a cliente chegou (link de story/cupom guardado no navegador).
+   * Validado à parte com safeParse: origem estragada vira "sem origem" e
+   * NUNCA derruba o pedido.
+   */
+  origin: z.unknown().optional(),
   gift: z
     .object({
       recipientName: z
@@ -216,6 +225,23 @@ const createStoreOrderSchema = z.object({
 });
 
 export type CreateStoreOrderInput = z.input<typeof createStoreOrderSchema>;
+
+/**
+ * A origem que o pedido grava: válida, dentro dos 7 dias e de um link ou
+ * cupom que EXISTE — o navegador é da cliente, e um slug inventado não pode
+ * abrir linha no painel da dona.
+ */
+async function orderAttribution(tx: DbOrTx, origin: unknown, now: Date): Promise<OrderAttribution | null> {
+  const parsed = storedOriginSchema.safeParse(origin);
+  if (!parsed.success) return null;
+  const attribution = attributionFrom(parsed.data, now);
+  if (!attribution) return null;
+  const found =
+    attribution.kind === "campaign"
+      ? await tx.select({ id: campaignLinks.id }).from(campaignLinks).where(eq(campaignLinks.slug, attribution.ref)).limit(1)
+      : await tx.select({ id: coupons.id }).from(coupons).where(eq(coupons.code, attribution.ref)).limit(1);
+  return found.length > 0 ? attribution : null;
+}
 
 export interface CreateStoreOrderResult {
   orderId: string;
@@ -679,6 +705,8 @@ export async function createStoreOrder(
         }
       : null;
 
+    const attribution = await orderAttribution(tx, parsed.origin, now);
+
     const [order] = await tx
       .insert(orders)
       .values({
@@ -702,6 +730,7 @@ export async function createStoreOrder(
         neededBy,
         occasion,
         shipBy,
+        attribution,
         note: "Pedido da loja",
         createdBy: null,
       })

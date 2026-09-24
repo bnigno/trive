@@ -47,7 +47,10 @@ export async function placeOrderAction(
     const db = getDb();
     // createStoreOrder valida TUDO com Zod internamente (documento, telefone,
     // endereço, itens) — nenhuma confiança no payload do cliente.
-    const result = await createStoreOrder(db, input);
+    // O navegador só faz pedido da LOJA: o canal "whatsapp" é da Lia (servidor).
+    // Sem isto, um payload forjado se passaria por venda da vendedora e sairia
+    // da conciliação e do lembrete de pagamento do site.
+    const result = await createStoreOrder(db, { ...input, channel: "store" });
 
     // Pagamento automático: se o MP está habilitado, já cria a preference e
     // devolve o link do Checkout Pro. QUALQUER falha aqui NÃO derruba o
