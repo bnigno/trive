@@ -1018,6 +1018,85 @@ Em 22/09/2026, em produção: os dois interruptores **desligados** e
 então cada foto custa 3 créditos. Falta comprar crédito, gerar as fotos-base e
 ligar.
 
+## De onde vieram: os pedidos feitos no site
+
+**/admin/whatsapp/origens** tem dois cards. **Pela Lia — por origem** é o
+funil de sempre (toque em "Falar com a Lia" → conversa → pedido). **Pedidos
+feitos no site** conta quem comprou direto no checkout, pela última origem
+que a cliente tocou **no mesmo navegador**, até 7 dias antes: um link de
+story (`/ig/…`) ou um link de cupom (`/c/…`, é o link tocado — o cupom usado
+fica no pedido).
+
+- "Sem origem conhecida" é normal: quem tocou no link dentro do Instagram e
+  comprou pelo Safari/Chrome aparece aí (o Instagram guarda o toque num
+  navegador próprio), e todo pedido de antes de 24/09/2026 também.
+- O pedido guarda só o link e o **dia** do toque (`orders.attribution`), e só
+  de link ou cupom que existe. A origem é apagada do navegador depois da
+  compra — cada toque conta para um pedido do site.
+- Regra em `src/core/store/attribution.ts`; relatório em
+  `siteOrdersByOrigin` (`src/services/site-carts.ts`).
+
+Produção: migração 0061 (24/09/2026).
+
+## Entrevista da curadora (a Lia pergunta, a dona responde por áudio)
+
+Em **/admin/whatsapp › Entrevista da curadora**: uma vez por dia, na hora
+escolhida (9h–20h; fim de semana só se marcado), a Lia manda no WhatsApp da
+dona (o número de **Conexão**) a foto de uma peça e UMA pergunta. A ordem:
+peças da edição da cidade sem nota → sem nota → as que já têm nota (outras
+perguntas); 14 dias entre perguntas da mesma peça.
+
+A dona responde com um ou mais áudios (eles **somam**; o rascunho espera o
+último) ou com texto começando por **resposta:**. Chega um rascunho com a
+nota da curadora e duas legendas (sem preço, custo, fornecedor ou nomes).
+Só estas palavras valem — o resto do que ela escreve continua indo à Lia:
+
+| Resposta | O que acontece |
+|---|---|
+| `ok` | a nota vai para a peça (página e Lia) |
+| `ok voz` | a nota **e o áudio inteiro** viram a voz da curadora (público: toca na página e a Lia manda às clientes) — só quando a resposta foi UM áudio, sem correção |
+| `corrige: …` | a inteligência reescreve o rascunho com a correção |
+| `nova: …` | salva a nota exatamente como ela escreveu |
+| `pula` | deixa a peça para depois |
+
+- A pergunta vale até a noite (14 h); o rascunho, 24 h. Três seguidas sem
+  resposta (ou puladas) e ela passa a perguntar só às segundas.
+- Lote de fotos do Ateliê aberto ganha: o áudio vira recado da peça nova.
+- **Perguntar agora** fura a hora e diz o que falta (telefone da dona,
+  WhatsApp desligado, mensagens não sincronizadas, nenhuma peça a perguntar).
+  Sem a chave de transcrição (`OPENAI_API_KEY`) ela só responde escrevendo.
+- Fila: `curator.interview_ask|draft|decide` (em /admin/fila); cron
+  `curator-interview` no minuto 5 de cada hora. Código em
+  `src/services/curator-interviews.ts` e `src/core/atelier/interview.ts`.
+
+Produção: migração 0062; `scripts/sync-seed.ts --settings curator_interview_enabled,curator_interview_hour,curator_interview_weekends --templates owner_interview_ask,owner_interview_draft,owner_interview_saved,owner_interview_skipped,owner_interview_unheard,owner_interview_rejected`;
+`PUT /api/inngest`. Em 24/09/2026: **desligada**.
+
+## "Me ajuda a escolher?" (a votação das amigas)
+
+Interruptor em **/admin/whatsapp › Vendedora** (`friends_vote_enabled`).
+Desligado, a ferramenta nem aparece para a Lia. Ligado, quando a cliente fica
+em dúvida entre 2 ou 3 peças, a Lia oferece (uma vez) a votação: a cliente
+recebe o cartão "Qual fica melhor na Ana?" com o link `/v/<código>` e
+encaminha às amigas.
+
+- Quem recebe vota com um toque, sem cadastro e sem telefone (um voto por
+  aparelho; até 60 por votação) e pode deixar recado depois do voto — sem
+  link, telefone ou @perfil, e o nome nunca pode ser "loja/equipe/TRIVÉ".
+- O placar volta à cliente pela Lia 10 min depois do primeiro voto e quando
+  a votação fecha (24 h), com os recados; fora das 9h–21h espera a manhã.
+  Com o "sim" dela, a Lia reserva a vencedora (o caderninho tem o slug).
+- "Quero ver peças no meu estilo" abre o WhatsApp **da amiga** com a Lia
+  (origem **amigas** em De onde vieram). A loja nunca escreve primeiro.
+- SAIR da cliente encerra a votação dela. Votos e recados somem 30 dias
+  depois do fim, o nome dela sai da votação e a página some.
+- Fila: `friends.summary`, `friends.close`, `friends.purge`. Código em
+  `src/services/friend-rounds.ts`, `src/core/friends/decision.ts` e
+  `src/services/bot/friends.ts`.
+
+Produção: migração 0063; `scripts/sync-seed.ts --settings friends_vote_enabled --templates friends_summary,friends_closed`.
+Em 24/09/2026: **desligado**.
+
 ## A Lia passou a conversa com "Assistente de IA indisponível"
 
 O motivo entre parênteses diz o que a API da Anthropic respondeu:
