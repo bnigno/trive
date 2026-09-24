@@ -191,7 +191,9 @@ async function sendOrderWa(
       customerId: ctx.customer.id,
       orderId,
       dedupeKey: `${clientDedupePrefix}${orderId}`,
-      requireOptIn: true,
+      // Aviso do PEDIDO DELA: não depende do opt-in, que vale para novidades
+      // e ofertas. Quem compra espera saber que o pedido foi confirmado.
+      requireOptIn: false,
     });
   }
   if (spec.ownerTemplate && spec.ownerDedupePrefix) {

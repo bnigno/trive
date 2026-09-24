@@ -71,7 +71,7 @@ async function loadOrderNoticeContext(db: DbOrTx, orderId: string) {
   return { ...row, vars };
 }
 
-/** Cliente: "seu pedido #N foi cancelado — motivo amigável — link". Só com opt-in. */
+/** Cliente: "seu pedido #N foi cancelado — motivo amigável — link". */
 export async function sendOrderCanceledWa(
   db: DbOrTx,
   provider: MessagingProvider,
@@ -89,11 +89,12 @@ export async function sendOrderCanceledWa(
     customerId: ctx.customerId,
     orderId,
     dedupeKey: `wa.order_canceled:${orderId}`,
-    requireOptIn: true,
+    // Aviso do pedido dela: sempre vai (o opt-in é de novidades e ofertas).
+    requireOptIn: false,
   });
 }
 
-/** Cliente: reembolso confirmado pelo Mercado Pago. Só com opt-in. */
+/** Cliente: reembolso confirmado pelo Mercado Pago. */
 export async function sendOrderRefundedWa(
   db: DbOrTx,
   provider: MessagingProvider,
@@ -111,7 +112,8 @@ export async function sendOrderRefundedWa(
     customerId: ctx.customerId,
     orderId,
     dedupeKey: `wa.order_refunded:${orderId}`,
-    requireOptIn: true,
+    // Aviso do pedido dela: sempre vai (o opt-in é de novidades e ofertas).
+    requireOptIn: false,
   });
 }
 

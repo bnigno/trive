@@ -198,7 +198,7 @@ describe("sendDeliveredWa", () => {
     expect(provider.sentImages).toHaveLength(1);
   });
 
-  it("sem foto: 'marcar entregue' pelo rastreio não manda nada; confirmado pela cliente manda o texto sem hora; não entregue, sem opt-in ou sem template: pula", async () => {
+  it("sem foto: 'marcar entregue' pelo rastreio não manda nada; confirmado pela cliente manda o texto sem hora; não entregue ou sem template: pula", async () => {
     const { orderId } = await createOrder();
     await db.update(schema.orders).set({ status: "delivered", deliveredAt: new Date() }).where(eq(schema.orders.id, orderId));
     expect(await sendDeliveredWa(sdb, provider, storage, { orderId })).toEqual({ skipped: "sem_foto" });
@@ -215,10 +215,11 @@ describe("sendDeliveredWa", () => {
     const shipped = await createOrder();
     expect(await sendDeliveredWa(sdb, provider, storage, { orderId: shipped.orderId })).toEqual({ skipped: "nao_entregue" });
 
+    // Sem opt-in a confirmação de entrega SAI: é o pedido dela, não é oferta.
     const noOptIn = await createOrder({ marketingOptIn: false });
     await db.update(schema.customers).set({ marketingOptIn: false });
     await deliverOrderWithPhoto(sdb, storage, { orderId: noOptIn.orderId, photo: { data: await cameraPhoto(), contentType: "image/jpeg" }, userId });
-    expect(await sendDeliveredWa(sdb, provider, storage, { orderId: noOptIn.orderId })).toEqual({ skipped: "sem_opt_in" });
+    expect(await sendDeliveredWa(sdb, provider, storage, { orderId: noOptIn.orderId })).toMatchObject({ sent: true });
     await db.update(schema.customers).set({ marketingOptIn: true });
 
     await db.update(schema.waTemplates).set({ isActive: false }).where(eq(schema.waTemplates.key, "order_delivered"));
