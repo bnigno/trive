@@ -16,6 +16,8 @@ import {
   type DeliveryWindow,
   type DeliveryWindowChoice,
 } from "@/core/shipping/delivery-windows";
+import { isFromEarlierAttempt } from "@/core/delivery/tracking";
+import type { StopStatus } from "@/core/delivery/state";
 import { groupRouteOrders, isPaidAfterCutoff, isStillOnTheStreet, type RouteOfDay } from "@/core/shipping/route";
 import { auditLog, customers, deliveryStops, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
 import { isSpDayKey, spDayKey, spMinutesOfDay } from "@/lib/sp-day";
@@ -54,7 +56,7 @@ export interface RouteOrder {
 
 /** O pedido na Rota do dia. */
 export interface RouteOfDayOrder extends RouteOrder {
-  /** Saiu e a última parada foi "não consegui": combinar com a cliente e mandar de novo. */
+  /** Saiu e a última parada foi "não consegui": combinar com a cliente e reagendar (ou mandar de novo). */
   cameBack: boolean;
 }
 
@@ -196,16 +198,14 @@ export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: bo
 export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOfDayOrder> & { todayKey: string }> {
   const now = input.now ?? new Date();
   const todayKey = spDayKey(now);
-  const candidates = (await listRouteOrders(db, { includeShipped: true })).filter(
-    // O dinheiro na entrega fica em "Na rua" até a baixa, por mais velho que seja: há dinheiro a receber.
-    (order) => order.status !== "shipped" || order.dispatchedAt === null || isStillOnTheStreet(order.dispatchedAt, now),
-  );
-  const cameBack = await ordersThatCameBack(db, candidates.filter((order) => order.dispatchedAt !== null).map((order) => order.id));
-  const grouped = groupRouteOrders(
-    candidates.map((order) => ({ ...order, cameBack: cameBack.has(order.id) })),
-    todayKey,
-    spMinutesOfDay(now),
-  );
+  const all = await listRouteOrders(db, { includeShipped: true });
+  const cameBack = await ordersThatCameBack(db, all.filter((order) => order.dispatchedAt !== null));
+  const candidates = all
+    .map((order) => ({ ...order, cameBack: order.dispatchedAt !== null && cameBack.has(order.id) }))
+    // "Na rua": o pago que saiu há até 48 h; o dinheiro na entrega até a baixa (há dinheiro a
+    // receber); o que voltou sem entregar até ser reagendado.
+    .filter((order) => order.status !== "shipped" || order.dispatchedAt === null || order.cameBack || isStillOnTheStreet(order.dispatchedAt, now));
+  const grouped = groupRouteOrders(candidates, todayKey, spMinutesOfDay(now));
   return { ...grouped, todayKey };
 }
 
@@ -246,6 +246,9 @@ export interface DispatchResult {
  * - Dinheiro na entrega: o pedido fica "aguardando pagamento" até o motoboy
  *   voltar, então não há transição — a saída fica no retrato da janela
  *   (dispatchedAt) e o aviso vai pela fila (order.out_for_delivery).
+ * - Voltou para a loja (a última parada foi "não consegui" depois da saída,
+ *   reagendado ou não): sai de novo, com marca de saída nova e aviso novo
+ *   pela fila (a chave leva a hora da saída; o "saiu" da primeira vez já foi).
  * Idempotente: quem já saiu devolve `idempotent: true`, sem novo aviso.
  */
 export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSchema>): Promise<DispatchResult> {
@@ -270,13 +273,19 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     }
     const from = order.status as OrderStatus;
     const base = { orderId: order.id, orderNumber: order.orderNumber, from };
-    if (from === "shipped" || from === "delivered" || order.deliveryWindow.dispatchedAt) return { ...base, to: from, idempotent: true };
+    if (from === "delivered") return { ...base, to: from, idempotent: true };
+    const waitingCash = from === "pending_payment" && order.paymentMethod === "cash";
+    const dispatchedAt = order.deliveryWindow.dispatchedAt ? new Date(order.deliveryWindow.dispatchedAt) : null;
+    // Voltou para a loja: a última parada foi "não consegui" depois da saída
+    // (reagendado ou não). O "Saiu" vale de novo — com marca e aviso novos.
+    const again = (from === "shipped" || waitingCash || ROUTE_STATUSES.includes(from)) && (await cameBackToStore(tx, { id: order.id, dispatchedAt }));
+    // Já saiu (ou foi enviado por outro caminho) e não voltou: nada de novo.
+    if (!again && (dispatchedAt || from === "shipped")) return { ...base, to: from, idempotent: true };
     // A janela já passou: primeiro reagendar, senão a cliente recebe "chega sexta 18/09" ontem.
     if (order.deliveryWindow.dayKey < spDayKey(now)) {
       throw new ServiceError("WINDOW_PAST", "A janela deste pedido já passou — reagende antes de marcar que saiu.");
     }
-    const waitingCash = from === "pending_payment" && order.paymentMethod === "cash";
-    if (!waitingCash && !ROUTE_STATUSES.includes(from)) {
+    if (!waitingCash && !again && !ROUTE_STATUSES.includes(from)) {
       throw new ServiceError("INVALID_TRANSITION", "Só um pedido pago (ou em dinheiro na entrega) pode sair para entrega.");
     }
     // Embalar antes de sair: sem a foto do pacote nada sai — nem o dinheiro na entrega.
@@ -285,30 +294,46 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     }
 
     const snapshot = { ...order.deliveryWindow, dispatchedAt: now.toISOString() };
-    if (waitingCash) {
-      await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: now }).where(eq(orders.id, order.id));
-      await enqueueOutboxEvent(tx, {
+    // O "saiu" da segunda vez tem chave própria: o da primeira já usou a de sempre.
+    const notice = () =>
+      enqueueOutboxEvent(tx, {
         eventType: "order.out_for_delivery",
-        dedupeKey: `order.out_for_delivery:${order.id}`,
+        dedupeKey: again ? `order.out_for_delivery:${order.id}:${snapshot.dispatchedAt}` : `order.out_for_delivery:${order.id}`,
         aggregateType: "order",
         aggregateId: order.id,
-        payload: { orderId: order.id, orderNumber: order.orderNumber },
+        payload: { orderId: order.id, orderNumber: order.orderNumber, ...(again ? { againAt: snapshot.dispatchedAt } : {}) },
       });
+    if (waitingCash || from === "shipped") {
+      await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: now }).where(eq(orders.id, order.id));
+      await notice();
       await tx.insert(auditLog).values({
         actorType: "user",
         actorId: parsed.userId,
         action: "order.dispatch",
         entityType: "order",
         entityId: order.id,
-        after: { dispatchedAt: snapshot.dispatchedAt, paymentMethod: "cash" },
+        after: { dispatchedAt: snapshot.dispatchedAt, ...(waitingCash ? { paymentMethod: "cash" } : {}), ...(again ? { again: true } : {}) },
       });
-      return { ...base, to: "pending_payment", idempotent: false };
+      return { ...base, to: from, idempotent: false };
     }
     if (from === "paid") {
       await transitionOrder(tx, { orderId: order.id, to: "preparing", userId: parsed.userId });
     }
     await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
     await tx.update(orders).set({ deliveryWindow: snapshot }).where(eq(orders.id, order.id));
+    // Dinheiro na entrega que voltou e foi pago antes de sair de novo: o
+    // order.shipped cai na chave do "saiu" da primeira vez — o aviso vai por aqui.
+    if (again) {
+      await notice();
+      await tx.insert(auditLog).values({
+        actorType: "user",
+        actorId: parsed.userId,
+        action: "order.dispatch",
+        entityType: "order",
+        entityId: order.id,
+        after: { dispatchedAt: snapshot.dispatchedAt, again: true },
+      });
+    }
     return { ...base, to: "shipped", idempotent: false };
   });
 }
@@ -391,8 +416,9 @@ export async function listMotoboyWindows(db: DbOrTx): Promise<{ rateName: string
  * Troca a janela do pedido (ainda por sair) por outra de uma faixa de
  * motoboy ativa, em hoje ou num dia futuro. Não avisa a cliente: a dona
  * combina pelo WhatsApp (o link está na rota). Fica no audit. Pedido que
- * saiu e voltou (a última parada da saída com GPS falhou) também pode: a
- * marca de saída cai e ele volta para a rota.
+ * saiu e voltou (a última parada da saída com GPS falhou) também pode — e de
+ * novo, se a cliente pedir outro dia outra vez: a marca de saída cai, ele
+ * volta para a rota e o "Saiu" seguinte o manda de novo (dispatchOrder).
  */
 export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof rescheduleSchema>): Promise<DeliveryWindowChoice> {
   const parsed = rescheduleSchema.parse(input);
@@ -407,7 +433,9 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
     if (!order) throw new ServiceError("ORDER_NOT_FOUND", "Pedido não encontrado.");
     if (!order.deliveryWindow) throw new ServiceError("NOT_MOTOBOY", "Este pedido não é de motoboy.");
     const waitingCash = order.status === "pending_payment" && order.paymentMethod === "cash";
-    const cameBack = order.deliveryWindow.dispatchedAt ? await lastStopFailed(tx, order.id) : false;
+    // Voltou (a última parada foi "não consegui"): vale também depois de já reagendado uma vez.
+    const dispatchedAt = order.deliveryWindow.dispatchedAt ? new Date(order.deliveryWindow.dispatchedAt) : null;
+    const cameBack = await cameBackToStore(tx, { id: order.id, dispatchedAt });
     const eligibleStatus = ROUTE_STATUSES.includes(order.status as OrderStatus) || waitingCash || (order.status === "shipped" && cameBack);
     if ((order.deliveryWindow.dispatchedAt && !cameBack) || !eligibleStatus) {
       throw new ServiceError("INVALID_TRANSITION", "Só um pedido que ainda não saiu (ou que voltou sem ser entregue) pode ser reagendado.");
@@ -434,20 +462,31 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
   });
 }
 
-/** A última parada (não cancelada) do pedido numa saída com GPS falhou: a peça voltou para a loja. */
-async function lastStopFailed(db: DbOrTx, orderId: string): Promise<boolean> {
-  return (await ordersThatCameBack(db, [orderId])).has(orderId);
+/** A última parada (não cancelada) do pedido numa saída com GPS falhou, e ele não saiu de novo depois: a peça está na loja. */
+async function cameBackToStore(db: DbOrTx, order: { id: string; dispatchedAt: Date | null }): Promise<boolean> {
+  return (await ordersThatCameBack(db, [order])).has(order.id);
 }
 
-/** Voltaram para a loja: a última parada (fora as canceladas) foi "não consegui". */
-async function ordersThatCameBack(db: DbOrTx, orderIds: readonly string[]): Promise<Set<string>> {
-  if (orderIds.length === 0) return new Set();
+/**
+ * Voltaram para a loja: a última parada (fora as canceladas) foi "não
+ * consegui" e o pedido não saiu de novo depois dela (o "Saiu" sem motoboy de
+ * quem foi reagendado não cria parada — a que falhou continua a última).
+ */
+export async function ordersThatCameBack(db: DbOrTx, list: readonly { id: string; dispatchedAt: Date | null }[]): Promise<Set<string>> {
+  if (list.length === 0) return new Set();
   const rows = await db
-    .select({ orderId: deliveryStops.orderId, status: deliveryStops.status })
+    .select({ orderId: deliveryStops.orderId, status: deliveryStops.status, closedAt: deliveryStops.updatedAt })
     .from(deliveryStops)
-    .where(and(inArray(deliveryStops.orderId, [...orderIds]), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
+    .where(and(inArray(deliveryStops.orderId, list.map((order) => order.id)), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
     .orderBy(desc(deliveryStops.createdAt), desc(deliveryStops.id));
-  const last = new Map<string, string>();
-  for (const row of rows) if (!last.has(row.orderId)) last.set(row.orderId, row.status);
-  return new Set([...last].filter(([, status]) => status === "failed").map(([orderId]) => orderId));
+  const last = new Map<string, { status: StopStatus; closedAt: Date }>();
+  for (const row of rows) if (!last.has(row.orderId)) last.set(row.orderId, { status: row.status as StopStatus, closedAt: row.closedAt });
+  return new Set(
+    list
+      .filter((order) => {
+        const stop = last.get(order.id);
+        return stop?.status === "failed" && !isFromEarlierAttempt(stop, order.dispatchedAt);
+      })
+      .map((order) => order.id),
+  );
 }

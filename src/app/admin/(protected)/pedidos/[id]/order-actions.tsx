@@ -180,9 +180,17 @@ export function OrderActions({
   /**
    * Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio;
    * dispatchedLabel = já saiu; canJoinRun = saiu sem motoboy e ainda dá para
-   * mandar o link a um (canJoinDeliveryRun).
+   * mandar o link a um (canJoinDeliveryRun); returned = voltou sem entregar e
+   * foi reagendado — o "Saiu" vale de novo.
    */
-  motoboy?: { customerName: string; dispatchedLabel: string | null; couriers: CourierOption[]; canJoinRun: boolean; previousStop: "failed" | "canceled" | null } | null;
+  motoboy?: {
+    customerName: string;
+    dispatchedLabel: string | null;
+    couriers: CourierOption[];
+    canJoinRun: boolean;
+    previousStop: "failed" | "canceled" | null;
+    returned: boolean;
+  } | null;
   /** Foto do pacote registrada: só assim "Saiu" e "Marcar como enviado" aparecem (embalar antes de sair). */
   packed: boolean;
 }) {
@@ -253,8 +261,8 @@ export function OrderActions({
       ) : null}
       {motoboy &&
       !motoboy.dispatchedLabel &&
-      (status === "paid" || status === "preparing" || (status === "pending_payment" && paymentMethod === "cash")) ? (
-        packed ? (
+      (status === "paid" || status === "preparing" || (status === "pending_payment" && paymentMethod === "cash") || (status === "shipped" && motoboy.returned)) ? (
+        packed || motoboy.returned ? (
           <div className="flex flex-col gap-1">
             <DispatchForm orderId={orderId} customerName={motoboy.customerName} couriers={motoboy.couriers} />
             <p className="text-xs text-zinc-500 dark:text-zinc-400">

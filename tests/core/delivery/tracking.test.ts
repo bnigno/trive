@@ -9,6 +9,7 @@ import {
   coarsePoint,
   distanceLabel,
   etaMinutes,
+  isFromEarlierAttempt,
   POSITION_HIDE_AFTER_MS,
   type TrackingRunInput,
   type TrackingStopInput,
@@ -140,5 +141,18 @@ describe("buildTrackingView", () => {
     expect(buildTrackingView({ run: run(), stop: stop({ status: "failed" }), otherStopsPending: 0, now: NOW })).toMatchObject({ state: "failed", courier: null });
     expect(buildTrackingView({ run: run({ status: "finished" }), stop: stop(), otherStopsPending: 0, now: NOW })).toMatchObject({ state: "finished", courier: null });
     expect(buildTrackingView({ run: run({ status: "canceled" }), stop: stop({ status: "canceled" }), otherStopsPending: 0, now: NOW }).state).toBe("finished");
+  });
+});
+
+describe("isFromEarlierAttempt", () => {
+  const failedAt = new Date("2026-09-18T20:00:00Z");
+  it("'não consegui' e o pedido saiu de novo depois: é da vez passada", () => {
+    expect(isFromEarlierAttempt({ status: "failed", closedAt: failedAt }, new Date("2026-09-20T18:00:00Z"))).toBe(true);
+  });
+  it("falhou depois da saída (a de agora), ainda não saiu de novo, ou não falhou: vale", () => {
+    expect(isFromEarlierAttempt({ status: "failed", closedAt: failedAt }, new Date("2026-09-18T19:00:00Z"))).toBe(false);
+    expect(isFromEarlierAttempt({ status: "failed", closedAt: failedAt }, null)).toBe(false);
+    expect(isFromEarlierAttempt({ status: "delivered", closedAt: failedAt }, new Date("2026-09-20T18:00:00Z"))).toBe(false);
+    expect(isFromEarlierAttempt({ status: "pending", closedAt: failedAt }, new Date("2026-09-20T18:00:00Z"))).toBe(false);
   });
 });

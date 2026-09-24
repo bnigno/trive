@@ -35,7 +35,7 @@ import { DeliverForm } from "./deliver-form";
 import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
 import { getFeedbackForOrder } from "@/services/delivery-feedback";
 import { listCouriers } from "@/services/couriers";
-import { canJoinDeliveryRun, getStopForOrder } from "@/services/delivery-runs";
+import { getRunEligibility, getStopForOrder } from "@/services/delivery-runs";
 import { lateDeliveryForOrder } from "@/services/late-delivery";
 import { listIssuedCouponsForOrder } from "@/services/coupons";
 import { formatCouponValue, ORIGIN_LABELS } from "../../cupons/labels";
@@ -82,7 +82,8 @@ export default async function PedidoDetalhePage({
   const stop = order.deliveryWindow ? await getStopForOrder(db, id) : null;
   // O "Saiu" pergunta o motoboy; saiu sem ele, ainda dá para mandar o link (48 h, fora de saída aberta).
   const couriers = order.deliveryWindow ? await listCouriers(db) : [];
-  const canJoinRun = order.deliveryWindow?.dispatchedAt && couriers.length > 0 ? await canJoinDeliveryRun(db, { orderId: id }) : false;
+  const runEligibility = order.deliveryWindow?.dispatchedAt && couriers.length > 0 ? await getRunEligibility(db, { orderId: id }) : { canJoin: false, cameBack: false };
+  const canJoinRun = runEligibility.canJoin;
   const late = stop?.stopStatus === "delivered" ? await lateDeliveryForOrder(db, id) : null;
   const issuedCoupons = await listIssuedCouponsForOrder(db, id);
   const status = order.status as OrderStatus;
@@ -635,7 +636,9 @@ export default async function PedidoDetalhePage({
                       dispatchedLabel: order.deliveryWindow.dispatchedAt ? formatDateTimeSP(order.deliveryWindow.dispatchedAt) : null,
                       couriers: couriers.map((c) => ({ id: c.id, name: c.name })),
                       canJoinRun,
-                      previousStop: stop?.stopStatus === "failed" || stop?.stopStatus === "canceled" ? stop.stopStatus : null,
+                      // "Não consegui" só conta se foi depois da saída de agora (senão é da vez passada).
+                      previousStop: runEligibility.cameBack ? "failed" : stop?.stopStatus === "canceled" ? "canceled" : null,
+                      returned: status === "shipped" && !order.deliveryWindow.dispatchedAt && stop?.stopStatus === "failed",
                     }
                   : null
               }

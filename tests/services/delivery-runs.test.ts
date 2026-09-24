@@ -16,7 +16,7 @@ import { createCourier, findActiveCourierByPhone, listCouriers, updateCourier } 
 import { confirmDeliveryByToken, sendDeliveredWa } from "@/services/delivery";
 import { completeDispatchedOrder, dispatchOrder, listRouteOfDay, rescheduleOrderWindow } from "@/services/delivery-routes";
 import {
-  canJoinDeliveryRun,
+  getRunEligibility,
   cancelDeliveryRun,
   closeStaleDeliveryRuns,
   completeStop,
@@ -258,12 +258,12 @@ describe("listRunEligibleOrders", () => {
   });
 });
 
-describe("canJoinDeliveryRun (a ficha: saiu sem escolher o motoboy)", () => {
+describe("getRunEligibility (a ficha: saiu sem escolher o motoboy, ou voltou)", () => {
   it("saiu sem motoboy pode receber um; em saída aberta, saído há mais de 48 h, Correios e entregue pelo motoboy não", async () => {
     const { variantId, rateId } = await setup();
     const semMotoboy = await paidMotoboyOrder(variantId, rateId);
     await dispatchOrder(sdb, { orderId: semMotoboy.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
-    expect(await canJoinDeliveryRun(sdb, { orderId: semMotoboy.orderId, now: AFTERNOON })).toBe(true);
+    expect((await getRunEligibility(sdb, { orderId: semMotoboy.orderId, now: AFTERNOON })).canJoin).toBe(true);
     expect(await getTrackingForOrder(sdb, semMotoboy.publicToken, AFTERNOON)).toBeNull();
 
     // Escolhido o motoboy depois: a cliente não recebe outro aviso e o pedido deixa de poder entrar em outra.
@@ -273,20 +273,20 @@ describe("canJoinDeliveryRun (a ficha: saiu sem escolher o motoboy)", () => {
     expect(created.stops[0].alreadyDispatched).toBe(true);
     expect((await outboxEvents()).filter((e) => e.eventType === "order.shipped")).toHaveLength(shippedBefore);
     expect(await getTrackingForOrder(sdb, semMotoboy.publicToken, AFTERNOON)).not.toBeNull();
-    expect(await canJoinDeliveryRun(sdb, { orderId: semMotoboy.orderId, now: AFTERNOON })).toBe(false);
+    expect((await getRunEligibility(sdb, { orderId: semMotoboy.orderId, now: AFTERNOON })).canJoin).toBe(false);
 
     const old = await paidMotoboyOrder(variantId, rateId, "2026-09-15", WINDOWS[0], new Date("2026-09-15T13:30:00Z"));
     await dispatchOrder(sdb, { orderId: old.orderId, userId: FIXED_USER_ID, now: new Date("2026-09-15T19:00:00Z") });
-    expect(await canJoinDeliveryRun(sdb, { orderId: old.orderId, now: AFTERNOON })).toBe(false);
+    expect((await getRunEligibility(sdb, { orderId: old.orderId, now: AFTERNOON })).canJoin).toBe(false);
 
     const correios = await setup({ kind: "correios" });
     const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }), { now: MORNING });
     await transitionOrder(sdb, { orderId: pac.orderId, to: "paid", userId: FIXED_USER_ID });
-    expect(await canJoinDeliveryRun(sdb, { orderId: pac.orderId, now: AFTERNOON })).toBe(false);
+    expect((await getRunEligibility(sdb, { orderId: pac.orderId, now: AFTERNOON })).canJoin).toBe(false);
 
     const { cash, stops, token } = await runOnTheRoad2();
     await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
-    expect(await canJoinDeliveryRun(sdb, { orderId: cash.orderId, now: AFTERNOON })).toBe(false);
+    expect((await getRunEligibility(sdb, { orderId: cash.orderId, now: AFTERNOON })).canJoin).toBe(false);
   });
 });
 
@@ -1005,17 +1005,16 @@ describe("leituras", () => {
 
   it("'cliente pediu outro dia': a peça voltou — dá para reagendar, o pedido volta à Rota do dia e pode sair de novo", async () => {
     const { paid, cash: stillOut, stops, token } = await runOnTheRoad();
-    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "cliente_pediu_outro_dia" });
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "cliente_pediu_outro_dia", now: new Date(AFTERNOON.getTime() + 30 * 60_000) });
     // Antes: pedido pago já saiu (shipped + dispatchedAt) — só o "voltou" libera o reagendamento.
     const threeDaysLater = new Date(AFTERNOON.getTime() + 3 * 86_400_000);
     // Na Rota do dia ele aparece em "Na rua" como "voltou" (e pode ir numa nova saída); o que
-    // ainda está com o motoboy (o de dinheiro) não. Depois das 48 h, sai da Rota.
+    // ainda está com o motoboy (o de dinheiro) não.
     const soon = new Date(AFTERNOON.getTime() + 3_600_000);
     const route = await listRouteOfDay(sdb, { now: soon });
     expect(route.out.filter((o) => o.cameBack).map((o) => o.id)).toEqual([paid.orderId]);
     expect(route.out.map((o) => o.id)).toContain(stillOut.orderId);
     expect((await listRunEligibleOrders(sdb, { now: soon })).find((o) => o.id === paid.orderId)?.openRunId).toBeNull();
-    expect((await listRouteOfDay(sdb, { now: threeDaysLater })).out.some((o) => o.id === paid.orderId)).toBe(false);
     await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-22", window: WINDOWS[0], now: threeDaysLater });
     const row = await orderRow(paid.orderId);
     expect(row.status).toBe("shipped");
@@ -1026,15 +1025,165 @@ describe("leituras", () => {
     expect((await listRunEligibleOrders(sdb, { now: threeDaysLater })).some((o) => o.id === paid.orderId)).toBe(true);
     const c2 = await courier("Terceiro", "(91) 98222-3333");
     const again = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: threeDaysLater });
-    expect(again.stops[0].alreadyDispatched).toBe(true);
+    // Sai de novo de verdade: marca de saída nova e aviso novo à cliente (com a janela nova).
+    expect(again.stops[0].alreadyDispatched).toBe(false);
+    expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBe(threeDaysLater.toISOString());
     // Pedido que saiu e NÃO voltou continua sem reagendamento.
     const { cash } = await runOnTheRoad2();
     await expect(rescheduleOrderWindow(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-22", window: WINDOWS[0], now: threeDaysLater })).rejects.toThrow(/já não saiu|ainda não saiu/);
   });
 
+  it("voltou, reagendou e a cliente pediu outro dia de novo: reagenda outra vez; o 'Saiu' seguinte manda de novo com aviso novo; se falhar de novo, reagenda de novo", async () => {
+    const { paid, stops, token } = await runOnTheRoad();
+    const t = (hours: number) => new Date(AFTERNOON.getTime() + hours * 3_600_000);
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "cliente_pediu_outro_dia", now: t(1) });
+    await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: t(2) });
+    // Antes recusava: shipped sem marca de saída não "voltava" mais.
+    await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-20", window: WINDOWS[0], now: t(3) });
+    expect((await orderRow(paid.orderId)).deliveryWindow).toMatchObject({ dayKey: "2026-09-20" });
+    expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBeUndefined();
+
+    // No dia, está na janela das 16h (não em "Na rua", não "voltou") e pode entrar numa saída.
+    const noon = new Date("2026-09-20T15:00:00Z"); // 12:00 SP
+    const route = await listRouteOfDay(sdb, { now: noon });
+    expect(route.today.flatMap((g) => g.orders).find((o) => o.id === paid.orderId)).toMatchObject({ status: "shipped", dispatchedAt: null, cameBack: false });
+    expect((await listRunEligibleOrders(sdb, { now: noon })).some((o) => o.id === paid.orderId)).toBe(true);
+
+    // "Saiu" sem motoboy: antes era um no-op ("já tinha saído"); agora sai, com aviso novo pela fila.
+    const shippedEvents = async () => (await outboxEvents()).filter((e) => e.eventType === "order.shipped").length;
+    const shippedBefore = await shippedEvents();
+    const out = new Date("2026-09-20T18:00:00Z"); // 15:00 SP
+    expect(await dispatchOrder(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, now: out })).toMatchObject({ from: "shipped", to: "shipped", idempotent: false });
+    expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBe(out.toISOString());
+    const notices = (await outboxEvents()).filter((e) => e.eventType === "order.out_for_delivery" && e.aggregateId === paid.orderId);
+    expect(notices.map((e) => [e.dedupeKey, e.payload])).toEqual([
+      [`order.out_for_delivery:${paid.orderId}:${out.toISOString()}`, { orderId: paid.orderId, orderNumber: paid.orderNumber, againAt: out.toISOString() }],
+    ]);
+    expect(await shippedEvents()).toBe(shippedBefore);
+    expect((await dispatchOrder(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, now: out })).idempotent).toBe(true);
+
+    // Na rua de novo: não "voltou" (a parada que falhou é da vez passada), não reagenda, e a
+    // página da cliente não mostra o "não conseguimos entregar" antigo.
+    expect((await listRouteOfDay(sdb, { now: out })).out.find((o) => o.id === paid.orderId)).toMatchObject({ cameBack: false });
+    expect(await getTrackingForOrder(sdb, paid.publicToken, out)).toBeNull();
+    await expect(rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-21", window: WINDOWS[0], now: out })).rejects.toMatchObject({
+      code: "INVALID_TRANSITION",
+    });
+
+    // O motoboy recebe o link depois (o caso do #1008) e, de novo, "não consegui": voltou — reagenda outra vez.
+    const c2 = await courier("Outro Motoboy", "(91) 98111-2222");
+    const run2 = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: out });
+    expect(run2.stops[0].alreadyDispatched).toBe(true);
+    expect((await getTrackingForOrder(sdb, paid.publicToken, out))?.state).toBe("waiting");
+    await startDeliveryRun(sdb, { courierToken: run2.courierToken, now: out });
+    const [stop2] = await stopsOf(run2.runId);
+    const failAt = new Date(out.getTime() + 3_600_000);
+    await failStop(sdb, { courierToken: run2.courierToken, stopId: stop2.id, reason: "ninguem_em_casa", now: failAt });
+    expect((await listRouteOfDay(sdb, { now: failAt })).out.find((o) => o.id === paid.orderId)).toMatchObject({ cameBack: true });
+    expect((await getTrackingForOrder(sdb, paid.publicToken, failAt))?.state).toBe("failed");
+    await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-21", window: WINDOWS[0], now: failAt });
+    expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBeUndefined();
+  });
+
+  it("voltou e sai de novo no mesmo dia sem reagendar ('Levar nesta saída'): marca de saída e aviso novos; janela de ontem pede reagendar", async () => {
+    const { paid, cash, stops, token } = await runOnTheRoad();
+    const failAt = new Date(AFTERNOON.getTime() + 3_600_000); // 17:00 SP, janela 19h–21h ainda por vir
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa", now: failAt });
+    const c2 = await courier("Outro Motoboy", "(91) 98111-2222");
+    const againAt = new Date(failAt.getTime() + 3_600_000);
+    const run2 = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: againAt });
+    expect(run2.stops[0].alreadyDispatched).toBe(false);
+    expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBe(againAt.toISOString());
+    expect((await outboxEvents()).filter((e) => e.eventType === "order.out_for_delivery" && e.aggregateId === paid.orderId).map((e) => e.dedupeKey)).toEqual([
+      `order.out_for_delivery:${paid.orderId}:${againAt.toISOString()}`,
+    ]);
+
+    // O de dinheiro volta também e só tentam de novo no dia seguinte: a janela (18/09) passou — reagendar primeiro.
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "ninguem_em_casa", now: failAt });
+    const nextDay = new Date("2026-09-19T13:00:00Z");
+    await expect(createDeliveryRun(sdb, { courierId: c2.id, orderIds: [cash.orderId], userId: FIXED_USER_ID, now: nextDay })).rejects.toMatchObject({ code: "WINDOW_PAST" });
+    expect(await db.select().from(schema.deliveryRuns)).toHaveLength(2);
+  });
+
+  it("voltou com a janela de ontem: fora do 'Levar nesta saída' (reagendar primeiro); montar saída com ele recusa listando o número, e o outro pedido não é derrubado sem aviso", async () => {
+    const { paid, stops, token } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa", now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    const sameDay = new Date(AFTERNOON.getTime() + 2 * 3_600_000);
+    expect(await getRunEligibility(sdb, { orderId: paid.orderId, now: sameDay })).toEqual({ canJoin: true, cameBack: true });
+
+    const nextMorning = new Date("2026-09-19T13:00:00Z");
+    expect((await listRunEligibleOrders(sdb, { now: nextMorning })).some((o) => o.id === paid.orderId)).toBe(false);
+    const { variantId, rateId } = await setup();
+    const tomorrow = await paidMotoboyOrder(variantId, rateId, "2026-09-19", WINDOWS[0]);
+    const c2 = await courier("Outro Motoboy", "(91) 98111-2222");
+    await expect(createDeliveryRun(sdb, { courierId: c2.id, orderIds: [tomorrow.orderId, paid.orderId], userId: FIXED_USER_ID, now: nextMorning })).rejects.toMatchObject({
+      code: "WINDOW_PAST",
+      message: `A janela do pedido #${paid.orderNumber} já passou — reagende na Rota do dia antes de montar a saída.`,
+    });
+    expect((await orderRow(tomorrow.orderId)).status).toBe("paid");
+
+    // Reagendado para hoje: entra.
+    await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: nextMorning });
+    const created = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [tomorrow.orderId, paid.orderId], userId: FIXED_USER_ID, now: nextMorning });
+    expect(created.stops.map((stop) => stop.alreadyDispatched)).toEqual([false, false]);
+  });
+
+  it("dinheiro na entrega que voltou, foi pago por Pix e reagendado: o 'Saiu' passa por paid → shipped e o aviso novo sai pela chave própria", async () => {
+    const { cash, stops, token } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "cliente_pediu_outro_dia", now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
+    await rescheduleOrderWindow(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: new Date(AFTERNOON.getTime() + 2 * 3_600_000) });
+    const out = new Date("2026-09-19T18:00:00Z");
+    expect(await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: out })).toMatchObject({ from: "paid", to: "shipped", idempotent: false });
+    const events = (await outboxEvents()).filter((e) => e.aggregateId === cash.orderId);
+    expect(events.filter((e) => e.eventType === "order.out_for_delivery").map((e) => e.dedupeKey)).toEqual([
+      `order.out_for_delivery:${cash.orderId}`,
+      `order.out_for_delivery:${cash.orderId}:${out.toISOString()}`,
+    ]);
+    expect(events.filter((e) => e.eventType === "order.shipped")).toHaveLength(1);
+  });
+
+  it("dinheiro na entrega que voltou e foi reagendado: sai de novo ainda 'aguardando pagamento', com o aviso novo", async () => {
+    const { cash, stops, token } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "cliente_pediu_outro_dia", now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    await rescheduleOrderWindow(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: new Date(AFTERNOON.getTime() + 2 * 3_600_000) });
+    const out = new Date("2026-09-19T18:00:00Z");
+    expect(await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: out })).toMatchObject({ from: "pending_payment", to: "pending_payment", idempotent: false });
+    const [notice] = (await outboxEvents()).filter((e) => e.eventType === "order.out_for_delivery" && e.aggregateId === cash.orderId && e.dedupeKey !== `order.out_for_delivery:${cash.orderId}`);
+    expect(notice.payload).toEqual({ orderId: cash.orderId, orderNumber: cash.orderNumber, againAt: out.toISOString() });
+    expect((await orderRow(cash.orderId)).status).toBe("pending_payment");
+  });
+
+  it("geocodificação atrasada não mexe na parada que já fechou: o 'voltou' (medido pela hora em que ela fechou) não volta a valer depois do 'Saiu' de novo", async () => {
+    const { paid, cash, stops, token, run } = await runOnTheRoad();
+    const failAt = new Date(AFTERNOON.getTime() + 3_600_000);
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "cliente_pediu_outro_dia", now: failAt });
+    await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: failAt });
+    const out = new Date("2026-09-19T18:00:00Z");
+    await dispatchOrder(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, now: out });
+    // A rodada de geocodificação chega depois (fila atrasada): só a parada por entregar ganha pino.
+    const geocoder = new FakeGeocoder();
+    const late = new Date(out.getTime() + 3_600_000);
+    expect(await geocodeRunStops(sdb, geocoder, { runId: run.runId, sleep: async () => {}, now: () => late })).toMatchObject({ attempted: 1, found: 1 });
+    const [failedStop] = (await stopsOf(run.runId)).filter((s) => s.orderId === paid.orderId);
+    expect(failedStop).toMatchObject({ status: "failed", destLat: null });
+    expect(failedStop.updatedAt.toISOString()).toBe(failAt.toISOString());
+    expect((await stopsOf(run.runId)).find((s) => s.orderId === cash.orderId)?.destLat).not.toBeNull();
+    expect((await listRouteOfDay(sdb, { now: late })).out.find((o) => o.id === paid.orderId)).toMatchObject({ cameBack: false });
+    expect(await getTrackingForOrder(sdb, paid.publicToken, late)).toBeNull();
+  });
+
+  it("o que voltou fica em 'Na rua' como 'voltou' até ser reagendado, mesmo depois das 48 h (só dá para reagendar)", async () => {
+    const { paid, stops, token } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa", now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    const threeDaysLater = new Date(AFTERNOON.getTime() + 3 * 86_400_000);
+    expect((await listRouteOfDay(sdb, { now: threeDaysLater })).out.filter((o) => o.cameBack).map((o) => o.id)).toEqual([paid.orderId]);
+    expect((await listRunEligibleOrders(sdb, { now: threeDaysLater })).some((o) => o.id === paid.orderId)).toBe(false);
+  });
+
   it("a ficha do pedido prefere a prova de uma saída anterior à parada cancelada", async () => {
     const { paid, stops, token, run } = await runOnTheRoad();
-    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa" });
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa", now: new Date(AFTERNOON.getTime() + 30 * 60_000) });
     await cancelDeliveryRun(sdb, { runId: run.runId, userId: FIXED_USER_ID });
     const c2 = await courier("Outro", "(91) 98111-2222");
     const again = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: new Date(AFTERNOON.getTime() + 3_600_000) });
