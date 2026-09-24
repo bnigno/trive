@@ -636,6 +636,7 @@ export default async function PedidoDetalhePage({
                       couriers: couriers.map((c) => ({ id: c.id, name: c.name })),
                       canJoinRun,
                       previousStop: stop?.stopStatus === "failed" || stop?.stopStatus === "canceled" ? stop.stopStatus : null,
+                      returned: status === "shipped" && !order.deliveryWindow.dispatchedAt && stop?.stopStatus === "failed",
                     }
                   : null
               }

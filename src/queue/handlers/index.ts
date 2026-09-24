@@ -167,6 +167,8 @@ const ORDER_WA_MILESTONES = {
 async function sendOrderWa(
   orderId: string,
   milestone: keyof typeof ORDER_WA_MILESTONES,
+  /** Segunda saída do pedido que voltou: o "saiu" da primeira vez já usou a chave. */
+  dedupeSuffix = "",
 ): Promise<void> {
   const db = getDb();
   if (!(await isWaEnabled(db))) return;
@@ -200,7 +202,7 @@ async function sendOrderWa(
       vars: ctx.vars,
       customerId: ctx.customer.id,
       orderId,
-      dedupeKey: `${clientDedupePrefix}${orderId}`,
+      dedupeKey: `${clientDedupePrefix}${orderId}${dedupeSuffix}`,
       // Aviso do PEDIDO DELA: não depende do opt-in, que vale para novidades
       // e ofertas. Quem compra espera saber que o pedido foi confirmado.
       requireOptIn: false,
@@ -229,6 +231,12 @@ const waSendPayloadSchema = z.object({
   dedupeKey: z.string().min(1).optional(),
   /** Resposta manual: a hora do clique da dona (vira o created_at da linha). */
   repliedAt: z.iso.datetime().optional(),
+});
+
+// "Saiu" do motoboy (dispatchOrder): `againAt` = a hora da segunda saída de quem voltou.
+const outForDeliveryPayloadSchema = z.object({
+  orderId: z.uuid(),
+  againAt: z.iso.datetime().optional(),
 });
 
 // Turno do bot de vendas: um por mensagem inbound (dedupe no enqueue).
@@ -864,7 +872,8 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "order.preparing": async () => {},
   "order.out_for_delivery": async (event) => {
-    await sendOrderWa(String(event.payload.orderId), "out_for_delivery");
+    const { orderId, againAt } = outForDeliveryPayloadSchema.parse(event.payload);
+    await sendOrderWa(orderId, "out_for_delivery", againAt ? `:${againAt}` : "");
   },
   // Entregue: a foto da entrega com a legenda (ou só o texto) para a
   // cliente, uma vez; skips não lançam.

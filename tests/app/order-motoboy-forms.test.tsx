@@ -13,8 +13,8 @@ const COURIERS = [
   { id: "22222222-2222-4222-8222-222222222222", name: "Dani Entregas" },
 ];
 
-function motoboy(over: Partial<{ dispatchedLabel: string | null; canJoinRun: boolean; previousStop: "failed" | "canceled" | null; couriers: typeof COURIERS }> = {}) {
-  return { customerName: "Klícia", dispatchedLabel: null, couriers: COURIERS, canJoinRun: false, previousStop: null, ...over };
+function motoboy(over: Partial<{ dispatchedLabel: string | null; canJoinRun: boolean; previousStop: "failed" | "canceled" | null; returned: boolean; couriers: typeof COURIERS }> = {}) {
+  return { customerName: "Klícia", dispatchedLabel: null, couriers: COURIERS, canJoinRun: false, previousStop: null, returned: false, ...over };
 }
 
 function actions(status: "paid" | "shipped", m: ReturnType<typeof motoboy>) {
@@ -64,5 +64,12 @@ describe("OrderActions (ficha do pedido de motoboy)", () => {
     expect(html).toContain("Mandar o link ao motoboy");
     expect(html).toContain("Entregue — o motoboy voltou");
     expect(actions("shipped", motoboy({ dispatchedLabel: "24/09/2026, 09:10", canJoinRun: false }))).not.toContain("Mandar o link ao motoboy");
+  });
+
+  it("voltou sem entregar e foi reagendado: o 'Saiu' (com o motoboy) volta à ficha; enviado sem ter voltado, não", () => {
+    const html = actions("shipped", motoboy({ returned: true, previousStop: "failed" }));
+    expect(html).toContain("Outro — sem link de GPS");
+    expect(html).toContain("Marcar entregue");
+    expect(actions("shipped", motoboy())).not.toContain("Outro — sem link de GPS");
   });
 });

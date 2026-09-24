@@ -30,7 +30,7 @@ import {
   type RunStatus,
   type StopStatus,
 } from "@/core/delivery/state";
-import { buildTrackingView, type TrackingView } from "@/core/delivery/tracking";
+import { buildTrackingView, isFromEarlierAttempt, type TrackingView } from "@/core/delivery/tracking";
 import { normalizeReceivedBy, RECEIVED_BY_MAX_CHARS } from "@/core/orders/delivery";
 import { needsPackingBeforeDispatch, NOT_PACKED_CODE } from "@/core/orders/packing";
 import type { OrderStatus } from "@/core/orders/state-machine";
@@ -681,7 +681,7 @@ export async function failStop(db: DbOrTx, input: FailStopInput): Promise<{ stop
     const body = [
       `🛵 ${courier?.name ?? "O motoboy"} não conseguiu entregar o pedido #${stop.orderNumber} (${firstNameOf(stop.customerName)}): ${FAILURE_REASON_LABELS[parsed.reason]}.`,
       note ? `Nota: ${note}` : null,
-      `O pedido continua como está — combine com a cliente; para mandar de novo, marque "Levar nesta saída" na Rota do dia (até 48 h depois da saída).`,
+      `O pedido continua como está — combine com a cliente e reagende na Rota do dia (ou, se sai de novo hoje, marque "Levar nesta saída").`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -888,6 +888,8 @@ export async function getTrackingForOrder(db: DbOrTx, publicToken: string, now =
     .select({
       stopId: deliveryStops.id,
       stopStatus: deliveryStops.status,
+      stopUpdatedAt: deliveryStops.updatedAt,
+      deliveryWindow: orders.deliveryWindow,
       destLat: deliveryStops.destLat,
       destLng: deliveryStops.destLng,
       deliveredAt: deliveryStops.deliveredAt,
@@ -908,6 +910,8 @@ export async function getTrackingForOrder(db: DbOrTx, publicToken: string, now =
     .orderBy(desc(deliveryStops.createdAt))
     .limit(1);
   if (!row) return null;
+  const dispatchedAt = (row.deliveryWindow as { dispatchedAt?: string } | null)?.dispatchedAt;
+  if (isFromEarlierAttempt({ status: row.stopStatus as StopStatus, closedAt: row.stopUpdatedAt }, dispatchedAt ? new Date(dispatchedAt) : null)) return null;
   const [{ pending }] = await db
     .select({ pending: count() })
     .from(deliveryStops)

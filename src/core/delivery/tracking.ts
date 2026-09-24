@@ -61,6 +61,15 @@ export interface TrackingView {
   receivedBy: string | null;
 }
 
+/**
+ * A parada "não consegui" ficou para trás quando o pedido saiu de novo depois
+ * dela (a dona reagendou e deu o "Saiu" sem motoboy): a cliente não deve ver
+ * o "não conseguimos entregar" da vez passada.
+ */
+export function isFromEarlierAttempt(stop: { status: StopStatus; closedAt: Date }, dispatchedAt: Date | null): boolean {
+  return stop.status === "failed" && dispatchedAt !== null && dispatchedAt.getTime() > stop.closedAt.getTime();
+}
+
 export function buildTrackingView(input: {
   run: TrackingRunInput;
   stop: TrackingStopInput;
