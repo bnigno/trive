@@ -24,7 +24,7 @@ import {
   fitCuratorNote,
 } from "@/core/catalog/curator-note";
 import { auditLog, products, settings } from "@/db/schema";
-import type { DbOrTx } from "@/queue/enqueue";
+import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 // A mesma classe de erro do catálogo: é a que a tela da peça reconhece.
 import { ServiceError } from "@/services/catalog";
 
@@ -326,6 +326,17 @@ export async function applyInterviewCuratorNote(
         : {}),
     })
     .where(eq(products.id, input.productId));
+  // A página da peça é estática (ISR): a nota nova aparece na hora pela fila.
+  const [slugRow] = await tx.select({ slug: products.slug }).from(products).where(eq(products.id, input.productId)).limit(1);
+  if (slugRow) {
+    await enqueueOutboxEvent(tx, {
+      eventType: "store.revalidate",
+      dedupeKey: `store.revalidate:curator_interview:${input.interviewId}`,
+      aggregateType: "product",
+      aggregateId: input.productId,
+      payload: { paths: [`/produto/${slugRow.slug}`] },
+    });
+  }
   await tx.insert(auditLog).values({
     actorType: "system",
     actorId: null,

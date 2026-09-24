@@ -32,6 +32,12 @@ describe("RETRY_POLICIES", () => {
 });
 
 describe("nextAttemptDelayMs", () => {
+  it("entrevista da curadora: a pergunta sai no mesmo dia; rascunho e decisão, poucas tentativas curtas", () => {
+    expect(getRetryPolicy("curator.interview_ask")).toEqual({ maxAttempts: 4, baseDelayMs: 30_000, maxDelayMs: 600_000 });
+    expect(getRetryPolicy("curator.interview_draft")).toEqual({ maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 });
+    expect(getRetryPolicy("curator.interview_decide")).toEqual({ maxAttempts: 4, baseDelayMs: 10_000, maxDelayMs: 120_000 });
+  });
+
   it("retorno combinado: 3 tentativas espaçadas (o modelo pode estar fora do ar um instante)", () => {
     expect(getRetryPolicy("wa.bot_followup")).toEqual({ maxAttempts: 3, baseDelayMs: 60_000, maxDelayMs: 600_000 });
     expect(getRetryPolicy("store.revalidate")).toEqual({ maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 });

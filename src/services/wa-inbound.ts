@@ -896,6 +896,7 @@ export async function processZapiInbound(
         kind: media?.kind ?? "text",
         body: text,
         waMessageId: message.id,
+        mediaUrl: media?.mediaUrl ?? null,
         now,
       });
       if (interview) {

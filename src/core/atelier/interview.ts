@@ -7,8 +7,12 @@ import { z } from "zod";
 import { fitCuratorNote } from "@/core/catalog/curator-note";
 import type { PieceType } from "@/core/catalog/piece-types";
 
-/** A resposta vale até 8 h depois da pergunta (10h → 18h); depois disso o áudio volta a ir para a Lia. */
-export const INTERVIEW_ANSWER_WINDOW_MS = 8 * 60 * 60 * 1000;
+/**
+ * A resposta vale até 14 h depois da pergunta ou do último áudio dela (a
+ * pergunta das 10h vale até a meia-noite; a mensagem diz "até hoje à noite").
+ * Depois disso o áudio segue o caminho de sempre (Ateliê ou Lia).
+ */
+export const INTERVIEW_ANSWER_WINDOW_MS = 14 * 60 * 60 * 1000;
 /** O rascunho espera o "ok" por 24 h. */
 export const INTERVIEW_DRAFT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** A mesma peça não volta a ser perguntada antes de 14 dias. */
@@ -43,15 +47,15 @@ export function questionText(key: QuestionKey, productName: string): string {
   const name = productName.trim();
   switch (key) {
     case "por_que":
-      return `Por que você escolheu trazer ${name} para a loja?`;
+      return `Por que você escolheu trazer a peça ${name} para a loja?`;
     case "onde_usar":
-      return `Pra onde você usaria ${name}? Me conta a cena.`;
+      return `Pra onde você usaria a peça ${name}? Me conta a cena.`;
     case "combina":
-      return `Com o que você combinaria ${name}?`;
+      return `Com o que você combinaria a peça ${name}?`;
     case "caimento":
-      return `Como ${name} veste? Pra qual corpo ela fica mais bonita?`;
+      return `Como a peça ${name} veste? Pra qual corpo ela fica mais bonita?`;
     case "sensacao":
-      return `Como é ${name} no calor de Belém — o tecido, a sensação na pele?`;
+      return `Como é a peça ${name} no calor de Belém — o tecido, a sensação na pele?`;
   }
 }
 
@@ -148,9 +152,11 @@ export function normalizeInterviewHour(value: unknown): number {
 
 export type InterviewReply =
   | { kind: "answer_audio" }
+  /** "resposta: …" (e "corrige: …", que vira instrução para reescrever o rascunho). */
   | { kind: "answer_text"; text: string }
   | { kind: "approve"; withVoice: boolean }
-  | { kind: "correct"; text: string }
+  /** "nova: …" — a nota inteira do jeito dela, salva como está. */
+  | { kind: "replace"; text: string }
   | { kind: "skip" };
 
 function plain(text: string): string {
@@ -162,9 +168,12 @@ function plain(text: string): string {
     .trim();
 }
 
-const SKIP_WORDS = new Set(["pula", "pular", "pulo", "amanha", "hoje nao", "nao sei", "depois", "agora nao"]);
-const APPROVE_WORDS = new Set(["ok", "okay", "pode", "pode salvar", "salva", "sim", "aprovado", "perfeito", "👍"]);
-const APPROVE_VOICE_WORDS = new Set(["ok voz", "ok com voz", "ok com a voz", "salva com voz", "voz"]);
+// Só as palavras que as mensagens ensinam: "sim", "pode", "depois" são do dia
+// a dia da dona (ela testa a Lia do próprio celular) e não podem aprovar nem
+// pular nada por engano.
+const SKIP_WORDS = new Set(["pula", "pular"]);
+const APPROVE_WORDS = new Set(["ok"]);
+const APPROVE_VOICE_WORDS = new Set(["ok voz"]);
 
 /**
  * O que a mensagem da dona quer dizer para a entrevista aberta. Só o áudio
@@ -176,38 +185,63 @@ export function classifyInterviewReply(input: {
   messageKind: "audio" | "text" | "image" | "note";
   body: string;
 }): InterviewReply | null {
-  if (input.messageKind === "image") return null;
-  if (input.status === "drafting") return null;
-  if (input.messageKind === "audio") {
-    return input.status === "asked" || input.status === "draft_sent" ? { kind: "answer_audio" } : null;
-  }
+  const open = input.status === "asked" || input.status === "drafting" || input.status === "draft_sent";
+  if (!open || input.messageKind === "image") return null;
+  // Áudio soma à resposta (ela fala em dois ou três áudios seguidos).
+  if (input.messageKind === "audio") return { kind: "answer_audio" };
   const raw = input.body.trim();
   const text = plain(raw);
-  if (SKIP_WORDS.has(text)) return input.status === "asked" || input.status === "draft_sent" ? { kind: "skip" } : null;
-  const answer = /^resposta\s*:\s*/i.exec(raw);
-  if (answer && (input.status === "asked" || input.status === "draft_sent")) {
-    const rest = raw.slice(answer[0].length).trim();
-    return rest ? { kind: "answer_text", text: rest } : null;
-  }
+  if (SKIP_WORDS.has(text)) return { kind: "skip" };
+  const command = (prefix: RegExp): string | null => {
+    const match = prefix.exec(raw);
+    if (!match) return null;
+    const rest = raw.slice(match[0].length).trim();
+    return rest === "" ? null : rest;
+  };
+  const answer = command(/^resposta\s*:\s*/i);
+  if (answer) return { kind: "answer_text", text: answer };
   if (input.status !== "draft_sent") return null;
   if (APPROVE_VOICE_WORDS.has(text)) return { kind: "approve", withVoice: true };
   if (APPROVE_WORDS.has(text)) return { kind: "approve", withVoice: false };
-  const correct = /^corrig[ea]\s*:\s*/i.exec(raw);
-  if (correct) {
-    const rest = raw.slice(correct[0].length).trim();
-    return rest ? { kind: "correct", text: rest } : null;
-  }
+  const correction = command(/^corrig[ea]\s*:\s*/i);
+  if (correction) return { kind: "answer_text", text: `Correção da dona para o rascunho: ${correction}` };
+  const replacement = command(/^nova\s*:\s*/i);
+  if (replacement) return { kind: "replace", text: replacement };
   return null;
 }
 
-/** Ainda dentro do prazo de resposta (pergunta) ou de aprovação (rascunho). */
-export function isInterviewOpen(row: { status: InterviewStatus; askedAt: Date; draftSentAt: Date | null }, now: Date): boolean {
-  if (row.status === "asked" || row.status === "drafting") return now.getTime() - row.askedAt.getTime() <= INTERVIEW_ANSWER_WINDOW_MS;
+export type InterviewClock = { status: InterviewStatus; askedAt: Date; draftSentAt: Date | null; lastAnswerAt: Date | null };
+
+/**
+ * Ainda dentro do prazo: a pergunta (e o rascunho sendo escrito) contam da
+ * pergunta ou do último áudio dela; o rascunho enviado, do envio.
+ */
+export function isInterviewOpen(row: InterviewClock, now: Date): boolean {
+  if (row.status === "asked" || row.status === "drafting") {
+    const since = Math.max(row.askedAt.getTime(), row.lastAnswerAt?.getTime() ?? 0, row.draftSentAt?.getTime() ?? 0);
+    return now.getTime() - since <= INTERVIEW_ANSWER_WINDOW_MS;
+  }
   if (row.status === "draft_sent") {
-    const since = row.draftSentAt ?? row.askedAt;
-    return now.getTime() - since.getTime() <= INTERVIEW_DRAFT_WINDOW_MS;
+    const since = Math.max(row.draftSentAt?.getTime() ?? row.askedAt.getTime(), row.lastAnswerAt?.getTime() ?? 0);
+    return now.getTime() - since <= INTERVIEW_DRAFT_WINDOW_MS;
   }
   return false;
+}
+
+/** O estado que o painel e a cadência enxergam: aberta fora do prazo já é "expired". */
+export function effectiveInterviewStatus(row: InterviewClock, now: Date): InterviewStatus {
+  const open = (OPEN_INTERVIEW_STATUSES as readonly string[]).includes(row.status);
+  return open && !isInterviewOpen(row, now) ? "expired" : row.status;
+}
+
+/**
+ * De qual áudio sai a voz da curadora no "ok voz": só quando a resposta foi
+ * UM áudio — dois áudios ou resposta escrita guardam só o texto.
+ */
+export function voiceSourceFor(input: { audioIds: readonly string[]; textAnswers: number }): { audioId: string } | { reason: "escrito" | "varios" } {
+  if (input.audioIds.length === 0) return { reason: "escrito" };
+  if (input.audioIds.length > 1 || input.textAnswers > 0) return { reason: "varios" };
+  return { audioId: input.audioIds[0] };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,8 +269,17 @@ const draftJsonSchema = z.object({
 
 export type InterviewDraft = { note: string; captions: string[] };
 
+/** Frase com preço sai: a nota fica na peça por meses e o preço muda. */
+export function stripPriceSentences(text: string): string {
+  return text
+    .split(/(?<=[.!?…])\s+/u)
+    .filter((sentence) => !/R\$\s?\d|\d+(?:[.,]\d+)?\s*(?:reais|conto)\b/iu.test(sentence))
+    .join(" ")
+    .trim();
+}
+
 function fitCaption(text: string): string | null {
-  const clean = text.replace(/\s+/g, " ").replace(/#\S+/g, "").trim();
+  const clean = stripPriceSentences(text.replace(/\s+/g, " ").replace(/#\S+/g, "")).trim();
   if (!/[\p{L}\p{N}]/u.test(clean)) return null;
   return clean.length <= INTERVIEW_CAPTION_MAX_CHARS ? clean : `${clean.slice(0, INTERVIEW_CAPTION_MAX_CHARS - 1).trimEnd()}…`;
 }
@@ -244,7 +287,7 @@ function fitCaption(text: string): string | null {
 /** Resposta do modelo → rascunho limpo; lança se o formato não bate (o chamador cai no fallback). */
 export function normalizeInterviewDraft(json: unknown): InterviewDraft {
   const parsed = draftJsonSchema.parse(json);
-  const note = fitCuratorNote(parsed.nota).text;
+  const note = fitCuratorNote(stripPriceSentences(parsed.nota)).text;
   if (!note) throw new Error("nota vazia");
   const captions = [parsed.legenda_1, parsed.legenda_2].map(fitCaption).filter((caption): caption is string => caption !== null);
   return { note, captions: [...new Set(captions)] };
@@ -252,7 +295,7 @@ export function normalizeInterviewDraft(json: unknown): InterviewDraft {
 
 /** Sem a inteligência, a própria fala (limpa) vira a nota — nunca se perde a resposta. */
 export function fallbackInterviewDraft(transcript: string): InterviewDraft | null {
-  const note = fitCuratorNote(transcript).text;
+  const note = fitCuratorNote(stripPriceSentences(transcript)).text;
   return note ? { note, captions: [] } : null;
 }
 
@@ -261,7 +304,9 @@ export function buildInterviewDraftPrompt(input: { storeName: string; productNam
     `Você ajuda a dona da ${input.storeName}, uma loja de moda feminina de Belém, a transformar uma resposta falada numa nota curta sobre uma peça.`,
     `A peça: ${input.productName}. A pergunta que ela respondeu: "${input.question}"`,
     "Regras:",
-    "- A nota é da dona, em primeira pessoa, com as palavras e o jeito dela. Tire vícios de fala (\"né\", \"tipo\", repetições), mas NÃO invente fato, tecido, medida, preço ou promessa que ela não disse.",
+    "- A nota é da dona, em primeira pessoa, com as palavras e o jeito dela. Tire vícios de fala (\"né\", \"tipo\", repetições), mas NÃO invente fato, tecido, medida ou promessa que ela não disse.",
+    "- A nota e as legendas vão para as clientes: deixe de fora preço, custo, margem, fornecedor, onde ela comprou e nomes de pessoas.",
+    "- Se houver uma \"Correção da dona\", ela manda: reescreva seguindo a correção.",
     "- 1 a 3 frases, no máximo 600 caracteres.",
     "- As duas legendas são para o Instagram: 1 ou 2 frases cada, sem hashtag, no máximo um emoji, sem preço.",
     `- A loja se chama ${input.storeName}: nunca a chame de "maison".`,
@@ -276,8 +321,8 @@ export function buildInterviewDraftPrompt(input: { storeName: string; productNam
 const INTERVIEW_TRANSITIONS: Record<InterviewStatus, readonly InterviewStatus[]> = {
   // pergunta feita → a resposta chegou (a inteligência escreve), ela pulou, venceu ou o envio falhou
   asked: ["drafting", "skipped", "expired", "failed"],
-  // escrevendo → rascunho enviado (ou a entrevista caiu de vez)
-  drafting: ["draft_sent", "failed", "expired"],
+  // escrevendo → mais uma parte da resposta (continua escrevendo), rascunho enviado, pulou, ou caiu de vez
+  drafting: ["drafting", "draft_sent", "skipped", "failed", "expired"],
   // rascunho na mão dela → aprovou/corrigiu, pulou, venceu, ou mandou outro áudio (reescreve)
   draft_sent: ["approved", "skipped", "expired", "drafting"],
   approved: [],

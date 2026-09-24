@@ -1,5 +1,5 @@
 {
-  "id": "ce6a5e9e-5fa3-4bfa-a926-e7616a0ba015",
+  "id": "61433674-3725-4ea9-b298-11d76191bd2c",
   "prevId": "b4e801ac-e3ad-4c63-96b4-518489e7960a",
   "version": "7",
   "dialect": "postgresql",
@@ -329,14 +329,48 @@
           "notNull": true,
           "default": "now()"
         },
-        "answer_wa_message_id": {
-          "name": "answer_wa_message_id",
-          "type": "uuid",
+        "pending_answer_ids": {
+          "name": "pending_answer_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "answer_audio_ids": {
+          "name": "answer_audio_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "text_answers": {
+          "name": "text_answers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "answer_count": {
+          "name": "answer_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_answer_at": {
+          "name": "last_answer_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "transcript": {
           "name": "transcript",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by_message": {
+          "name": "decided_by_message",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -440,19 +474,6 @@
             "id"
           ],
           "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "curator_interviews_answer_wa_message_id_wa_messages_id_fk": {
-          "name": "curator_interviews_answer_wa_message_id_wa_messages_id_fk",
-          "tableFrom": "curator_interviews",
-          "tableTo": "wa_messages",
-          "columnsFrom": [
-            "answer_wa_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

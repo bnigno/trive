@@ -42,8 +42,11 @@ import type { LiaGiftPolicy } from "@/core/coupons/lia-gift";
 import { countLiaGiftsToday, loadLiaGiftPolicy } from "@/services/lia-gifts";
 import { INTERVIEW_STATUS_LABELS } from "@/core/atelier/interview";
 import {
+  INTERVIEW_PROBLEM_TEXT,
+  interviewProblems,
   listRecentInterviews,
   loadInterviewSettings,
+  type InterviewProblem,
   type InterviewSettings,
   type InterviewSummary,
 } from "@/services/curator-interviews";
@@ -76,7 +79,7 @@ export const metadata: Metadata = {
 
 interface PageData {
   overview: WaSessionOverview | null;
-  interview: { settings: InterviewSettings; recent: InterviewSummary[] } | null;
+  interview: { settings: InterviewSettings; recent: InterviewSummary[]; problems: InterviewProblem[] } | null;
   waEnabledSetting: boolean;
   ownerPhone: string;
   recoveryAfterMinutes: number;
@@ -169,9 +172,9 @@ async function loadPageData(): Promise<PageData | null> {
   }
 
   // Entrevista da curadora à parte: a tabela nova não pode derrubar a página.
-  let interview: { settings: InterviewSettings; recent: InterviewSummary[] } | null = null;
+  let interview: { settings: InterviewSettings; recent: InterviewSummary[]; problems: InterviewProblem[] } | null = null;
   try {
-    interview = { settings: await loadInterviewSettings(db), recent: await listRecentInterviews(db, 5) };
+    interview = { settings: await loadInterviewSettings(db), recent: await listRecentInterviews(db, 5), problems: await interviewProblems(db) };
   } catch {
     interview = null;
   }
@@ -532,8 +535,11 @@ export default async function WhatsappPage() {
               settingKey="curator_interview_enabled"
               checked={data.interview.settings.enabled}
               label="Uma pergunta por dia sobre uma peça"
-              hint={`Na hora escolhida, a ${sellerName} manda no SEU WhatsApp a foto de uma peça e uma pergunta (“por que você trouxe?”, “pra onde você usaria?”). Você responde com um áudio de 20 segundos e recebe o rascunho da nota da curadora e duas legendas; só entra na peça com o seu “ok” (“ok voz” guarda também o seu áudio como a voz da curadora). Começa pelas peças da edição da cidade sem a sua voz. Três perguntas seguidas sem resposta e ela passa a perguntar só às segundas.`}
+              hint={`Na hora escolhida, a ${sellerName} manda no seu WhatsApp a foto de uma peça e uma pergunta (“por que você trouxe?”, “pra onde você usaria?”). Você responde com um ou mais áudios até a noite e recebe o rascunho da nota da curadora e duas legendas; só entra na peça com o seu “ok”. “ok voz” guarda também o seu áudio, inteiro, como a voz da curadora — ele toca na página da peça. Começa pelas peças da edição da cidade sem a sua voz. Se três perguntas seguidas ficarem sem resposta (ou puladas), ela passa a perguntar só às segundas.`}
             />
+            {data.interview.problems.filter((problem) => problem !== "nada_a_perguntar" || data.interview?.settings.enabled).map((problem) => (
+              <Warning key={problem}>{INTERVIEW_PROBLEM_TEXT[problem]}</Warning>
+            ))}
             <InterviewScheduleForm hour={data.interview.settings.hour} weekends={data.interview.settings.weekends} />
             <AskInterviewNowForm />
             {data.interview.recent.length > 0 ? (

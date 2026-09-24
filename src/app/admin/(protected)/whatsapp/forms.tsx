@@ -256,7 +256,7 @@ export function AskInterviewNowForm() {
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
       <div>
-        <SubmitButton variant="outline" size="sm" pendingLabel="Escolhendo a peça…">
+        <SubmitButton variant="outline" size="sm" pendingLabel="Pedindo…">
           Perguntar agora
         </SubmitButton>
       </div>

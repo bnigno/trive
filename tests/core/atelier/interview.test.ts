@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   canTransitionInterview,
   classifyInterviewReply,
+  effectiveInterviewStatus,
+  stripPriceSentences,
+  voiceSourceFor,
   fallbackInterviewDraft,
   interviewCadence,
   interviewSourcesFor,
@@ -72,7 +75,7 @@ describe("pickInterviewTarget", () => {
 
   it("a pergunta leva o nome da peça", () => {
     expect(pickInterviewTarget([candidate({ productId: "x", name: "Longo Dunas " })], NOW)?.question).toBe(
-      "Por que você escolheu trazer Longo Dunas para a loja?",
+      "Por que você escolheu trazer a peça Longo Dunas para a loja?",
     );
   });
 });
@@ -116,14 +119,15 @@ describe("shouldAskNow", () => {
 });
 
 describe("classifyInterviewReply", () => {
-  it("áudio responde à pergunta e ao rascunho (reescreve); foto nunca", () => {
+  it("áudio soma à resposta em qualquer estado aberto (inclusive escrevendo); foto nunca", () => {
     expect(classifyInterviewReply({ status: "asked", messageKind: "audio", body: "" })).toEqual({ kind: "answer_audio" });
+    expect(classifyInterviewReply({ status: "drafting", messageKind: "audio", body: "" })).toEqual({ kind: "answer_audio" });
     expect(classifyInterviewReply({ status: "draft_sent", messageKind: "audio", body: "" })).toEqual({ kind: "answer_audio" });
     expect(classifyInterviewReply({ status: "asked", messageKind: "image", body: "pula" })).toBeNull();
-    expect(classifyInterviewReply({ status: "drafting", messageKind: "audio", body: "" })).toBeNull();
+    expect(classifyInterviewReply({ status: "approved", messageKind: "audio", body: "" })).toBeNull();
   });
 
-  it("texto só com as palavras combinadas — texto solto continua indo à Lia", () => {
+  it("texto só com as palavras que a mensagem ensina — o dia a dia dela continua indo à Lia", () => {
     expect(classifyInterviewReply({ status: "asked", messageKind: "text", body: "tem esse vestido no M?" })).toBeNull();
     expect(classifyInterviewReply({ status: "asked", messageKind: "text", body: "Resposta: trouxe porque é fresco" })).toEqual({
       kind: "answer_text",
@@ -131,28 +135,51 @@ describe("classifyInterviewReply", () => {
     });
     expect(classifyInterviewReply({ status: "asked", messageKind: "text", body: "resposta:" })).toBeNull();
     expect(classifyInterviewReply({ status: "asked", messageKind: "text", body: "Pula!" })).toEqual({ kind: "skip" });
-    expect(classifyInterviewReply({ status: "asked", messageKind: "text", body: "amanhã" })).toEqual({ kind: "skip" });
+    for (const word of ["amanhã", "não sei", "depois", "sim", "pode", "perfeito"]) {
+      expect(classifyInterviewReply({ status: "draft_sent", messageKind: "text", body: word })).toBeNull();
+    }
   });
 
-  it("ok / ok voz / corrige só valem com o rascunho na mão", () => {
+  it("ok / ok voz / corrige / nova só valem com o rascunho na mão", () => {
     expect(classifyInterviewReply({ status: "asked", messageKind: "text", body: "ok" })).toBeNull();
     expect(classifyInterviewReply({ status: "draft_sent", messageKind: "text", body: "OK" })).toEqual({ kind: "approve", withVoice: false });
     expect(classifyInterviewReply({ status: "draft_sent", messageKind: "text", body: "ok voz" })).toEqual({ kind: "approve", withVoice: true });
-    expect(classifyInterviewReply({ status: "draft_sent", messageKind: "text", body: "Corrige: é linho puro." })).toEqual({
-      kind: "correct",
-      text: "é linho puro.",
+    expect(classifyInterviewReply({ status: "draft_sent", messageKind: "text", body: "Corrige: é linho, não viscose." })).toEqual({
+      kind: "answer_text",
+      text: "Correção da dona para o rascunho: é linho, não viscose.",
+    });
+    expect(classifyInterviewReply({ status: "draft_sent", messageKind: "text", body: "nova: Linho puro, fresquinho." })).toEqual({
+      kind: "replace",
+      text: "Linho puro, fresquinho.",
     });
   });
 });
 
 describe("isInterviewOpen", () => {
   const askedAt = new Date(NOW.getTime() - INTERVIEW_ANSWER_WINDOW_MS);
-  it("pergunta vale 8 h; rascunho vale 24 h desde o envio", () => {
-    expect(isInterviewOpen({ status: "asked", askedAt, draftSentAt: null }, NOW)).toBe(true);
-    expect(isInterviewOpen({ status: "asked", askedAt: new Date(askedAt.getTime() - 1), draftSentAt: null }, NOW)).toBe(false);
+  it("pergunta vale 14 h desde a pergunta ou o último áudio; rascunho vale 24 h desde o envio", () => {
+    expect(isInterviewOpen({ status: "asked", askedAt, draftSentAt: null, lastAnswerAt: null }, NOW)).toBe(true);
+    const older = new Date(askedAt.getTime() - 1);
+    expect(isInterviewOpen({ status: "asked", askedAt: older, draftSentAt: null, lastAnswerAt: null }, NOW)).toBe(false);
+    expect(isInterviewOpen({ status: "drafting", askedAt: older, draftSentAt: null, lastAnswerAt: new Date(NOW.getTime() - 60_000) }, NOW)).toBe(true);
     const draftSentAt = new Date(NOW.getTime() - INTERVIEW_DRAFT_WINDOW_MS);
-    expect(isInterviewOpen({ status: "draft_sent", askedAt: new Date(0), draftSentAt }, NOW)).toBe(true);
-    expect(isInterviewOpen({ status: "approved", askedAt: NOW, draftSentAt: NOW }, NOW)).toBe(false);
+    expect(isInterviewOpen({ status: "draft_sent", askedAt: new Date(0), draftSentAt, lastAnswerAt: null }, NOW)).toBe(true);
+    expect(isInterviewOpen({ status: "approved", askedAt: NOW, draftSentAt: NOW, lastAnswerAt: null }, NOW)).toBe(false);
+  });
+
+  it("aberta fora do prazo aparece (e conta) como sem resposta", () => {
+    const stale = { status: "asked" as const, askedAt: new Date(NOW.getTime() - INTERVIEW_ANSWER_WINDOW_MS - 1), draftSentAt: null, lastAnswerAt: null };
+    expect(effectiveInterviewStatus(stale, NOW)).toBe("expired");
+    expect(effectiveInterviewStatus({ ...stale, status: "approved" }, NOW)).toBe("approved");
+  });
+});
+
+describe("a voz da curadora", () => {
+  it("só de UM áudio; dois áudios ou parte escrita guardam só o texto", () => {
+    expect(voiceSourceFor({ audioIds: ["a1"], textAnswers: 0 })).toEqual({ audioId: "a1" });
+    expect(voiceSourceFor({ audioIds: [], textAnswers: 1 })).toEqual({ reason: "escrito" });
+    expect(voiceSourceFor({ audioIds: ["a1", "a2"], textAnswers: 0 })).toEqual({ reason: "varios" });
+    expect(voiceSourceFor({ audioIds: ["a1"], textAnswers: 1 })).toEqual({ reason: "varios" });
   });
 });
 
@@ -167,6 +194,15 @@ describe("rascunho", () => {
     expect(() => normalizeInterviewDraft({ nota: 3 })).toThrow();
     expect(() => normalizeInterviewDraft({ nota: "…", legenda_1: "", legenda_2: "" })).toThrow();
   });
+  it("frase com preço sai da nota e das legendas", () => {
+    expect(stripPriceSentences("Trouxe porque é fresco. Custou R$ 40 no Brás. Vai com tudo.")).toBe("Trouxe porque é fresco. Vai com tudo.");
+    expect(stripPriceSentences("Sai por 89 reais!")).toBe("");
+    expect(normalizeInterviewDraft({ nota: "É linho. Paguei 50 reais.", legenda_1: "Por R$ 89 é sua", legenda_2: "Linho puro" })).toEqual({
+      note: "É linho.",
+      captions: ["Linho puro"],
+    });
+  });
+
   it("sem a inteligência, a fala vira a nota", () => {
     expect(fallbackInterviewDraft("trouxe porque é fresco")).toEqual({ note: "trouxe porque é fresco", captions: [] });
     expect(fallbackInterviewDraft("...")).toBeNull();
@@ -177,6 +213,7 @@ describe("máquina de estados", () => {
   it("aprovada é final; rascunho pode voltar a ser escrito com um áudio novo", () => {
     expect(canTransitionInterview("draft_sent", "approved")).toBe(true);
     expect(canTransitionInterview("draft_sent", "drafting")).toBe(true);
+    expect(canTransitionInterview("drafting", "drafting")).toBe(true);
     expect(canTransitionInterview("approved", "drafting")).toBe(false);
     expect(canTransitionInterview("asked", "approved")).toBe(false);
     expect(interviewSourcesFor("expired").sort()).toEqual(["asked", "draft_sent", "drafting"]);

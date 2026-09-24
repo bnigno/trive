@@ -20,7 +20,7 @@ import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { sendDailyDigestWa, yesterdaySpDayKey } from "@/services/daily-digest";
 import { rehearseBotTurn, type RehearsalTurn } from "@/services/wa-rehearsal";
 import { updateWaTemplate } from "@/services/wa-templates";
-import { requestCuratorInterviewNow, saveInterviewSchedule } from "@/services/curator-interviews";
+import { INTERVIEW_PROBLEM_TEXT, requestCuratorInterviewNow, saveInterviewSchedule } from "@/services/curator-interviews";
 
 export type FormState = { error?: string; success?: string };
 
@@ -394,9 +394,13 @@ export async function askInterviewNowAction(_prev: FormState, _formData: FormDat
   try {
     const result = await requestCuratorInterviewNow(getDb(), { userId: user.id });
     revalidatePath("/admin/whatsapp");
-    return result.ok
-      ? { success: "Pergunta a caminho do seu WhatsApp." }
-      : { error: "Já tem uma pergunta esperando a sua resposta no WhatsApp — responda (ou mande *pula*) antes de pedir outra." };
+    if (result.ok) return { success: "Pedido enviado: a pergunta chega no seu WhatsApp em instantes." };
+    return {
+      error:
+        result.reason === "aberta"
+          ? "Já tem uma pergunta esperando a sua resposta no WhatsApp — responda (ou mande “pula”) antes de pedir outra."
+          : INTERVIEW_PROBLEM_TEXT[result.reason],
+    };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }

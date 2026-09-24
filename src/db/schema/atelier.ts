@@ -73,9 +73,21 @@ export const curatorInterviews = pgTable(
     question: text("question").notNull(),
     status: text("status").notNull().default("asked"),
     askedAt: timestamp("asked_at", { withTimezone: true }).notNull().defaultNow(),
-    /** A mensagem da dona que respondeu (o áudio vira a voz da curadora no "ok voz"). */
-    answerWaMessageId: uuid("answer_wa_message_id").references(() => waMessages.id, { onDelete: "set null" }),
+    /**
+     * A resposta pode vir em várias partes (dois ou três áudios, "resposta:",
+     * "corrige:"): os áudios esperando transcrição, os já somados à fala e
+     * quantas partes entraram — o rascunho só sai quando não há áudio
+     * pendente, e o contador descarta rascunho de uma versão velha.
+     */
+    pendingAnswerIds: jsonb("pending_answer_ids").$type<string[]>().notNull().default([]),
+    answerAudioIds: jsonb("answer_audio_ids").$type<string[]>().notNull().default([]),
+    textAnswers: integer("text_answers").notNull().default(0),
+    answerCount: integer("answer_count").notNull().default(0),
+    lastAnswerAt: timestamp("last_answer_at", { withTimezone: true }),
+    /** A fala somada (cada parte numa linha). */
     transcript: text("transcript"),
+    /** A mensagem que decidiu ("ok", "pula"…): o retry reenvia a confirmação em vez de calar. */
+    decidedByMessage: text("decided_by_message"),
     draft: jsonb("draft").$type<{ note: string; captions: string[]; model?: string | null }>(),
     draftSentAt: timestamp("draft_sent_at", { withTimezone: true }),
     decidedAt: timestamp("decided_at", { withTimezone: true }),

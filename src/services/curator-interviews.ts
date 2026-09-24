@@ -1,25 +1,30 @@
 // Entrevista da curadora: a Lia faz UMA pergunta por dia sobre UMA peça no
-// WhatsApp da dona; a resposta (áudio, ou texto começando com "resposta:")
-// vira um rascunho de nota + duas legendas, e só entra na peça com o "ok"
-// dela. É o caminho mais curto para a voz da dona chegar à Lia e aos posts:
-// ninguém senta para escrever descrição, mas responder a uma pergunta por
-// áudio leva 20 segundos.
+// WhatsApp da dona; a resposta (um ou mais áudios, ou texto começando com
+// "resposta:") vira um rascunho de nota + duas legendas, e só entra na peça
+// com o "ok" dela. É o caminho mais curto para a voz da dona chegar à Lia e
+// aos posts: ninguém senta para escrever descrição, mas responder a uma
+// pergunta por áudio leva 20 segundos.
 //
 // Fluxo: cron de hora em hora → curator.interview_ask (pergunta com a foto)
-// → a resposta cai no webhook (routeInterviewReply) → transcrição → rascunho
-// pela fila (curator.interview_draft) → "ok"/"ok voz"/"corrige:"/"pula" →
-// curator.interview_decide. Uma entrevista aberta por vez (índice parcial).
+// → a resposta cai no webhook (routeInterviewReply): áudio entra na lista de
+// pendentes e vai transcrever; cada parte ouvida soma à fala → rascunho pela
+// fila (curator.interview_draft, só quando não há áudio pendente) → "ok",
+// "ok voz", "corrige:", "nova:" ou "pula" → curator.interview_decide. Uma
+// entrevista aberta por vez (índice parcial).
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { SalesAssistant } from "@/adapters/assistant";
 import type { FileStorage } from "@/adapters/storage";
+import { isTranscriptionConfigured } from "@/adapters/transcription";
 import type { MessagingProvider } from "@/adapters/zapi";
+import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
 import {
   buildInterviewDraftPrompt,
   classifyInterviewReply,
+  effectiveInterviewStatus,
   fallbackInterviewDraft,
   interviewCadence,
   interviewSourcesFor,
@@ -31,6 +36,9 @@ import {
   OPEN_INTERVIEW_STATUSES,
   pickInterviewTarget,
   shouldAskNow,
+  stripPriceSentences,
+  voiceSourceFor,
+  type InterviewClock,
   type InterviewDraft,
   type InterviewStatus,
 } from "@/core/atelier/interview";
@@ -42,7 +50,8 @@ import {
   fitCuratorNote,
 } from "@/core/catalog/curator-note";
 import { INBOUND_MEDIA_MARKERS, parseWaMediaMeta } from "@/core/whatsapp/media";
-import { auditLog, cityEditionProducts, curatorInterviews, productImages, products, waMessages } from "@/db/schema";
+import { auditLog, cityEditionProducts, curatorInterviews, productImages, products, waMessages, waTemplates } from "@/db/schema";
+import { isValidE164, toE164BR } from "@/lib/phone";
 import { spDayKey, spMinutesOfDay, weekdayIndexSP } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { hasOpenAtelierBatch } from "@/services/atelier";
@@ -50,18 +59,27 @@ import { listPublicCityEditions } from "@/services/city-editions";
 import { applyInterviewCuratorNote, removeReplacedCuratorAudio } from "@/services/curator-notes";
 import { getSettingsMap, updateSetting, type ServiceDb } from "@/services/settings";
 import { publicImageUrl } from "@/services/store-catalog";
-import { sendToOwner, type SendWaMessageResult } from "@/services/wa-messaging";
+import { isWaEnabled, sendToOwner, type SendWaMessageResult } from "@/services/wa-messaging";
 
-export const INTERVIEW_ASK_TEMPLATE = "owner_interview_ask";
-export const INTERVIEW_DRAFT_TEMPLATE = "owner_interview_draft";
-export const INTERVIEW_DONE_TEMPLATE = "owner_interview_done";
+export const INTERVIEW_TEMPLATES = {
+  ask: "owner_interview_ask",
+  draft: "owner_interview_draft",
+  saved: "owner_interview_saved",
+  skipped: "owner_interview_skipped",
+  unheard: "owner_interview_unheard",
+  rejected: "owner_interview_rejected",
+} as const;
 
 const DEFAULT_DRAFT_MODEL = "claude-sonnet-5";
 /** A dona espera o rascunho no WhatsApp: a inteligência tem 25 s; depois, a própria fala vira a nota. */
 const DRAFT_MODEL_TIMEOUT_MS = 25_000;
+/** O raciocínio do modelo conta no mesmo teto: 800 cortava o JSON. */
+const DRAFT_MAX_TOKENS = 3_000;
+/** Ela costuma mandar dois ou três áudios seguidos: o rascunho espera um pouco antes de sair. */
+const DRAFT_GATHER_MS = 20_000;
 
 // ---------------------------------------------------------------------------
-// Configuração
+// Configuração e prontidão
 // ---------------------------------------------------------------------------
 
 export type InterviewSettings = { enabled: boolean; hour: number; weekends: boolean };
@@ -76,7 +94,46 @@ export async function loadInterviewSettings(db: DbOrTx): Promise<InterviewSettin
   };
 }
 
+export type InterviewProblem = "sem_telefone_dono" | "whatsapp_desligado" | "sem_template" | "nada_a_perguntar";
+
+export const INTERVIEW_PROBLEM_TEXT: Record<InterviewProblem, string> = {
+  sem_telefone_dono: "Falta o seu WhatsApp em Conexão (é para ele que a pergunta vai).",
+  whatsapp_desligado: "O WhatsApp da loja está desligado.",
+  sem_template: "Faltam as mensagens da entrevista (rode a sincronização das mensagens do sistema).",
+  nada_a_perguntar: "Nenhuma peça ativa para perguntar agora (todas foram perguntadas nos últimos 14 dias).",
+};
+
+async function missingTemplates(db: DbOrTx): Promise<boolean> {
+  const keys = Object.values(INTERVIEW_TEMPLATES);
+  const rows = await db
+    .select({ key: waTemplates.key })
+    .from(waTemplates)
+    .where(and(inArray(waTemplates.key, keys), eq(waTemplates.isActive, true)));
+  return rows.length < keys.length;
+}
+
+/** O que impede a pergunta de sair (o painel mostra; "Perguntar agora" recusa com o motivo). */
+export async function interviewProblems(db: DbOrTx, now: Date = new Date()): Promise<InterviewProblem[]> {
+  const problems: InterviewProblem[] = [];
+  const map = await getSettingsMap(db, ["owner_whatsapp_phone"]);
+  const raw = map["owner_whatsapp_phone"];
+  const phone = typeof raw === "string" ? (toE164BR(raw) ?? raw.trim()) : "";
+  if (!isValidE164(phone)) problems.push("sem_telefone_dono");
+  if (!(await isWaEnabled(db))) problems.push("whatsapp_desligado");
+  if (await missingTemplates(db)) problems.push("sem_template");
+  if (!pickInterviewTarget(await loadCandidates(db, now), now)) problems.push("nada_a_perguntar");
+  return problems;
+}
+
 type InterviewRow = typeof curatorInterviews.$inferSelect;
+
+function statusOf(row: { status: string }): InterviewStatus {
+  return isInterviewStatus(row.status) ? row.status : "failed";
+}
+
+function clockOf(row: Pick<InterviewRow, "status" | "askedAt" | "draftSentAt" | "lastAnswerAt">): InterviewClock {
+  return { status: statusOf(row), askedAt: row.askedAt, draftSentAt: row.draftSentAt, lastAnswerAt: row.lastAnswerAt };
+}
 
 async function findOpenInterview(db: DbOrTx): Promise<InterviewRow | null> {
   const [row] = await db
@@ -88,10 +145,6 @@ async function findOpenInterview(db: DbOrTx): Promise<InterviewRow | null> {
   return row ?? null;
 }
 
-function statusOf(row: { status: string }): InterviewStatus {
-  return isInterviewStatus(row.status) ? row.status : "failed";
-}
-
 /**
  * Transição guardada: só muda se a entrevista está num estado de onde se
  * chega a `to` (core/atelier/interview). Devolve false quando outra
@@ -101,7 +154,8 @@ async function transitionInterview(
   db: DbOrTx,
   input: { id: string; to: InterviewStatus; from?: InterviewStatus[]; now: Date; patch?: Partial<typeof curatorInterviews.$inferInsert> },
 ): Promise<boolean> {
-  const sources = (input.from ?? interviewSourcesFor(input.to)).filter((from) => interviewSourcesFor(input.to).includes(from));
+  const allowed = interviewSourcesFor(input.to);
+  const sources = (input.from ?? allowed).filter((from) => allowed.includes(from));
   if (sources.length === 0) return false;
   const moved = await db
     .update(curatorInterviews)
@@ -113,13 +167,10 @@ async function transitionInterview(
 
 /** Entrevistas abertas que passaram do prazo viram "expired" (a pergunta seguinte pode sair). */
 async function expireStaleInterviews(db: DbOrTx, now: Date): Promise<number> {
-  const open = await db
-    .select({ id: curatorInterviews.id, status: curatorInterviews.status, askedAt: curatorInterviews.askedAt, draftSentAt: curatorInterviews.draftSentAt })
-    .from(curatorInterviews)
-    .where(inArray(curatorInterviews.status, [...OPEN_INTERVIEW_STATUSES]));
+  const open = await db.select().from(curatorInterviews).where(inArray(curatorInterviews.status, [...OPEN_INTERVIEW_STATUSES]));
   let expired = 0;
   for (const row of open) {
-    if (isInterviewOpen({ status: statusOf(row), askedAt: row.askedAt, draftSentAt: row.draftSentAt }, now)) continue;
+    if (isInterviewOpen(clockOf(row), now)) continue;
     if (await transitionInterview(db, { id: row.id, to: "expired", now })) expired += 1;
   }
   return expired;
@@ -136,11 +187,7 @@ export async function enqueueCuratorInterviewAsk(
 ): Promise<{ enqueued: boolean; reason?: "desligado" | "fora_da_hora" }> {
   const settings = await loadInterviewSettings(db);
   if (!settings.enabled) return { enqueued: false, reason: "desligado" };
-  const recent = await db
-    .select({ status: curatorInterviews.status })
-    .from(curatorInterviews)
-    .orderBy(desc(curatorInterviews.askedAt))
-    .limit(10);
+  const recent = await db.select().from(curatorInterviews).orderBy(desc(curatorInterviews.askedAt)).limit(10);
   const dayKey = spDayKey(now);
   const ask = shouldAskNow({
     enabled: settings.enabled,
@@ -148,7 +195,8 @@ export async function enqueueCuratorInterviewAsk(
     weekends: settings.weekends,
     spHour: Math.floor(spMinutesOfDay(now) / 60),
     spWeekday: weekdayIndexSP(dayKey),
-    cadence: interviewCadence(recent.map((row) => ({ status: statusOf(row) }))),
+    // A aberta que já venceu conta como sem resposta (o recuo vem na 3ª, não na 4ª).
+    cadence: interviewCadence(recent.map((row) => ({ status: effectiveInterviewStatus(clockOf(row), now) }))),
   });
   if (!ask) return { enqueued: false, reason: "fora_da_hora" };
   const id = await enqueueOutboxEvent(db, {
@@ -160,17 +208,17 @@ export async function enqueueCuratorInterviewAsk(
   return { enqueued: id !== null };
 }
 
-/** "Perguntar agora" no painel: fura a hora (não a regra de uma aberta por vez). */
+/** "Perguntar agora" no painel: fura a hora (não a regra de uma aberta por vez nem os pré-requisitos). */
 export async function requestCuratorInterviewNow(
   db: DbOrTx,
   input: { userId: string; now?: Date },
-): Promise<{ ok: true } | { ok: false; reason: "aberta" }> {
+): Promise<{ ok: true } | { ok: false; reason: "aberta" | InterviewProblem }> {
   const userId = z.uuid().parse(input.userId);
   const now = input.now ?? new Date();
   const open = await findOpenInterview(db);
-  if (open && isInterviewOpen({ status: statusOf(open), askedAt: open.askedAt, draftSentAt: open.draftSentAt }, now)) {
-    return { ok: false, reason: "aberta" };
-  }
+  if (open && isInterviewOpen(clockOf(open), now)) return { ok: false, reason: "aberta" };
+  const [problem] = await interviewProblems(db, now);
+  if (problem) return { ok: false, reason: problem };
   const askKey = `agora:${randomUUID()}`;
   await db.transaction(async (tx) => {
     await enqueueOutboxEvent(tx, {
@@ -212,9 +260,11 @@ async function loadCandidates(db: DbOrTx, now: Date) {
       .where(inArray(cityEditionProducts.cityEditionId, editions.map((edition) => edition.id)));
     for (const link of links) editionProductIds.add(link.productId);
   }
+  // Pergunta que não saiu (failed) não gasta a peça nem a pergunta.
   const history = await db
     .select({ productId: curatorInterviews.productId, questionKey: curatorInterviews.questionKey, askedAt: curatorInterviews.askedAt })
-    .from(curatorInterviews);
+    .from(curatorInterviews)
+    .where(ne(curatorInterviews.status, "failed"));
   const asked = new Map<string, { keys: string[]; last: Date }>();
   for (const row of history) {
     const entry = asked.get(row.productId) ?? { keys: [], last: row.askedAt };
@@ -253,17 +303,17 @@ async function productPhotoUrl(db: DbOrTx, productId: string): Promise<string | 
 
 export const interviewAskPayloadSchema = z.object({ askKey: z.string().min(1).max(80) });
 
+type SendSkip = Extract<SendWaMessageResult, { skipped: unknown }>["skipped"];
+
 export type AskCuratorInterviewResult =
   | { asked: true; interviewId: string; productId: string }
-  | { skipped: "desligado" | "ja_processada" | "aberta" | "nada_a_perguntar" | SendSkip };
-
-type SendSkip = Extract<SendWaMessageResult, { skipped: unknown }>["skipped"];
+  | { skipped: "desligado" | "ja_processada" | "aberta" | "nada_a_perguntar" | "sem_template" | SendSkip };
 
 async function sendQuestion(db: DbOrTx, provider: MessagingProvider, row: { id: string; productId: string; question: string }): Promise<SendWaMessageResult> {
   const [product] = await db.select({ name: products.name }).from(products).where(eq(products.id, row.productId)).limit(1);
   const photo = await productPhotoUrl(db, row.productId);
   return sendToOwner(db, provider, {
-    templateKey: INTERVIEW_ASK_TEMPLATE,
+    templateKey: INTERVIEW_TEMPLATES.ask,
     vars: { peca: product?.name ?? "a peça", pergunta: row.question },
     dedupeKey: `curator.interview_ask:${row.id}`,
     ...(photo ? { image: { url: photo } } : {}),
@@ -292,6 +342,9 @@ export async function askCuratorInterview(
     return { asked: true, interviewId: existing.id, productId: existing.productId };
   }
 
+  // Sem as mensagens da entrevista, nada de gastar a pergunta de uma peça.
+  if (await missingTemplates(db)) return { skipped: "sem_template" };
+
   await expireStaleInterviews(db, now);
   if (await findOpenInterview(db)) return { skipped: "aberta" };
 
@@ -307,8 +360,8 @@ export async function askCuratorInterview(
 
   const sent = await sendQuestion(db, provider, row);
   if ("skipped" in sent) {
-    // Sem telefone da dona, WhatsApp desligado ou modelo apagado: a pergunta
-    // não saiu e a entrevista não pode ficar aberta segurando a próxima.
+    // Sem telefone da dona ou WhatsApp desligado: a pergunta não saiu e a
+    // entrevista não pode ficar aberta segurando a próxima.
     await transitionInterview(db, { id: row.id, to: "failed", now });
     return { skipped: sent.skipped };
   }
@@ -320,112 +373,145 @@ export async function askCuratorInterview(
 // ---------------------------------------------------------------------------
 
 export type InterviewRoute =
-  /** Áudio: vai transcrever; a transcrição volta por receiveInterviewTranscript. */
+  /** Áudio: entrou na lista de pendentes e vai transcrever; volta por receiveInterviewTranscript. */
   | { kind: "transcribe"; interviewId: string }
   /** Texto de resposta, aprovação, correção ou "pula": já está na fila. */
   | { kind: "queued"; interviewId: string };
 
+/** Soma uma parte ouvida/escrita à fala e agenda o rascunho (que espera os áudios pendentes). */
+async function addAnswerPart(
+  tx: DbOrTx,
+  input: { interviewId: string; text: string; audioId: string | null; now: Date },
+): Promise<boolean> {
+  const [updated] = await tx
+    .update(curatorInterviews)
+    .set({
+      status: "drafting",
+      transcript: sql`case when ${curatorInterviews.transcript} is null or ${curatorInterviews.transcript} = '' then ${input.text} else ${curatorInterviews.transcript} || E'\\n' || ${input.text} end`,
+      answerCount: sql`${curatorInterviews.answerCount} + 1`,
+      lastAnswerAt: input.now,
+      updatedAt: input.now,
+      ...(input.audioId
+        ? {
+            answerAudioIds: sql`${curatorInterviews.answerAudioIds} || ${JSON.stringify([input.audioId])}::jsonb`,
+            pendingAnswerIds: sql`${curatorInterviews.pendingAnswerIds} - ${input.audioId}::text`,
+          }
+        : { textAnswers: sql`${curatorInterviews.textAnswers} + 1` }),
+    })
+    .where(and(eq(curatorInterviews.id, input.interviewId), inArray(curatorInterviews.status, interviewSourcesFor("drafting"))))
+    .returning({ answerCount: curatorInterviews.answerCount, pending: curatorInterviews.pendingAnswerIds });
+  if (!updated) return false;
+  await enqueueDraft(tx, { interviewId: input.interviewId, answerCount: updated.answerCount, now: input.now });
+  return true;
+}
+
+async function enqueueDraft(tx: DbOrTx, input: { interviewId: string; answerCount: number; now: Date }): Promise<void> {
+  await enqueueOutboxEvent(tx, {
+    eventType: "curator.interview_draft",
+    dedupeKey: `curator.interview_draft:${input.interviewId}:${input.answerCount}`,
+    aggregateType: "curator_interview",
+    aggregateId: input.interviewId,
+    payload: { interviewId: input.interviewId, answerCount: input.answerCount },
+    nextAttemptAt: new Date(input.now.getTime() + DRAFT_GATHER_MS),
+  });
+}
+
+async function enqueueDecision(
+  tx: DbOrTx,
+  input: { interviewId: string; decision: z.infer<typeof interviewDecidePayloadSchema>["decision"]; messageKey: string; text?: string },
+): Promise<void> {
+  await enqueueOutboxEvent(tx, {
+    eventType: "curator.interview_decide",
+    dedupeKey: `curator.interview_decide:${input.messageKey}`,
+    aggregateType: "curator_interview",
+    aggregateId: input.interviewId,
+    payload: { interviewId: input.interviewId, decision: input.decision, messageKey: input.messageKey, ...(input.text ? { text: input.text } : {}) },
+  });
+}
+
 /**
  * A mensagem da dona é para a entrevista aberta? Lote de fotos do Ateliê
- * aberto ganha (as fotos são de peça nova); fora do prazo, nada muda — o
+ * aberto ganha (as fotos são de peça nova); fora do prazo, nada muda — e
  * texto solto dela continua indo à Lia. null = siga o fluxo de sempre.
  */
 export async function routeInterviewReply(
   tx: DbOrTx,
-  input: { phoneE164: string; kind: "audio" | "text" | "image" | "note"; body: string; waMessageId: string; now: Date },
+  input: { phoneE164: string; kind: "audio" | "text" | "image" | "note"; body: string; waMessageId: string; mediaUrl: string | null; now: Date },
 ): Promise<InterviewRoute | null> {
   const interview = await findOpenInterview(tx);
   if (!interview) return null;
-  const status = statusOf(interview);
-  if (!isInterviewOpen({ status, askedAt: interview.askedAt, draftSentAt: interview.draftSentAt }, input.now)) return null;
-  const reply = classifyInterviewReply({ status, messageKind: input.kind, body: input.body });
+  const clock = clockOf(interview);
+  if (!isInterviewOpen(clock, input.now)) return null;
+  const reply = classifyInterviewReply({ status: clock.status, messageKind: input.kind, body: input.body });
   if (!reply) return null;
   if (await hasOpenAtelierBatch(tx, input.phoneE164, input.now)) return null;
 
   if (reply.kind === "answer_audio") {
+    if (!input.mediaUrl) return null;
+    if (!isTranscriptionConfigured()) {
+      await enqueueDecision(tx, { interviewId: interview.id, decision: "unheard", messageKey: input.waMessageId });
+      return { kind: "queued", interviewId: interview.id };
+    }
     const claimed = await tx
       .update(curatorInterviews)
-      .set({ answerWaMessageId: input.waMessageId, updatedAt: input.now })
-      .where(and(eq(curatorInterviews.id, interview.id), inArray(curatorInterviews.status, ["asked", "draft_sent"])))
+      .set({
+        pendingAnswerIds: sql`${curatorInterviews.pendingAnswerIds} || ${JSON.stringify([input.waMessageId])}::jsonb`,
+        lastAnswerAt: input.now,
+        updatedAt: input.now,
+      })
+      .where(and(eq(curatorInterviews.id, interview.id), inArray(curatorInterviews.status, [...OPEN_INTERVIEW_STATUSES])))
       .returning({ id: curatorInterviews.id });
     return claimed.length > 0 ? { kind: "transcribe", interviewId: interview.id } : null;
   }
 
   if (reply.kind === "answer_text") {
-    const moved = await transitionInterview(tx, {
-      id: interview.id,
-      to: "drafting",
-      from: ["asked", "draft_sent"],
-      now: input.now,
-      patch: { answerWaMessageId: input.waMessageId, transcript: reply.text },
-    });
-    if (!moved) return null;
-    await enqueueDraft(tx, { interviewId: interview.id, answerKey: input.waMessageId });
-    return { kind: "queued", interviewId: interview.id };
+    const added = await addAnswerPart(tx, { interviewId: interview.id, text: reply.text, audioId: null, now: input.now });
+    return added ? { kind: "queued", interviewId: interview.id } : null;
   }
 
   const decision =
-    reply.kind === "approve" ? (reply.withVoice ? "approve_voice" : "approve") : reply.kind === "correct" ? "correct" : "skip";
-  await enqueueOutboxEvent(tx, {
-    eventType: "curator.interview_decide",
-    dedupeKey: `curator.interview_decide:${input.waMessageId}`,
-    aggregateType: "curator_interview",
-    aggregateId: interview.id,
-    payload: {
-      interviewId: interview.id,
-      decision,
-      messageKey: input.waMessageId,
-      ...(reply.kind === "correct" ? { text: reply.text } : {}),
-    },
+    reply.kind === "approve" ? (reply.withVoice ? "approve_voice" : "approve") : reply.kind === "replace" ? "replace" : "skip";
+  await enqueueDecision(tx, {
+    interviewId: interview.id,
+    decision,
+    messageKey: input.waMessageId,
+    ...(reply.kind === "replace" ? { text: reply.text } : {}),
   });
   return { kind: "queued", interviewId: interview.id };
 }
 
-async function enqueueDraft(tx: DbOrTx, input: { interviewId: string; answerKey: string }): Promise<void> {
-  await enqueueOutboxEvent(tx, {
-    eventType: "curator.interview_draft",
-    dedupeKey: `curator.interview_draft:${input.answerKey}`,
-    aggregateType: "curator_interview",
-    aggregateId: input.interviewId,
-    payload: input,
-  });
-}
-
 /**
  * A transcrição do áudio voltou (wa-transcribe → routeInboundMessage): se o
- * áudio era a resposta da entrevista, grava a fala e pede o rascunho; se não
- * deu para ouvir, avisa a dona. false = o áudio não era da entrevista.
+ * áudio era parte da resposta, soma a fala e pede o rascunho; se não deu
+ * para ouvir, avisa a dona. false = o áudio não era da entrevista.
  */
 export async function receiveInterviewTranscript(
   tx: DbOrTx,
   input: { waMessageId: string; text: string; now: Date },
 ): Promise<boolean> {
   const [interview] = await tx
-    .select({ id: curatorInterviews.id, status: curatorInterviews.status })
+    .select({ id: curatorInterviews.id, answerCount: curatorInterviews.answerCount })
     .from(curatorInterviews)
-    .where(and(eq(curatorInterviews.answerWaMessageId, input.waMessageId), inArray(curatorInterviews.status, ["asked", "draft_sent"])))
+    .where(sql`${curatorInterviews.pendingAnswerIds} @> ${JSON.stringify([input.waMessageId])}::jsonb`)
     .limit(1);
   if (!interview) return false;
 
   const unheard = input.text.startsWith(INBOUND_MEDIA_MARKERS.audio) || input.text.trim() === "";
-  if (unheard) {
-    await enqueueOutboxEvent(tx, {
-      eventType: "curator.interview_decide",
-      dedupeKey: `curator.interview_decide:${input.waMessageId}`,
-      aggregateType: "curator_interview",
-      aggregateId: interview.id,
-      payload: { interviewId: interview.id, decision: "unheard", messageKey: input.waMessageId },
-    });
+  if (!unheard) {
+    await addAnswerPart(tx, { interviewId: interview.id, text: input.text, audioId: input.waMessageId, now: input.now });
     return true;
   }
-  const moved = await transitionInterview(tx, {
-    id: interview.id,
-    to: "drafting",
-    from: ["asked", "draft_sent"],
-    now: input.now,
-    patch: { transcript: input.text },
-  });
-  if (moved) await enqueueDraft(tx, { interviewId: interview.id, answerKey: input.waMessageId });
+  // Não deu para ouvir: sai da fila de pendentes (o rascunho do que já foi
+  // ouvido não fica esperando por ele) e a dona recebe o aviso.
+  const [left] = await tx
+    .update(curatorInterviews)
+    .set({ pendingAnswerIds: sql`${curatorInterviews.pendingAnswerIds} - ${input.waMessageId}::text`, updatedAt: input.now })
+    .where(eq(curatorInterviews.id, interview.id))
+    .returning({ answerCount: curatorInterviews.answerCount, status: curatorInterviews.status });
+  await enqueueDecision(tx, { interviewId: interview.id, decision: "unheard", messageKey: input.waMessageId });
+  if (left && left.status === "drafting" && left.answerCount > 0) {
+    await enqueueDraft(tx, { interviewId: interview.id, answerCount: left.answerCount, now: input.now });
+  }
   return true;
 }
 
@@ -433,15 +519,19 @@ export async function receiveInterviewTranscript(
 // O rascunho
 // ---------------------------------------------------------------------------
 
-export const interviewDraftPayloadSchema = z.object({ interviewId: z.uuid(), answerKey: z.string().min(1) });
+export const interviewDraftPayloadSchema = z.object({ interviewId: z.uuid(), answerCount: z.number().int().min(1) });
 
 export type DraftCuratorInterviewResult =
   | { sent: true; usedModel: boolean }
-  | { skipped: "inexistente" | "ja_decidida" | "sem_fala" | SendSkip };
+  | { skipped: "inexistente" | "ja_decidida" | "sem_fala" | "esperando_audio" | "superado" | SendSkip };
 
-function draftVars(productName: string, draft: InterviewDraft): Record<string, string> {
+function draftVars(productName: string, draft: InterviewDraft & { model?: string | null }, replacesNote: boolean): Record<string, string> {
   const captions = draft.captions.length > 0 ? `\n\n*Legendas*\n${draft.captions.map((caption, index) => `${index + 1}. ${caption}`).join("\n")}` : "";
-  return { peca: productName, nota: draft.note, legendas: captions };
+  const notices = [
+    draft.model === null ? "(A inteligência não respondeu agora: esta é a sua fala como veio, sem preço.)" : null,
+    replacesNote ? "(Esta nota substitui a que a peça tem hoje.)" : null,
+  ].filter((line): line is string => line !== null);
+  return { peca: productName, nota: draft.note, legendas: captions, aviso: notices.length > 0 ? `\n\n${notices.join("\n")}` : "" };
 }
 
 async function writeDraft(
@@ -457,7 +547,7 @@ async function writeDraft(
       userText: `Resposta da dona (transcrita):\n${input.transcript}`,
       model: input.model,
       jsonSchema: INTERVIEW_DRAFT_JSON_SCHEMA as unknown as Record<string, unknown>,
-      maxTokens: 800,
+      maxTokens: DRAFT_MAX_TOKENS,
       signal: controller.signal,
     });
     return { draft: normalizeInterviewDraft(result.json), model: input.model };
@@ -470,7 +560,7 @@ async function writeDraft(
   }
 }
 
-/** Handler da fila: a fala vira nota + legendas e o rascunho vai para a dona aprovar. */
+/** Handler da fila: a fala somada vira nota + legendas e o rascunho vai para a dona aprovar. */
 export async function draftCuratorInterview(
   db: DbOrTx,
   provider: MessagingProvider,
@@ -478,24 +568,29 @@ export async function draftCuratorInterview(
   input: z.input<typeof interviewDraftPayloadSchema>,
   clock: { now?: () => Date } = {},
 ): Promise<DraftCuratorInterviewResult> {
-  const { interviewId, answerKey } = interviewDraftPayloadSchema.parse(input);
+  const { interviewId, answerCount } = interviewDraftPayloadSchema.parse(input);
   const now = (clock.now ?? (() => new Date()))();
   const [row] = await db
-    .select({ interview: curatorInterviews, productName: products.name })
+    .select({ interview: curatorInterviews, productName: products.name, productNote: products.curatorNote })
     .from(curatorInterviews)
     .innerJoin(products, eq(products.id, curatorInterviews.productId))
     .where(eq(curatorInterviews.id, interviewId))
     .limit(1);
   if (!row) return { skipped: "inexistente" };
   const { interview } = row;
-  const dedupeKey = `curator.interview_draft:${interview.id}:${answerKey}`;
+  // Outra parte chegou depois deste pedido: o rascunho dela (com tudo) vem em outro evento.
+  if (interview.answerCount !== answerCount) return { skipped: "superado" };
+  const replacesNote = (row.productNote ?? "").trim() !== "";
+  const dedupeKey = `curator.interview_draft:${interview.id}:${answerCount}`;
 
   // Reentrega depois de gravar: só reenvia o mesmo rascunho.
-  if (interview.status === "draft_sent" && interview.draft && interview.answerWaMessageId === answerKey) {
-    const resent = await sendToOwner(db, provider, { templateKey: INTERVIEW_DRAFT_TEMPLATE, vars: draftVars(row.productName, interview.draft), dedupeKey });
+  if (interview.status === "draft_sent" && interview.draft) {
+    const resent = await sendToOwner(db, provider, { templateKey: INTERVIEW_TEMPLATES.draft, vars: draftVars(row.productName, interview.draft, replacesNote), dedupeKey });
     return "skipped" in resent ? { skipped: resent.skipped } : { sent: true, usedModel: Boolean(interview.draft.model) };
   }
   if (interview.status !== "drafting") return { skipped: "ja_decidida" };
+  // Ainda há áudio sendo transcrito: a volta dele pede o rascunho com tudo.
+  if (interview.pendingAnswerIds.length > 0) return { skipped: "esperando_audio" };
   const transcript = (interview.transcript ?? "").trim();
   if (!transcript) return { skipped: "sem_fala" };
 
@@ -508,40 +603,51 @@ export async function draftCuratorInterview(
     model,
   });
   if (!written) {
-    await transitionInterview(db, { id: interview.id, to: "failed", now });
+    await transitionInterview(db, { id: interview.id, to: "failed", from: ["drafting"], now });
     return { skipped: "sem_fala" };
   }
 
   const draft = { ...written.draft, model: written.model };
-  const moved = await transitionInterview(db, {
-    id: interview.id,
-    to: "draft_sent",
-    from: ["drafting"],
-    now,
-    patch: { draft, draftSentAt: now },
-  });
-  if (!moved) return { skipped: "ja_decidida" };
-  const sent = await sendToOwner(db, provider, { templateKey: INTERVIEW_DRAFT_TEMPLATE, vars: draftVars(row.productName, draft), dedupeKey });
-  return "skipped" in sent ? { skipped: sent.skipped } : { sent: true, usedModel: written.model !== null };
+  const moved = await db
+    .update(curatorInterviews)
+    .set({ status: "draft_sent", draft, draftSentAt: now, updatedAt: now })
+    .where(and(eq(curatorInterviews.id, interview.id), eq(curatorInterviews.status, "drafting"), eq(curatorInterviews.answerCount, answerCount)))
+    .returning({ id: curatorInterviews.id });
+  if (moved.length === 0) return { skipped: "superado" };
+  const sent = await sendToOwner(db, provider, { templateKey: INTERVIEW_TEMPLATES.draft, vars: draftVars(row.productName, draft, replacesNote), dedupeKey });
+  if ("skipped" in sent) {
+    // O rascunho não chegou a ela: não pode ficar 24 h esperando um "ok" sobre um texto que ela não viu.
+    await transitionInterview(db, { id: interview.id, to: "failed", from: ["draft_sent"], now });
+    return { skipped: sent.skipped };
+  }
+  return { sent: true, usedModel: written.model !== null };
 }
 
 // ---------------------------------------------------------------------------
-// A decisão: "ok", "ok voz", "corrige: …", "pula" (e o áudio que não deu para ouvir)
+// A decisão: "ok", "ok voz", "nova: …", "pula" (e o áudio que não deu para ouvir)
 // ---------------------------------------------------------------------------
 
 export const interviewDecidePayloadSchema = z.object({
   interviewId: z.uuid(),
-  decision: z.enum(["approve", "approve_voice", "correct", "skip", "unheard"]),
+  decision: z.enum(["approve", "approve_voice", "replace", "skip", "unheard"]),
   messageKey: z.string().min(1),
   text: z.string().max(4000).optional(),
 });
 
+type VoiceOutcome = "salva" | "longo" | "escrito" | "varios" | "falhou";
+
 export type DecideCuratorInterviewResult =
-  | { done: "aprovada" | "corrigida" | "pulada" | "avisada"; voice?: "salva" | "longo" | "escrito" | "falhou" }
+  | { done: "aprovada" | "nova" | "pulada" | "avisada"; voice?: VoiceOutcome }
   | { skipped: "inexistente" | "ja_decidida" | "nota_invalida" };
 
-async function sendDone(db: DbOrTx, provider: MessagingProvider, messageKey: string, resultado: string): Promise<void> {
-  await sendToOwner(db, provider, { templateKey: INTERVIEW_DONE_TEMPLATE, vars: { resultado }, dedupeKey: `curator.interview_done:${messageKey}` });
+async function sellerNameOf(db: DbOrTx): Promise<string> {
+  const map = await getSettingsMap(db, ["bot_seller_name"]);
+  const name = typeof map["bot_seller_name"] === "string" ? map["bot_seller_name"].trim() : "";
+  return name || DEFAULT_SELLER_NAME;
+}
+
+async function notify(db: DbOrTx, provider: MessagingProvider, input: { templateKey: string; vars: Record<string, string>; messageKey: string }): Promise<void> {
+  await sendToOwner(db, provider, { templateKey: input.templateKey, vars: input.vars, dedupeKey: `curator.interview_done:${input.messageKey}` });
 }
 
 /** O áudio da resposta vira a voz da curadora: baixa da Z-API e guarda no bucket. */
@@ -549,15 +655,14 @@ async function storeAnswerAudio(
   db: DbOrTx,
   provider: MessagingProvider,
   storage: FileStorage,
-  input: { productId: string; answerWaMessageId: string | null },
-): Promise<{ audio: { path: string; mime: string; seconds: number | null } } | { voice: "longo" | "escrito" | "falhou" }> {
-  if (!input.answerWaMessageId) return { voice: "escrito" };
+  input: { productId: string; audioId: string },
+): Promise<{ audio: { path: string; mime: string; seconds: number | null } } | { voice: "longo" | "falhou" }> {
   const [message] = await db
     .select({ kind: waMessages.kind, mediaUrl: waMessages.mediaUrl, mediaMeta: waMessages.mediaMeta })
     .from(waMessages)
-    .where(eq(waMessages.id, input.answerWaMessageId))
+    .where(eq(waMessages.id, input.audioId))
     .limit(1);
-  if (!message || message.kind !== "audio" || !message.mediaUrl) return { voice: "escrito" };
+  if (!message || message.kind !== "audio" || !message.mediaUrl) return { voice: "falhou" };
   const meta = parseWaMediaMeta(message.mediaMeta);
   if (meta.seconds !== undefined && meta.seconds > CURATOR_AUDIO_MAX_SECONDS) return { voice: "longo" };
   const format = curatorAudioFormat(meta.mimeType ?? "audio/ogg") ?? curatorAudioFormat("audio/ogg");
@@ -573,11 +678,12 @@ async function storeAnswerAudio(
   }
 }
 
-const VOICE_NOTE: Record<"salva" | "longo" | "escrito" | "falhou", string> = {
-  salva: " e o seu áudio virou a voz da curadora 🎙️",
-  longo: " (o áudio passou de 1 minuto, então guardei só o texto)",
-  escrito: " (a resposta foi escrita, então guardei só o texto)",
-  falhou: " (não consegui guardar o áudio agora, então guardei só o texto)",
+const VOICE_LINE: Record<VoiceOutcome, string> = {
+  salva: " O seu áudio virou a voz da curadora: ele toca na página da peça e a vendedora manda às clientes.",
+  longo: " O áudio passou de 1 minuto, então guardei só o texto.",
+  escrito: " A resposta foi escrita, então guardei só o texto.",
+  varios: " A resposta veio em mais de uma parte, então guardei só o texto — para a voz, mande um áudio só e responda *ok voz*.",
+  falhou: " Não consegui guardar o áudio agora, então guardei só o texto.",
 };
 
 /** Handler da fila: aplica o que a dona decidiu e confirma para ela. */
@@ -591,75 +697,119 @@ export async function decideCuratorInterview(
   const parsed = interviewDecidePayloadSchema.parse(input);
   const now = (clock.now ?? (() => new Date()))();
   const [row] = await db
-    .select({ interview: curatorInterviews, productName: products.name })
+    .select({ interview: curatorInterviews, productName: products.name, productAudio: products.curatorAudioPath })
     .from(curatorInterviews)
     .innerJoin(products, eq(products.id, curatorInterviews.productId))
     .where(eq(curatorInterviews.id, parsed.interviewId))
     .limit(1);
   if (!row) return { skipped: "inexistente" };
   const { interview, productName } = row;
+  const seller = await sellerNameOf(db);
 
   if (parsed.decision === "unheard") {
-    await sendDone(
-      db,
-      provider,
-      parsed.messageKey,
-      "Não consegui ouvir esse áudio agora 😕 Pode mandar de novo, ou escrever a resposta começando com *resposta:*.",
-    );
+    await notify(db, provider, { templateKey: INTERVIEW_TEMPLATES.unheard, vars: {}, messageKey: parsed.messageKey });
     return { done: "avisada" };
   }
 
+  // Retry depois de decidir: a confirmação que falhou sai de novo (o dedupe segura a duplicata).
+  if (interview.decidedByMessage === parsed.messageKey) {
+    if (interview.status === "skipped") {
+      await notify(db, provider, { templateKey: INTERVIEW_TEMPLATES.skipped, vars: { peca: productName }, messageKey: parsed.messageKey });
+      return { done: "pulada" };
+    }
+    if (interview.status === "approved") {
+      await notify(db, provider, {
+        templateKey: INTERVIEW_TEMPLATES.saved,
+        vars: { peca: productName, vendedora: seller, voz: "" },
+        messageKey: parsed.messageKey,
+      });
+      return { done: "aprovada" };
+    }
+  }
+
   if (parsed.decision === "skip") {
-    const moved = await transitionInterview(db, { id: interview.id, to: "skipped", from: ["asked", "draft_sent"], now, patch: { decidedAt: now } });
+    const moved = await transitionInterview(db, {
+      id: interview.id,
+      to: "skipped",
+      from: [...OPEN_INTERVIEW_STATUSES],
+      now,
+      patch: { decidedAt: now, decidedByMessage: parsed.messageKey },
+    });
     if (!moved) return { skipped: "ja_decidida" };
-    await sendDone(db, provider, parsed.messageKey, `Tudo bem — deixei ${productName} para depois. Na próxima pergunto de outra peça.`);
+    await notify(db, provider, { templateKey: INTERVIEW_TEMPLATES.skipped, vars: { peca: productName }, messageKey: parsed.messageKey });
     return { done: "pulada" };
   }
 
   if (interview.status !== "draft_sent" || !interview.draft) return { skipped: "ja_decidida" };
 
   let note = interview.draft.note;
-  if (parsed.decision === "correct") {
-    const fitted = fitCuratorNote(parsed.text ?? "");
+  if (parsed.decision === "replace") {
+    const fitted = fitCuratorNote(stripPriceSentences(parsed.text ?? ""));
     if (!fitted.text || fitted.truncated) {
-      await sendDone(db, provider, parsed.messageKey, "Não salvei: a nota precisa ter texto e caber em 1000 caracteres. Mande *corrige:* de novo, mais curtinha.");
+      await notify(db, provider, {
+        templateKey: INTERVIEW_TEMPLATES.rejected,
+        vars: { motivo: "a nota precisa ter texto e caber em 1000 caracteres. Mande *nova:* de novo, mais curtinha." },
+        messageKey: parsed.messageKey,
+      });
       return { skipped: "nota_invalida" };
     }
     note = fitted.text;
   }
 
-  let voice: "salva" | "longo" | "escrito" | "falhou" | undefined;
+  let voice: VoiceOutcome | undefined;
   let audio: { path: string; mime: string; seconds: number | null } | null = null;
   if (parsed.decision === "approve_voice") {
-    const stored = await storeAnswerAudio(db, provider, storage, { productId: interview.productId, answerWaMessageId: interview.answerWaMessageId });
-    if ("audio" in stored) {
-      audio = stored.audio;
-      voice = "salva";
+    const source = voiceSourceFor({ audioIds: interview.answerAudioIds, textAnswers: interview.textAnswers });
+    if ("audioId" in source) {
+      const stored = await storeAnswerAudio(db, provider, storage, { productId: interview.productId, audioId: source.audioId });
+      if ("audio" in stored) {
+        audio = stored.audio;
+        voice = "salva";
+      } else {
+        voice = stored.voice;
+      }
     } else {
-      voice = stored.voice;
+      voice = source.reason;
     }
   }
 
   let previousAudioPath: string | null = null;
-  const applied = await db.transaction(async (tx) => {
-    const moved = await transitionInterview(tx, { id: interview.id, to: "approved", from: ["draft_sent"], now, patch: { decidedAt: now } });
-    if (!moved) return false;
-    ({ previousAudioPath } = await applyInterviewCuratorNote(tx, { productId: interview.productId, interviewId: interview.id, note, audio, now }));
-    return true;
-  });
+  let applied = false;
+  try {
+    applied = await db.transaction(async (tx) => {
+      const moved = await transitionInterview(tx, {
+        id: interview.id,
+        to: "approved",
+        from: ["draft_sent"],
+        now,
+        patch: { decidedAt: now, decidedByMessage: parsed.messageKey },
+      });
+      if (!moved) return false;
+      ({ previousAudioPath } = await applyInterviewCuratorNote(tx, { productId: interview.productId, interviewId: interview.id, note, audio, now }));
+      return true;
+    });
+  } catch (error) {
+    // O banco caiu depois do upload: o arquivo novo não fica órfão (o retry sobe outro).
+    if (audio) await removeReplacedCuratorAudio(storage, audio.path);
+    throw error;
+  }
   if (!applied) {
     if (audio) await removeReplacedCuratorAudio(storage, audio.path);
     return { skipped: "ja_decidida" };
   }
   if (previousAudioPath) await removeReplacedCuratorAudio(storage, previousAudioPath);
 
-  const done = parsed.decision === "correct" ? "corrigida" : "aprovada";
-  await sendDone(
-    db,
-    provider,
-    parsed.messageKey,
-    `✅ Nota salva em ${productName}${voice ? VOICE_NOTE[voice] : ""}. A Lia já usa quando perguntarem dessa peça.`,
-  );
+  const oldAudioStays = !audio && row.productAudio ? " A peça continua com o áudio antigo; para trocar, responda uma próxima pergunta com um áudio só e *ok voz*." : "";
+  await notify(db, provider, {
+    templateKey: INTERVIEW_TEMPLATES.saved,
+    vars: {
+      peca: productName,
+      vendedora: seller,
+      voz: `${parsed.decision === "replace" ? ` Salvei do jeito que você escreveu: "${note}"` : ""}${voice ? VOICE_LINE[voice] : ""}${oldAudioStays}`,
+    },
+    messageKey: parsed.messageKey,
+  });
+  const done = parsed.decision === "replace" ? "nova" : "aprovada";
   return voice ? { done, voice } : { done };
 }
 
@@ -672,25 +822,26 @@ export type InterviewSummary = {
   productId: string;
   productName: string;
   question: string;
+  /** O que a dona vê: aberta fora do prazo já aparece como "ficou sem resposta". */
   status: InterviewStatus;
   askedAt: Date;
 };
 
-export async function listRecentInterviews(db: DbOrTx, limit = 6): Promise<InterviewSummary[]> {
+export async function listRecentInterviews(db: DbOrTx, limit = 6, now: Date = new Date()): Promise<InterviewSummary[]> {
   const rows = await db
-    .select({
-      id: curatorInterviews.id,
-      productId: curatorInterviews.productId,
-      productName: products.name,
-      question: curatorInterviews.question,
-      status: curatorInterviews.status,
-      askedAt: curatorInterviews.askedAt,
-    })
+    .select({ interview: curatorInterviews, productName: products.name })
     .from(curatorInterviews)
     .innerJoin(products, eq(products.id, curatorInterviews.productId))
     .orderBy(desc(curatorInterviews.askedAt))
     .limit(limit);
-  return rows.map((row) => ({ ...row, status: statusOf(row) }));
+  return rows.map(({ interview, productName }) => ({
+    id: interview.id,
+    productId: interview.productId,
+    productName,
+    question: interview.question,
+    status: effectiveInterviewStatus(clockOf(interview), now),
+    askedAt: interview.askedAt,
+  }));
 }
 
 const scheduleSchema = z.object({
