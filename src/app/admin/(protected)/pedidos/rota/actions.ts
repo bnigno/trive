@@ -38,10 +38,31 @@ function revalidateRoute(orderId: string): void {
 
 const dispatchSchema = z.object({ orderId: z.uuid() });
 
+const dispatchWithCourierSchema = dispatchSchema.extend({
+  // "" = "Outro — sem link de GPS": só o "Saiu", como antes.
+  courierId: z.union([z.literal(""), z.uuid("Escolha o motoboy.")]).optional(),
+});
+
+/**
+ * "Saiu". Com o motoboy escolhido vira uma saída com GPS de um pedido só
+ * (createDeliveryRun faz o "Saiu" e manda o link a ele); serve também para o
+ * pedido que já saiu sem motoboy — a cliente não recebe outro aviso.
+ */
 export async function dispatchOrderAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
   try {
-    const { orderId } = dispatchSchema.parse({ orderId: formData.get("orderId") });
+    const { orderId, courierId } = dispatchWithCourierSchema.parse({ orderId: formData.get("orderId"), courierId: formData.get("courierId") ?? undefined });
+    if (courierId) {
+      const created = await createDeliveryRun(getDb(), { courierId, orderIds: [orderId], userId: user.id });
+      revalidateRoute(orderId);
+      revalidatePath("/admin/pedidos/saidas");
+      const [stop] = created.stops;
+      return {
+        success: stop.alreadyDispatched
+          ? `O motoboy recebe o link do pedido #${stop.orderNumber} no WhatsApp. A cliente não recebe outro aviso: o mapa aparece no link que ela já tem.`
+          : `Pedido #${stop.orderNumber} saiu — a cliente recebe o aviso e o motoboy, o link com o GPS no WhatsApp.`,
+      };
+    }
     const result = await dispatchOrder(getDb(), { orderId, userId: user.id });
     revalidateRoute(orderId);
     return {

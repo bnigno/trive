@@ -48,6 +48,7 @@ function rescheduleChoices(todayKey: string, nowMinutes: number, rates: { rateNa
 }
 
 function statusBadge(order: RouteOrder) {
+  if (order.status === "shipped") return <Badge tone="neutral">Saiu</Badge>;
   if (order.status === "preparing") return <Badge tone="info">Em separação</Badge>;
   if (order.status === "pending_payment") return <Badge tone="warning">Paga ao receber</Badge>;
   return <Badge tone="warning">Pago</Badge>;
@@ -118,7 +119,7 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
       <div className="flex flex-wrap items-center gap-3">
         {out ? (
           <Link href={`/admin/pedidos/${order.id}`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-            Saiu {order.dispatchedAt ? formatDateTimeSP(order.dispatchedAt) : ""} — registrar pagamento e entrega
+            Saiu {order.dispatchedAt ? formatDateTimeSP(order.dispatchedAt) : ""} — {order.collectCashCents !== null ? "registrar pagamento e entrega" : "registrar entrega"}
           </Link>
         ) : late ? (
           <p className="text-xs text-red-700 dark:text-red-300">A janela passou: reagende abaixo antes de marcar que saiu.</p>
@@ -135,7 +136,7 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
             .
           </p>
         ) : (
-          <DispatchForm orderId={order.id} customerName={order.customerName} compact />
+          <DispatchForm orderId={order.id} customerName={order.customerName} compact mountRunHint={hasCouriers} />
         )}
         {wa ? (
           <a href={wa} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
@@ -216,7 +217,10 @@ export default async function RotaPage() {
       {route.out.length > 0 ? (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
-            Na rua <span className="font-normal text-zinc-500">· {route.out.length} — dinheiro na entrega; ao receber, registre o pagamento no pedido</span>
+            Na rua{" "}
+            <span className="font-normal text-zinc-500">
+              · {route.out.length} — saiu sem motoboy escolhido? Marque &ldquo;Levar nesta saída&rdquo; e monte a saída: ele recebe o link e o GPS liga. Dinheiro na entrega: ao receber, registre o pagamento no pedido
+            </span>
           </h2>
           <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {route.out.map((order) => (

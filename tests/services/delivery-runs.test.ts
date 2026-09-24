@@ -16,6 +16,7 @@ import { createCourier, findActiveCourierByPhone, listCouriers, updateCourier } 
 import { confirmDeliveryByToken, sendDeliveredWa } from "@/services/delivery";
 import { completeDispatchedOrder, dispatchOrder, listRouteOfDay, rescheduleOrderWindow } from "@/services/delivery-routes";
 import {
+  canJoinDeliveryRun,
   cancelDeliveryRun,
   closeStaleDeliveryRuns,
   completeStop,
@@ -253,6 +254,38 @@ describe("listRunEligibleOrders", () => {
     expect((await listRunEligibleOrders(sdb, { now: AFTERNOON })).some((o) => o.id === cash.orderId)).toBe(false);
     const c2 = await courier("Outro", "(91) 98111-2222");
     await expect(createDeliveryRun(sdb, { courierId: c2.id, orderIds: [cash.orderId], userId: FIXED_USER_ID, now: AFTERNOON })).rejects.toThrow(/já foi entregue/);
+  });
+});
+
+describe("canJoinDeliveryRun (a ficha: saiu sem escolher o motoboy)", () => {
+  it("saiu sem motoboy pode receber um; em saída aberta, saído há mais de 48 h, Correios e entregue pelo motoboy não", async () => {
+    const { variantId, rateId } = await setup();
+    const semMotoboy = await paidMotoboyOrder(variantId, rateId);
+    await dispatchOrder(sdb, { orderId: semMotoboy.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
+    expect(await canJoinDeliveryRun(sdb, { orderId: semMotoboy.orderId, now: AFTERNOON })).toBe(true);
+    expect(await getTrackingForOrder(sdb, semMotoboy.publicToken, AFTERNOON)).toBeNull();
+
+    // Escolhido o motoboy depois: a cliente não recebe outro aviso e o pedido deixa de poder entrar em outra.
+    const shippedBefore = (await outboxEvents()).filter((e) => e.eventType === "order.shipped").length;
+    const c = await courier();
+    const created = await createDeliveryRun(sdb, { courierId: c.id, orderIds: [semMotoboy.orderId], userId: FIXED_USER_ID, now: AFTERNOON });
+    expect(created.stops[0].alreadyDispatched).toBe(true);
+    expect((await outboxEvents()).filter((e) => e.eventType === "order.shipped")).toHaveLength(shippedBefore);
+    expect(await getTrackingForOrder(sdb, semMotoboy.publicToken, AFTERNOON)).not.toBeNull();
+    expect(await canJoinDeliveryRun(sdb, { orderId: semMotoboy.orderId, now: AFTERNOON })).toBe(false);
+
+    const old = await paidMotoboyOrder(variantId, rateId, "2026-09-15", WINDOWS[0], new Date("2026-09-15T13:30:00Z"));
+    await dispatchOrder(sdb, { orderId: old.orderId, userId: FIXED_USER_ID, now: new Date("2026-09-15T19:00:00Z") });
+    expect(await canJoinDeliveryRun(sdb, { orderId: old.orderId, now: AFTERNOON })).toBe(false);
+
+    const correios = await setup({ kind: "correios" });
+    const pac = await createStoreOrder(sdb, input(correios.variantId, correios.rateId, { expectedShippingCents: 1990, address: SP_ADDRESS }), { now: MORNING });
+    await transitionOrder(sdb, { orderId: pac.orderId, to: "paid", userId: FIXED_USER_ID });
+    expect(await canJoinDeliveryRun(sdb, { orderId: pac.orderId, now: AFTERNOON })).toBe(false);
+
+    const { cash, stops, token } = await runOnTheRoad2();
+    await deliver({ courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, receivedBy: "Maria", now: AFTERNOON });
+    expect(await canJoinDeliveryRun(sdb, { orderId: cash.orderId, now: AFTERNOON })).toBe(false);
   });
 });
 

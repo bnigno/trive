@@ -164,6 +164,30 @@ describe("listRouteOfDay", () => {
     expect(await countRouteOfDay(sdb, { now: new Date("2026-09-19T12:00:00Z") })).toEqual({ today: 1, late: 2 });
   });
 
+  it("o pago que saiu fica em 'Na rua' por 48 h (dá para escolher o motoboy depois do 'Saiu'); não conta em hoje nem em atrasados", async () => {
+    const { variantId, rateId } = await setup();
+    const out = await paidMotoboyOrder(variantId, rateId, "2026-09-18", WINDOWS[1]);
+    await dispatchOrder(sdb, { orderId: out.orderId, userId: FIXED_USER_ID, now: AFTERNOON });
+    const waiting = await paidMotoboyOrder(variantId, rateId, "2026-09-18", WINDOWS[1]);
+
+    const route = await listRouteOfDay(sdb, { now: new Date("2026-09-18T20:00:00Z") });
+    expect(route.out.map((o) => [o.orderNumber, o.status, o.dispatchedAt?.toISOString()])).toEqual([[out.orderNumber, "shipped", AFTERNOON.toISOString()]]);
+    expect(route.today.flatMap((g) => g.orders.map((o) => o.orderNumber))).toEqual([waiting.orderNumber]);
+    expect(route.todayCount).toBe(1);
+    expect(route.late).toEqual([]);
+
+    // Dois dias depois do "Saiu" (+ 1 min) já não é "na rua": a dona esqueceu de fechar.
+    const later = new Date(AFTERNOON.getTime() + 48 * 3_600_000);
+    expect((await listRouteOfDay(sdb, { now: later })).out.map((o) => o.orderNumber)).toEqual([out.orderNumber]);
+    const tooLate = new Date(later.getTime() + 60_000);
+    expect((await listRouteOfDay(sdb, { now: tooLate })).out).toEqual([]);
+    expect(await countRouteOfDay(sdb, { now: tooLate })).toEqual({ today: 0, late: 1 });
+
+    // Entregue some de vez.
+    await completeDispatchedOrder(sdb, { orderId: out.orderId, userId: FIXED_USER_ID });
+    expect((await listRouteOfDay(sdb, { now: new Date("2026-09-18T20:00:00Z") })).out).toEqual([]);
+  });
+
   it("addressLineOf tolera retrato incompleto ou lixo", () => {
     expect(addressLineOf({ street: "Rua A", number: "1", district: "Centro", city: "Belém" })).toEqual({ line: "Rua A, 1 — Centro, Belém", postalCode: null });
     expect(addressLineOf({ street: "Rua A" })).toEqual({ line: "Rua A", postalCode: null });

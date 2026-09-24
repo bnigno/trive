@@ -48,7 +48,7 @@ export interface RouteOrder {
   paidAt: Date | null;
   /** Pagou depois da hora-limite: a promessa "hoje" precisa de um olhar da dona. */
   paidAfterCutoff: boolean;
-  /** Saiu com o motoboy (pedido em dinheiro ainda por receber). */
+  /** Saiu com o motoboy ("Na rua": dinheiro ainda por receber, ou pago nas últimas 48 h). */
   dispatchedAt: Date | null;
 }
 
@@ -182,11 +182,21 @@ export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: bo
   return result;
 }
 
-/** A rota como a tela mostra. `now` injetável (o "hoje" é o de São Paulo). */
+/** Um "Saiu" mais velho que isso já não é "na rua": a dona esqueceu de fechar; não entra em saída nova. */
+export const ELIGIBLE_DISPATCH_MAX_MS = 48 * 3_600_000;
+
+/**
+ * A rota como a tela mostra. `now` injetável (o "hoje" é o de São Paulo).
+ * O pago que já saiu fica em "Na rua" pelas mesmas 48 h da saída com GPS:
+ * saiu sem escolher o motoboy, ainda dá para mandar o link a ele.
+ */
 export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOrder> & { todayKey: string }> {
   const now = input.now ?? new Date();
   const todayKey = spDayKey(now);
-  const grouped = groupRouteOrders(await listRouteOrders(db), todayKey, spMinutesOfDay(now));
+  const candidates = (await listRouteOrders(db, { includeShipped: true })).filter(
+    (order) => order.status !== "shipped" || order.dispatchedAt === null || now.getTime() - order.dispatchedAt.getTime() <= ELIGIBLE_DISPATCH_MAX_MS,
+  );
+  const grouped = groupRouteOrders(candidates, todayKey, spMinutesOfDay(now));
   return { ...grouped, todayKey };
 }
 

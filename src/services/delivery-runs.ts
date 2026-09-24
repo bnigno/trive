@@ -41,7 +41,15 @@ import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { findActiveCourierByPhone } from "@/services/couriers";
 import { assertDeliveryPhotoAcceptable, courierDeliveryPhotoStoragePath, deliveryPhotoSchema, processDeliveryPhoto } from "@/services/delivery";
-import { addressLineOf, completeDispatchedOrder, dispatchOrder, listRouteOrders, summarizeOrderItems, type RouteOrder } from "@/services/delivery-routes";
+import {
+  addressLineOf,
+  completeDispatchedOrder,
+  dispatchOrder,
+  ELIGIBLE_DISPATCH_MAX_MS,
+  listRouteOrders,
+  summarizeOrderItems,
+  type RouteOrder,
+} from "@/services/delivery-routes";
 import { enqueueStopDelivered } from "@/services/late-delivery";
 import { ServiceError } from "@/services/orders";
 import { getStoreName } from "@/services/settings";
@@ -62,9 +70,6 @@ export interface RunEligibleOrder extends RouteOrder {
   openRunId: string | null;
   openRunCourier: string | null;
 }
-
-/** Um "Saiu" mais velho que isso já não é "na rua": a dona esqueceu de fechar; não entra em saída nova. */
-export const ELIGIBLE_DISPATCH_MAX_MS = 48 * 3_600_000;
 
 /**
  * Pedidos com parada ENTREGUE pelo motoboy cujo pedido ainda não fechou
@@ -116,6 +121,16 @@ export async function listRunEligibleOrders(db: DbOrTx, input: { now?: Date } = 
       openRunId: openByOrder.get(order.id)?.runId ?? null,
       openRunCourier: openByOrder.get(order.id)?.courierName ?? null,
     }));
+}
+
+/**
+ * A ficha do pedido: dá para mandar o link a um motoboy agora? Mesma régua
+ * da Rota do dia — elegível e fora de saída aberta. É o caso do "Saiu" sem
+ * escolher o motoboy: a peça está na rua e o GPS ainda pode ligar.
+ */
+export async function canJoinDeliveryRun(db: DbOrTx, input: { orderId: string; now?: Date }): Promise<boolean> {
+  const order = (await listRunEligibleOrders(db, { now: input.now })).find((o) => o.id === input.orderId);
+  return order !== undefined && order.openRunId === null;
 }
 
 /** Violação de UNIQUE do Postgres/PGlite (corrida entre duas transações). */
