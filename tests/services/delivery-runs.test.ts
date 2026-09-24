@@ -1085,6 +1085,71 @@ describe("leituras", () => {
     expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBeUndefined();
   });
 
+  it("voltou e sai de novo no mesmo dia sem reagendar ('Levar nesta saída'): marca de saída e aviso novos; janela de ontem pede reagendar", async () => {
+    const { paid, cash, stops, token } = await runOnTheRoad();
+    const failAt = new Date(AFTERNOON.getTime() + 3_600_000); // 17:00 SP, janela 19h–21h ainda por vir
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa", now: failAt });
+    const c2 = await courier("Outro Motoboy", "(91) 98111-2222");
+    const againAt = new Date(failAt.getTime() + 3_600_000);
+    const run2 = await createDeliveryRun(sdb, { courierId: c2.id, orderIds: [paid.orderId], userId: FIXED_USER_ID, now: againAt });
+    expect(run2.stops[0].alreadyDispatched).toBe(false);
+    expect((await orderRow(paid.orderId)).deliveryWindow?.dispatchedAt).toBe(againAt.toISOString());
+    expect((await outboxEvents()).filter((e) => e.eventType === "order.out_for_delivery" && e.aggregateId === paid.orderId).map((e) => e.dedupeKey)).toEqual([
+      `order.out_for_delivery:${paid.orderId}:${againAt.toISOString()}`,
+    ]);
+
+    // O de dinheiro volta também e só tentam de novo no dia seguinte: a janela (18/09) passou — reagendar primeiro.
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "ninguem_em_casa", now: failAt });
+    const nextDay = new Date("2026-09-19T13:00:00Z");
+    await expect(createDeliveryRun(sdb, { courierId: c2.id, orderIds: [cash.orderId], userId: FIXED_USER_ID, now: nextDay })).rejects.toMatchObject({ code: "WINDOW_PAST" });
+    expect(await db.select().from(schema.deliveryRuns)).toHaveLength(2);
+  });
+
+  it("dinheiro na entrega que voltou, foi pago por Pix e reagendado: o 'Saiu' passa por paid → shipped e o aviso novo sai pela chave própria", async () => {
+    const { cash, stops, token } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "cliente_pediu_outro_dia", now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    await transitionOrder(sdb, { orderId: cash.orderId, to: "paid", userId: FIXED_USER_ID });
+    await rescheduleOrderWindow(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: new Date(AFTERNOON.getTime() + 2 * 3_600_000) });
+    const out = new Date("2026-09-19T18:00:00Z");
+    expect(await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: out })).toMatchObject({ from: "paid", to: "shipped", idempotent: false });
+    const events = (await outboxEvents()).filter((e) => e.aggregateId === cash.orderId);
+    expect(events.filter((e) => e.eventType === "order.out_for_delivery").map((e) => e.dedupeKey)).toEqual([
+      `order.out_for_delivery:${cash.orderId}`,
+      `order.out_for_delivery:${cash.orderId}:${out.toISOString()}`,
+    ]);
+    expect(events.filter((e) => e.eventType === "order.shipped")).toHaveLength(1);
+  });
+
+  it("dinheiro na entrega que voltou e foi reagendado: sai de novo ainda 'aguardando pagamento', com o aviso novo", async () => {
+    const { cash, stops, token } = await runOnTheRoad();
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === cash.orderId)!.id, reason: "cliente_pediu_outro_dia", now: new Date(AFTERNOON.getTime() + 3_600_000) });
+    await rescheduleOrderWindow(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: new Date(AFTERNOON.getTime() + 2 * 3_600_000) });
+    const out = new Date("2026-09-19T18:00:00Z");
+    expect(await dispatchOrder(sdb, { orderId: cash.orderId, userId: FIXED_USER_ID, now: out })).toMatchObject({ from: "pending_payment", to: "pending_payment", idempotent: false });
+    const [notice] = (await outboxEvents()).filter((e) => e.eventType === "order.out_for_delivery" && e.aggregateId === cash.orderId && e.dedupeKey !== `order.out_for_delivery:${cash.orderId}`);
+    expect(notice.payload).toEqual({ orderId: cash.orderId, orderNumber: cash.orderNumber, againAt: out.toISOString() });
+    expect((await orderRow(cash.orderId)).status).toBe("pending_payment");
+  });
+
+  it("geocodificação atrasada não mexe na parada que já fechou: o 'voltou' (medido pela hora em que ela fechou) não volta a valer depois do 'Saiu' de novo", async () => {
+    const { paid, cash, stops, token, run } = await runOnTheRoad();
+    const failAt = new Date(AFTERNOON.getTime() + 3_600_000);
+    await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "cliente_pediu_outro_dia", now: failAt });
+    await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-19", window: WINDOWS[0], now: failAt });
+    const out = new Date("2026-09-19T18:00:00Z");
+    await dispatchOrder(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, now: out });
+    // A rodada de geocodificação chega depois (fila atrasada): só a parada por entregar ganha pino.
+    const geocoder = new FakeGeocoder();
+    const late = new Date(out.getTime() + 3_600_000);
+    expect(await geocodeRunStops(sdb, geocoder, { runId: run.runId, sleep: async () => {}, now: () => late })).toMatchObject({ attempted: 1, found: 1 });
+    const [failedStop] = (await stopsOf(run.runId)).filter((s) => s.orderId === paid.orderId);
+    expect(failedStop).toMatchObject({ status: "failed", destLat: null });
+    expect(failedStop.updatedAt.toISOString()).toBe(failAt.toISOString());
+    expect((await stopsOf(run.runId)).find((s) => s.orderId === cash.orderId)?.destLat).not.toBeNull();
+    expect((await listRouteOfDay(sdb, { now: late })).out.find((o) => o.id === paid.orderId)).toMatchObject({ cameBack: false });
+    expect(await getTrackingForOrder(sdb, paid.publicToken, late)).toBeNull();
+  });
+
   it("o que voltou fica em 'Na rua' como 'voltou' até ser reagendado, mesmo depois das 48 h (só dá para reagendar)", async () => {
     const { paid, stops, token } = await runOnTheRoad();
     await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "ninguem_em_casa", now: new Date(AFTERNOON.getTime() + 3_600_000) });

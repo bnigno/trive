@@ -1263,7 +1263,9 @@ export async function geocodeRunStops(
     .select({ id: deliveryStops.id, destLat: deliveryStops.destLat, shippingAddress: orders.shippingAddress })
     .from(deliveryStops)
     .innerJoin(orders, eq(orders.id, deliveryStops.orderId))
-    .where(eq(deliveryStops.runId, runId))
+    // Só as paradas por entregar: a fechada não precisa de pino, e o updatedAt
+    // dela é a hora em que fechou (o "voltou" se mede por ele).
+    .where(and(eq(deliveryStops.runId, runId), eq(deliveryStops.status, "pending")))
     .orderBy(asc(deliveryStops.sequence));
   const pending = rows.flatMap((row) => {
     if (row.destLat !== null || skip.has(row.id)) return [];
@@ -1290,7 +1292,10 @@ export async function geocodeRunStops(
     });
     if (!point || !isValidPoint(point)) continue;
     found += 1;
-    await db.update(deliveryStops).set({ destLat: point.lat, destLng: point.lng, updatedAt: clock() }).where(eq(deliveryStops.id, row.id));
+    await db
+      .update(deliveryStops)
+      .set({ destLat: point.lat, destLng: point.lng, updatedAt: clock() })
+      .where(and(eq(deliveryStops.id, row.id), eq(deliveryStops.status, "pending")));
   }
   return { attempted, found, remaining: pending.length - attempted, attemptedIds, runOpen };
 }

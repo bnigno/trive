@@ -63,7 +63,8 @@ type RunStates = Map<string, RunState>;
 function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order: RouteOfDayOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined; hasCouriers: boolean }) {
   const wa = waMeUrl(order.phoneE164);
   const out = order.dispatchedAt !== null;
-  const needsLook = (!out && (late || order.paidAfterCutoff)) || order.cameBack;
+  // O reagendado (voltou e ganhou outro dia) pode ser reagendado de novo: a cliente pode pedir outro dia outra vez.
+  const needsLook = (!out && (late || order.paidAfterCutoff || order.status === "shipped")) || order.cameBack;
   // Embalar antes de sair: sem a foto do pacote não há "Saiu" nem saída com GPS.
   const needsPacking = needsPackingBeforeDispatch({ status: order.status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.dispatchedAt?.toISOString() ?? null });
   // Sem motoboy cadastrado não existe o form "montar-saida": checkbox órfão confunde.

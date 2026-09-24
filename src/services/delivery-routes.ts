@@ -246,9 +246,9 @@ export interface DispatchResult {
  * - Dinheiro na entrega: o pedido fica "aguardando pagamento" até o motoboy
  *   voltar, então não há transição — a saída fica no retrato da janela
  *   (dispatchedAt) e o aviso vai pela fila (order.out_for_delivery).
- * - Voltou para a loja (a última parada foi "não consegui" e a dona
- *   reagendou — a marca de saída caiu): sai de novo, com aviso novo pela
- *   fila (a chave leva a hora da saída; o "saiu" da primeira vez já foi).
+ * - Voltou para a loja (a última parada foi "não consegui" depois da saída,
+ *   reagendado ou não): sai de novo, com marca de saída nova e aviso novo
+ *   pela fila (a chave leva a hora da saída; o "saiu" da primeira vez já foi).
  * Idempotente: quem já saiu devolve `idempotent: true`, sem novo aviso.
  */
 export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSchema>): Promise<DispatchResult> {
@@ -273,11 +273,14 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     }
     const from = order.status as OrderStatus;
     const base = { orderId: order.id, orderNumber: order.orderNumber, from };
-    if (from === "delivered" || order.deliveryWindow.dispatchedAt) return { ...base, to: from, idempotent: true };
+    if (from === "delivered") return { ...base, to: from, idempotent: true };
     const waitingCash = from === "pending_payment" && order.paymentMethod === "cash";
-    const again = (from === "shipped" || waitingCash) && (await cameBackToStore(tx, { id: order.id, dispatchedAt: null }));
-    // Enviado sem ter voltado de uma saída: já saiu por outro caminho.
-    if (from === "shipped" && !again) return { ...base, to: from, idempotent: true };
+    const dispatchedAt = order.deliveryWindow.dispatchedAt ? new Date(order.deliveryWindow.dispatchedAt) : null;
+    // Voltou para a loja: a última parada foi "não consegui" depois da saída
+    // (reagendado ou não). O "Saiu" vale de novo — com marca e aviso novos.
+    const again = (from === "shipped" || waitingCash || ROUTE_STATUSES.includes(from)) && (await cameBackToStore(tx, { id: order.id, dispatchedAt }));
+    // Já saiu (ou foi enviado por outro caminho) e não voltou: nada de novo.
+    if (!again && (dispatchedAt || from === "shipped")) return { ...base, to: from, idempotent: true };
     // A janela já passou: primeiro reagendar, senão a cliente recebe "chega sexta 18/09" ontem.
     if (order.deliveryWindow.dayKey < spDayKey(now)) {
       throw new ServiceError("WINDOW_PAST", "A janela deste pedido já passou — reagende antes de marcar que saiu.");
@@ -291,15 +294,18 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     }
 
     const snapshot = { ...order.deliveryWindow, dispatchedAt: now.toISOString() };
-    if (waitingCash || again) {
-      await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: now }).where(eq(orders.id, order.id));
-      await enqueueOutboxEvent(tx, {
+    // O "saiu" da segunda vez tem chave própria: o da primeira já usou a de sempre.
+    const notice = () =>
+      enqueueOutboxEvent(tx, {
         eventType: "order.out_for_delivery",
         dedupeKey: again ? `order.out_for_delivery:${order.id}:${snapshot.dispatchedAt}` : `order.out_for_delivery:${order.id}`,
         aggregateType: "order",
         aggregateId: order.id,
         payload: { orderId: order.id, orderNumber: order.orderNumber, ...(again ? { againAt: snapshot.dispatchedAt } : {}) },
       });
+    if (waitingCash || from === "shipped") {
+      await tx.update(orders).set({ deliveryWindow: snapshot, updatedAt: now }).where(eq(orders.id, order.id));
+      await notice();
       await tx.insert(auditLog).values({
         actorType: "user",
         actorId: parsed.userId,
@@ -315,6 +321,9 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     }
     await transitionOrder(tx, { orderId: order.id, to: "shipped", userId: parsed.userId });
     await tx.update(orders).set({ deliveryWindow: snapshot }).where(eq(orders.id, order.id));
+    // Dinheiro na entrega que voltou e foi pago antes de sair de novo: o
+    // order.shipped cai na chave do "saiu" da primeira vez — o aviso vai por aqui.
+    if (again) await notice();
     return { ...base, to: "shipped", idempotent: false };
   });
 }
