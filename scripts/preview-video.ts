@@ -110,10 +110,16 @@ function resumeCommand(out: string): string {
   return `npx tsx --env-file=.env.local scripts/preview-video.ts --real --retomar ${JSON.stringify(out)}`;
 }
 
-/** O que dizer quando falha: depende de a FASHN já ter aceitado o pedido e de a falha ser passageira. */
-function failureNote(error: StudioUnavailableError, jobId: string | null, out: string): { text: string; closeOrder: boolean } {
+/**
+ * O que dizer quando falha. Depende de a FASHN já ter aceitado o pedido e de
+ * o fim ser CERTO: só "failed" no corpo do status (sem HTTP de erro) ou 404
+ * (ela não conhece o pedido) encerram; qualquer outra resposta deixa o
+ * pedido aberto para retomar, porque ele pode ainda terminar e ser cobrado.
+ */
+function failureNote(error: StudioUnavailableError, jobId: string | null, resumed: boolean, out: string): { text: string; closeOrder: boolean } {
   if (jobId === null) {
-    const refusedAtTheDoor = error.reason === "no_key" || error.reason === "no_credits" || error.reason === "rejected";
+    // Sem id: ou a FASHN respondeu recusando (qualquer HTTP abaixo de 500, ou a chave faltando aqui), ou a resposta não chegou.
+    const refusedAtTheDoor = error.reason === "no_key" || (error.status !== undefined && error.status < 500);
     return {
       closeOrder: false,
       text: refusedAtTheDoor
@@ -121,10 +127,18 @@ function failureNote(error: StudioUnavailableError, jobId: string | null, out: s
         : "A resposta da FASHN não chegou, então não dá para saber se ela recebeu o pedido. Confira o saldo daqui a uns 10 minutos antes de pedir de novo (se caiu, o vídeo foi feito — fale com o suporte deles pelo painel da FASHN).",
     };
   }
-  if (error.reason === "rejected") {
+  if (error.reason === "rejected" && error.status === undefined) {
     return {
       closeOrder: true,
-      text: `A FASHN recusou ou não reconhece o pedido ${jobId}: sem vídeo e sem cobrança (ela só cobra saída pronta). Pode pedir de novo nesta pasta.`,
+      text: `A FASHN terminou o pedido ${jobId} sem vídeo (recusou a foto ou o movimento): ela só cobra saída pronta, então nada foi cobrado. Pode pedir de novo nesta pasta.`,
+    };
+  }
+  if (error.status === 404) {
+    return {
+      closeOrder: true,
+      text: resumed
+        ? `A FASHN não reconhece mais o pedido ${jobId} (a saída dela vale 3 dias, ou a chave mudou). O vídeo não dá mais para buscar; o saldo antes/agora acima mostra se houve cobrança.`
+        : `A FASHN não reconhece o pedido ${jobId} que ela mesma acabou de aceitar: sem vídeo. Confira o saldo daqui a uns 10 minutos antes de pedir de novo.`,
     };
   }
   if (error.reason === "invalid_response") {
@@ -229,7 +243,7 @@ async function main() {
   } catch (error) {
     if (error instanceof StudioUnavailableError && fashn) {
       const after = await fashn.creditsBalance(AbortSignal.timeout(20_000)).catch(() => null);
-      const { text, closeOrder } = failureNote(error, jobId, out);
+      const { text, closeOrder } = failureNote(error, jobId, resumeJobId !== undefined, out);
       if (closeOrder && existsSync(orderPath)) renameSync(orderPath, join(out, `pedido-encerrado-${Date.now()}.json`));
       const note = [`Falhou (${error.reason}): ${error.message}`, `Saldo antes ${order.balanceBefore ?? "?"}, agora ${after ?? "?"}.`, text].join("\n");
       writeFileSync(join(out, "falhou.txt"), `${note}\n`);
@@ -238,6 +252,8 @@ async function main() {
     throw error;
   }
   writeFileSync(join(out, videoFile), video.data);
+  // Uma falha anterior nesta pasta (antes do --retomar) já não vale: o vídeo chegou.
+  if (existsSync(join(out, "falhou.txt"))) renameSync(join(out, "falhou.txt"), join(out, "falhou-antes-do-video.txt"));
   const balanceAfter = fashn ? await fashn.creditsBalance(AbortSignal.timeout(20_000)).catch(() => null) : null;
   const charged = order.balanceBefore !== null && balanceAfter !== null ? order.balanceBefore - balanceAfter : null;
 
