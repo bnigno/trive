@@ -33,6 +33,7 @@ import {
   openAtelierIntake,
   routeOwnerInbound,
 } from "@/services/atelier";
+import { receiveInterviewTranscript, routeInterviewReply } from "@/services/curator-interviews";
 import { lookConsentHistoryText, parseLookRowId } from "@/core/looks/consent";
 import { feedbackHandledBy, feedbackHistoryText, parseFeedbackRowId } from "@/core/orders/feedback";
 import { recordLookConsent } from "@/services/customer-looks";
@@ -206,11 +207,13 @@ export type ProcessZapiInboundResult =
   | { action: "atelier_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   | { action: "atelier_photo"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   | { action: "atelier_help"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "interview_queued"; conversationId: string; waMessageId: string; outboxEventId: string | null }
+  | { action: "interview_answer"; conversationId: string; waMessageId: string; outboxEventId: string | null }
   // Resposta ao "Chegou bem?" que vai direto para a equipe (defeito / falar).
   | { action: "feedback_handoff"; conversationId: string; waMessageId: string }
   | { action: "look_consent"; conversationId: string; waMessageId: string };
 
-export type InboundRoute = "bot_queued" | "forwarded" | "atelier_queued" | "atelier_help";
+export type InboundRoute = "bot_queued" | "forwarded" | "atelier_queued" | "atelier_help" | "interview_answer";
 
 /** trim + maiúsculas + sem acento, para comparar comandos como SAIR/PARAR. */
 function normalizeKeyword(text: string): string {
@@ -338,6 +341,14 @@ export async function routeInboundMessage(
   },
 ): Promise<{ route: InboundRoute; outboxEventId: string | null }> {
   const { conversation } = input;
+
+  // Áudio da dona que respondia à entrevista da curadora (o webhook marcou a
+  // entrevista com este áudio antes de transcrever): a fala vira rascunho.
+  if (input.waMessageId && input.kind === "audio" && (await isOwnerPhone(tx, input.identityPhone))) {
+    if (await receiveInterviewTranscript(tx, { waMessageId: input.waMessageId, text: input.text, now: input.now })) {
+      return { route: "interview_answer", outboxEventId: null };
+    }
+  }
 
   // Áudio do dono transcrito: recado com fotos recentes vira chegada; sem
   // fotos, ele recebe a orientação (áudio dele ao número da maison é sempre
@@ -876,6 +887,30 @@ export async function processZapiInbound(
     // recado com fotos recentes abre a chegada; documento pede a foto.
     // Texto solto dele cai no fluxo normal (testar a Lia como cliente);
     // SAIR/PARAR continua sendo o comando, mesmo com lote aberto.
+    // Entrevista da curadora aberta: o áudio da dona (ou "resposta:", "ok",
+    // "corrige:", "pula") é para ela — antes do Ateliê, que só ganha quando
+    // há lote de fotos aberto (routeInterviewReply já recua nesse caso).
+    if (!isOptOut && (await isOwnerPhone(tx, identityPhone))) {
+      const interview = await routeInterviewReply(tx, {
+        phoneE164,
+        kind: media?.kind ?? "text",
+        body: text,
+        waMessageId: message.id,
+        mediaUrl: media?.mediaUrl ?? null,
+        now,
+      });
+      if (interview) {
+        const outboxEventId = interview.kind === "transcribe" ? await queueTranscription() : null;
+        await markDone();
+        return {
+          action: interview.kind === "transcribe" ? "transcribe_queued" : "interview_queued",
+          conversationId: conversation.id,
+          waMessageId: message.id,
+          outboxEventId,
+        } as const;
+      }
+    }
+
     if (!isOptOut && (await isOwnerPhone(tx, identityPhone)) && (await isAtelierEnabled(tx))) {
       const decision = await routeOwnerInbound(tx, {
         phoneE164,

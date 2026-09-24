@@ -8,6 +8,7 @@ import { kickOutbox } from "@/queue/enqueue";
 import { runOutboxKick } from "@/queue/kick";
 import { drainOutbox, type DrainOutboxResult } from "@/queue/worker";
 import { enqueueDailyDigest } from "@/services/daily-digest";
+import { enqueueCuratorInterviewAsk } from "@/services/curator-interviews";
 import { pollEmailInbox } from "@/services/email-inbox";
 import { reconcilePendingMpOrders } from "@/services/payments";
 import { dispatchDueDrops } from "@/services/drops";
@@ -215,6 +216,14 @@ export const dailyDigest = inngest.createFunction(
   async () => enqueueDailyDigest(getDb()),
 );
 
+// Entrevista da curadora: de hora em hora (minuto 5), só enfileira a
+// pergunta quando é a hora escolhida pela dona (dedupe por dia no outbox);
+// quem escolhe a peça e manda é o handler curator.interview_ask.
+export const curatorInterview = inngest.createFunction(
+  { id: "curator-interview", triggers: [{ cron: "5 * * * *" }] },
+  async () => enqueueCuratorInterviewAsk(getDb()),
+);
+
 // Conversas "com você" paradas por handoff_auto_return_hours voltam para a
 // vendedora (0 = nunca). Cada volta é auditada como ação do sistema.
 export const waAutoReturn = inngest.createFunction(
@@ -253,6 +262,7 @@ export const functions = [
   waInboundWatchdog,
   deliveryPositionsPurge,
   dailyDigest,
+  curatorInterview,
   outboxSweep,
   outboxKick,
   reservationExpiry,

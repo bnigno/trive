@@ -108,6 +108,10 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "bot_audio_notes_enabled", value: true },
   // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.
   { key: "atelier_enabled", value: true },
+  // Entrevista da curadora: nasce desligada; a dona escolhe a hora no painel.
+  { key: "curator_interview_enabled", value: false },
+  { key: "curator_interview_hour", value: 10 },
+  { key: "curator_interview_weekends", value: false },
   { key: "edition_name", value: "" },
   // Datas da cidade (Círio, Natal…): a dona cadastra em Configurações.
   { key: "city_dates", value: [] },
@@ -443,6 +447,49 @@ export const initialWaTemplates: Array<{
     label: "[interno] Ateliê: como cadastrar",
     bodyTemplate:
       "Para cadastrar uma peça por aqui: mande as fotos primeiro (pela galeria) e, em seguida, um recado com o nome dela — texto ou áudio. {{motivo}}",
+    variables: ["motivo"],
+  },
+  {
+    key: "owner_interview_ask",
+    label: "[interno] Entrevista da curadora: a pergunta do dia",
+    bodyTemplate:
+      "🎙️ Pergunta do dia · {{peca}}\n{{pergunta}}\n\n" +
+      "Me responde com um áudio até hoje à noite — 20 segundos bastam (pode mandar mais de um). Eu transformo na nota da peça e em duas legendas, e só salvo com o seu ok. " +
+      "Prefere escrever? Comece com *resposta:*. Se hoje não der, responda *pula*.",
+    variables: ["peca", "pergunta"],
+  },
+  {
+    key: "owner_interview_draft",
+    label: "[interno] Entrevista da curadora: rascunho para aprovar",
+    bodyTemplate:
+      "✍️ Rascunho · {{peca}}\n\n*Nota da curadora*\n{{nota}}{{legendas}}{{aviso}}\n\n" +
+      "Responda:\n*ok* — salvo a nota na peça\n" +
+      "*ok voz* — salvo a nota E o seu áudio, inteiro como você mandou: ele passa a tocar na página da peça e a vendedora envia às clientes\n" +
+      "*corrige:* e o que mudar — eu reescrevo\n*nova:* e a nota inteira do seu jeito\n*pula* — deixo pra lá",
+    variables: ["peca", "nota", "legendas", "aviso"],
+  },
+  {
+    key: "owner_interview_saved",
+    label: "[interno] Entrevista da curadora: nota salva",
+    bodyTemplate: "✅ Nota salva em {{peca}}: já aparece na página da peça e a {{vendedora}} usa quando perguntarem dela.{{voz}}",
+    variables: ["peca", "vendedora", "voz"],
+  },
+  {
+    key: "owner_interview_skipped",
+    label: "[interno] Entrevista da curadora: pulada",
+    bodyTemplate: "Tudo bem — deixei {{peca}} para depois. Na próxima pergunto de outra peça.",
+    variables: ["peca"],
+  },
+  {
+    key: "owner_interview_unheard",
+    label: "[interno] Entrevista da curadora: áudio que não deu para ouvir",
+    bodyTemplate: "Não consegui ouvir esse áudio agora 😕 Pode mandar de novo, ou escrever a resposta começando com *resposta:*.",
+    variables: [],
+  },
+  {
+    key: "owner_interview_rejected",
+    label: "[interno] Entrevista da curadora: não salvei",
+    bodyTemplate: "Não salvei: {{motivo}}",
     variables: ["motivo"],
   },
   {

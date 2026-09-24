@@ -435,6 +435,13 @@
       "when": 1790228271461,
       "tag": "0061_atribuicao_do_site",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1790231383238,
+      "tag": "0062_entrevista_da_curadora",
+      "breakpoints": true
     }
   ]
 }

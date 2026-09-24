@@ -33,6 +33,14 @@ import {
   sendAtelierNudge,
 } from "@/services/atelier";
 import { atelierCardPayloadSchema, renderAndSendAtelierCard } from "@/services/atelier-card";
+import {
+  askCuratorInterview,
+  decideCuratorInterview,
+  draftCuratorInterview,
+  interviewAskPayloadSchema,
+  interviewDecidePayloadSchema,
+  interviewDraftPayloadSchema,
+} from "@/services/curator-interviews";
 import { sendDeliveredWa } from "@/services/delivery";
 import { customerLookCardPayloadSchema, renderAndSendCustomerLookCard } from "@/services/customer-looks";
 
@@ -548,6 +556,30 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "wa.atelier_help": async (event) => {
     await sendAtelierHelp(getDb(), getMessagingProvider(), atelierHelpPayloadSchema.parse(event.payload));
+  },
+  // Entrevista da curadora: a pergunta do dia, o rascunho da resposta e a
+  // decisão da dona ("ok", "ok voz", "corrige:", "pula"). Skips não lançam.
+  "curator.interview_ask": async (event) => {
+    const result = await askCuratorInterview(getDb(), getMessagingProvider(), interviewAskPayloadSchema.parse({ ...event.payload, attempt: event.attempts }));
+    console.info(`[curator.interview_ask] ${JSON.stringify(result)}`);
+  },
+  "curator.interview_draft": async (event) => {
+    const result = await draftCuratorInterview(
+      getDb(),
+      getMessagingProvider(),
+      getSalesAssistant(),
+      interviewDraftPayloadSchema.parse({ ...event.payload, attempt: event.attempts }),
+    );
+    console.info(`[curator.interview_draft] ${JSON.stringify(result)}`);
+  },
+  "curator.interview_decide": async (event) => {
+    const result = await decideCuratorInterview(
+      getDb(),
+      getMessagingProvider(),
+      getFileStorage(),
+      interviewDecidePayloadSchema.parse(event.payload),
+    );
+    console.info(`[curator.interview_decide] ${JSON.stringify(result)}`);
   },
   // Fotos sem recado há 3 min: lembrete à dona (só se continuarem sem recado).
   "wa.atelier_nudge": async (event) => {

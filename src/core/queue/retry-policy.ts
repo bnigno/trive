@@ -57,6 +57,13 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // Cartão do rascunho para a dona: melhor esforço (o texto já foi); foto
   // que não abre não melhora com o tempo.
   "wa.atelier_card": { maxAttempts: 2, baseDelayMs: 10_000, maxDelayMs: 30_000 },
+  // Entrevista da curadora: a pergunta do dia tem de sair no mesmo dia (não
+  // adianta tentar por horas); o rascunho a dona espera no WhatsApp — sem a
+  // inteligência ele sai da própria fala, então as tentativas são só para
+  // banco e envio; a decisão ("ok", "ok voz") baixa o áudio da Z-API.
+  "curator.interview_ask": { maxAttempts: 4, baseDelayMs: 30_000, maxDelayMs: 600_000 },
+  "curator.interview_draft": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
+  "curator.interview_decide": { maxAttempts: 4, baseDelayMs: 10_000, maxDelayMs: 120_000 },
   "wa.customer_look_card": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
   "store.revalidate": { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
   // Recibo (entregue/lida) que chegou antes de o balão da Lia existir: o turno

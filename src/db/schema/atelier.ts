@@ -4,7 +4,7 @@
 // webhook não cria duas), as fotos do lote e o produto que saiu daí. O
 // recado interpretado (grade, custo, fornecedor) entra em `parsed` (C-B).
 import { sql } from "drizzle-orm";
-import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { products } from "./catalog";
 import { financialEntries } from "./financial";
@@ -52,5 +52,59 @@ export const atelierIntakes = pgTable(
     index("atelier_intakes_product_id_idx").on(table.productId),
     check("atelier_intakes_status_check", sql`${table.status} IN ('queued', 'done', 'failed')`),
     check("atelier_intakes_note_kind_check", sql`${table.noteKind} IN ('text', 'audio', 'caption')`),
+  ],
+);
+
+// Entrevista da curadora: uma pergunta por dia sobre uma peça, no WhatsApp
+// da dona; a resposta (áudio ou "resposta: …") vira rascunho de nota e
+// legendas, que só vão para a peça com o "ok" dela. `ask_key` é o árbitro do
+// cron (um por dia; "agora:<id>" quando ela pede pelo painel) e o índice
+// parcial garante UMA entrevista aberta por vez — a resposta nunca fica
+// ambígua entre duas perguntas.
+export const curatorInterviews = pgTable(
+  "curator_interviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    askKey: text("ask_key").notNull().unique(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "restrict" }),
+    questionKey: text("question_key").notNull(),
+    question: text("question").notNull(),
+    status: text("status").notNull().default("asked"),
+    askedAt: timestamp("asked_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * A resposta pode vir em várias partes (dois ou três áudios, "resposta:",
+     * "corrige:"): os áudios esperando transcrição, os já somados à fala e
+     * quantas partes entraram — o rascunho só sai quando não há áudio
+     * pendente, e o contador descarta rascunho de uma versão velha.
+     */
+    pendingAnswerIds: jsonb("pending_answer_ids").$type<string[]>().notNull().default([]),
+    answerAudioIds: jsonb("answer_audio_ids").$type<string[]>().notNull().default([]),
+    textAnswers: integer("text_answers").notNull().default(0),
+    answerCount: integer("answer_count").notNull().default(0),
+    lastAnswerAt: timestamp("last_answer_at", { withTimezone: true }),
+    /** A fala somada (cada parte numa linha). */
+    transcript: text("transcript"),
+    /** A mensagem que decidiu ("ok", "pula"…): o retry reenvia a confirmação em vez de calar. */
+    decidedByMessage: text("decided_by_message"),
+    /** O que a confirmação disse além de "nota salva" (voz, eco do "nova:") — o reenvio repete igual. */
+    decisionNote: text("decision_note"),
+    draft: jsonb("draft").$type<{ note: string; captions: string[]; model?: string | null }>(),
+    draftSentAt: timestamp("draft_sent_at", { withTimezone: true }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "curator_interviews_status_check",
+      sql`${table.status} IN ('asked', 'drafting', 'draft_sent', 'approved', 'skipped', 'expired', 'failed')`,
+    ),
+    uniqueIndex("curator_interviews_one_open_idx")
+      .on(sql`(true)`)
+      .where(sql`${table.status} IN ('asked', 'drafting', 'draft_sent')`),
+    index("curator_interviews_product_idx").on(table.productId, table.askedAt),
+    index("curator_interviews_asked_at_idx").on(table.askedAt),
   ],
 );

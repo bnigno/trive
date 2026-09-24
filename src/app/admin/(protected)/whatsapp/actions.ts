@@ -20,6 +20,7 @@ import { renderDailyDigestPng } from "@/receipts/render-digest";
 import { sendDailyDigestWa, yesterdaySpDayKey } from "@/services/daily-digest";
 import { rehearseBotTurn, type RehearsalTurn } from "@/services/wa-rehearsal";
 import { updateWaTemplate } from "@/services/wa-templates";
+import { INTERVIEW_PROBLEM_TEXT, requestCuratorInterviewNow, saveInterviewSchedule } from "@/services/curator-interviews";
 
 export type FormState = { error?: string; success?: string };
 
@@ -53,6 +54,7 @@ const toggleKeySchema = z.enum([
   "provador_welcome_gift_enabled",
   "ai_photos_enabled",
   "ai_photos_in_store",
+  "curator_interview_enabled",
 ]);
 
 export async function setToggleAction(
@@ -361,6 +363,44 @@ export async function saveLiaGiftSettingsAction(
     }
     revalidatePath("/admin/whatsapp");
     return { success: "Gentilezas salvas." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entrevista da curadora
+// ---------------------------------------------------------------------------
+
+const interviewScheduleSchema = z.object({
+  hour: z.coerce.number().int().min(9, "A pergunta sai entre 9h e 20h.").max(20, "A pergunta sai entre 9h e 20h."),
+  weekends: z.enum(["on", "off"]),
+});
+
+export async function saveInterviewScheduleAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("whatsapp");
+  try {
+    const parsed = interviewScheduleSchema.parse({ hour: formData.get("hour"), weekends: formData.get("weekends") });
+    await saveInterviewSchedule(getDb(), { hour: parsed.hour, weekends: parsed.weekends === "on", userId: user.id });
+    revalidatePath("/admin/whatsapp");
+    return { success: "Horário da entrevista salvo." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+export async function askInterviewNowAction(_prev: FormState, _formData: FormData): Promise<FormState> {
+  const user = await requireOwner("whatsapp");
+  try {
+    const result = await requestCuratorInterviewNow(getDb(), { userId: user.id });
+    revalidatePath("/admin/whatsapp");
+    if (result.ok) return { success: "Pedido enviado: a pergunta chega no seu WhatsApp em instantes." };
+    return {
+      error:
+        result.reason === "aberta"
+          ? "Já tem uma pergunta esperando a sua resposta no WhatsApp — responda (ou mande “pula”) antes de pedir outra."
+          : INTERVIEW_PROBLEM_TEXT[result.reason],
+    };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }
