@@ -40,9 +40,18 @@ import {
 } from "@/services/wa-templates";
 import type { LiaGiftPolicy } from "@/core/coupons/lia-gift";
 import { countLiaGiftsToday, loadLiaGiftPolicy } from "@/services/lia-gifts";
+import { INTERVIEW_STATUS_LABELS } from "@/core/atelier/interview";
+import {
+  listRecentInterviews,
+  loadInterviewSettings,
+  type InterviewSettings,
+  type InterviewSummary,
+} from "@/services/curator-interviews";
 import { maskPhone } from "./conversas/format";
 import {
+  AskInterviewNowForm,
   BotSettingsForm,
+  InterviewScheduleForm,
   LiaGiftSettingsForm,
   SendDigestNowForm,
   SendTestMessageForm,
@@ -67,6 +76,7 @@ export const metadata: Metadata = {
 
 interface PageData {
   overview: WaSessionOverview | null;
+  interview: { settings: InterviewSettings; recent: InterviewSummary[] } | null;
   waEnabledSetting: boolean;
   ownerPhone: string;
   recoveryAfterMinutes: number;
@@ -158,6 +168,14 @@ async function loadPageData(): Promise<PageData | null> {
     return null;
   }
 
+  // Entrevista da curadora à parte: a tabela nova não pode derrubar a página.
+  let interview: { settings: InterviewSettings; recent: InterviewSummary[] } | null = null;
+  try {
+    interview = { settings: await loadInterviewSettings(db), recent: await listRecentInterviews(db, 5) };
+  } catch {
+    interview = null;
+  }
+
   // Estado da sessão à parte: o provedor (Z-API) pode estar fora do ar sem
   // que a página inteira precise cair.
   let overview: WaSessionOverview | null = null;
@@ -176,6 +194,7 @@ async function loadPageData(): Promise<PageData | null> {
   };
   return {
     overview,
+    interview,
     waEnabledSetting: settingsMap["wa_enabled"] === true,
     ownerPhone: text("owner_whatsapp_phone"),
     recoveryAfterMinutes:
@@ -504,6 +523,38 @@ export default async function WhatsappPage() {
             )}
           </div>
         </div>
+      </Card>
+
+      <Card title="Entrevista da curadora">
+        {data.interview ? (
+          <div className="flex flex-col gap-5">
+            <ToggleSwitch
+              settingKey="curator_interview_enabled"
+              checked={data.interview.settings.enabled}
+              label="Uma pergunta por dia sobre uma peça"
+              hint={`Na hora escolhida, a ${sellerName} manda no SEU WhatsApp a foto de uma peça e uma pergunta (“por que você trouxe?”, “pra onde você usaria?”). Você responde com um áudio de 20 segundos e recebe o rascunho da nota da curadora e duas legendas; só entra na peça com o seu “ok” (“ok voz” guarda também o seu áudio como a voz da curadora). Começa pelas peças da edição da cidade sem a sua voz. Três perguntas seguidas sem resposta e ela passa a perguntar só às segundas.`}
+            />
+            <InterviewScheduleForm hour={data.interview.settings.hour} weekends={data.interview.settings.weekends} />
+            <AskInterviewNowForm />
+            {data.interview.recent.length > 0 ? (
+              <ul className="flex flex-col gap-2 text-sm">
+                {data.interview.recent.map((row) => (
+                  <li key={row.id} className="flex flex-wrap items-baseline gap-x-2">
+                    <Link href={`/admin/produtos/${row.productId}`} className="font-medium text-zinc-900 underline dark:text-zinc-100">
+                      {row.productName}
+                    </Link>
+                    <span className="text-zinc-500 dark:text-zinc-400">{INTERVIEW_STATUS_LABELS[row.status]}</span>
+                    <span className="text-xs text-zinc-400">{formatDateTimeSP(row.askedAt)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">Nenhuma pergunta feita ainda.</p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Não foi possível carregar a entrevista agora. Tente recarregar a página.</p>
+        )}
       </Card>
 
       <Card title={`Gentilezas da ${sellerName}`}>

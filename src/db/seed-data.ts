@@ -108,6 +108,10 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "bot_audio_notes_enabled", value: true },
   // Ateliê pelo WhatsApp: fotos + recado do dono viram rascunho de peça.
   { key: "atelier_enabled", value: true },
+  // Entrevista da curadora: nasce desligada; a dona escolhe a hora no painel.
+  { key: "curator_interview_enabled", value: false },
+  { key: "curator_interview_hour", value: 10 },
+  { key: "curator_interview_weekends", value: false },
   { key: "edition_name", value: "" },
   // Datas da cidade (Círio, Natal…): a dona cadastra em Configurações.
   { key: "city_dates", value: [] },
@@ -444,6 +448,30 @@ export const initialWaTemplates: Array<{
     bodyTemplate:
       "Para cadastrar uma peça por aqui: mande as fotos primeiro (pela galeria) e, em seguida, um recado com o nome dela — texto ou áudio. {{motivo}}",
     variables: ["motivo"],
+  },
+  {
+    key: "owner_interview_ask",
+    label: "[interno] Entrevista da curadora: a pergunta do dia",
+    bodyTemplate:
+      "🎙️ Pergunta do dia · {{peca}}\n{{pergunta}}\n\n" +
+      "Me responde com um áudio — 20 segundos bastam. Eu transformo na nota da peça e em duas legendas, e só salvo com o seu ok. " +
+      "Prefere escrever? Comece com *resposta:*. Se hoje não der, responda *pula*.",
+    variables: ["peca", "pergunta"],
+  },
+  {
+    key: "owner_interview_draft",
+    label: "[interno] Entrevista da curadora: rascunho para aprovar",
+    bodyTemplate:
+      "✍️ Rascunho · {{peca}}\n\n*Nota da curadora*\n{{nota}}{{legendas}}\n\n" +
+      "Responda:\n*ok* — salvo a nota na peça\n*ok voz* — salvo a nota e o seu áudio vira a voz da curadora\n" +
+      "*corrige:* e a nota do seu jeito\n*pula* — deixo pra lá",
+    variables: ["peca", "nota", "legendas"],
+  },
+  {
+    key: "owner_interview_done",
+    label: "[interno] Entrevista da curadora: confirmação",
+    bodyTemplate: "{{resultado}}",
+    variables: ["resultado"],
   },
   {
     key: "owner_queue_dead",

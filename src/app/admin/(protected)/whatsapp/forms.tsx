@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/form";
 import { renderTemplate } from "@/core/whatsapp/render";
 import {
+  askInterviewNowAction,
+  saveInterviewScheduleAction,
   saveLiaGiftSettingsAction,
   saveBotSettingsAction,
   saveWaSettingsAction,
@@ -57,7 +59,8 @@ export function ToggleSwitch({
     | "lia_gift_enabled"
     | "provador_welcome_gift_enabled"
     | "ai_photos_enabled"
-    | "ai_photos_in_store";
+    | "ai_photos_in_store"
+    | "curator_interview_enabled";
   checked: boolean;
   label: string;
   hint: string;
@@ -196,6 +199,65 @@ export function SendDigestNowForm() {
       <div>
         <SubmitButton variant="outline" size="sm" pendingLabel="Montando o resumo…">
           Enviar o resumo de ontem agora
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Hora e fim de semana da entrevista. Controlado por estado com campos
+ * ocultos: o React 19 reseta o formulário depois da action (o select voltaria
+ * à primeira opção e o checkbox ao valor antigo).
+ */
+export function InterviewScheduleForm({ hour, weekends }: { hour: number; weekends: boolean }) {
+  const [state, formAction] = useActionState(saveInterviewScheduleAction, INITIAL_STATE);
+  const [chosenHour, setChosenHour] = useState(hour);
+  const [chosenWeekends, setChosenWeekends] = useState(weekends);
+  const hours = Array.from({ length: 12 }, (_, index) => 9 + index);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <input type="hidden" name="hour" value={chosenHour} />
+      <input type="hidden" name="weekends" value={chosenWeekends ? "on" : "off"} />
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium text-zinc-800 dark:text-zinc-200">Hora da pergunta</span>
+          <select
+            value={chosenHour}
+            onChange={(event) => setChosenHour(Number(event.target.value))}
+            className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            {hours.map((value) => (
+              <option key={value} value={value}>
+                {value}h
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input type="checkbox" checked={chosenWeekends} onChange={(event) => setChosenWeekends(event.target.checked)} />
+          Perguntar também no sábado e no domingo
+        </label>
+        <SubmitButton variant="outline" size="sm" pendingLabel="Salvando…">
+          Salvar horário
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+export function AskInterviewNowForm() {
+  const [state, formAction] = useActionState(askInterviewNowAction, INITIAL_STATE);
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton variant="outline" size="sm" pendingLabel="Escolhendo a peça…">
+          Perguntar agora
         </SubmitButton>
       </div>
     </form>

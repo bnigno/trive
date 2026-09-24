@@ -297,3 +297,49 @@ export async function removeCuratorAudio(
   await removeAudioBestEffort(storage, product.curatorAudioPath, "remover áudio");
   return { removed: true };
 }
+
+/**
+ * A nota que veio da entrevista pelo WhatsApp (o "ok" da dona): grava o
+ * texto e, no "ok voz", o áudio já guardado no bucket — dentro da transação
+ * de quem aprova. Devolve o áudio anterior para o chamador apagar DEPOIS do
+ * commit (apagar antes perderia a voz se a transação desfizer).
+ */
+export async function applyInterviewCuratorNote(
+  tx: DbOrTx,
+  input: {
+    productId: string;
+    interviewId: string;
+    note: string;
+    audio: { path: string; mime: string; seconds: number | null } | null;
+    now: Date;
+  },
+): Promise<{ previousAudioPath: string | null }> {
+  const product = await requireProductRow(tx, input.productId);
+  await tx
+    .update(products)
+    .set({
+      curatorNote: input.note,
+      curatorNoteUpdatedAt: input.now,
+      updatedAt: input.now,
+      ...(input.audio
+        ? { curatorAudioPath: input.audio.path, curatorAudioMime: input.audio.mime, curatorAudioSeconds: input.audio.seconds }
+        : {}),
+    })
+    .where(eq(products.id, input.productId));
+  await tx.insert(auditLog).values({
+    actorType: "system",
+    actorId: null,
+    action: "product.curator_note_interview",
+    entityType: "product",
+    entityId: input.productId,
+    before: { note: product.curatorNote, audioPath: product.curatorAudioPath },
+    after: { note: input.note, audioPath: input.audio?.path ?? product.curatorAudioPath, interviewId: input.interviewId },
+  });
+  const replaced = input.audio && product.curatorAudioPath && product.curatorAudioPath !== input.audio.path;
+  return { previousAudioPath: replaced ? product.curatorAudioPath : null };
+}
+
+/** O áudio anterior sai do bucket em melhor esforço (depois do commit). */
+export async function removeReplacedCuratorAudio(storage: FileStorage, path: string): Promise<void> {
+  await removeAudioBestEffort(storage, path, "substituído pela entrevista");
+}

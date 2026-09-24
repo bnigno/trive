@@ -65,6 +65,16 @@ export const FAKE_ARRIVAL_JSON = {
 };
 
 /** Portão de fidelidade sem roteiro: aprovada com folga (os testes reprovam enfileirando o JSON). */
+/** Entrevista da curadora: a própria fala vira a nota (o suficiente para dev e testes). */
+export function fakeInterviewDraft(userText: string): { nota: string; legenda_1: string; legenda_2: string } {
+  const speech = userText.replace(/^Resposta da dona \(transcrita\):\s*/u, "").trim();
+  return {
+    nota: speech || "Uma peça que eu escolhi a dedo.",
+    legenda_1: "Escolhida a dedo para a sua tarde em Belém.",
+    legenda_2: "Leve, fresca e do jeito que a gente gosta.",
+  };
+}
+
 export const FAKE_FIDELITY_JSON = {
   mesma_peca: true,
   cor_ok: true,
@@ -108,7 +118,9 @@ export class FakeSalesAssistant implements SalesAssistant {
           ? { matches: [] }
           : "mesma_peca" in properties
             ? FAKE_FIDELITY_JSON
-            : FAKE_PRODUCT_DRAFT_JSON;
+            : "legenda_1" in properties
+              ? fakeInterviewDraft(input.userText)
+              : FAKE_PRODUCT_DRAFT_JSON;
     return {
       json: scripted === undefined ? fallback : scripted,
       usage: { inputTokens: 4200, outputTokens: 800, cacheReadTokens: 0, cacheWriteTokens: 0 },

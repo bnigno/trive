@@ -609,6 +609,16 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   /** "Começar pela foto" no cadastro de peça (ausente = ligado). */
   catalog_draft_enabled: z.boolean(),
   atelier_enabled: z.boolean(),
+  /** Entrevista da curadora: uma pergunta por dia sobre uma peça no WhatsApp da dona. Ausente = desligado. */
+  curator_interview_enabled: z.boolean(),
+  /** Hora (São Paulo) da pergunta, 9–20. */
+  curator_interview_hour: z
+    .number()
+    .int()
+    .min(9, { error: "A pergunta sai entre 9h e 20h." })
+    .max(20, { error: "A pergunta sai entre 9h e 20h." }),
+  /** Pergunta também no sábado e no domingo. */
+  curator_interview_weekends: z.boolean(),
   feedback_ask_enabled: z.boolean(),
   /** Cupom de desculpas quando o motoboy entrega depois da janela prometida + carência. */
   late_delivery_coupon_enabled: z.boolean(),
