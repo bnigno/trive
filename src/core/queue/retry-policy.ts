@@ -61,6 +61,10 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // adianta tentar por horas); o rascunho a dona espera no WhatsApp — sem a
   // inteligência ele sai da própria fala, então as tentativas são só para
   // banco e envio; a decisão ("ok", "ok voz") baixa o áudio da Z-API.
+  // "Me ajuda a escolher?": o placar é resposta ao pedido dela — poucas
+  // tentativas e curtas (placar atrasado de horas não serve a ninguém).
+  "friends.summary": { maxAttempts: 4, baseDelayMs: 30_000, maxDelayMs: 600_000 },
+  "friends.close": { maxAttempts: 6, baseDelayMs: 30_000, maxDelayMs: 1_800_000 },
   "curator.interview_ask": { maxAttempts: 4, baseDelayMs: 30_000, maxDelayMs: 600_000 },
   "curator.interview_draft": { maxAttempts: 3, baseDelayMs: 10_000, maxDelayMs: 60_000 },
   "curator.interview_decide": { maxAttempts: 4, baseDelayMs: 10_000, maxDelayMs: 120_000 },

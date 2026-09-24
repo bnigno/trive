@@ -56,6 +56,7 @@ import {
   execVerSacola,
 } from "./bot/cart";
 import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/catalog";
+import { execPedirOpiniaoDasAmigas } from "./bot/friends";
 import { execEnviarNotaDaCuradora } from "./bot/curator-audio";
 import { execBuscarCadastro } from "./bot/customer";
 import { execAvisarQuandoVoltar, execLiberarReserva, execReservarPeca } from "./bot/holds";
@@ -318,6 +319,8 @@ export function buildToolExecutor(
         return execAtualizarCartela(db, ctx, parsed.data as BotToolInputs["atualizar_cartela"]);
       case "montar_look":
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
+      case "pedir_opiniao_das_amigas":
+        return execPedirOpiniaoDasAmigas(db, ctx, parsed.data as BotToolInputs["pedir_opiniao_das_amigas"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
       case "oferecer_gentileza":

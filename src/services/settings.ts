@@ -619,6 +619,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
     .max(20, { error: "A pergunta sai entre 9h e 20h." }),
   /** Pergunta também no sábado e no domingo. */
   curator_interview_weekends: z.boolean(),
+  /** "Me ajuda a escolher?": a Lia pode abrir a votação das amigas. Ausente = desligado. */
+  friends_vote_enabled: z.boolean(),
   feedback_ask_enabled: z.boolean(),
   /** Cupom de desculpas quando o motoboy entrega depois da janela prometida + carência. */
   late_delivery_coupon_enabled: z.boolean(),

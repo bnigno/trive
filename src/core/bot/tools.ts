@@ -28,6 +28,7 @@ export const BOT_TOOL_NAMES = [
   "sugerir_tamanho",
   "enviar_nota_da_curadora",
   "montar_look",
+  "pedir_opiniao_das_amigas",
   "oferecer_gentileza",
   "anotar",
   "registrar_foto_com_a_peca",
@@ -123,6 +124,8 @@ export type BotToolInputs = {
   /** A voz da curadora sobre a peça vai para o WhatsApp dela como mensagem de voz. */
   enviar_nota_da_curadora: { produto: string; reenviar?: true };
   montar_look: { produto: string; orcamento_reais?: number };
+  /** "Me ajuda a escolher?": 2 ou 3 peças viram uma votação para as amigas dela. */
+  pedir_opiniao_das_amigas: { pecas: string[]; detalhes?: string[]; nome: string; cliente_pediu: true };
   anotar: { nota: string };
   oferecer_gentileza: { motivo: string };
   /** A foto que ela acabou de mandar usando a peça: vira cartão e pedido de consentimento. */
@@ -656,6 +659,33 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "pedir_opiniao_das_amigas",
+    description:
+      "A cliente está em dúvida entre 2 ou 3 peças e quer (ou aceitou) a opinião das amigas: cria uma votação e manda o cartão \"Qual fica melhor?\" com o link para ela encaminhar. As amigas votam com um toque, sem cadastro; o placar volta para ela aqui, 10 min depois do primeiro voto e ao fim de 24 h. Ofereça quando ela disser que está em dúvida ou que vai perguntar para alguém — nunca na abertura. Chame só depois do sim dela e com o primeiro nome como ela quer aparecer para as amigas. Repita o link como veio e diga que o placar chega por aqui; não prometa desconto. Nada fica reservado durante a votação.",
+    input_schema: {
+      type: "object",
+      properties: {
+        pecas: {
+          type: "array",
+          minItems: 2,
+          maxItems: 3,
+          items: { type: "string" },
+          description: "Slug ou nome exato de cada peça (a mesma peça em 2 cores vale: repita o slug e diga a cor em detalhes).",
+        },
+        detalhes: {
+          type: "array",
+          maxItems: 3,
+          items: { type: "string" },
+          description: "Opcional, na mesma ordem das peças: cor/tamanho que ela está pensando (\"areia\", \"preto M\").",
+        },
+        nome: { type: "string", description: "Primeiro nome dela como vai aparecer para as amigas (\"Qual fica melhor na Ana?\")." },
+        cliente_pediu: { type: "boolean", const: true, description: "true = ela disse que quer a opinião das amigas." },
+      },
+      required: ["pecas", "nome", "cliente_pediu"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "oferecer_gentileza",
     description:
       "Pede à loja uma GENTILEZA para esta cliente: um cupom pessoal, de poucos dias, sobre a sacola atual, dentro da cota diária da dona. Chame SÓ nas situações da seção GENTILEZAS do prompt — nunca na abertura, nunca sem peça na sacola, uma vez por conversa. A ferramenta confere tudo no servidor (cota do dia, compras anteriores, valor da sacola, tempo desde a última gentileza) e decide. ok: true devolve código, valor e validade — ofereça exatamente isso, ligado ao motivo. ok: false = não há gentileza hoje: NÃO mencione desconto, cupom nem que tentou. Nunca prometa antes de chamar.",
@@ -1010,6 +1040,12 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
   montar_look: z.strictObject({
     produto: z.string().min(1),
     orcamento_reais: z.number().int().min(1).optional(),
+  }),
+  pedir_opiniao_das_amigas: z.strictObject({
+    pecas: z.array(z.string().trim().min(1).max(120)).min(2, "Passe 2 ou 3 peças.").max(3, "No máximo 3 peças."),
+    detalhes: z.array(z.string().trim().max(60)).max(3).optional(),
+    nome: z.string().trim().min(1, "Diga o primeiro nome dela.").max(30),
+    cliente_pediu: z.literal(true),
   }),
   oferecer_gentileza: z.strictObject({
     motivo: z.string().trim().min(3, "Diga o motivo em poucas palavras.").max(140),

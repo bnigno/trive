@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { products } from "./catalog";
+import { friendRounds } from "./friends";
 import { orders } from "./orders";
 import { waConversations } from "./whatsapp";
 
@@ -25,6 +26,8 @@ export const siteCarts = pgTable(
     items: jsonb("items").notNull().default([]),
     conversationId: uuid("conversation_id").references(() => waConversations.id, { onDelete: "set null" }),
     orderId: uuid("order_id").references(() => orders.id, { onDelete: "set null" }),
+    /** Ponte aberta por uma amiga depois de votar (source = 'amigas'): de qual rodada ela veio. */
+    roundId: uuid("round_id").references(() => friendRounds.id, { onDelete: "set null" }),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -38,6 +41,6 @@ export const siteCarts = pgTable(
     index("site_carts_conversation_id_idx").on(table.conversationId),
     // Funil por link de story (toques, conversas, pedidos por campanha e período).
     index("site_carts_campaign_slug_created_at_idx").on(table.campaignSlug, table.createdAt),
-    check("site_carts_source_check", sql`${table.source} IN ('pdp', 'cart', 'footer', 'campaign')`),
+    check("site_carts_source_check", sql`${table.source} IN ('pdp', 'cart', 'footer', 'campaign', 'amigas')`),
   ],
 );

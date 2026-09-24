@@ -55,6 +55,7 @@ const toggleKeySchema = z.enum([
   "ai_photos_enabled",
   "ai_photos_in_store",
   "curator_interview_enabled",
+  "friends_vote_enabled",
 ]);
 
 export async function setToggleAction(

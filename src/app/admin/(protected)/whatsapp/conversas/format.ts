@@ -93,6 +93,7 @@ export const TOOL_LABELS: Record<BotToolName, string> = {
   avisar_quando_voltar: "anotou o aviso de volta",
   atualizar_cartela: "atualizou a cartela",
   montar_look: "montou um look",
+  pedir_opiniao_das_amigas: "abriu a votação das amigas",
   anotar: "anotou no caderninho",
   oferecer_gentileza: "pediu uma gentileza à loja",
   sugerir_tamanho: "sugeriu o tamanho",

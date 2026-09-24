@@ -91,6 +91,7 @@ interface PageData {
   feedbackAskEnabled: boolean;
   customerLooksEnabled: boolean;
   audioNotesEnabled: boolean;
+  friendsVoteEnabled: boolean;
   handoffSilenceHours: number;
   handoffAutoReturnHours: number;
   idleCartFollowupHours: number;
@@ -157,6 +158,7 @@ async function loadPageData(): Promise<PageData | null> {
         "lia_gift_enabled",
         "ai_photos_enabled",
         "ai_photos_in_store",
+        "friends_vote_enabled",
       ]),
       listWaTemplates(db),
       getBotActivitySummary(db),
@@ -212,6 +214,7 @@ async function loadPageData(): Promise<PageData | null> {
     feedbackAskEnabled: settingsMap["feedback_ask_enabled"] !== false,
     customerLooksEnabled: settingsMap["customer_looks_enabled"] !== false,
     audioNotesEnabled: settingsMap["bot_audio_notes_enabled"] !== false,
+    friendsVoteEnabled: settingsMap["friends_vote_enabled"] === true,
     handoffSilenceHours: hours("handoff_silence_hours", 24),
     handoffAutoReturnHours: hours("handoff_auto_return_hours", 12),
     idleCartFollowupHours: hours("bot_idle_cart_followup_hours", 0),
@@ -449,6 +452,12 @@ export default async function WhatsappPage() {
             checked={data.audioNotesEnabled}
             label="A Lia manda a voz da curadora"
             hint="Quando a cliente pergunta de tecido, caimento ou calor de uma peça com nota em áudio, a Lia diz que a curadora gravou uma nota e a cliente recebe o áudio como mensagem de voz no WhatsApp — uma vez por peça na conversa. Desligado, a Lia cita só a nota escrita."
+          />
+          <ToggleSwitch
+            settingKey="friends_vote_enabled"
+            checked={data.friendsVoteEnabled}
+            label="Me ajuda a escolher? (votação das amigas)"
+            hint={`Quando a cliente fica em dúvida entre 2 ou 3 peças, a ${sellerName} oferece uma votação: ela manda o cartão com o link às amigas, cada amiga vota com um toque (sem cadastro, sem telefone) e o placar volta para ela aqui, 10 minutos depois do primeiro voto e ao fim de 24 h. Quem votou pode abrir uma conversa com a ${sellerName} — a loja nunca escreve primeiro para a amiga. Nada fica reservado durante a votação.`}
           />
           <ToggleSwitch
             settingKey="bot_cards_enabled"

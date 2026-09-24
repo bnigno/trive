@@ -112,6 +112,8 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "curator_interview_enabled", value: false },
   { key: "curator_interview_hour", value: 10 },
   { key: "curator_interview_weekends", value: false },
+  // "Me ajuda a escolher?": nasce desligado; liga em WhatsApp › Vendedora.
+  { key: "friends_vote_enabled", value: false },
   { key: "edition_name", value: "" },
   // Datas da cidade (Círio, Natal…): a dona cadastra em Configurações.
   { key: "city_dates", value: [] },
@@ -448,6 +450,18 @@ export const initialWaTemplates: Array<{
     bodyTemplate:
       "Para cadastrar uma peça por aqui: mande as fotos primeiro (pela galeria) e, em seguida, um recado com o nome dela — texto ou áudio. {{motivo}}",
     variables: ["motivo"],
+  },
+  {
+    key: "friends_summary",
+    label: "Me ajuda a escolher?: placar parcial",
+    bodyTemplate: "Suas amigas já estão votando 🗳️\n{{placar}}{{recados}}\n\nA votação fica aberta até amanhã: {{link}}",
+    variables: ["placar", "recados", "link"],
+  },
+  {
+    key: "friends_closed",
+    label: "Me ajuda a escolher?: resultado",
+    bodyTemplate: "A votação acabou ✨\n{{placar}}\n\n{{fecho}}",
+    variables: ["placar", "fecho"],
   },
   {
     key: "owner_interview_ask",
