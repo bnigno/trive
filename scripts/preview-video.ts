@@ -146,7 +146,7 @@ async function main() {
       onSubmitted: (id) => {
         jobId = id;
         writeFileSync(join(out, "pedido.txt"), `${id}\n`);
-        console.log(`pedido aceito pela FASHN: ${id} (guardado em pedido.txt)`);
+        console.log(`pedido aceito: ${id} (guardado em pedido.txt)`);
       },
     });
   } catch (error) {
