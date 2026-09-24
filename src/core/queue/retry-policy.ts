@@ -26,6 +26,15 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
     baseDelayMs: 10_000,
     maxDelayMs: 60_000,
   },
+  // Estorno no Mercado Pago: é DINHEIRO da cliente, então insiste bastante —
+  // instabilidade do vendor não pode virar reembolso perdido. A cliente só é
+  // avisada depois do sucesso; esgotando as tentativas, o pedido fica
+  // "falhou" e o dono devolve à mão.
+  "payment.refund": {
+    maxAttempts: 8,
+    baseDelayMs: 10_000,
+    maxDelayMs: 3_600_000,
+  },
   default: {
     maxAttempts: 8,
     baseDelayMs: 5_000,

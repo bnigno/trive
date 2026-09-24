@@ -47,12 +47,23 @@ export type Payment = {
   paymentMethod: PaymentMethod;
 };
 
+export type RefundResult = {
+  /** Id do estorno no vendor (não confundir com o id do pagamento). */
+  refundId: string;
+  /** Como o vendor classificou o estorno: "approved", "in_process"… */
+  status: string;
+};
+
 export interface PaymentGateway {
   createCheckoutPreference(
     input: CreateCheckoutPreferenceInput,
   ): Promise<CheckoutPreference>;
   getPayment(paymentId: string): Promise<Payment>;
-  refundPayment(paymentId: string): Promise<void>;
+  /**
+   * Estorno TOTAL. Devolve o que o vendor respondeu: sem o id do estorno não
+   * há como provar depois que o dinheiro voltou, nem conferir no painel dele.
+   */
+  refundPayment(paymentId: string): Promise<RefundResult>;
 }
 
 let instance: PaymentGateway | undefined;

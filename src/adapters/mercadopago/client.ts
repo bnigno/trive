@@ -7,6 +7,7 @@ import type {
   PaymentGateway,
   PaymentMethod,
   PaymentStatus,
+  RefundResult,
 } from "./index";
 
 const MP_BASE_URL = "https://api.mercadopago.com";
@@ -17,6 +18,13 @@ const MP_BASE_URL = "https://api.mercadopago.com";
 const mpPreferenceResponseSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
   init_point: z.url(),
+});
+
+// Resposta de POST /v1/payments/{id}/refunds. O status vem como "approved"
+// na maioria dos casos e "in_process" quando o meio de pagamento demora.
+const mpRefundResponseSchema = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  status: z.string().nullish(),
 });
 
 const mpFeeDetailSchema = z.object({
@@ -170,8 +178,8 @@ export class MercadoPagoPaymentGateway implements PaymentGateway {
     };
   }
 
-  async refundPayment(paymentId: string): Promise<void> {
-    await this.request(
+  async refundPayment(paymentId: string): Promise<RefundResult> {
+    const raw = await this.request(
       `/v1/payments/${encodeURIComponent(paymentId)}/refunds`,
       {
         method: "POST",
@@ -180,6 +188,8 @@ export class MercadoPagoPaymentGateway implements PaymentGateway {
         body: {},
       },
     );
+    const parsed = mpRefundResponseSchema.parse(raw);
+    return { refundId: parsed.id, status: parsed.status ?? "unknown" };
   }
 
   private async request(

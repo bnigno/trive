@@ -68,6 +68,13 @@ export const orders = pgTable(
     mpPreferenceId: text("mp_preference_id"),
     mpPaymentId: text("mp_payment_id"),
     mpFeeCents: bigint("mp_fee_cents", { mode: "number" }),
+    // O que se sabe do DINHEIRO do reembolso, que é outra coisa do status do
+    // pedido: 'refunded' diz que a venda caiu, isto diz se o valor voltou.
+    // Sem estes três campos um pedido podia ficar 'refunded' com o dinheiro
+    // ainda no vendor — foi o que aconteceu com o #1004.
+    refundedAt: timestamp("refunded_at", { withTimezone: true }),
+    mpRefundId: text("mp_refund_id"),
+    refundState: text("refund_state"),
     installments: integer("installments"),
     // Snapshot do endereço no momento do pedido.
     shippingAddress: jsonb("shipping_address"),
@@ -174,6 +181,10 @@ export const orders = pgTable(
     check(
       "orders_payment_method_check",
       sql`${table.paymentMethod} IN ('pix', 'credit_card', 'boleto', 'pix_manual', 'cash')`,
+    ),
+    check(
+      "orders_refund_state_check",
+      sql`${table.refundState} IS NULL OR ${table.refundState} IN ('nao_aplicavel', 'pendente', 'devolvido', 'falhou')`,
     ),
     check(
       "orders_total_consistency_check",

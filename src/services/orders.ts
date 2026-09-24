@@ -10,6 +10,7 @@ import {
   type StockEffect,
 } from "@/core/orders/state-machine";
 import { needsPackingBeforeDispatch, NOT_PACKED_CODE, notPackedMessage } from "@/core/orders/packing";
+import { initialRefundState, isAutomaticRefund } from "@/core/orders/refunds";
 import { computeOrderTotals } from "@/core/orders/totals";
 import {
   auditLog,
@@ -398,6 +399,13 @@ export async function transitionOrder(
     if (to === "canceled" && parsed.reason) {
       updateSet.cancelReason = parsed.reason;
     }
+    // O dinheiro tem estado próprio: 'refunded' diz que a venda caiu, isto diz
+    // se o valor voltou. Nasce aqui para o handler de order.refunded saber se
+    // pode avisar a cliente agora ou se deve esperar o vendor responder.
+    const refundRoute = { paymentMethod: order.paymentMethod, mpPaymentId: order.mpPaymentId };
+    if (to === "refunded") {
+      updateSet.refundState = initialRefundState(refundRoute);
+    }
     await tx.update(orders).set(updateSet).where(eq(orders.id, order.id));
 
     await tx.insert(orderStatusHistory).values({
@@ -479,6 +487,20 @@ export async function transitionOrder(
         status: "pending",
         orderId: order.id,
         createdBy: parsed.userId,
+      });
+    }
+
+    // Estorno de verdade: só para o que passou pelo Mercado Pago e só quando
+    // quem reembolsa é uma PESSOA no painel. Transição vinda do webhook
+    // (userId null) significa que o MP já estornou — pedir de novo seria
+    // estornar em dobro.
+    if (to === "refunded" && parsed.userId !== null && isAutomaticRefund(refundRoute)) {
+      await enqueueOutboxEvent(tx, {
+        eventType: "payment.refund",
+        dedupeKey: `payment.refund:${order.id}`,
+        aggregateType: "order",
+        aggregateId: order.id,
+        payload: { orderId: order.id, mpPaymentId: order.mpPaymentId },
       });
     }
 

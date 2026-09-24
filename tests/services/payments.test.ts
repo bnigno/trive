@@ -5,6 +5,7 @@ import type {
   CheckoutPreference,
   Payment,
   PaymentGateway,
+  RefundResult,
 } from "@/adapters/mercadopago";
 import { FakePaymentGateway } from "@/adapters/mercadopago/fake";
 import * as schema from "@/db/schema";
@@ -53,7 +54,9 @@ class StubPaymentGateway implements PaymentGateway {
     }
     return { ...this.payment };
   }
-  async refundPayment(): Promise<void> {}
+  async refundPayment(paymentId: string): Promise<RefundResult> {
+    return { refundId: `stub-refund-${paymentId}`, status: "approved" };
+  }
   set(partial: Partial<Payment>): void {
     Object.assign(this.payment, partial);
   }
