@@ -4,6 +4,7 @@ import { z } from "zod";
 import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import type { OutboxSource } from "@/core/queue/outbox-source";
 import { getRetryPolicy, handlerReserveMs } from "@/core/queue/retry-policy";
+import { mayAnnounceRefund, type RefundState } from "@/core/orders/refunds";
 import { isWaLid } from "@/lib/phone";
 
 import { getSalesAssistant } from "@/adapters/assistant";
@@ -89,7 +90,7 @@ import {
   sendOrderCanceledWa,
   sendOrderRefundedWa,
 } from "@/services/order-notices";
-import { processPaymentEvent } from "@/services/payments";
+import { markRefundFailed, processPaymentEvent, refundOrderPayment } from "@/services/payments";
 import { sendPackedWa } from "@/services/packing";
 import { sendReceiptWa } from "@/services/receipts";
 import { runBotTurn, runScheduledBotTurn } from "@/services/wa-bot";
@@ -740,12 +741,38 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const { mpPaymentId } = mpPaymentEventPayloadSchema.parse(event.payload);
     await processPaymentEvent(getDb(), getPaymentGateway(), { mpPaymentId });
   },
-  // Reembolso confirmado (transição feita pelo serviço de pagamentos): a
-  // cliente recebe o aviso no WhatsApp (só com opt-in; dedupe por pedido).
+  // Devolve o dinheiro no Mercado Pago e só então deixa a cliente saber. A
+  // ordem é o ponto: antes disto o sistema anunciava "reembolso confirmado" no
+  // clique do dono, com o valor ainda parado no vendor.
+  "payment.refund": async (event) => {
+    const { orderId } = orderNoticePayloadSchema.parse(event.payload);
+    const last = event.attempts + 1 >= getRetryPolicy("payment.refund").maxAttempts;
+    try {
+      const outcome = await refundOrderPayment(getDb(), getPaymentGateway(), { orderId });
+      console.info(`[payment.refund] ${orderId}:`, outcome);
+      if (outcome.action !== "nao_aplicavel") {
+        const notice = await sendOrderRefundedWa(getDb(), getMessagingProvider(), { orderId });
+        console.info(`[payment.refund] ${orderId}: aviso à cliente`, notice);
+      }
+    } catch (error) {
+      // Na última tentativa o pedido fica marcado como "falhou": a cliente NÃO
+      // é avisada e o dono precisa devolver à mão.
+      if (last) await markRefundFailed(getDb(), { orderId });
+      throw error;
+    }
+  },
+  // O pedido caiu: cupons que ele gerou saem de cena. O aviso à cliente só sai
+  // quando o dinheiro já voltou (ou quando a devolução é por fora, caso em que
+  // quem devolve é o dono e ele clicou sabendo disso).
   "order.refunded": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
-    // O pedido caiu: o cupom que ele gerou (proteção de preço) e ainda não foi usado sai de cena.
     const deactivated = await deactivateIssuedCouponsForOrder(getDb(), { orderId, origins: ["price_protection", "paper_voucher", "referral", "referral_reward"] });
+    const [order] = await getDb().select({ refundState: orders.refundState }).from(orders).where(eq(orders.id, orderId)).limit(1);
+    const state = (order?.refundState ?? "nao_aplicavel") as RefundState;
+    if (!mayAnnounceRefund(state)) {
+      console.info(`[order.refunded] ${orderId}: aviso adiado (estorno ${state}); cupons desativados: ${deactivated}`);
+      return;
+    }
     const result = await sendOrderRefundedWa(getDb(), getMessagingProvider(), { orderId });
     console.info(`[order.refunded] ${orderId}:`, result, `cupons desativados: ${deactivated}`);
   },

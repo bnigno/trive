@@ -9,8 +9,9 @@ import {
 } from "@/core/orders/state-machine";
 import { getFileStorage } from "@/adapters/storage";
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
+import { REFUND_STATE_LABELS, type RefundState } from "@/core/orders/refunds";
 import { neededByLabel, shipByLabel, trafficLight, type TrafficLight } from "@/core/shipping/needed-by";
-import { spDayKey } from "@/lib/sp-day";
+import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { getDb } from "@/db/client";
 import { isOwner, requireUser } from "@/services/auth";
 import { getOrderDetail } from "@/services/orders";
@@ -235,6 +236,29 @@ export default async function PedidoDetalhePage({
                 </div>
               </OwnerOnly>
             </dl>
+            {/* Estado do DINHEIRO do reembolso, que não é o mesmo que o status
+                do pedido: 'Reembolsado' diz que a venda caiu, isto diz se o
+                valor voltou. Só aparece quando há reembolso em jogo. */}
+            {order.refundState && order.refundState !== "nao_aplicavel" ? (
+              <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-300">
+                <strong>{REFUND_STATE_LABELS[order.refundState as RefundState]}</strong>
+                {order.refundState === "devolvido" && order.refundedAt
+                  ? ` — ${spDayLabel(spDayKey(order.refundedAt))} às ${spTimeLabel(order.refundedAt)}${order.mpRefundId ? ` · estorno ${order.mpRefundId}` : ""}`
+                  : null}
+                {order.refundState === "pendente"
+                  ? " — pedimos o estorno ao Mercado Pago; a cliente é avisada quando o valor sair."
+                  : null}
+                {order.refundState === "falhou"
+                  ? " — o Mercado Pago recusou. Devolva pelo painel dele e a cliente NÃO foi avisada."
+                  : null}
+              </p>
+            ) : null}
+            {status === "refunded" && order.refundState === "nao_aplicavel" ? (
+              <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-300">
+                <strong>Devolução por fora</strong> — esta forma de pagamento não é estornada pelo
+                sistema: confirme que o Pix (ou o dinheiro) voltou para a cliente.
+              </p>
+            ) : null}
           </Card>
 
           <OrderMarginCard order={order} />
@@ -587,6 +611,7 @@ export default async function PedidoDetalhePage({
               orderId={order.id}
               status={status}
               paymentMethod={order.paymentMethod}
+              mpPaymentId={order.mpPaymentId}
               trackingCode={order.shippingTrackingCode}
               canRefund={owner}
               packed={Boolean(order.packagePhotoPath)}

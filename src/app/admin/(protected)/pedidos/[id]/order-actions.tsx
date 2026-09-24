@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 
+import { isAutomaticRefund } from "@/core/orders/refunds";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { DeliveredForm, DispatchForm } from "../rota/forms";
@@ -166,10 +167,13 @@ export function OrderActions({
   canRefund,
   motoboy,
   packed,
+  mpPaymentId,
 }: {
   orderId: string;
   status: OrderStatus;
   paymentMethod: string | null;
+  /** Sem id do pagamento no vendor não há estorno automático, mesmo em método do MP. */
+  mpPaymentId: string | null;
   trackingCode: string | null;
   /** Reembolso lança saída no financeiro: só o dono. A action confere de novo. */
   canRefund: boolean;
@@ -178,6 +182,10 @@ export function OrderActions({
   /** Foto do pacote registrada: só assim "Saiu" e "Marcar como enviado" aparecem (embalar antes de sair). */
   packed: boolean;
 }) {
+  // Quem devolve o dinheiro muda o texto inteiro da confirmação: prometer
+  // estorno automático onde ele não existe foi o defeito que originou isto.
+  const refundIsAutomatic = isAutomaticRefund({ paymentMethod, mpPaymentId });
+
   const packFirst = (
     <p className="text-sm text-amber-800 dark:text-amber-200">
       Só sai depois da foto do pacote: registre a embalagem no card <strong>Embalagem</strong> desta ficha (ou na Mesa de embalagem).
@@ -320,7 +328,16 @@ export function OrderActions({
             reasonRequired={false}
             showRestock
             label="Reembolsar"
-            confirmMessage="Tem certeza que deseja reembolsar este pedido? Um lançamento de reembolso será criado no financeiro."
+            confirmMessage={
+              refundIsAutomatic
+                ? "Vamos devolver o valor pelo Mercado Pago AGORA. A cliente só é avisada depois que o dinheiro sair. Confirma?"
+                : "O sistema NÃO devolve dinheiro nesta forma de pagamento. Faça o Pix (ou devolva em espécie) e use este botão só para registrar. Confirma?"
+            }
+            hint={
+              refundIsAutomatic
+                ? "O estorno é pedido ao Mercado Pago e o valor volta pelo mesmo meio de pagamento."
+                : "Pix manual e dinheiro na entrega voltam pela sua mão — o sistema apenas registra e avisa a cliente."
+            }
           />
         </>
       ) : null}

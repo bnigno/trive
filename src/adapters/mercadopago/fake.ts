@@ -3,6 +3,7 @@ import type {
   CreateCheckoutPreferenceInput,
   Payment,
   PaymentGateway,
+  RefundResult,
 } from "./index";
 
 export class FakePaymentGateway implements PaymentGateway {
@@ -38,7 +39,7 @@ export class FakePaymentGateway implements PaymentGateway {
     return { ...this.requirePayment(paymentId) };
   }
 
-  async refundPayment(paymentId: string): Promise<void> {
+  async refundPayment(paymentId: string): Promise<RefundResult> {
     const payment = this.requirePayment(paymentId);
     if (payment.status !== "approved") {
       throw new Error(
@@ -46,7 +47,12 @@ export class FakePaymentGateway implements PaymentGateway {
       );
     }
     payment.status = "refunded";
+    this.refundCalls.push(paymentId);
+    return { refundId: `fake-refund-${paymentId}`, status: "approved" };
   }
+
+  /** Teste: quantas vezes o vendor foi realmente chamado (estorno duplicado é dinheiro a mais). */
+  readonly refundCalls: string[] = [];
 
   // --- Helpers de teste (não fazem parte da interface PaymentGateway) ---
 

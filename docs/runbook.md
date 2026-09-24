@@ -1216,6 +1216,41 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   ou reembolsado desativa os vales não usados. Produção:
   `scripts/sync-seed.ts --settings paper_voucher_enabled,paper_voucher_percent,referral_percent,referral_reward_percent,paper_voucher_days --templates referral_reward_coupon`.
 
+## Reembolso: quem devolve o dinheiro
+
+Desde 24/09/2026 o botão **Reembolsar** devolve o dinheiro de verdade — mas só
+no que passou pelo Mercado Pago. Antes disso ele só registrava, e a cliente
+recebia "reembolso confirmado" com o valor ainda parado no vendor (foi o que
+aconteceu no pedido #1004).
+
+**Duas rotas, e a tela diz qual é antes de você confirmar:**
+
+| Forma de pagamento | Quem devolve |
+| --- | --- |
+| Pix, cartão ou boleto **pelo link do MP** | **O sistema.** Pede o estorno total ao Mercado Pago e a cliente é avisada **depois** que o valor sai |
+| **Pix manual** (sua chave) e **dinheiro na entrega** | **Você**, pelo banco ou em espécie. O sistema só registra |
+
+O card **Pagamento** da ficha mostra em que pé está o dinheiro:
+
+- **Devolvendo…** — o pedido foi para a fila; a cliente ainda não foi avisada.
+- **Dinheiro devolvido** — com data e o id do estorno, que confere com o painel do MP.
+- **A devolução falhou** — o MP recusou até o fim das tentativas. **A cliente NÃO
+  foi avisada**: devolva pelo painel do Mercado Pago e confira.
+- **Devolução por fora** — Pix manual ou dinheiro: confirme que o valor voltou.
+
+**Estorno em dobro não acontece**, e são três travas: o `dedupe_key` do evento,
+uma consulta ao MP antes de agir (pega o caso de você ter estornado pelo painel
+dele) e a chave de idempotência do adapter.
+
+**Se você estornar primeiro no painel do MP**, o webhook marca o pedido sozinho
+— não precisa clicar em nada aqui.
+
+O estoque **só volta se você marcar a caixinha** "Devolver itens ao estoque".
+O lançamento "Reembolso do pedido #N" do financeiro é liquidado sozinho quando
+o MP confirma; na devolução por fora ele fica pendente até você liquidar.
+
+Produção: migração 0060 (`refunded_at`, `mp_refund_id`, `refund_state`); sem setting.
+
 ## Foto não sobe ("This page couldn't load" / "a página não carregou")
 
 Na Vercel, cada requisição aceita no máximo **4,5 MB** — o `bodySizeLimit` do

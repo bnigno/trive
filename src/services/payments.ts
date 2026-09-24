@@ -21,6 +21,7 @@ import {
   MP_PAYMENT_METHODS,
   type MpPaymentMethod,
 } from "@/core/orders/payment-methods";
+import { isAutomaticRefund } from "@/core/orders/refunds";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import {
   auditLog,
@@ -628,4 +629,107 @@ export async function reconcilePendingMpOrders(
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Estorno: devolver o dinheiro de verdade
+// ---------------------------------------------------------------------------
+
+export type RefundOutcome =
+  | { action: "nao_aplicavel" }
+  | { action: "ja_estornado" }
+  | { action: "estornado"; refundId: string };
+
+/**
+ * Pede ao Mercado Pago o estorno TOTAL do pedido e registra o que ele
+ * respondeu. Idempotente em três camadas, porque estorno em dobro é dinheiro
+ * saindo duas vezes: o dedupe do evento na fila, a consulta ao vendor antes de
+ * agir, e a chave de idempotência do próprio adapter.
+ *
+ * Lança em falha do vendor — o retry/DLQ da fila cuida; quem avisa a cliente é
+ * o chamador, e só depois que isto retorna bem.
+ */
+export async function refundOrderPayment(
+  db: DbOrTx,
+  gateway: PaymentGateway,
+  input: { orderId: string },
+): Promise<RefundOutcome> {
+  const [order] = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      paymentMethod: orders.paymentMethod,
+      mpPaymentId: orders.mpPaymentId,
+      refundState: orders.refundState,
+    })
+    .from(orders)
+    .where(eq(orders.id, input.orderId))
+    .limit(1);
+  if (!order) throw new Error(`refundOrderPayment: pedido ${input.orderId} não existe`);
+
+  if (order.refundState === "devolvido") return { action: "ja_estornado" };
+
+  if (!isAutomaticRefund({ paymentMethod: order.paymentMethod, mpPaymentId: order.mpPaymentId })) {
+    await db.update(orders).set({ refundState: "nao_aplicavel", updatedAt: new Date() }).where(eq(orders.id, order.id));
+    return { action: "nao_aplicavel" };
+  }
+
+  const mpPaymentId = order.mpPaymentId!;
+  // Nunca confiar só no nosso estado: o dono pode ter estornado pelo painel do
+  // MP entre o clique e esta execução.
+  const payment = await gateway.getPayment(mpPaymentId);
+  if (payment.status === "refunded") {
+    await settleRefund(db, { orderId: order.id, orderNumber: order.orderNumber, refundId: null });
+    return { action: "ja_estornado" };
+  }
+
+  const refund = await gateway.refundPayment(mpPaymentId);
+  await settleRefund(db, { orderId: order.id, orderNumber: order.orderNumber, refundId: refund.refundId });
+  return { action: "estornado", refundId: refund.refundId };
+}
+
+/** Registra o dinheiro de volta: carimbo no pedido, taxa do MP e lançamento do financeiro. */
+async function settleRefund(
+  db: DbOrTx,
+  input: { orderId: string; orderNumber: number; refundId: string | null },
+): Promise<void> {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(orders)
+      .set({ refundState: "devolvido", refundedAt: now, mpRefundId: input.refundId, updatedAt: now })
+      .where(eq(orders.id, input.orderId));
+
+    // O MP devolve a taxa no estorno total — o caminho do webhook já fazia
+    // isto, o do painel não fazia e deixava a taxa a pagar de pé.
+    await cancelPendingMpFeeEntry(tx, input.orderId);
+
+    // A saída "Reembolso do pedido #N" nasce pendente esperando a mão do dono.
+    // Com o vendor devolvendo sozinho, não sobrou ação manual: liquida.
+    await tx
+      .update(financialEntries)
+      .set({ status: "settled", updatedAt: now })
+      .where(
+        and(
+          eq(financialEntries.orderId, input.orderId),
+          eq(financialEntries.category, "refund"),
+          eq(financialEntries.status, "pending"),
+        ),
+      );
+
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "payment.refunded",
+      entityType: "order",
+      entityId: input.orderId,
+      after: { mpRefundId: input.refundId, refundState: "devolvido" },
+      reason: `Estorno do pedido #${input.orderNumber} confirmado pelo Mercado Pago`,
+    });
+  });
+}
+
+/** Esgotadas as tentativas: fica registrado que o dinheiro NÃO voltou. */
+export async function markRefundFailed(db: DbOrTx, input: { orderId: string }): Promise<void> {
+  await db.update(orders).set({ refundState: "falhou", updatedAt: new Date() }).where(eq(orders.id, input.orderId));
 }
