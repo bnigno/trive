@@ -1,5 +1,5 @@
 {
-  "id": "61433674-3725-4ea9-b298-11d76191bd2c",
+  "id": "26be88a3-397a-4d44-b860-19299b230deb",
   "prevId": "b4e801ac-e3ad-4c63-96b4-518489e7960a",
   "version": "7",
   "dialect": "postgresql",
@@ -371,6 +371,12 @@
         },
         "decided_by_message": {
           "name": "decided_by_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decision_note": {
+          "name": "decision_note",
           "type": "text",
           "primaryKey": false,
           "notNull": false

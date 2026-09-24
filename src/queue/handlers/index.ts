@@ -560,7 +560,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // Entrevista da curadora: a pergunta do dia, o rascunho da resposta e a
   // decisão da dona ("ok", "ok voz", "corrige:", "pula"). Skips não lançam.
   "curator.interview_ask": async (event) => {
-    const result = await askCuratorInterview(getDb(), getMessagingProvider(), interviewAskPayloadSchema.parse(event.payload));
+    const result = await askCuratorInterview(getDb(), getMessagingProvider(), interviewAskPayloadSchema.parse({ ...event.payload, attempt: event.attempts }));
     console.info(`[curator.interview_ask] ${JSON.stringify(result)}`);
   },
   "curator.interview_draft": async (event) => {
@@ -568,7 +568,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       getDb(),
       getMessagingProvider(),
       getSalesAssistant(),
-      interviewDraftPayloadSchema.parse(event.payload),
+      interviewDraftPayloadSchema.parse({ ...event.payload, attempt: event.attempts }),
     );
     console.info(`[curator.interview_draft] ${JSON.stringify(result)}`);
   },

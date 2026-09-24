@@ -88,6 +88,8 @@ export const curatorInterviews = pgTable(
     transcript: text("transcript"),
     /** A mensagem que decidiu ("ok", "pula"…): o retry reenvia a confirmação em vez de calar. */
     decidedByMessage: text("decided_by_message"),
+    /** O que a confirmação disse além de "nota salva" (voz, eco do "nova:") — o reenvio repete igual. */
+    decisionNote: text("decision_note"),
     draft: jsonb("draft").$type<{ note: string; captions: string[]; model?: string | null }>(),
     draftSentAt: timestamp("draft_sent_at", { withTimezone: true }),
     decidedAt: timestamp("decided_at", { withTimezone: true }),

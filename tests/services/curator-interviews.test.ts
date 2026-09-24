@@ -299,3 +299,88 @@ describe("a resposta da dona", () => {
     expect(await outboxTypes()).not.toContain("curator.interview_draft");
   });
 });
+
+describe("segunda rodada da revisão", () => {
+  it("o áudio que não deu para ouvir destrava o rascunho do que já foi ouvido (mesmo depois de o rascunho ter esperado por ele)", async () => {
+    await askToday();
+    await audio("MSG-A1");
+    await audio("MSG-A2");
+    await transcribe("MSG-A1", "é de linho");
+    expect((await draftNow()).result).toEqual({ skipped: "esperando_audio" });
+    await transcribe("MSG-A2", new Error("fora"));
+    const drafts = (await outboxOf("curator.interview_draft")).filter((event) => event.status !== "done");
+    expect(drafts.length).toBeGreaterThan(0);
+    const pending = drafts[drafts.length - 1];
+    expect(await draftCuratorInterview(sdb, provider, new FakeSalesAssistant(), pending.payload as never)).toEqual({ sent: true, usedModel: true });
+  });
+
+  it("\"ok\" sobre o rascunho que ela tem na mão vale mesmo com um áudio novo sendo somado", async () => {
+    const { productId } = await askToday();
+    await text("MSG-T1", "resposta: é fresca");
+    await draftNow();
+    await audio("MSG-A5");
+    await transcribe("MSG-A5", "e não amassa");
+    expect((await interviews())[0].status).toBe("drafting");
+    expect((await text("MSG-OK", "ok")).action).toBe("interview_queued");
+    expect((await decideLast()).result).toEqual({ done: "aprovada" });
+    const [product] = await db.select().from(schema.products).where(eq(schema.products.id, productId));
+    expect(product.curatorNote).toBe("é fresca");
+    expect((await draftNow()).result).toEqual({ skipped: "ja_decidida" });
+  });
+
+  it("Z-API fora na última tentativa: a pergunta vira 'não saiu' e não captura os áudios dela", async () => {
+    await createTestVariant(db, { sku: "DUNAS-M", name: "Longo Dunas" });
+    provider.simulateDisconnect();
+    await expect(askCuratorInterview(sdb, provider, { askKey: "2026-10-05", attempt: 3 })).rejects.toThrow();
+    expect((await interviews())[0].status).toBe("failed");
+  });
+
+  it("o reenvio da confirmação repete a linha da voz", async () => {
+    await askToday();
+    await audio("MSG-A1");
+    await audio("MSG-A2");
+    await transcribe("MSG-A1", "é de linho");
+    await transcribe("MSG-A2", "e não amassa");
+    await draftNow();
+    expect(lastBodies().some((body) => body.includes("guarda só o texto"))).toBe(true);
+    await text("MSG-OK", "ok voz");
+    const { payload } = await decideLast();
+    const before = lastBodies().find((body) => body.includes("✅ Nota salva"));
+    expect(before).toContain("mais de um áudio");
+    await decideCuratorInterview(sdb, provider, storage, payload);
+    const after = lastBodies().filter((body) => body.includes("✅ Nota salva"));
+    expect(after).toHaveLength(1);
+    expect(after[0]).toContain("mais de um áudio");
+  });
+
+  it("um áudio + correção: \"ok voz\" guarda só o texto e explica o motivo certo", async () => {
+    await askToday();
+    await audio("MSG-A1");
+    await transcribe("MSG-A1", "é de viscose");
+    await draftNow();
+    await text("MSG-C1", "corrige: é linho");
+    await draftNow();
+    await text("MSG-OK", "ok voz");
+    expect((await decideLast()).result).toEqual({ done: "aprovada", voice: "misto" });
+    expect(lastBodies().some((body) => body.includes("uma parte escrita ou uma correção"))).toBe(true);
+  });
+
+  it("\"pula\" antes de a transcrição voltar: o áudio segue o caminho de sempre, não some", async () => {
+    await askToday();
+    await audio("MSG-A1");
+    await text("MSG-P", "pula");
+    await decideLast();
+    expect(await transcribe("MSG-A1", "chegou o cropped novo")).not.toMatchObject({ route: "interview_answer" });
+    expect((await interviews())[0].pendingAnswerIds).toEqual([]);
+  });
+
+  it("resposta que só fala de preço: a dona recebe o porquê, não o silêncio", async () => {
+    await askToday();
+    await text("MSG-T1", "resposta: custa 89 reais.");
+    const assistant = new FakeSalesAssistant();
+    assistant.enqueueExtraction(new Error("fora do ar"));
+    expect((await draftNow(assistant)).result).toEqual({ skipped: "sem_fala" });
+    expect((await interviews())[0].status).toBe("failed");
+    expect(lastBodies().some((body) => body.includes("a resposta falava só de preço"))).toBe(true);
+  });
+});

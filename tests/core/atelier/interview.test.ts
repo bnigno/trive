@@ -179,7 +179,7 @@ describe("a voz da curadora", () => {
     expect(voiceSourceFor({ audioIds: ["a1"], textAnswers: 0 })).toEqual({ audioId: "a1" });
     expect(voiceSourceFor({ audioIds: [], textAnswers: 1 })).toEqual({ reason: "escrito" });
     expect(voiceSourceFor({ audioIds: ["a1", "a2"], textAnswers: 0 })).toEqual({ reason: "varios" });
-    expect(voiceSourceFor({ audioIds: ["a1"], textAnswers: 1 })).toEqual({ reason: "varios" });
+    expect(voiceSourceFor({ audioIds: ["a1"], textAnswers: 1 })).toEqual({ reason: "misto" });
   });
 });
 

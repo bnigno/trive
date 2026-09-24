@@ -20,6 +20,7 @@ CREATE TABLE "curator_interviews" (
 	"last_answer_at" timestamp with time zone,
 	"transcript" text,
 	"decided_by_message" text,
+	"decision_note" text,
 	"draft" jsonb,
 	"draft_sent_at" timestamp with time zone,
 	"decided_at" timestamp with time zone,

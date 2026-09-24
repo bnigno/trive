@@ -184,6 +184,8 @@ export function classifyInterviewReply(input: {
   status: InterviewStatus;
   messageKind: "audio" | "text" | "image" | "note";
   body: string;
+  /** Já existe um rascunho na mão dela (mesmo que um áudio novo esteja sendo somado). */
+  hasDraft?: boolean;
 }): InterviewReply | null {
   const open = input.status === "asked" || input.status === "drafting" || input.status === "draft_sent";
   if (!open || input.messageKind === "image") return null;
@@ -200,7 +202,8 @@ export function classifyInterviewReply(input: {
   };
   const answer = command(/^resposta\s*:\s*/i);
   if (answer) return { kind: "answer_text", text: answer };
-  if (input.status !== "draft_sent") return null;
+  const draftInHand = input.status === "draft_sent" || (input.status === "drafting" && input.hasDraft === true);
+  if (!draftInHand) return null;
   if (APPROVE_VOICE_WORDS.has(text)) return { kind: "approve", withVoice: true };
   if (APPROVE_WORDS.has(text)) return { kind: "approve", withVoice: false };
   const correction = command(/^corrig[ea]\s*:\s*/i);
@@ -238,9 +241,11 @@ export function effectiveInterviewStatus(row: InterviewClock, now: Date): Interv
  * De qual áudio sai a voz da curadora no "ok voz": só quando a resposta foi
  * UM áudio — dois áudios ou resposta escrita guardam só o texto.
  */
-export function voiceSourceFor(input: { audioIds: readonly string[]; textAnswers: number }): { audioId: string } | { reason: "escrito" | "varios" } {
+export function voiceSourceFor(input: { audioIds: readonly string[]; textAnswers: number }): { audioId: string } | { reason: "escrito" | "varios" | "misto" } {
   if (input.audioIds.length === 0) return { reason: "escrito" };
-  if (input.audioIds.length > 1 || input.textAnswers > 0) return { reason: "varios" };
+  if (input.audioIds.length > 1) return { reason: "varios" };
+  // Um áudio + parte escrita ou correção: o áudio não diz tudo o que está na nota.
+  if (input.textAnswers > 0) return { reason: "misto" };
   return { audioId: input.audioIds[0] };
 }
 
@@ -321,8 +326,9 @@ export function buildInterviewDraftPrompt(input: { storeName: string; productNam
 const INTERVIEW_TRANSITIONS: Record<InterviewStatus, readonly InterviewStatus[]> = {
   // pergunta feita → a resposta chegou (a inteligência escreve), ela pulou, venceu ou o envio falhou
   asked: ["drafting", "skipped", "expired", "failed"],
-  // escrevendo → mais uma parte da resposta (continua escrevendo), rascunho enviado, pulou, ou caiu de vez
-  drafting: ["drafting", "draft_sent", "skipped", "failed", "expired"],
+  // escrevendo → mais uma parte da resposta (continua escrevendo), rascunho enviado, pulou, caiu de vez —
+  // ou o "ok" sobre o rascunho que ela já tem na mão enquanto um áudio novo era somado
+  drafting: ["drafting", "draft_sent", "approved", "skipped", "failed", "expired"],
   // rascunho na mão dela → aprovou/corrigiu, pulou, venceu, ou mandou outro áudio (reescreve)
   draft_sent: ["approved", "skipped", "expired", "drafting"],
   approved: [],
