@@ -210,3 +210,15 @@ describe("isBridgeFresh", () => {
     expect(isBridgeFresh(bridge("nunca"), now)).toBe(false);
   });
 });
+
+describe("ponte da votação das amigas", () => {
+  it("a mensagem diz de quem era a dúvida, e o rótulo também", async () => {
+    const { buildBridgeMessage, originLabel } = await import("@/core/bot/site-bridge");
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7QD", source: "amigas", friendName: "Ana" })).toBe(
+      "Oi Lia, vim pela votação da Ana e quero ver peças no meu estilo (#K7QD)",
+    );
+    expect(buildBridgeMessage({ sellerName: "Lia", code: "K7QD", source: "amigas" })).toContain("vim pela votação das amigas");
+    expect(originLabel("amigas", "Ana")).toBe("votação da Ana");
+    expect(originLabel("amigas")).toBe("votação das amigas");
+  });
+});

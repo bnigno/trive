@@ -60,7 +60,8 @@ export function ToggleSwitch({
     | "provador_welcome_gift_enabled"
     | "ai_photos_enabled"
     | "ai_photos_in_store"
-    | "curator_interview_enabled";
+    | "curator_interview_enabled"
+    | "friends_vote_enabled";
   checked: boolean;
   label: string;
   hint: string;

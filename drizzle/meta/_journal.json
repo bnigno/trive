@@ -442,6 +442,13 @@
       "when": 1790231383238,
       "tag": "0062_entrevista_da_curadora",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1790232431532,
+      "tag": "0063_me_ajuda_a_escolher",
+      "breakpoints": true
     }
   ]
 }

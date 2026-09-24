@@ -12,7 +12,7 @@ import { slugify } from "@/lib/slug";
 export const BRIDGE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 export const BRIDGE_CODE_LENGTH = 4;
 
-export const BRIDGE_SOURCES = ["pdp", "cart", "footer", "campaign"] as const;
+export const BRIDGE_SOURCES = ["pdp", "cart", "footer", "campaign", "amigas"] as const;
 export type BridgeSource = (typeof BRIDGE_SOURCES)[number];
 
 /** Um código novo; `random` é injetável para o teste ser determinístico. */
@@ -78,6 +78,8 @@ export type BridgeMessageInput = {
   items?: readonly BridgeItem[];
   /** O CEP que a cliente digitou no checkout (8 dígitos): a Lia já cota certo — e, fora da área do motoboy, a equipe calcula os Correios. */
   cep?: string;
+  /** "amigas": o nome de quem pediu a opinião (a amiga votou na dúvida dela). */
+  friendName?: string | null;
 };
 
 /** "68740000" → "68740-000"; outra coisa volta como veio. */
@@ -101,6 +103,10 @@ export function buildBridgeMessage(input: BridgeMessageInput): string {
     const lista = input.items.map((item) => `${item.quantity}× ${itemPhrase(item)}`).join(", ");
     const entrega = input.cep ? `, entrega no CEP ${cepLabel(input.cep)}` : "";
     return `${oi} minha sacola no site: ${lista}${entrega} ${tag}`;
+  }
+  if (input.source === "amigas") {
+    const quem = input.friendName?.trim() ? `da ${input.friendName.trim()}` : "das amigas";
+    return `${oi} vim pela votação ${quem} e quero ver peças no meu estilo ${tag}`;
   }
   const viaProvador = input.source === "campaign" && isProvadorCampaign(input.campaignSlug);
   if (input.product) {
@@ -129,6 +135,8 @@ export function originLabel(source: BridgeSource, campaign?: string | null, camp
       const where = isProvadorCampaign(campaignSlug ?? campaign) ? "Provador" : "story";
       return campaign?.trim() ? `${where} «${campaign.trim()}»` : where;
     }
+    case "amigas":
+      return campaign?.trim() ? `votação da ${campaign.trim()}` : "votação das amigas";
   }
 }
 

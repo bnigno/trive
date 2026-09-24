@@ -1,6 +1,7 @@
 // "Testar a vendedora": um turno de ensaio com o prompt e o catálogo reais,
 // sem conversa gravada e sem efeito externo (dryRun) — o dono sente o tom
 // antes de salvar as instruções. Custa centavos por mensagem (API real).
+import { turnToolsFor } from "@/services/bot/friends";
 import { getCepLookup } from "@/adapters/cep";
 import { getCorreiosQuoter } from "@/adapters/superfrete";
 import { z } from "zod";
@@ -72,7 +73,9 @@ export async function rehearseBotTurn(
   });
 
   const startedAt = Date.now();
+  const tools = await turnToolsFor(db);
   const turn = await assistant.respondTurn({
+    ...(tools ? { tools } : {}),
     system: bundle.system,
     // O ensaio lê o mesmo caderninho de catálogo (e a data) que a produção.
     history: assembleHistory({}, messages, { lines: await catalogHighlightLines(db, new Date()), now: new Date() }),

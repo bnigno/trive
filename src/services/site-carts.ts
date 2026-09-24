@@ -21,7 +21,7 @@ import {
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
 import { attributionPath, type OriginKind } from "@/core/store/attribution";
-import { campaignLinks, orders, products, siteCarts } from "@/db/schema";
+import { campaignLinks, friendRounds, orders, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
@@ -49,6 +49,9 @@ const createSiteCartSchema = z.object({
   variantSku: z.string().trim().min(1).max(60).optional(),
   /** CEP do checkout sem frete (só na mensagem, para a Lia cotar; não fica gravado). */
   cep: z.string().regex(/^\d{8}$/).optional(),
+  /** "amigas": a rodada em que ela votou e o nome de quem pediu a opinião (vão na ponte e na mensagem). */
+  roundId: z.uuid().optional(),
+  friendName: z.string().trim().min(1).max(30).optional(),
   /**
    * A sacola (source = cart): variação (id, como a sacola guarda; SKU só como
    * reserva) e quantidade; o preço é lido na hora. Tetos acima do que a
@@ -156,6 +159,7 @@ export async function createSiteCart(db: DbOrTx, rawInput: CreateSiteCartInput):
           productId: snapshot.productId,
           variantSku: input.variantSku ?? null,
           items: snapshot.items,
+          roundId: input.source === "amigas" ? (input.roundId ?? null) : null,
         })
         .returning({ id: siteCarts.id });
       const message = buildBridgeMessage({
@@ -166,6 +170,7 @@ export async function createSiteCart(db: DbOrTx, rawInput: CreateSiteCartInput):
         product: snapshot.product,
         items: snapshot.items,
         cep: input.cep,
+        friendName: input.source === "amigas" ? (input.friendName ?? null) : null,
       });
       return { id: row.id, code, message, waUrl: waMeUrl(settings.storeWhatsapp, message) };
     } catch (error) {
@@ -221,13 +226,17 @@ export async function consumeSiteCartByCode(
   const [campaign] = row.campaignSlug
     ? await db.select({ label: campaignLinks.label }).from(campaignLinks).where(eq(campaignLinks.slug, row.campaignSlug)).limit(1)
     : [];
+  // Veio de uma votação: o nome de quem pediu a opinião ("votou na dúvida da Ana").
+  const [round] = row.roundId
+    ? await db.select({ displayName: friendRounds.displayName }).from(friendRounds).where(eq(friendRounds.id, row.roundId)).limit(1)
+    : [];
   const source = row.source as BridgeSource;
   const first = list[0];
   return {
     siteCartId: row.id,
     code,
     source,
-    sourceLabel: originLabel(source, campaign?.label ?? row.campaignSlug, row.campaignSlug),
+    sourceLabel: originLabel(source, source === "amigas" ? (round?.displayName ?? null) : (campaign?.label ?? row.campaignSlug), row.campaignSlug),
     // "Veio do site agora" conta da chegada da mensagem: quem tocou ontem e
     // escreveu hoje também merece a linha de estoque no primeiro turno.
     at: input.now.toISOString(),

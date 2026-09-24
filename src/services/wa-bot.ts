@@ -56,6 +56,8 @@ import {
   execVerSacola,
 } from "./bot/cart";
 import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/catalog";
+import { execPedirOpiniaoDasAmigas, turnToolsFor } from "./bot/friends";
+import { friendRoundMemoryLines } from "@/services/friend-rounds";
 import { execEnviarNotaDaCuradora } from "./bot/curator-audio";
 import { execBuscarCadastro } from "./bot/customer";
 import { execAvisarQuandoVoltar, execLiberarReserva, execReservarPeca } from "./bot/holds";
@@ -318,6 +320,8 @@ export function buildToolExecutor(
         return execAtualizarCartela(db, ctx, parsed.data as BotToolInputs["atualizar_cartela"]);
       case "montar_look":
         return execMontarLook(db, ctx, parsed.data as BotToolInputs["montar_look"]);
+      case "pedir_opiniao_das_amigas":
+        return execPedirOpiniaoDasAmigas(db, ctx, parsed.data as BotToolInputs["pedir_opiniao_das_amigas"]);
       case "anotar":
         return execAnotar(db, ctx, parsed.data as BotToolInputs["anotar"]);
       case "oferecer_gentileza":
@@ -527,7 +531,7 @@ export async function loadTurnHistory(
     };
   });
   const state = parseBotState(conversation.botState);
-  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines, highlightLines] = await Promise.all([
+  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines, friendLines, highlightLines] = await Promise.all([
     loadMemoryLines(tx, conversation.phoneE164),
     purchaseMemoryLineFor(tx, {
       customerId: conversation.customerId,
@@ -543,6 +547,8 @@ export async function loadTurnHistory(
       ? bridgeStockLine(tx, state.bridge)
       : Promise.resolve(null),
     followupMemoryLines(tx, conversationId),
+    // "Me ajuda a escolher?": a votação aberta ou o resultado, com o slug da vencedora.
+    friendRoundMemoryLines(tx, { conversationId, now }),
     // Novidades e mais vendidas por último: são as primeiras a cair no teto do caderninho.
     catalogHighlightLines(tx, now),
   ]);
@@ -553,6 +559,7 @@ export async function loadTurnHistory(
       ...(shipmentLine ? [shipmentLine] : []),
       ...(bridgeLine ? [bridgeLine] : []),
       ...followupLines,
+      ...friendLines,
       ...highlightLines,
     ],
     now,
@@ -1020,7 +1027,8 @@ export async function runBotTurn(
     let modelMs = 0;
     await readMark;
     try {
-      turn = await assistant.respondTurn({ system, history, model, executeTool, deadlineAt: modelDeadline });
+      const tools = await turnToolsFor(tx);
+      turn = await assistant.respondTurn({ system, history, model, executeTool, deadlineAt: modelDeadline, ...(tools ? { tools } : {}) });
       modelMs = Date.now() - startedAt;
     } catch (error) {
       modelMs = Date.now() - startedAt;
@@ -1298,12 +1306,14 @@ export async function runScheduledBotTurn(
     // tentativa, registra e desiste: nada de retorno "agendado" para sempre.
     let turn: AssistantTurn;
     try {
+      const tools = await turnToolsFor(tx);
       turn = await assistant.respondTurn({
         system,
         history,
         model,
         executeTool,
         deadlineAt: modelDeadlineFor(turnStartedAt, input.deadlineAt ?? undefined),
+        ...(tools ? { tools } : {}),
       });
     } catch (error) {
       if (lastAttempt) return finish("skipped", "modelo_indisponivel");

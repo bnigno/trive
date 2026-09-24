@@ -41,6 +41,7 @@ import {
   interviewDecidePayloadSchema,
   interviewDraftPayloadSchema,
 } from "@/services/curator-interviews";
+import { closeFriendRound, friendRoundPayloadSchema, purgeFriendRound, sendRoundSummary } from "@/services/friend-rounds";
 import { sendDeliveredWa } from "@/services/delivery";
 import { customerLookCardPayloadSchema, renderAndSendCustomerLookCard } from "@/services/customer-looks";
 
@@ -556,6 +557,20 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   },
   "wa.atelier_help": async (event) => {
     await sendAtelierHelp(getDb(), getMessagingProvider(), atelierHelpPayloadSchema.parse(event.payload));
+  },
+  // "Me ajuda a escolher?": o resumo 10 min depois do primeiro voto, o
+  // fechamento em 24 h (com o resultado) e a limpeza dos votos 30 dias depois.
+  "friends.summary": async (event) => {
+    const result = await sendRoundSummary(getDb(), getMessagingProvider(), friendRoundPayloadSchema.parse(event.payload));
+    console.info(`[friends.summary] ${JSON.stringify(result)}`);
+  },
+  "friends.close": async (event) => {
+    const result = await closeFriendRound(getDb(), getMessagingProvider(), friendRoundPayloadSchema.parse(event.payload));
+    console.info(`[friends.close] ${JSON.stringify(result)}`);
+  },
+  "friends.purge": async (event) => {
+    const result = await purgeFriendRound(getDb(), friendRoundPayloadSchema.parse(event.payload));
+    console.info(`[friends.purge] ${JSON.stringify(result)}`);
   },
   // Entrevista da curadora: a pergunta do dia, o rascunho da resposta e a
   // decisão da dona ("ok", "ok voz", "corrige:", "pula"). Skips não lançam.
