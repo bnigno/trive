@@ -147,3 +147,19 @@ describe("devolução de item", () => {
     expect(r.refundCents).toBe(5000);
   });
 });
+
+describe("a recusa chega à tela", () => {
+  it("ReturnError é uma ServiceError — senão a tela mostra 'algo deu errado'", async () => {
+    const o = await createPaidOrderComDuasPecas();
+    await returnOrderItem(sdb, { orderId: o.orderId, orderItemId: o.oculos.id, quantity: 1, resolution: "credito", userId: FIXED_USER_ID });
+
+    const erro = await returnOrderItem(sdb, {
+      orderId: o.orderId, orderItemId: o.oculos.id, quantity: 1, resolution: "credito", userId: FIXED_USER_ID,
+    }).catch((e: unknown) => e);
+
+    // O painel traduz pelo NOME da classe (cada serviço declara a sua).
+    expect((erro as Error).name).toBe("ServiceError");
+    // E a mensagem explica o que houve, em vez de assustar.
+    expect((erro as Error).message).toContain("já voltaram");
+  });
+});
