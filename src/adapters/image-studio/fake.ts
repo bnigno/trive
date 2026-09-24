@@ -1,16 +1,28 @@
 import sharp from "sharp";
 
-import { creditsFor, creditsToUsdCents } from "@/core/studio/cost";
+import { creditsFor, creditsToUsdCents, videoCreditsFor } from "@/core/studio/cost";
 
 import {
   clampStudioCount,
   StudioUnavailableError,
+  type AnimateInput,
   type CreateModelPhotoInput,
   type GenerateOnModelInput,
   type ImageStudio,
   type StudioAspectRatio,
   type StudioImage,
+  type StudioVideo,
 } from "./index";
+
+/**
+ * Um MP4 mínimo de mentira (só a caixa "ftyp" + um rótulo): passa na
+ * checagem de formato, não toca em player nenhum — o fake é para o fluxo,
+ * não para ver o vídeo.
+ */
+function fakeMp4(label: string): Buffer {
+  const ftyp = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom", "latin1"), Buffer.from([0, 0, 2, 0]), Buffer.from("isomiso2", "latin1")]);
+  return Buffer.concat([ftyp, Buffer.from(`FAKE ${label}`, "utf8")]);
+}
 
 const FAKE_SIZES: Record<StudioAspectRatio, { width: number; height: number }> = {
   "3:4": { width: 900, height: 1200 },
@@ -43,6 +55,7 @@ function bandSvg(width: number, height: number, lines: string[]): Buffer {
 export class FakeImageStudio implements ImageStudio {
   readonly modelPhotos: CreateModelPhotoInput[] = [];
   readonly generations: GenerateOnModelInput[] = [];
+  readonly animations: AnimateInput[] = [];
   private readonly failures: Error[] = [];
 
   failNext(error: Error = new StudioUnavailableError("gerador fora do ar (fake)", "unavailable")): void {
@@ -93,9 +106,30 @@ export class FakeImageStudio implements ImageStudio {
     return images;
   }
 
+  async animate(input: AnimateInput): Promise<StudioVideo> {
+    this.animations.push(input);
+    this.throwIfScripted();
+    try {
+      await sharp(input.image.data).metadata();
+    } catch {
+      throw new StudioUnavailableError("A foto não é uma imagem válida (fake).", "rejected");
+    }
+    const credits = videoCreditsFor(input.durationSeconds, input.resolution);
+    return {
+      data: fakeMp4(`${input.durationSeconds}s ${input.resolution}${input.endImage ? " com costas" : ""}`),
+      mimeType: "video/mp4",
+      vendor: "fake",
+      vendorModel: "fake-image-to-video",
+      creditsUsed: credits,
+      usdCents: creditsToUsdCents(credits),
+      elapsedMs: 5,
+    };
+  }
+
   reset(): void {
     this.modelPhotos.length = 0;
     this.generations.length = 0;
+    this.animations.length = 0;
     this.failures.length = 0;
   }
 

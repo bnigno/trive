@@ -1,16 +1,18 @@
 import { z } from "zod";
 
-import { creditsFor, creditsToUsdCents, type StudioCall } from "@/core/studio/cost";
+import { creditsFor, creditsToUsdCents, videoCreditsFor, type StudioCall } from "@/core/studio/cost";
 import type { StudioQuality } from "@/core/studio/presets";
 
 import {
   clampStudioCount,
   StudioUnavailableError,
+  type AnimateInput,
   type CreateModelPhotoInput,
   type GenerateOnModelInput,
   type ImageStudio,
   type StudioImage,
   type StudioImageInput,
+  type StudioVideo,
 } from "./index";
 
 const BASE_URL = "https://api.fashn.ai/v1";
@@ -20,6 +22,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 1_500;
 /** Teto da espera pelo resultado: quality 4K leva ~55 s na doc; 2K balanced ~25 s. */
 const MAX_WAIT_MS = 90_000;
+/** Vídeo demora mais que foto (a doc não diz quanto): até 5 min de espera. */
+const VIDEO_MAX_WAIT_MS = 300_000;
+/** Baixar o MP4 (alguns MB) do CDN deles. */
+const VIDEO_DOWNLOAD_TIMEOUT_MS = 120_000;
+/** Teto do arquivo: 5–10 s em 1080p passam longe disso; mais que isso é resposta errada. */
+const VIDEO_MAX_BYTES = 60 * 1024 * 1024;
 /** Consultas de status que podem falhar seguidas (rede, 5xx) antes de desistir de um pedido já pago. */
 const MAX_POLL_FAILURES = 3;
 /** O que a doc chama cada modelo. */
@@ -27,7 +35,12 @@ export const FASHN_MODELS = {
   tryonLight: "tryon-v1.6",
   tryonMax: "tryon-max",
   modelCreate: "model-create",
+  imageToVideo: "image-to-video",
 } as const;
+
+const creditsResponseSchema = z.looseObject({
+  credits: z.looseObject({ total: z.number(), subscription: z.number().optional(), on_demand: z.number().optional() }),
+});
 
 const runResponseSchema = z.looseObject({
   id: z.string().min(1).optional(),
@@ -161,6 +174,53 @@ export class FashnImageStudio implements ImageStudio {
     });
   }
 
+  /**
+   * "A peça se mexe": a foto no corpo vira MP4 (image-to-video). A saída vem
+   * como URL do CDN deles; o vídeo é baixado na hora (a URL expira).
+   */
+  async animate(input: AnimateInput): Promise<StudioVideo> {
+    const { outputs, elapsedMs } = await this.runJob({
+      modelName: FASHN_MODELS.imageToVideo,
+      inputs: {
+        image: dataUri(input.image),
+        prompt: input.prompt,
+        duration: input.durationSeconds,
+        resolution: input.resolution,
+        ...(input.endImage ? { end_image: dataUri(input.endImage) } : {}),
+      },
+      maxWaitMs: VIDEO_MAX_WAIT_MS,
+      signal: input.signal,
+    });
+    const credits = videoCreditsFor(input.durationSeconds, input.resolution);
+    return {
+      data: await this.readVideo(outputs[0], input.signal),
+      mimeType: "video/mp4",
+      vendor: "fashn",
+      vendorModel: FASHN_MODELS.imageToVideo,
+      creditsUsed: credits,
+      usdCents: creditsToUsdCents(credits),
+      elapsedMs,
+    };
+  }
+
+  /** Saldo da conta (GET /credits, grátis): o script de prévia confere antes de gastar. */
+  async creditsBalance(signal?: AbortSignal): Promise<number> {
+    const raw = await this.request(`${BASE_URL}/credits`, { method: "GET", headers: this.headers(), signal });
+    const parsed = creditsResponseSchema.safeParse(raw);
+    if (!parsed.success) throw new StudioUnavailableError("A FASHN devolveu o saldo fora do formato.", "invalid_response");
+    return parsed.data.credits.total;
+  }
+
+  private headers(): Record<string, string> {
+    const apiKey = process.env.FASHN_API_KEY?.trim();
+    if (!apiKey) throw new StudioUnavailableError("FASHN_API_KEY não configurada.", "no_key");
+    return {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+  }
+
   private async run(job: {
     call: StudioCall;
     quality: StudioQuality;
@@ -170,13 +230,32 @@ export class FashnImageStudio implements ImageStudio {
     seed: number;
     signal?: AbortSignal;
   }): Promise<StudioImage[]> {
-    const apiKey = process.env.FASHN_API_KEY?.trim();
-    if (!apiKey) throw new StudioUnavailableError("FASHN_API_KEY não configurada.", "no_key");
-    const headers = {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
+    const { outputs, elapsedMs } = await this.runJob({ modelName: job.modelName, inputs: job.inputs, maxWaitMs: MAX_WAIT_MS, signal: job.signal });
+    const credits = creditsFor(job.call, job.quality, 1);
+    const images: StudioImage[] = [];
+    for (const output of outputs.slice(0, job.count)) {
+      images.push({
+        data: await this.readOutput(output, job.signal),
+        mimeType: "image/jpeg",
+        vendor: "fashn",
+        vendorModel: job.modelName,
+        creditsUsed: credits,
+        usdCents: creditsToUsdCents(credits),
+        elapsedMs,
+        seed: job.seed,
+      });
+    }
+    return images;
+  }
+
+  /** POST /run e GET /status até "completed": devolve as saídas cruas (base64 ou URL). */
+  private async runJob(job: {
+    modelName: string;
+    inputs: Record<string, unknown>;
+    maxWaitMs: number;
+    signal?: AbortSignal;
+  }): Promise<{ outputs: string[]; elapsedMs: number }> {
+    const headers = this.headers();
     const startedAt = this.now();
 
     const started = await this.request(`${BASE_URL}/run`, {
@@ -190,10 +269,10 @@ export class FashnImageStudio implements ImageStudio {
       throw new StudioUnavailableError("A FASHN não devolveu o id do pedido.", "invalid_response");
     }
 
-    const deadline = startedAt + MAX_WAIT_MS;
+    const deadline = startedAt + job.maxWaitMs;
     let pollFailures = 0;
     for (;;) {
-      if (job.signal?.aborted) throw new StudioUnavailableError("O ensaio não ficou pronto no prazo.", "timeout");
+      if (job.signal?.aborted) throw new StudioUnavailableError("A FASHN não terminou no prazo de quem pediu.", "timeout");
       if (this.now() >= deadline) throw new StudioUnavailableError("A FASHN demorou demais para responder.", "timeout");
       await this.sleep(POLL_INTERVAL_MS, job.signal);
       let raw: unknown;
@@ -218,24 +297,34 @@ export class FashnImageStudio implements ImageStudio {
       }
       if (status.data.status !== "completed") continue;
       const outputs = status.data.output ?? [];
-      if (outputs.length === 0) throw new StudioUnavailableError("A FASHN terminou sem imagem.", "invalid_response");
-      const elapsedMs = this.now() - startedAt;
-      const credits = creditsFor(job.call, job.quality, 1);
-      const images: StudioImage[] = [];
-      for (const output of outputs.slice(0, job.count)) {
-        images.push({
-          data: await this.readOutput(output, job.signal),
-          mimeType: "image/jpeg",
-          vendor: "fashn",
-          vendorModel: job.modelName,
-          creditsUsed: credits,
-          usdCents: creditsToUsdCents(credits),
-          elapsedMs,
-          seed: job.seed,
-        });
-      }
-      return images;
+      if (outputs.length === 0) throw new StudioUnavailableError("A FASHN terminou sem saída.", "invalid_response");
+      return { outputs, elapsedMs: this.now() - startedAt };
     }
+  }
+
+  /** O MP4 vem por URL do CDN deles: baixado com teto de tempo e de tamanho, e conferido. */
+  private async readVideo(output: string | undefined, signal?: AbortSignal): Promise<Buffer> {
+    if (!output || !/^https:\/\//i.test(output)) throw new StudioUnavailableError("A FASHN devolveu um vídeo ilegível.", "invalid_response");
+    let response: Response;
+    try {
+      const timeout = AbortSignal.timeout(VIDEO_DOWNLOAD_TIMEOUT_MS);
+      response = await this.fetchImpl(output, { method: "GET", signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    } catch (error) {
+      throw networkError(error);
+    }
+    if (!response.ok) throw new StudioUnavailableError(`O vídeo da FASHN respondeu HTTP ${response.status}.`, "unavailable", response.status);
+    if (Number(response.headers.get("content-length") ?? 0) > VIDEO_MAX_BYTES) {
+      throw new StudioUnavailableError("O vídeo da FASHN veio grande demais.", "invalid_response");
+    }
+    const data = Buffer.from(await response.arrayBuffer());
+    if (data.byteLength === 0 || data.byteLength > VIDEO_MAX_BYTES) {
+      throw new StudioUnavailableError("O vídeo da FASHN veio vazio ou grande demais.", "invalid_response");
+    }
+    // MP4 tem "ftyp" nos bytes 4–7: qualquer outra coisa (página de erro, imagem) é resposta errada.
+    if (data.subarray(4, 8).toString("latin1") !== "ftyp") {
+      throw new StudioUnavailableError("A FASHN devolveu algo que não é MP4.", "invalid_response");
+    }
+    return data;
   }
 
   /** A saída vem como data URI (base64) ou como URL do CDN — os dois viram Buffer. */

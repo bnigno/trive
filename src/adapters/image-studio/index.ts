@@ -7,6 +7,7 @@
 // A interface é neutra de propósito: peça + foto da modelo + texto da cena.
 // Outro vendor (Gemini, gpt-image) entra como outro client sem tocar em
 // core/service/UI.
+import type { VideoDurationSeconds, VideoResolution } from "@/core/studio/cost";
 import type { StudioQuality } from "@/core/studio/presets";
 import type { StudioGarmentCategory } from "@/core/studio/prompts";
 
@@ -61,9 +62,33 @@ export type GenerateOnModelInput = {
   signal?: AbortSignal;
 };
 
+export type AnimateInput = {
+  /** A foto no corpo aprovada — o primeiro quadro do vídeo. */
+  image: StudioImageInput;
+  /** Foto das costas (opcional): o último quadro, para o giro mostrar a costa real. */
+  endImage?: StudioImageInput;
+  /** O movimento (core/studio/video: buildVideoMotionPrompt). */
+  prompt: string;
+  durationSeconds: VideoDurationSeconds;
+  resolution: VideoResolution;
+  signal?: AbortSignal;
+};
+
+export type StudioVideo = {
+  data: Buffer;
+  mimeType: "video/mp4";
+  vendor: string;
+  vendorModel: string;
+  creditsUsed: number;
+  usdCents: number;
+  elapsedMs: number;
+};
+
 export interface ImageStudio {
   createModelPhoto(input: CreateModelPhotoInput): Promise<StudioImage[]>;
   generateOnModel(input: GenerateOnModelInput): Promise<StudioImage[]>;
+  /** "A peça se mexe": a foto vira um vídeo curto (MP4). */
+  animate(input: AnimateInput): Promise<StudioVideo>;
 }
 
 /**

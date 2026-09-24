@@ -81,3 +81,22 @@ export function studioCostTable(input: { quality: StudioQuality; brlPerUsdCents?
     line("1 mês, 40 peças novas", perMonth),
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Vídeo ("a peça se mexe"): a foto no corpo vira 5 ou 10 s pela FASHN
+// (image-to-video). A tabela é a da doc, por duração × resolução.
+// ---------------------------------------------------------------------------
+
+export const VIDEO_DURATIONS = [5, 10] as const;
+export type VideoDurationSeconds = (typeof VIDEO_DURATIONS)[number];
+export const VIDEO_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
+export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];
+
+export const FASHN_VIDEO_CREDITS: Record<VideoDurationSeconds, Record<VideoResolution, number>> = {
+  5: { "480p": 1, "720p": 3, "1080p": 6 },
+  10: { "480p": 2, "720p": 6, "1080p": 12 },
+};
+
+export function videoCreditsFor(durationSeconds: VideoDurationSeconds, resolution: VideoResolution): number {
+  return FASHN_VIDEO_CREDITS[durationSeconds][resolution];
+}
