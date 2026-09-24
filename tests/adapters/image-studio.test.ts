@@ -305,7 +305,7 @@ describe("FashnImageStudio.animate (a peça se mexe)", () => {
     expect(body.inputs.duration).toBe(10);
   });
 
-  it("vídeo demora mais que foto: espera além dos 90 s da foto, até o teto de 5 min", async () => {
+  it("vídeo demora mais que foto: espera além dos 90 s da foto, até o teto de 10 min", async () => {
     const statuses = [...Array.from({ length: 80 }, () => ({ status: "processing" })), { status: "completed", output: ["https://cdn.fashn.ai/v.mp4"] }];
     const clock = { now: 0 };
     const video = await client(videoServer({ statuses }), clock).animate({ image: PHOTO, prompt: "p", durationSeconds: 5, resolution: "480p" });
@@ -316,8 +316,8 @@ describe("FashnImageStudio.animate (a peça se mexe)", () => {
     await expect(
       client(videoServer({ statuses: [{ status: "processing" }] }), forever).animate({ image: PHOTO, prompt: "p", durationSeconds: 5, resolution: "480p" }),
     ).rejects.toMatchObject({ reason: "timeout" });
-    expect(forever.now).toBeGreaterThanOrEqual(300_000);
-    expect(forever.now).toBeLessThan(302_000);
+    expect(forever.now).toBeGreaterThanOrEqual(600_000);
+    expect(forever.now).toBeLessThan(602_000);
   });
 
   it("saída que não é MP4, vazia, grande demais, fora de https ou com CDN fora do ar é recusada", async () => {
@@ -336,6 +336,46 @@ describe("FashnImageStudio.animate (a peça se mexe)", () => {
     expect(await reasonOf(videoServer({ statuses: [{ status: "failed", error: { name: "ContentModerationError", message: "corpo" } }] }))).toBe("rejected");
     vi.stubEnv("FASHN_API_KEY", "");
     expect(await reasonOf(videoServer())).toBe("no_key");
+  });
+
+  it("entrega o id do pedido assim que a FASHN aceita; retomar só acompanha e baixa, sem novo POST", async () => {
+    const server = videoServer();
+    const submitted: string[] = [];
+    await client(server).animate({ image: PHOTO, prompt: "p", durationSeconds: 5, resolution: "1080p", onSubmitted: (id) => submitted.push(id) });
+    expect(submitted).toEqual(["job-v"]);
+
+    const resumed = videoServer();
+    const again: string[] = [];
+    const video = await client(resumed).animate({
+      image: PHOTO,
+      prompt: "p",
+      durationSeconds: 5,
+      resolution: "1080p",
+      resumeJobId: "job-antigo",
+      onSubmitted: (id) => again.push(id),
+    });
+    expect(video.data.equals(MP4_BYTES)).toBe(true);
+    expect(again).toEqual([]);
+    expect(resumed.calls.some((call) => call.url.endsWith("/run"))).toBe(false);
+    expect(resumed.calls[0]?.url).toBe("https://api.fashn.ai/v1/status/job-antigo");
+  });
+
+  it("queda no meio do download do MP4 vira erro de rede, não um erro cru", async () => {
+    const broken = new FashnImageStudio({
+      fetchImpl: async (url: string) => {
+        if (url.endsWith("/run")) return new Response(JSON.stringify({ id: "j" }));
+        if (url.includes("/status/")) return new Response(JSON.stringify({ status: "completed", output: ["https://cdn.fashn.ai/j/output_0.mp4"] }));
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(MP4_BYTES));
+            controller.error(new TypeError("terminated"));
+          },
+        });
+        return new Response(body);
+      },
+      sleep: async () => {},
+    });
+    await expect(broken.animate({ image: PHOTO, prompt: "p", durationSeconds: 5, resolution: "480p" })).rejects.toMatchObject({ reason: "network" });
   });
 
   it("creditsBalance lê o total de GET /credits; formato errado é invalid_response", async () => {
@@ -407,6 +447,10 @@ describe("FakeImageStudio + seleção por ADAPTER_MODE", () => {
     expect(video.data.subarray(4, 8).toString("latin1")).toBe("ftyp");
     expect(video.data.toString("utf8")).toContain("FAKE 5s 1080p");
     expect(fake.animations).toHaveLength(1);
+    const ids: string[] = [];
+    await fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", onSubmitted: (id) => ids.push(id) });
+    await fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", resumeJobId: "x", onSubmitted: (id) => ids.push(id) });
+    expect(ids).toEqual(["fake-video-2"]);
     await expect(
       fake.animate({ image: { data: Buffer.from("nao-e-imagem"), mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p" }),
     ).rejects.toMatchObject({ reason: "rejected" });

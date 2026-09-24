@@ -22,8 +22,8 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 1_500;
 /** Teto da espera pelo resultado: quality 4K leva ~55 s na doc; 2K balanced ~25 s. */
 const MAX_WAIT_MS = 90_000;
-/** Vídeo demora mais que foto (a doc não diz quanto): até 5 min de espera. */
-const VIDEO_MAX_WAIT_MS = 300_000;
+/** Vídeo demora mais que foto (a doc não diz quanto; o 1º teste real levou 266 s): até 10 min. */
+const VIDEO_MAX_WAIT_MS = 600_000;
 /** Baixar o MP4 (alguns MB) do CDN deles. */
 const VIDEO_DOWNLOAD_TIMEOUT_MS = 120_000;
 /** Teto do arquivo: 5–10 s em 1080p passam longe disso; mais que isso é resposta errada. */
@@ -190,6 +190,8 @@ export class FashnImageStudio implements ImageStudio {
       },
       maxWaitMs: VIDEO_MAX_WAIT_MS,
       signal: input.signal,
+      onSubmitted: input.onSubmitted,
+      resumeJobId: input.resumeJobId,
     });
     const credits = videoCreditsFor(input.durationSeconds, input.resolution);
     return {
@@ -248,25 +250,35 @@ export class FashnImageStudio implements ImageStudio {
     return images;
   }
 
-  /** POST /run e GET /status até "completed": devolve as saídas cruas (base64 ou URL). */
+  /**
+   * POST /run e GET /status até "completed": devolve as saídas cruas (base64
+   * ou URL). Com `resumeJobId`, pula o POST e só acompanha um pedido já feito.
+   */
   private async runJob(job: {
     modelName: string;
     inputs: Record<string, unknown>;
     maxWaitMs: number;
     signal?: AbortSignal;
+    onSubmitted?: (jobId: string) => void;
+    resumeJobId?: string;
   }): Promise<{ outputs: string[]; elapsedMs: number }> {
     const headers = this.headers();
     const startedAt = this.now();
 
-    const started = await this.request(`${BASE_URL}/run`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ model_name: job.modelName, inputs: job.inputs }),
-      signal: job.signal,
-    });
-    const run = runResponseSchema.safeParse(started);
-    if (!run.success || !run.data.id) {
-      throw new StudioUnavailableError("A FASHN não devolveu o id do pedido.", "invalid_response");
+    let jobId = job.resumeJobId;
+    if (!jobId) {
+      const started = await this.request(`${BASE_URL}/run`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model_name: job.modelName, inputs: job.inputs }),
+        signal: job.signal,
+      });
+      const run = runResponseSchema.safeParse(started);
+      if (!run.success || !run.data.id) {
+        throw new StudioUnavailableError("A FASHN não devolveu o id do pedido.", "invalid_response");
+      }
+      jobId = run.data.id;
+      job.onSubmitted?.(jobId);
     }
 
     const deadline = startedAt + job.maxWaitMs;
@@ -277,7 +289,7 @@ export class FashnImageStudio implements ImageStudio {
       await this.sleep(POLL_INTERVAL_MS, job.signal);
       let raw: unknown;
       try {
-        raw = await this.request(`${BASE_URL}/status/${encodeURIComponent(run.data.id)}`, {
+        raw = await this.request(`${BASE_URL}/status/${encodeURIComponent(jobId)}`, {
           method: "GET",
           headers,
           signal: job.signal,
@@ -316,7 +328,7 @@ export class FashnImageStudio implements ImageStudio {
     if (Number(response.headers.get("content-length") ?? 0) > VIDEO_MAX_BYTES) {
       throw new StudioUnavailableError("O vídeo da FASHN veio grande demais.", "invalid_response");
     }
-    const data = Buffer.from(await response.arrayBuffer());
+    const data = await readBody(response);
     if (data.byteLength === 0 || data.byteLength > VIDEO_MAX_BYTES) {
       throw new StudioUnavailableError("O vídeo da FASHN veio vazio ou grande demais.", "invalid_response");
     }
@@ -339,7 +351,7 @@ export class FashnImageStudio implements ImageStudio {
       throw networkError(error);
     }
     if (!response.ok) throw new StudioUnavailableError(`A imagem da FASHN respondeu HTTP ${response.status}.`, "unavailable", response.status);
-    return Buffer.from(await response.arrayBuffer());
+    return readBody(response);
   }
 
   private async request(
@@ -405,6 +417,15 @@ function networkError(error: unknown): StudioUnavailableError {
     timedOut ? "A FASHN não respondeu a tempo." : "Sem conexão com a FASHN.",
     timedOut ? "timeout" : "network",
   );
+}
+
+/** O corpo chega depois dos cabeçalhos: queda ou prazo no meio do download também é erro de rede. */
+async function readBody(response: Response): Promise<Buffer> {
+  try {
+    return Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    throw networkError(error);
+  }
 }
 
 /** Toda chamada HTTP tem o seu próprio teto, além do prazo de quem chama. */

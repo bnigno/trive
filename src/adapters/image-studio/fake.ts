@@ -109,6 +109,7 @@ export class FakeImageStudio implements ImageStudio {
   async animate(input: AnimateInput): Promise<StudioVideo> {
     this.animations.push(input);
     this.throwIfScripted();
+    if (!input.resumeJobId) input.onSubmitted?.(`fake-video-${this.animations.length}`);
     try {
       await sharp(input.image.data).metadata();
     } catch {

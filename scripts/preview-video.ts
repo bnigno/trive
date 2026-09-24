@@ -2,11 +2,13 @@
 // curto (FASHN image-to-video). Sem --real roda contra o fake (sem rede, sem
 // custo). Com --real instancia a FASHN direto (ignora ADAPTER_MODE), consulta
 // o saldo ANTES, recusa se o vídeo passar do teto em créditos ou do saldo, e
-// confere o saldo DEPOIS (a cobrança real contra a tabela). Tudo vai para a
+// confere o saldo DEPOIS (a cobrança real contra a tabela). O id do pedido
+// vai para pedido.txt assim que a FASHN aceita: se algo falhar depois, rode
+// com --retomar <id> (só espera e baixa, não cobra de novo). Tudo vai para a
 // pasta de saída: foto.jpg, video.mp4, prompt.txt, custo.txt e LEIA-ME.txt.
 //
 // Uso (fake):  npx tsx scripts/preview-video.ts [--imagem foto.jpg] [--tipo vestido] [pasta-de-saida]
-// Uso (real):  npx tsx --env-file=.env.local scripts/preview-video.ts --real --imagem foto-no-corpo.jpg [--costas costas.jpg] [--tipo vestido] [--duracao 5|10] [--resolucao 480p|720p|1080p] [--teto-creditos 6] [--prompt "..."] [pasta-de-saida]
+// Uso (real):  npx tsx --env-file=.env.local scripts/preview-video.ts --real --imagem foto-no-corpo.jpg [--costas costas.jpg] [--tipo vestido] [--duracao 5|10] [--resolucao 480p|720p|1080p] [--teto-creditos 6] [--movimento "..."] [--retomar <id>] [pasta-de-saida]
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -29,8 +31,8 @@ import {
 import { buildVideoMotionPrompt, VIDEO_AI_NOTICE, VIDEO_DEFAULTS, videoFitsBudget } from "@/core/studio/video";
 import { formatCentsBRL } from "@/lib/money";
 
-/** O vídeo leva minutos; além disto, desiste (a FASHN pode ainda cobrar — o saldo depois diz). */
-const CALL_TIMEOUT_MS = 6 * 60_000;
+/** O vídeo leva minutos (o 1º teste: 266 s); o adapter espera até 10 min, isto é a folga do download. */
+const CALL_TIMEOUT_MS = 12 * 60_000;
 /** Teto padrão: exatamente um vídeo de 5 s em 1080p. */
 const DEFAULT_BUDGET_CREDITS = 6;
 /** Lado maior da foto enviada: basta para 1080p e mantém o pedido leve. */
@@ -46,7 +48,7 @@ function flag(name: string): boolean {
 }
 
 function positional(): string | undefined {
-  const withValue = new Set(["--imagem", "--costas", "--tipo", "--duracao", "--resolucao", "--teto-creditos", "--prompt"]);
+  const withValue = new Set(["--imagem", "--costas", "--tipo", "--duracao", "--resolucao", "--teto-creditos", "--movimento", "--retomar"]);
   const args = process.argv.slice(2);
   return args.find((value, index) => !value.startsWith("--") && !(index > 0 && withValue.has(args[index - 1] ?? "")));
 }
@@ -97,6 +99,9 @@ async function main() {
   const resolution = parseResolution(arg("--resolucao"));
   const budgetCredits = parseBudget(arg("--teto-creditos"));
   const pieceType = parsePieceType(arg("--tipo") ?? "vestido");
+  const resumeJobId = arg("--retomar");
+  if (arg("--prompt") !== undefined) throw new Error("--prompt saiu: use --movimento \"...\" (troca só o gesto; a proibição de mudar a peça fica).");
+  if (resumeJobId !== undefined && !real) throw new Error("--retomar só faz sentido com --real.");
   if (real && !imagePath) throw new Error("--real exige --imagem <foto no corpo aprovada>.");
   if (real && !process.env.FASHN_API_KEY?.trim()) throw new Error("Defina FASHN_API_KEY (no .env.local ou no ambiente) para o vídeo real.");
   mkdirSync(out, { recursive: true });
@@ -105,7 +110,7 @@ async function main() {
   const back = backPath ? await preparePhoto(readFileSync(backPath)) : undefined;
   writeFileSync(join(out, "foto.jpg"), photo);
   if (back) writeFileSync(join(out, "costas.jpg"), back);
-  const prompt = arg("--prompt") ?? buildVideoMotionPrompt({ pieceType, withBackView: back !== undefined });
+  const prompt = buildVideoMotionPrompt({ pieceType, withBackView: back !== undefined, movement: arg("--movimento") });
   writeFileSync(join(out, "prompt.txt"), `${prompt}\n`);
 
   const fashn = real ? new FashnImageStudio() : null;
@@ -114,9 +119,10 @@ async function main() {
   const fits = videoFitsBudget({ durationSeconds, resolution, budgetCredits, balanceCredits: balanceBefore });
   console.log(
     `${real ? "REAL (FASHN)" : "FAKE"} — ${durationSeconds} s em ${resolution}, tipo ${pieceType ?? "?"}${back ? ", com as costas" : ""} → ${out}\n` +
-      `custo: ${money(fits.credits)} · teto ${budgetCredits} crédito(s)${balanceBefore === null ? "" : ` · saldo ${balanceBefore}`}`,
+      `custo: ${money(fits.credits)} · teto ${budgetCredits} crédito(s)${balanceBefore === null ? "" : ` · saldo ${balanceBefore}`}` +
+      (resumeJobId ? `\nretomando o pedido ${resumeJobId}: só espera e baixa, sem cobrar de novo` : ""),
   );
-  if (!fits.ok) {
+  if (!fits.ok && !resumeJobId) {
     const note =
       fits.reason === "teto"
         ? `Não gerou: o vídeo custa ${fits.credits} crédito(s) e o teto é ${budgetCredits} (--teto-creditos).`
@@ -126,6 +132,7 @@ async function main() {
   }
 
   const started = Date.now();
+  let jobId = resumeJobId ?? null;
   let video: StudioVideo;
   try {
     video = await studio.animate({
@@ -135,11 +142,23 @@ async function main() {
       durationSeconds,
       resolution,
       signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      resumeJobId,
+      onSubmitted: (id) => {
+        jobId = id;
+        writeFileSync(join(out, "pedido.txt"), `${id}\n`);
+        console.log(`pedido aceito pela FASHN: ${id} (guardado em pedido.txt)`);
+      },
     });
   } catch (error) {
     if (error instanceof StudioUnavailableError && fashn) {
       const after = await fashn.creditsBalance(AbortSignal.timeout(20_000)).catch(() => null);
-      const note = `Falhou (${error.reason}): ${error.message} Saldo antes ${balanceBefore}, depois ${after ?? "?"}.`;
+      const note = [
+        `Falhou (${error.reason}): ${error.message}`,
+        `Saldo antes ${balanceBefore}, depois ${after ?? "?"}.`,
+        jobId
+          ? `O pedido ${jobId} já foi aceito: a FASHN cobra quando termina, então o saldo ainda pode cair. Para buscar o vídeo sem pagar de novo (vale por 3 dias): rode de novo com --retomar ${jobId}.`
+          : "A FASHN não chegou a aceitar o pedido: nada foi cobrado.",
+      ].join("\n");
       writeFileSync(join(out, "falhou.txt"), `${note}\n`);
       throw new Error(note);
     }
@@ -156,7 +175,9 @@ async function main() {
     `Pela tabela: ${money(video.creditsUsed)}`,
     balanceBefore === null
       ? "Saldo: não consultado (fake)."
-      : `Saldo da FASHN: ${balanceBefore} antes → ${balanceAfter ?? "?"} depois${charged === null ? "" : ` (cobrou ${charged}${charged === video.creditsUsed ? ", igual à tabela" : ` — a tabela dizia ${video.creditsUsed}: conferir src/core/studio/cost.ts`})`}.`,
+      : resumeJobId
+        ? `Retomada do pedido ${resumeJobId}: a cobrança foi na rodada original (saldo agora ${balanceAfter ?? "?"}).`
+        : `Saldo da FASHN: ${balanceBefore} antes → ${balanceAfter ?? "?"} depois${charged === null ? "" : ` (cobrou ${charged}${charged === video.creditsUsed ? ", igual à tabela" : ` — a tabela dizia ${video.creditsUsed}: conferir src/core/studio/cost.ts`})`}.`,
     "",
     "A conta de um vídeo por peça (câmbio de referência R$ 5,50):",
     ...VIDEO_DURATIONS.flatMap((duration) => VIDEO_RESOLUTIONS.map((res) => `  ${duration} s ${res}: ${money(videoCreditsFor(duration, res))}`)),
@@ -170,7 +191,7 @@ async function main() {
       "2. Mãos, rosto e tecido — o movimento parece gente de verdade ou 'boneco'? O tecido cai como tecido?",
       "3. O vídeo sai no formato da foto (3:4). O Reels mostra 3:4 com faixa; 9:16 cheio pediria uma foto-base vertical — decisão para depois, se o vídeo convencer.",
       `4. Se entrar: sempre com o aviso "${VIDEO_AI_NOTICE}" na legenda e o rótulo de IA do Instagram; só no Instagram, nunca como prova de caimento na página da peça.`,
-      "5. prompt.txt — o movimento pedido. Para tentar outro, rode de novo com --prompt \"...\" (cada rodada custa de novo).",
+      "5. prompt.txt — o movimento pedido. Para tentar outro gesto, rode de novo com --movimento \"...\" (troca só o gesto; cada rodada custa de novo).",
     ].join("\n") + "\n",
   );
   console.log(`\n${custo}\n\nArquivos em ${out}`);

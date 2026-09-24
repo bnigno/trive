@@ -72,6 +72,10 @@ export type AnimateInput = {
   durationSeconds: VideoDurationSeconds;
   resolution: VideoResolution;
   signal?: AbortSignal;
+  /** Chamado com o id do pedido assim que o vendor aceita (e cobra): quem chama guarda para retomar. */
+  onSubmitted?: (jobId: string) => void;
+  /** Retoma um pedido já feito (só espera e baixa, sem pedir — e pagar — de novo). */
+  resumeJobId?: string;
 };
 
 export type StudioVideo = {

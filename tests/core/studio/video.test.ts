@@ -50,6 +50,15 @@ describe("buildVideoMotionPrompt", () => {
     expect(buildVideoMotionPrompt({ pieceType: "inexistente", withBackView: false })).toContain("letting the fabric move naturally");
   });
 
+  it("um gesto sob medida troca só a frase do movimento: a proibição de mudar a peça fica", () => {
+    const prompt = buildVideoMotionPrompt({ pieceType: "vestido", withBackView: false, movement: "  She walks two steps toward the window.  " });
+    expect(prompt).toContain("She walks two steps toward the window.");
+    expect(prompt).not.toContain("letting the fabric move naturally");
+    expect(prompt).toContain("Keep the garment exactly as in the image");
+    expect(prompt).toContain("Keep her face and body the same.");
+    expect(buildVideoMotionPrompt({ pieceType: "vestido", withBackView: false, movement: "   " })).toContain("letting the fabric move naturally");
+  });
+
   it("o aviso de IA diz que é ilustrativo e feito a partir da peça real", () => {
     expect(VIDEO_AI_NOTICE).toMatch(/ilustrativa/);
     expect(VIDEO_AI_NOTICE).toMatch(/IA/);
