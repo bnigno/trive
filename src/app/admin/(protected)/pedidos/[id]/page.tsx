@@ -10,6 +10,8 @@ import {
 import { getFileStorage } from "@/adapters/storage";
 import { PAYMENT_METHOD_LABELS } from "@/core/orders/payment-methods";
 import { REFUND_STATE_LABELS, type RefundState } from "@/core/orders/refunds";
+import { listReturnableItems } from "@/services/order-returns";
+import { ReturnItemForm } from "./return-item-form";
 import { neededByLabel, shipByLabel, trafficLight, type TrafficLight } from "@/core/shipping/needed-by";
 import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { getDb } from "@/db/client";
@@ -86,6 +88,7 @@ export default async function PedidoDetalhePage({
   const canJoinRun = runEligibility.canJoin;
   const late = stop?.stopStatus === "delivered" ? await lateDeliveryForOrder(db, id) : null;
   const issuedCoupons = await listIssuedCouponsForOrder(db, id);
+  const returnableItems = await listReturnableItems(getDb(), order.id);
   const status = order.status as OrderStatus;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
@@ -199,6 +202,14 @@ export default async function PedidoDetalhePage({
               </div>
             </dl>
           </Card>
+
+          {/* Uma peça voltou: o pedido NÃO muda de status — não foi
+              reembolsado, uma peça voltou. Só o dono vê (mexe em dinheiro). */}
+          <OwnerOnly>
+            <Card title="Devolução de peça">
+              <ReturnItemForm orderId={order.id} items={returnableItems} />
+            </Card>
+          </OwnerOnly>
 
           <Card title="Pagamento">
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">

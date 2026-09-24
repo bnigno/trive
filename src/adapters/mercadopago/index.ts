@@ -47,6 +47,18 @@ export type Payment = {
   paymentMethod: PaymentMethod;
 };
 
+export type RefundOptions = {
+  /** Ausente = estorno total. Presente = parcial, deste valor. */
+  amountCents?: number;
+  /**
+   * A chave que o vendor usa para não repetir o estorno. PRECISA ser única por
+   * devolução: a chave por pagamento fazia o MP DESCARTAR EM SILÊNCIO o segundo
+   * estorno parcial do mesmo pagamento — a cliente ficaria sem o dinheiro e o
+   * sistema acharia que devolveu.
+   */
+  idempotencyKey?: string;
+};
+
 export type RefundResult = {
   /** Id do estorno no vendor (não confundir com o id do pagamento). */
   refundId: string;
@@ -60,10 +72,11 @@ export interface PaymentGateway {
   ): Promise<CheckoutPreference>;
   getPayment(paymentId: string): Promise<Payment>;
   /**
-   * Estorno TOTAL. Devolve o que o vendor respondeu: sem o id do estorno não
-   * há como provar depois que o dinheiro voltou, nem conferir no painel dele.
+   * Estorno. Sem `amountCents` é TOTAL; com, é parcial. Devolve o que o vendor
+   * respondeu: sem o id do estorno não há como provar depois que o dinheiro
+   * voltou, nem conferir no painel dele.
    */
-  refundPayment(paymentId: string): Promise<RefundResult>;
+  refundPayment(paymentId: string, options?: RefundOptions): Promise<RefundResult>;
 }
 
 let instance: PaymentGateway | undefined;

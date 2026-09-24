@@ -210,6 +210,26 @@ export const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "total", "link"],
   },
   {
+    key: "order_item_refunded",
+    label: "Devolução de peça — dinheiro de volta",
+    bodyTemplate:
+      "{{nome}}, devolvemos {{valor}} referente a {{peca}} do pedido #{{pedido}}.\n" +
+      "O valor volta pelo mesmo meio de pagamento, no prazo do banco ou do cartão.\n" +
+      "As outras peças do pedido seguem com você.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido", "peca", "valor"],
+  },
+  {
+    key: "order_item_credit",
+    label: "Devolução de peça — crédito para a próxima",
+    bodyTemplate:
+      "{{nome}}, recebemos {{peca}} de volta 🤎\n" +
+      "Você tem {{valor}} de crédito com a gente: use o código {{cupom}} na próxima compra.\n" +
+      "Vale até {{validade}}. Qualquer dúvida, é só chamar.\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "peca", "valor", "cupom", "validade"],
+  },
+  {
     key: "order_shipped",
     label: "Pedido enviado",
     bodyTemplate:
