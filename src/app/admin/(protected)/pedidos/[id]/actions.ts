@@ -10,7 +10,6 @@ import { requireOwner, requireUser } from "@/services/auth";
 import { returnOrderItem } from "@/services/order-returns";
 import { formatCentsBRL } from "@/lib/money";
 import {
-  ServiceError,
   deliverByHand,
   shipOrder,
   transitionOrder,
@@ -23,8 +22,12 @@ export type FormState = { error?: string; success?: string };
 const orderIdSchema = z.uuid();
 
 function friendlyError(error: unknown): FormState {
-  if (error instanceof ServiceError || error instanceof InvalidTransitionError) {
-    return { error: error.message };
+  // Cada serviço declara a SUA classe ServiceError, então `instanceof` contra a
+  // de orders deixava passar a recusa das outras — que virava "algo deu errado"
+  // e parecia pane. Toda ServiceError carrega mensagem pronta para a tela.
+  const isServiceRefusal = error instanceof Error && error.name === "ServiceError";
+  if (isServiceRefusal || error instanceof InvalidTransitionError) {
+    return { error: (error as Error).message };
   }
   if (error instanceof ZodError) {
     return { error: "Dados inválidos. Recarregue a página e tente novamente." };

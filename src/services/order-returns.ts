@@ -19,6 +19,7 @@ import {
 } from "@/db/schema";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { issueCoupon } from "@/services/coupons";
+import { ServiceError } from "@/services/orders";
 import { applyStockEffectTx } from "@/services/stock";
 import { firstNameOf, sendTemplateMessage } from "@/services/wa-messaging";
 import { formatCentsBRL } from "@/lib/money";
@@ -27,12 +28,15 @@ import { spDayKey, spDayLabel } from "@/lib/sp-day";
 /** Validade do crédito da troca: 90 dias é o mesmo fôlego do defeito em durável. */
 const CREDIT_DAYS = 90;
 
-export class ReturnError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "ReturnError";
-  }
-}
+/**
+ * Recusa desta área, com mensagem pronta para a tela.
+ *
+ * Estende o ServiceError de orders de propósito: as telas de pedido traduzem
+ * `instanceof ServiceError` para o texto da recusa, e uma classe solta caía no
+ * "Algo deu errado, tente novamente" — uma recusa correta com cara de pane,
+ * que foi o que assustou na primeira devolução de verdade.
+ */
+export class ReturnError extends ServiceError {}
 
 const returnItemSchema = z.object({
   orderId: z.uuid(),
