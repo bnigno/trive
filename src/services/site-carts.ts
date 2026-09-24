@@ -20,6 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
+import { attributionLabel, type OriginKind } from "@/core/store/attribution";
 import { campaignLinks, orders, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -369,6 +370,54 @@ export async function siteBridgeFunnel(db: DbOrTx, input: { from: Date; to: Date
     paidCents: Number(overall?.paidCents ?? 0),
   };
   return { rows: list, totals };
+}
+
+export type SiteOrderOriginRow = {
+  /** null = pedido do site sem origem rastreável. */
+  kind: OriginKind | null;
+  ref: string | null;
+  /** "/ig/dunas «Dunas no story»", "cupom AMIGA7K" ou "sem origem conhecida". */
+  label: string;
+  orders: number;
+  paidOrders: number;
+  paidCents: number;
+};
+
+/**
+ * Pedidos feitos no CHECKOUT DO SITE no período, por origem guardada no
+ * navegador (orders.attribution). É a metade que a ponte não vê: a cliente
+ * tocou no link, foi ao site e comprou sem passar pela Lia.
+ */
+export async function siteOrdersByOrigin(db: DbOrTx, input: { from: Date; to: Date }): Promise<SiteOrderOriginRow[]> {
+  const kind = sql<string | null>`${orders.attribution}->>'kind'`;
+  const ref = sql<string | null>`${orders.attribution}->>'ref'`;
+  const rows = await db
+    .select({
+      kind,
+      ref,
+      campaignLabel: campaignLinks.label,
+      orders: sql<number>`count(*)::int`,
+      paidOrders: sql<number>`count(*) filter (where ${paidOrder()})::int`,
+      paidCents: sql<number>`coalesce(sum(${orders.totalCents}) filter (where ${paidOrder()}), 0)::int`,
+    })
+    .from(orders)
+    .leftJoin(campaignLinks, and(sql`${orders.attribution}->>'kind' = 'campaign'`, eq(campaignLinks.slug, ref)))
+    .where(and(eq(orders.channel, "store"), gte(orders.createdAt, input.from), lt(orders.createdAt, input.to)))
+    .groupBy(kind, ref, campaignLinks.label);
+  return rows
+    .map((row): SiteOrderOriginRow => {
+      const originKind: OriginKind | null = row.kind === "campaign" || row.kind === "coupon" ? row.kind : null;
+      const base = originKind && row.ref ? attributionLabel({ kind: originKind, ref: row.ref }) : "sem origem conhecida";
+      return {
+        kind: originKind,
+        ref: originKind ? row.ref : null,
+        label: originKind === "campaign" && row.campaignLabel ? `${base} «${row.campaignLabel}»` : base,
+        orders: Number(row.orders),
+        paidOrders: Number(row.paidOrders),
+        paidCents: Number(row.paidCents),
+      };
+    })
+    .sort((a, b) => (a.kind === null ? 1 : 0) - (b.kind === null ? 1 : 0) || b.orders - a.orders || a.label.localeCompare(b.label, "pt-BR"));
 }
 
 /** Quantas pontes há por conversa (o funil e o painel). */

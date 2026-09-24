@@ -42,6 +42,7 @@ import { billableWeightGrams, isQuoteValid } from "@/core/shipping/correios-pack
 import { hourLabel, isWindowBookable, windowBelongsToRate, windowDateLabel } from "@/core/shipping/delivery-windows";
 import { isValidNeededBy, neededByLabel, OCCASION_MAX, shipByFor } from "@/core/shipping/needed-by";
 import { spDayKey } from "@/lib/sp-day";
+import { attributionFrom, storedOriginSchema, type OrderAttribution } from "@/core/store/attribution";
 import { findShippingQuoteById, getCorreiosAutoSettings } from "@/services/correios-quotes";
 import { parseWindows } from "@/services/shipping";
 import { activeMotoboyCoversCep, computeTotalWeightGrams } from "@/services/store-catalog";
@@ -195,6 +196,12 @@ const createStoreOrderSchema = z.object({
    */
   /** Token da cartela de estilo guardada no navegador: vincula ao cadastro. */
   styleToken: z.uuid().optional(),
+  /**
+   * De onde a cliente chegou (link de story/cupom guardado no navegador).
+   * Validado à parte com safeParse: origem estragada vira "sem origem" e
+   * NUNCA derruba o pedido.
+   */
+  origin: z.unknown().optional(),
   gift: z
     .object({
       recipientName: z
@@ -216,6 +223,11 @@ const createStoreOrderSchema = z.object({
 });
 
 export type CreateStoreOrderInput = z.input<typeof createStoreOrderSchema>;
+
+function orderAttribution(origin: unknown, now: Date): OrderAttribution | null {
+  const parsed = storedOriginSchema.safeParse(origin);
+  return parsed.success ? attributionFrom(parsed.data, now) : null;
+}
 
 export interface CreateStoreOrderResult {
   orderId: string;
@@ -702,6 +714,7 @@ export async function createStoreOrder(
         neededBy,
         occasion,
         shipBy,
+        attribution: orderAttribution(parsed.origin, now),
         note: "Pedido da loja",
         createdBy: null,
       })

@@ -6,11 +6,13 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { writeLinkCoupon } from "@/lib/coupon-storage";
+import { writeOrigin } from "@/lib/origin-storage";
 
 export function CouponCapture({ code, to }: { code: string; to: string }) {
   const router = useRouter();
   useEffect(() => {
     writeLinkCoupon(code);
+    writeOrigin("coupon", code);
     router.replace(to);
   }, [code, to, router]);
   return null;

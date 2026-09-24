@@ -51,6 +51,7 @@ import type { DeliveryOption } from "@/core/shipping/delivery-windows";
 import { assessNeededBy, isValidNeededBy, OCCASION_MAX } from "@/core/shipping/needed-by";
 import { writeStoredCep } from "@/lib/cep-storage";
 import { readStoredCoupon, writeStoredCoupon } from "@/lib/coupon-storage";
+import { readOrigin } from "@/lib/origin-storage";
 import { spDayKey } from "@/lib/sp-day";
 import { isWindowOptionKey, pickDefaultOptionKey } from "@/lib/checkout-options";
 import type { CreateStoreOrderInput, PriceChange } from "@/services/store-orders";
@@ -498,6 +499,7 @@ export function CheckoutClient({
       paymentMethod,
       ...(couponCode ? { couponCode } : {}),
       ...(readStoredStyle()?.token ? { styleToken: readStoredStyle()?.token } : {}),
+      ...(readOrigin() ? { origin: readOrigin() } : {}),
       ...(isGift
         ? {
             gift: {

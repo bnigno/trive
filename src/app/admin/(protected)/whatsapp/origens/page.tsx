@@ -13,7 +13,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { getDb } from "@/db/client";
 import { formatCentsBRL } from "@/lib/money";
 import { requireOwner } from "@/services/auth";
-import { siteBridgeFunnel, type BridgeFunnel } from "@/services/site-carts";
+import { siteBridgeFunnel, siteOrdersByOrigin, type BridgeFunnel, type SiteOrderOriginRow } from "@/services/site-carts";
 
 export const dynamic = "force-dynamic";
 
@@ -36,11 +36,13 @@ function rate(part: number, whole: number): string {
   return `${Math.round((part / whole) * 100)}%`;
 }
 
-async function loadFunnel(days: Period): Promise<BridgeFunnel | null> {
+async function loadFunnel(days: Period): Promise<{ funnel: BridgeFunnel; siteOrders: SiteOrderOriginRow[] } | null> {
   try {
     const to = new Date();
     const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
-    return await siteBridgeFunnel(getDb(), { from, to });
+    const funnel = await siteBridgeFunnel(getDb(), { from, to });
+    const siteOrders = await siteOrdersByOrigin(getDb(), { from, to });
+    return { funnel, siteOrders };
   } catch {
     return null;
   }
@@ -50,7 +52,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
   await requireOwner("whatsapp");
   const { dias } = await searchParams;
   const days = parsePeriod(dias);
-  const funnel = await loadFunnel(days);
+  const loaded = await loadFunnel(days);
 
   const header = (
     <PageHeader
@@ -78,7 +80,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
     />
   );
 
-  if (!funnel) {
+  if (!loaded) {
     return (
       <div className="flex flex-col gap-6">
         {header}
@@ -90,7 +92,8 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
     );
   }
 
-  const { rows, totals } = funnel;
+  const { rows, totals } = loaded.funnel;
+  const siteOrders = loaded.siteOrders;
 
   return (
     <div className="flex flex-col gap-8">
@@ -149,6 +152,40 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
                 Gerenciar links de story →
               </Link>
             </div>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Pedidos feitos no site">
+        {siteOrders.length === 0 ? (
+          <EmptyState
+            title={`Nenhum pedido pelo site em ${days} dias`}
+            hint="Quando alguém comprar direto no site (sem passar pela Lia), aparece aqui com o link de story ou de cupom que trouxe a cliente."
+          />
+        ) : (
+          <div className="flex flex-col gap-4">
+            <Table headers={["Origem", "Pedidos", "Pagos", "Vendido"]}>
+              {siteOrders.map((row) => (
+                <Tr key={`${row.kind ?? "none"}:${row.ref ?? ""}`}>
+                  <Td>
+                    <span
+                      className={cx(
+                        "font-medium",
+                        row.kind ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400",
+                      )}
+                    >
+                      {row.label}
+                    </span>
+                  </Td>
+                  <Td className="tabular-nums">{row.orders}</Td>
+                  <Td className="tabular-nums">{row.paidOrders}</Td>
+                  <Td className="whitespace-nowrap tabular-nums">{row.paidCents > 0 ? formatCentsBRL(row.paidCents) : "—"}</Td>
+                </Tr>
+              ))}
+            </Table>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              A origem é o último link de story (/ig/) ou de cupom (/c/) que a cliente tocou <strong>no mesmo celular</strong>, até 7 dias antes da compra. Quem viu o story no Instagram e abriu o site depois pelo navegador do celular aparece como “sem origem conhecida” — o Instagram guarda o que ela tocou num navegador próprio.
+            </p>
           </div>
         )}
       </Card>

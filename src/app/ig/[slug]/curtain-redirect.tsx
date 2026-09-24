@@ -8,6 +8,8 @@ import { useEffect, useState } from "react";
 import { IconWhatsApp } from "@/components/store/icons";
 import { btnGold } from "@/components/store/styles";
 
+import { writeOrigin } from "@/lib/origin-storage";
+
 import { tapCampaignLinkAction } from "./actions";
 
 /** Depois disso sem sair da página, mostramos o botão como saída manual. */
@@ -28,6 +30,8 @@ export function CurtainRedirect({
 
   useEffect(() => {
     let cancelled = false;
+    // Quem volta pelo "Ver a peça no site" e compra no checkout conta para este link.
+    writeOrigin("campaign", slug);
     const timer = window.setTimeout(() => setShowButton(true), SHOW_BUTTON_AFTER_MS);
     (async () => {
       let target = fallbackUrl;
