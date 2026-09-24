@@ -13,7 +13,7 @@ import { waMeUrl } from "@/lib/phone";
 import { spDayLabel, spMinutesOfDay, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
 import { requireUser } from "@/services/auth";
 import { listCouriers } from "@/services/couriers";
-import { listMotoboyWindows, listRouteOfDay, paymentLabelOf, type RouteOrder } from "@/services/delivery-routes";
+import { listMotoboyWindows, listRouteOfDay, paymentLabelOf, type RouteOfDayOrder } from "@/services/delivery-routes";
 import { listRunEligibleOrders } from "@/services/delivery-runs";
 import { formatDateTimeSP } from "../format";
 import { DispatchForm, MountRunForm, RescheduleForm, type RescheduleChoice } from "./forms";
@@ -47,7 +47,7 @@ function rescheduleChoices(todayKey: string, nowMinutes: number, rates: { rateNa
   return [...choices.values()];
 }
 
-function statusBadge(order: RouteOrder) {
+function statusBadge(order: RouteOfDayOrder) {
   if (order.cameBack) return <Badge tone="danger">Voltou sem entregar</Badge>;
   if (order.status === "shipped") return <Badge tone="neutral">Saiu</Badge>;
   if (order.status === "preparing") return <Badge tone="info">Em separação</Badge>;
@@ -59,10 +59,10 @@ function statusBadge(order: RouteOrder) {
 type RunState = { eligible: boolean; openRunId: string | null; openRunCourier: string | null };
 type RunStates = Map<string, RunState>;
 
-function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined; hasCouriers: boolean }) {
+function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order: RouteOfDayOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined; hasCouriers: boolean }) {
   const wa = waMeUrl(order.phoneE164);
   const out = order.dispatchedAt !== null;
-  const needsLook = (!out && (late || order.paidAfterCutoff)) || order.cameBack;
+  const needsLook = !out && (late || order.paidAfterCutoff);
   // Embalar antes de sair: sem a foto do pacote não há "Saiu" nem saída com GPS.
   const needsPacking = needsPackingBeforeDispatch({ status: order.status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.dispatchedAt?.toISOString() ?? null });
   // Sem motoboy cadastrado não existe o form "montar-saida": checkbox órfão confunde.
@@ -120,7 +120,11 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
       <div className="flex flex-wrap items-center gap-3">
         {order.cameBack ? (
           <p className="text-xs text-red-700 dark:text-red-300">
-            O motoboy não conseguiu entregar e a peça voltou: combine com a cliente e reagende abaixo{canJoinRun ? ", ou leve numa nova saída" : ""}.
+            O motoboy marcou que não conseguiu entregar. Combine com a cliente{canJoinRun ? " e, para mandar de novo, marque “Levar nesta saída”" : ""} — ou{" "}
+            <Link href={`/admin/pedidos/${order.id}`} className="font-medium underline">
+              feche na ficha
+            </Link>
+            .
           </p>
         ) : out ? (
           <Link href={`/admin/pedidos/${order.id}`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
@@ -154,7 +158,7 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
   );
 }
 
-function WindowSection({ group, todayKey, choices, runs, hasCouriers }: { group: RouteWindowGroup<RouteOrder>; todayKey: string; choices: RescheduleChoice[]; runs: RunStates; hasCouriers: boolean }) {
+function WindowSection({ group, todayKey, choices, runs, hasCouriers }: { group: RouteWindowGroup<RouteOfDayOrder>; todayKey: string; choices: RescheduleChoice[]; runs: RunStates; hasCouriers: boolean }) {
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">

@@ -50,7 +50,11 @@ export interface RouteOrder {
   paidAfterCutoff: boolean;
   /** Saiu com o motoboy ("Na rua": dinheiro ainda por receber, ou pago nas últimas 48 h). */
   dispatchedAt: Date | null;
-  /** Saiu e a última parada foi "não consegui": a peça voltou — reagendar ou outra saída (só listRouteOfDay preenche). */
+}
+
+/** O pedido na Rota do dia. */
+export interface RouteOfDayOrder extends RouteOrder {
+  /** Saiu e a última parada foi "não consegui": combinar com a cliente e mandar de novo. */
   cameBack: boolean;
 }
 
@@ -179,7 +183,6 @@ export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: bo
       paidAt: row.paidAt,
       paidAfterCutoff: isPaidAfterCutoff(row.paidAt, window),
       dispatchedAt: dispatchedAt ? new Date(dispatchedAt) : null,
-      cameBack: false,
     });
   }
   return result;
@@ -190,17 +193,19 @@ export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: bo
  * O pago que já saiu fica em "Na rua" pelas mesmas 48 h da saída com GPS:
  * saiu sem escolher o motoboy, ainda dá para mandar o link a ele.
  */
-export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOrder> & { todayKey: string }> {
+export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOfDayOrder> & { todayKey: string }> {
   const now = input.now ?? new Date();
   const todayKey = spDayKey(now);
-  const all = await listRouteOrders(db, { includeShipped: true });
-  const cameBack = await ordersThatCameBack(db, all.filter((order) => order.dispatchedAt !== null).map((order) => order.id));
-  const candidates = all
-    .map((order) => ({ ...order, cameBack: cameBack.has(order.id) }))
-    // O dinheiro na entrega fica em "Na rua" até a baixa, por mais velho que seja (há dinheiro a
-    // receber); o que voltou sem entregar também, até reagendar.
-    .filter((order) => order.status !== "shipped" || order.dispatchedAt === null || order.cameBack || isStillOnTheStreet(order.dispatchedAt, now));
-  const grouped = groupRouteOrders(candidates, todayKey, spMinutesOfDay(now));
+  const candidates = (await listRouteOrders(db, { includeShipped: true })).filter(
+    // O dinheiro na entrega fica em "Na rua" até a baixa, por mais velho que seja: há dinheiro a receber.
+    (order) => order.status !== "shipped" || order.dispatchedAt === null || isStillOnTheStreet(order.dispatchedAt, now),
+  );
+  const cameBack = await ordersThatCameBack(db, candidates.filter((order) => order.dispatchedAt !== null).map((order) => order.id));
+  const grouped = groupRouteOrders(
+    candidates.map((order) => ({ ...order, cameBack: cameBack.has(order.id) })),
+    todayKey,
+    spMinutesOfDay(now),
+  );
   return { ...grouped, todayKey };
 }
 
@@ -441,7 +446,7 @@ async function ordersThatCameBack(db: DbOrTx, orderIds: readonly string[]): Prom
     .select({ orderId: deliveryStops.orderId, status: deliveryStops.status })
     .from(deliveryStops)
     .where(and(inArray(deliveryStops.orderId, [...orderIds]), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
-    .orderBy(desc(deliveryStops.createdAt));
+    .orderBy(desc(deliveryStops.createdAt), desc(deliveryStops.id));
   const last = new Map<string, string>();
   for (const row of rows) if (!last.has(row.orderId)) last.set(row.orderId, row.status);
   return new Set([...last].filter(([, status]) => status === "failed").map(([orderId]) => orderId));

@@ -1004,14 +1004,18 @@ describe("leituras", () => {
   });
 
   it("'cliente pediu outro dia': a peça voltou — dá para reagendar, o pedido volta à Rota do dia e pode sair de novo", async () => {
-    const { paid, stops, token } = await runOnTheRoad();
+    const { paid, cash: stillOut, stops, token } = await runOnTheRoad();
     await failStop(sdb, { courierToken: token, stopId: stops.find((s) => s.orderId === paid.orderId)!.id, reason: "cliente_pediu_outro_dia" });
     // Antes: pedido pago já saiu (shipped + dispatchedAt) — só o "voltou" libera o reagendamento.
     const threeDaysLater = new Date(AFTERNOON.getTime() + 3 * 86_400_000);
-    // A dona recebe "reagende na Rota do dia": lá ele está em "Na rua" como "voltou", mesmo depois das 48 h;
-    // o que ainda está com o motoboy (o de dinheiro) não.
-    const beforeReschedule = await listRouteOfDay(sdb, { now: threeDaysLater });
-    expect(beforeReschedule.out.filter((o) => o.cameBack).map((o) => o.id)).toEqual([paid.orderId]);
+    // Na Rota do dia ele aparece em "Na rua" como "voltou" (e pode ir numa nova saída); o que
+    // ainda está com o motoboy (o de dinheiro) não. Depois das 48 h, sai da Rota.
+    const soon = new Date(AFTERNOON.getTime() + 3_600_000);
+    const route = await listRouteOfDay(sdb, { now: soon });
+    expect(route.out.filter((o) => o.cameBack).map((o) => o.id)).toEqual([paid.orderId]);
+    expect(route.out.map((o) => o.id)).toContain(stillOut.orderId);
+    expect((await listRunEligibleOrders(sdb, { now: soon })).find((o) => o.id === paid.orderId)?.openRunId).toBeNull();
+    expect((await listRouteOfDay(sdb, { now: threeDaysLater })).out.some((o) => o.id === paid.orderId)).toBe(false);
     await rescheduleOrderWindow(sdb, { orderId: paid.orderId, userId: FIXED_USER_ID, dayKey: "2026-09-22", window: WINDOWS[0], now: threeDaysLater });
     const row = await orderRow(paid.orderId);
     expect(row.status).toBe("shipped");

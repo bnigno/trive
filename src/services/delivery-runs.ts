@@ -681,7 +681,7 @@ export async function failStop(db: DbOrTx, input: FailStopInput): Promise<{ stop
     const body = [
       `🛵 ${courier?.name ?? "O motoboy"} não conseguiu entregar o pedido #${stop.orderNumber} (${firstNameOf(stop.customerName)}): ${FAILURE_REASON_LABELS[parsed.reason]}.`,
       note ? `Nota: ${note}` : null,
-      `O pedido continua como está — combine com a cliente e reagende na Rota do dia.`,
+      `O pedido continua como está — combine com a cliente; para mandar de novo, marque "Levar nesta saída" na Rota do dia (até 48 h depois da saída).`,
     ]
       .filter(Boolean)
       .join("\n");

@@ -4,7 +4,7 @@
 // hora) e "Reagendar" (select com as janelas das faixas de motoboy, hoje e
 // nos próximos dias). Sem regra aqui — tudo vem das actions/services.
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { FormError, FormSuccess, Select, SubmitButton } from "@/components/ui/form";
@@ -23,7 +23,8 @@ export interface CourierOption {
  * O motoboy escolhido vive no estado e vai num input escondido: o React 19
  * reseta o form depois de cada envio, e um select controlado com `name`
  * voltaria para a primeira opção no DOM — a nova tentativa depois de um erro
- * mandaria o link ao motoboy errado.
+ * mandaria o link ao motoboy errado. O select só mostra (e é ressincronizado
+ * depois de cada resposta, para a tela não contradizer a confirmação).
  */
 function useCourierChoice(couriers: CourierOption[], allowNone: boolean) {
   const [chosen, setChosen] = useState(couriers[0]?.id ?? "");
@@ -33,12 +34,29 @@ function useCourierChoice(couriers: CourierOption[], allowNone: boolean) {
   return { courierId, courier: couriers.find((c) => c.id === courierId), setCourierId: setChosen };
 }
 
-function CourierSelect({ couriers, value, onChange, allowNone }: { couriers: CourierOption[]; value: string; onChange: (id: string) => void; allowNone: boolean }) {
+function CourierSelect({
+  couriers,
+  value,
+  onChange,
+  allowNone,
+  result,
+}: {
+  couriers: CourierOption[];
+  value: string;
+  onChange: (id: string) => void;
+  allowNone: boolean;
+  /** A resposta da action: muda a cada envio, depois do reset do form. */
+  result: FormState;
+}) {
+  const ref = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.value = value;
+  }, [value, result]);
   return (
     <label className="flex min-w-48 flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
       Motoboy
       <input type="hidden" name="courierId" value={value} />
-      <Select value={value} onChange={(event) => onChange(event.target.value)}>
+      <Select ref={ref} value={value} onChange={(event) => onChange(event.target.value)}>
         {couriers.map((courier) => (
           <option key={courier.id} value={courier.id}>
             {courier.name}
@@ -85,7 +103,7 @@ export function DispatchForm({
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
       <div className="flex flex-wrap items-end gap-2">
-        {couriers.length > 0 ? <CourierSelect couriers={couriers} value={courierId} onChange={setCourierId} allowNone /> : null}
+        {couriers.length > 0 ? <CourierSelect couriers={couriers} value={courierId} onChange={setCourierId} allowNone result={state} /> : null}
         <ConfirmButton variant="primary" size={compact ? "sm" : "md"} confirmMessage={confirmMessage}>
           Saiu
         </ConfirmButton>
@@ -115,7 +133,7 @@ export function CourierForOrderForm({ orderId, couriers, previousStop = null }: 
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
       <div className="flex flex-wrap items-end gap-2">
-        <CourierSelect couriers={couriers} value={courierId} onChange={setCourierId} allowNone={false} />
+        <CourierSelect couriers={couriers} value={courierId} onChange={setCourierId} allowNone={false} result={state} />
         <ConfirmButton
           variant="primary"
           size="sm"
