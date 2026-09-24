@@ -74,7 +74,11 @@ export type AnimateInput = {
   signal?: AbortSignal;
   /** Chamado com o id do pedido assim que o vendor aceita (e cobra): quem chama guarda para retomar. */
   onSubmitted?: (jobId: string) => void;
-  /** Retoma um pedido já feito (só espera e baixa, sem pedir — e pagar — de novo). */
+  /**
+   * Retoma um pedido já feito (só espera e baixa, sem pedir — e pagar — de
+   * novo). O custo devolvido continua sendo o do vídeo, cobrado uma vez só,
+   * no pedido original. Id vazio é recusado, nunca vira pedido novo.
+   */
   resumeJobId?: string;
 };
 

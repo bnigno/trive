@@ -360,6 +360,30 @@ describe("FashnImageStudio.animate (a peça se mexe)", () => {
     expect(resumed.calls[0]?.url).toBe("https://api.fashn.ai/v1/status/job-antigo");
   });
 
+  it("o id sai ANTES do fim: um pedido que estoura o prazo já entregou o id para retomar; id vazio nunca vira pedido novo", async () => {
+    const order: string[] = [];
+    const server = videoServer({ statuses: [{ status: "processing" }] });
+    const tracked = {
+      fetchImpl: async (url: string, init?: Call["init"]) => {
+        order.push(url.endsWith("/run") ? "run" : url.includes("/status/") ? "status" : "cdn");
+        return server.fetchImpl(url, init);
+      },
+    };
+    const clock = { now: 0 };
+    await expect(
+      client(tracked, clock).animate({ image: PHOTO, prompt: "p", durationSeconds: 5, resolution: "1080p", onSubmitted: (id) => order.push(`id:${id}`) }),
+    ).rejects.toMatchObject({ reason: "timeout" });
+    expect(order.slice(0, 3)).toEqual(["run", "id:job-v", "status"]);
+
+    for (const empty of ["", "   "]) {
+      const blank = videoServer();
+      await expect(client(blank).animate({ image: PHOTO, prompt: "p", durationSeconds: 5, resolution: "1080p", resumeJobId: empty })).rejects.toMatchObject({
+        reason: "rejected",
+      });
+      expect(blank.calls).toHaveLength(0);
+    }
+  });
+
   it("queda no meio do download do MP4 vira erro de rede, não um erro cru", async () => {
     const broken = new FashnImageStudio({
       fetchImpl: async (url: string) => {

@@ -265,7 +265,11 @@ export class FashnImageStudio implements ImageStudio {
     const headers = this.headers();
     const startedAt = this.now();
 
-    let jobId = job.resumeJobId;
+    let jobId = job.resumeJobId?.trim();
+    if (job.resumeJobId !== undefined && !jobId) {
+      // Retomar com id vazio nunca vira pedido novo (e pago).
+      throw new StudioUnavailableError("Pedido para retomar sem id.", "rejected");
+    }
     if (!jobId) {
       const started = await this.request(`${BASE_URL}/run`, {
         method: "POST",
