@@ -199,6 +199,9 @@ describe("sendReceiptWa", () => {
       kind: "image",
       dedupeKey: receiptDedupeKey(orderId),
       orderId,
+      // Sem o template gravado, o comprovante some de qualquer consulta por
+      // template — foi o que escondeu o defeito do pedido #1009.
+      templateKey: "payment_receipt",
     });
     expect(messages[0].mediaUrl).toContain("?v=");
 
@@ -209,7 +212,21 @@ describe("sendReceiptWa", () => {
     expect(await db.select().from(schema.waMessages)).toHaveLength(1);
   });
 
-  it("pula sem renderizar nem subir nada: WhatsApp desligado, sem opt-in, sem template", async () => {
+  it("a cliente que recusou novidades RECEBE o comprovante da compra dela", async () => {
+    // O defeito do pedido #1009: o comprovante era transacional mas exigia o
+    // opt-in de marketing, e a dona teve de mandar na mão.
+    const orderId = await createPaidOrder({ marketingOptIn: false });
+    await enableWa();
+    await seedTemplate();
+
+    const result = await sendReceiptWa(sdb, provider, storage, render, { orderId });
+
+    expect(result).toMatchObject({ sent: true });
+    expect(provider.sentImages).toHaveLength(1);
+    expect(renders).toBe(1);
+  });
+
+  it("pula sem renderizar nem subir nada: WhatsApp desligado, sem template", async () => {
     const orderId = await createPaidOrder({ marketingOptIn: false });
 
     expect(await sendReceiptWa(sdb, provider, storage, render, { orderId })).toEqual({
@@ -217,13 +234,6 @@ describe("sendReceiptWa", () => {
     });
 
     await enableWa();
-    expect(await sendReceiptWa(sdb, provider, storage, render, { orderId })).toEqual({
-      skipped: "sem_opt_in",
-    });
-
-    await db
-      .update(schema.customers)
-      .set({ marketingOptIn: true });
     expect(await sendReceiptWa(sdb, provider, storage, render, { orderId })).toEqual({
       skipped: "sem_template",
     });

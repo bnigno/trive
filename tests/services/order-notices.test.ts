@@ -127,14 +127,16 @@ describe("sendOrderCanceledWa", () => {
     expect(provider.sentMessages[0].body).not.toContain("Reserva expirada");
   });
 
-  it("sem opt-in não envia; pedido que não está cancelado também não", async () => {
+  it("pedido que não está cancelado não avisa; sem opt-in AVISA (é o pedido dela)", async () => {
     const { orderId } = await createOrder();
     expect(await sendOrderCanceledWa(sdb, provider, { orderId })).toEqual({ skipped: "status_diferente" });
 
     await transitionOrder(sdb, { orderId, to: "canceled", userId: null });
     await db.update(schema.customers).set({ marketingOptIn: false }).where(eq(schema.customers.phoneE164, PHONE));
-    expect(await sendOrderCanceledWa(sdb, provider, { orderId })).toEqual({ skipped: "sem_opt_in" });
-    expect(provider.sentMessages).toHaveLength(0);
+    // O opt-in vale para novidades e ofertas: saber que o próprio pedido foi
+    // cancelado não depende dele.
+    expect(await sendOrderCanceledWa(sdb, provider, { orderId })).toMatchObject({ sent: true });
+    expect(provider.sentMessages).toHaveLength(1);
   });
 
   it("WhatsApp desligado: skip, nunca erro", async () => {

@@ -172,8 +172,8 @@ export type SendReceiptResult =
 
 /**
  * Pré-checa tudo, só então publica a imagem e envia pelo WhatsApp com a
- * legenda do template payment_receipt (editável no admin), requireOptIn e
- * dedupe wa.receipt:<orderId>. Skips nunca lançam; falha do provedor relança
+ * legenda do template payment_receipt (editável no admin) e dedupe
+ * wa.receipt:<orderId>. NÃO exige opt-in: é o comprovante da compra dela. Skips nunca lançam; falha do provedor relança
  * e o retry do evento order.receipt reprocessa (upsert + dedupe).
  */
 export async function sendReceiptWa(
@@ -198,7 +198,6 @@ export async function sendReceiptWa(
       customerId: customers.id,
       customerName: customers.fullName,
       phoneE164: customers.phoneE164,
-      marketingOptIn: customers.marketingOptIn,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -208,7 +207,6 @@ export async function sendReceiptWa(
     throw new ServiceError("pedido_nao_encontrado", `Pedido ${orderId} não encontrado.`);
   }
   if (!row.phoneE164) return { skipped: "sem_telefone" };
-  if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
 
   const dedupeKey = receiptDedupeKey(orderId);
   const [existing] = await db
@@ -252,6 +250,8 @@ export async function sendReceiptWa(
     customerId: row.customerId,
     orderId,
     dedupeKey,
-    requireOptIn: true,
+    templateKey: RECEIPT_TEMPLATE_KEY,
+    // O comprovante é da compra dela: o opt-in vale para novidades e ofertas.
+    requireOptIn: false,
   });
 }

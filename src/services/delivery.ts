@@ -239,7 +239,6 @@ export async function sendDeliveredWa(
       customerId: customers.id,
       customerName: customers.fullName,
       phoneE164: customers.phoneE164,
-      marketingOptIn: customers.marketingOptIn,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -256,7 +255,6 @@ export async function sendDeliveredWa(
     if (row.deliveryConfirmedBy !== "customer" && row.deliveryConfirmedBy !== "courier") return { skipped: "sem_foto" };
   }
   if (!row.phoneE164) return { skipped: "sem_telefone" };
-  if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
 
   const dedupeKey = deliveredDedupeKey(orderId);
   const [existing] = await db
@@ -320,7 +318,9 @@ export async function sendDeliveredWa(
       customerId: row.customerId,
       orderId,
       dedupeKey,
-      requireOptIn: true,
+      templateKey: DELIVERED_TEMPLATE_KEY,
+      // Confirmação de entrega do pedido dela: o opt-in é de novidades.
+      requireOptIn: false,
     });
     return "sent" in result ? { ...result, withPhoto: true } : result;
   }
@@ -330,7 +330,7 @@ export async function sendDeliveredWa(
     customerId: row.customerId,
     orderId,
     dedupeKey,
-    requireOptIn: true,
+    requireOptIn: false,
   });
   return "sent" in result ? { ...result, withPhoto: false } : result;
 }

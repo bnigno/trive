@@ -161,12 +161,13 @@ describe("sendGiftNoteWa", () => {
     expect(rendered).toHaveLength(2);
   });
 
-  it("sem opt-in: publica, não manda; sem template: sem_template", async () => {
+  it("sem opt-in MANDA (é o pedido dela); sem template: sem_template", async () => {
     await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
     await seedTemplate();
     const noOptIn = await createOrder({ marketingOptIn: false });
-    expect(await sendGiftNoteWa(sdb, provider, storage, render, { orderId: noOptIn.orderId })).toEqual({
-      skipped: "sem_opt_in",
+    // A prévia do cartão é do pedido dela, não é novidade nem oferta.
+    expect(await sendGiftNoteWa(sdb, provider, storage, render, { orderId: noOptIn.orderId })).toMatchObject({
+      sent: true,
     });
     expect(storage.has(giftNoteStoragePath(noOptIn.orderId))).toBe(true);
 

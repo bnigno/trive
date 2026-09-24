@@ -2,9 +2,17 @@
 // chamado pelos handlers do outbox (nunca inline no request). Idempotência
 // forte via dedupe_key UNIQUE em wa_messages; falha REAL do provedor LANÇA
 // (retry/backoff/DLQ da fila reentregam) e a retentativa RETOMA a mensagem
-// failed em vez de duplicar. Opt-in LGPD (customers.marketing_opt_in) é
-// obrigatório para mensagens ao CLIENTE (requireOptIn: true); avisos internos
-// ao DONO não precisam.
+// failed em vez de duplicar.
+//
+// Opt-in LGPD (customers.marketing_opt_in) separa DOIS tipos de mensagem ao
+// cliente, e a fronteira é o que a política de privacidade promete:
+//   - NOVIDADES E OFERTAS (requireOptIn: true) — cupom, convite de drop,
+//     "voltou ao estoque", pesquisa pós-entrega, recuperação de carrinho.
+//   - AVISO DO PEDIDO DELA (requireOptIn: false) — confirmação, pagamento,
+//     comprovante, foto da embalagem, envio, entrega, cancelamento e
+//     reembolso. É parte da compra; exigir consentimento de marketing aqui
+//     deixava a cliente sem notícia do próprio pedido.
+// Avisos internos ao DONO nunca precisam.
 import { and, eq, gt, isNull, lt, ne } from "drizzle-orm";
 import { z } from "zod";
 
@@ -506,6 +514,12 @@ const sendMediaMessageCommonFields = {
   customerId: z.uuid().optional(),
   orderId: z.uuid().optional(),
   dedupeKey: z.string().min(1),
+  /**
+   * Template que deu origem à legenda, quando houver. Guardado igual ao envio
+   * por texto: sem ele, comprovante e foto da embalagem somem de qualquer
+   * consulta por template e de deriveWaMessageOrigin.
+   */
+  templateKey: z.string().min(1).optional(),
   requireOptIn: z.boolean().default(false),
   /** Ver sendTemplateMessage: false para respostas a quem acabou de escrever. */
   verifyPhone: z.boolean().default(true),
@@ -598,6 +612,7 @@ export async function sendMediaMessage(
       kind: parsed.kind,
       body: persistedBody,
       mediaUrl,
+      templateKey: parsed.templateKey ?? null,
       dedupeKey: parsed.dedupeKey,
       status: "queued",
       orderId: parsed.orderId ?? null,

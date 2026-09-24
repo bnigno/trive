@@ -1033,8 +1033,11 @@ export function CheckoutClient({
               </div>
             </fieldset>
 
-            {/* LGPD: opt-in começa DESMARCADO — nunca assumido. O texto diz
-                exatamente o que chega: os avisos deste pedido. */}
+            {/* Os avisos DESTE pedido não dependem de consentimento: são
+                sobre a compra dela. O opt-in, que nasce DESMARCADO por LGPD,
+                vale só para novidades e ofertas — é o que a política de
+                privacidade promete. A linha abaixo dele conta o que chega de
+                qualquer jeito, para ninguém ser pego de surpresa. */}
             <label className="mt-5 flex min-h-11 cursor-pointer items-start gap-3 font-store text-sm text-ink-700">
               <input
                 type="checkbox"
@@ -1042,10 +1045,13 @@ export function CheckoutClient({
                 className="mt-0.5 h-5 w-5 shrink-0 accent-gold-600"
               />
               <span>
-                Quero receber os avisos deste pedido (confirmação, pagamento e
-                envio) pelo WhatsApp.
+                Quero receber novidades e ofertas da TRIVÉ pelo WhatsApp.
               </span>
             </label>
+            <p className="mt-2 pl-8 font-store text-xs text-ink-500">
+              Os avisos deste pedido — confirmação, pagamento, comprovante e
+              envio — chegam pelo WhatsApp de qualquer forma.
+            </p>
           </FormSection>
 
           {/* Divergência de preço detectada pelo servidor */}

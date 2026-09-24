@@ -315,18 +315,37 @@ describe("sendPackedWa", () => {
     expect(provider.sentImages).toHaveLength(1);
   });
 
-  it("pula sem enviar: WhatsApp desligado, sem opt-in, sem foto, sem template", async () => {
+  it("a cliente que recusou novidades RECEBE a foto do pedido dela", async () => {
+    // O defeito do pedido #1009: a foto ficava presa no opt-in de marketing e
+    // a cliente não recebia notícia nenhuma da própria compra.
+    const { orderId } = await createPaidOrder({ marketingOptIn: false });
+    await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
+    await packOrder(sdb, storage, {
+      orderId,
+      photo: { data: await cameraPhoto(), contentType: "image/jpeg" },
+      userId,
+    });
+    await seedTemplate();
+
+    const result = await sendPackedWa(sdb, provider, storage, { orderId });
+
+    expect(result).toMatchObject({ sent: true });
+    expect(provider.sentImages).toHaveLength(1);
+    const [message] = await db
+      .select()
+      .from(schema.waMessages)
+      .where(eq(schema.waMessages.dedupeKey, packedDedupeKey(orderId)));
+    // Sem o template gravado, a foto some de qualquer relatório por template.
+    expect(message.templateKey).toBe("order_packed");
+  });
+
+  it("pula sem enviar: WhatsApp desligado, sem foto, sem template", async () => {
     const { orderId } = await createPaidOrder({ marketingOptIn: false });
     expect(await sendPackedWa(sdb, provider, storage, { orderId })).toEqual({
       skipped: "desabilitado",
     });
 
     await db.insert(schema.settings).values({ key: "wa_enabled", value: true });
-    expect(await sendPackedWa(sdb, provider, storage, { orderId })).toEqual({
-      skipped: "sem_opt_in",
-    });
-
-    await db.update(schema.customers).set({ marketingOptIn: true });
     expect(await sendPackedWa(sdb, provider, storage, { orderId })).toEqual({
       skipped: "sem_foto",
     });

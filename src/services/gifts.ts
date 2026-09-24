@@ -69,7 +69,6 @@ async function loadGiftOrder(db: DbOrTx, orderId: string) {
       customerId: customers.id,
       customerName: customers.fullName,
       phoneE164: customers.phoneE164,
-      marketingOptIn: customers.marketingOptIn,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -145,7 +144,6 @@ export async function sendGiftNoteWa(
 
   if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
   if (!row.phoneE164) return { skipped: "sem_telefone" };
-  if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
 
   const dedupeKey = giftNoteDedupeKey(orderId);
   const [existing] = await db
@@ -187,6 +185,8 @@ export async function sendGiftNoteWa(
     customerId: row.customerId,
     orderId,
     dedupeKey,
-    requireOptIn: true,
+    templateKey: GIFT_NOTE_TEMPLATE_KEY,
+    // Prévia do cartão do pedido dela: não é novidade nem oferta.
+    requireOptIn: false,
   });
 }

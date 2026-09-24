@@ -117,6 +117,12 @@ export default async function PrivacyPage() {
           nunca vem marcado por padrão.
         </p>
         <p>
+          Os avisos do <strong>seu pedido</strong> — confirmação, pagamento,
+          comprovante, envio e entrega — não dependem desse consentimento: eles
+          são parte da compra e chegam de qualquer forma. O que você autoriza
+          aqui são as novidades e ofertas, e só elas param quando você sai.
+        </p>
+        <p>
           Para parar de receber, basta responder <strong>SAIR</strong> a
           qualquer mensagem nossa
           {email ? <> — ou pedir pelo e-mail {email}</> : null}. A saída vale

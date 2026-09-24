@@ -332,7 +332,6 @@ export async function sendPackedWa(
       customerId: customers.id,
       customerName: customers.fullName,
       phoneE164: customers.phoneE164,
-      marketingOptIn: customers.marketingOptIn,
     })
     .from(orders)
     .innerJoin(customers, eq(customers.id, orders.customerId))
@@ -340,7 +339,6 @@ export async function sendPackedWa(
     .limit(1);
   if (!row) throw new ServiceError("ORDER_NOT_FOUND", `Pedido ${orderId} não encontrado.`);
   if (!row.phoneE164) return { skipped: "sem_telefone" };
-  if (!row.marketingOptIn) return { skipped: "sem_opt_in" };
   if (!row.packagePhotoPath || !row.packedAt) return { skipped: "sem_foto" };
 
   const dedupeKey = packedDedupeKey(orderId);
@@ -392,6 +390,8 @@ export async function sendPackedWa(
     customerId: row.customerId,
     orderId,
     dedupeKey,
-    requireOptIn: true,
+    templateKey: PACKED_TEMPLATE_KEY,
+    // Foto do pacote DELA: o opt-in vale para novidades e ofertas.
+    requireOptIn: false,
   });
 }
