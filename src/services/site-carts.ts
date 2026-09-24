@@ -20,7 +20,7 @@ import {
   type BridgeState,
 } from "@/core/bot/site-bridge";
 import { variantLabel } from "@/core/catalog/attributes";
-import { attributionLabel, type OriginKind } from "@/core/store/attribution";
+import { attributionPath, type OriginKind } from "@/core/store/attribution";
 import { campaignLinks, orders, products, siteCarts } from "@/db/schema";
 import { waMeUrl } from "@/lib/phone";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -376,8 +376,10 @@ export type SiteOrderOriginRow = {
   /** null = pedido do site sem origem rastreável. */
   kind: OriginKind | null;
   ref: string | null;
-  /** "/ig/dunas «Dunas no story»", "cupom AMIGA7K" ou "sem origem conhecida". */
+  /** "story «Dunas»", "Provador «chegadas»", "link de cupom" ou "sem origem conhecida" — o mesmo jeito do funil da Lia. */
   label: string;
+  /** "/ig/dunas" ou "/c/AMIGA7K" (a linha mono embaixo do rótulo); null sem origem. */
+  path: string | null;
   orders: number;
   paidOrders: number;
   paidCents: number;
@@ -406,12 +408,19 @@ export async function siteOrdersByOrigin(db: DbOrTx, input: { from: Date; to: Da
     .groupBy(kind, ref, campaignLinks.label);
   return rows
     .map((row): SiteOrderOriginRow => {
-      const originKind: OriginKind | null = row.kind === "campaign" || row.kind === "coupon" ? row.kind : null;
-      const base = originKind && row.ref ? attributionLabel({ kind: originKind, ref: row.ref }) : "sem origem conhecida";
+      const originKind: OriginKind | null = (row.kind === "campaign" || row.kind === "coupon") && row.ref ? row.kind : null;
+      const ref = originKind ? row.ref : null;
+      const label =
+        originKind === "campaign"
+          ? originLabel("campaign", row.campaignLabel ?? ref, ref)
+          : originKind === "coupon"
+            ? "link de cupom"
+            : "sem origem conhecida";
       return {
         kind: originKind,
-        ref: originKind ? row.ref : null,
-        label: originKind === "campaign" && row.campaignLabel ? `${base} «${row.campaignLabel}»` : base,
+        ref,
+        label,
+        path: originKind && ref ? attributionPath({ kind: originKind, ref }) : null,
         orders: Number(row.orders),
         paidOrders: Number(row.paidOrders),
         paidCents: Number(row.paidCents),

@@ -62,11 +62,25 @@ async function attributionOf(orderId: string) {
 }
 
 describe("createStoreOrder — origem do pedido do site", () => {
-  it("grava o link de story guardado no navegador, normalizado", async () => {
+  it("grava o link de story guardado no navegador, normalizado, com só o dia do toque", async () => {
     const { variantId, rateId } = await setupStore();
-    const at = new Date(Date.now() - 3600_000).toISOString();
-    const result = await createStoreOrder(sdb, input(variantId, rateId, { origin: { kind: "campaign", ref: "Dunas", at } }));
-    expect(await attributionOf(result.orderId)).toEqual({ kind: "campaign", ref: "dunas", touchedAt: at });
+    await db.insert(schema.campaignLinks).values({ slug: "dunas", label: "Dunas no story" });
+    const now = new Date("2026-10-05T15:00:00.000Z");
+    const at = new Date(now.getTime() - 3600_000).toISOString();
+    const result = await createStoreOrder(sdb, input(variantId, rateId, { origin: { kind: "campaign", ref: "Dunas", at } }), { now });
+    expect(await attributionOf(result.orderId)).toEqual({ kind: "campaign", ref: "dunas", touchedOn: "2026-10-05" });
+  });
+
+  it("link ou cupom que não existe não vira origem (o navegador é da cliente)", async () => {
+    const { variantId, rateId } = await setupStore();
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const invented = await createStoreOrder(sdb, input(variantId, rateId, { origin: { kind: "campaign", ref: "inventado", at } }));
+    expect(await attributionOf(invented.orderId)).toBeNull();
+    const coupon = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { customer: { fullName: "Bia Lima", phone: "(91) 99999-0002", marketingOptIn: false }, origin: { kind: "coupon", ref: "NAOEXISTE", at } }),
+    );
+    expect(await attributionOf(coupon.orderId)).toBeNull();
   });
 
   it("origem estragada ou vencida NÃO derruba o pedido — só fica sem origem", async () => {
@@ -108,8 +122,8 @@ describe("siteOrdersByOrigin", () => {
 
     const rows = await siteOrdersByOrigin(sdb, { from: new Date(Date.now() - 3600_000), to: new Date(Date.now() + 60_000) });
     expect(rows).toEqual([
-      { kind: "campaign", ref: "dunas", label: "/ig/dunas «Dunas no story»", orders: 2, paidOrders: 1, paidCents: 4990 + 1990 },
-      { kind: null, ref: null, label: "sem origem conhecida", orders: 1, paidOrders: 0, paidCents: 0 },
+      { kind: "campaign", ref: "dunas", label: "story «Dunas no story»", path: "/ig/dunas", orders: 2, paidOrders: 1, paidCents: 4990 + 1990 },
+      { kind: null, ref: null, label: "sem origem conhecida", path: null, orders: 1, paidOrders: 0, paidCents: 0 },
     ]);
   });
 });

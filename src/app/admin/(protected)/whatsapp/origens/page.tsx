@@ -36,13 +36,22 @@ function rate(part: number, whole: number): string {
   return `${Math.round((part / whole) * 100)}%`;
 }
 
-async function loadFunnel(days: Period): Promise<{ funnel: BridgeFunnel; siteOrders: SiteOrderOriginRow[] } | null> {
+async function loadFunnel(days: Period): Promise<BridgeFunnel | null> {
   try {
     const to = new Date();
     const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
-    const funnel = await siteBridgeFunnel(getDb(), { from, to });
-    const siteOrders = await siteOrdersByOrigin(getDb(), { from, to });
-    return { funnel, siteOrders };
+    return await siteBridgeFunnel(getDb(), { from, to });
+  } catch {
+    return null;
+  }
+}
+
+/** Carga separada: se só esta falhar, o funil da Lia continua na tela. */
+async function loadSiteOrders(days: Period): Promise<SiteOrderOriginRow[] | null> {
+  try {
+    const to = new Date();
+    const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+    return await siteOrdersByOrigin(getDb(), { from, to });
   } catch {
     return null;
   }
@@ -52,12 +61,13 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
   await requireOwner("whatsapp");
   const { dias } = await searchParams;
   const days = parsePeriod(dias);
-  const loaded = await loadFunnel(days);
+  const funnel = await loadFunnel(days);
+  const siteOrders = await loadSiteOrders(days);
 
   const header = (
     <PageHeader
       title="De onde vieram"
-      subtitle="Quem tocou em “Falar com a Lia” (no site ou num link de story), quantas chegaram à conversa e quantas compraram."
+      subtitle="Quem tocou em “Falar com a Lia” (no site ou num link de story), quantas chegaram à conversa e quantas compraram — e, embaixo, os pedidos feitos direto no site."
       actions={
         <div className="flex items-center gap-1 rounded-md border border-zinc-300 p-0.5 text-xs dark:border-zinc-700">
           {PERIODS.map((period) => (
@@ -80,7 +90,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
     />
   );
 
-  if (!loaded) {
+  if (!funnel) {
     return (
       <div className="flex flex-col gap-6">
         {header}
@@ -92,8 +102,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
     );
   }
 
-  const { rows, totals } = loaded.funnel;
-  const siteOrders = loaded.siteOrders;
+  const { rows, totals } = funnel;
 
   return (
     <div className="flex flex-col gap-8">
@@ -116,7 +125,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
         />
       </div>
 
-      <Card title="Por origem">
+      <Card title="Pela Lia — por origem">
         {rows.length === 0 ? (
           <EmptyState
             title={`Nenhum toque em ${days} dias`}
@@ -157,7 +166,12 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
       </Card>
 
       <Card title="Pedidos feitos no site">
-        {siteOrders.length === 0 ? (
+        {siteOrders === null ? (
+          <EmptyState
+            title="Não foi possível carregar os pedidos do site"
+            hint="O funil da Lia acima continua certo. Tente recarregar a página em instantes."
+          />
+        ) : siteOrders.length === 0 ? (
           <EmptyState
             title={`Nenhum pedido pelo site em ${days} dias`}
             hint="Quando alguém comprar direto no site (sem passar pela Lia), aparece aqui com o link de story ou de cupom que trouxe a cliente."
@@ -176,6 +190,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
                     >
                       {row.label}
                     </span>
+                    {row.path ? <span className="block font-mono text-xs text-zinc-500 dark:text-zinc-400">{row.path}</span> : null}
                   </Td>
                   <Td className="tabular-nums">{row.orders}</Td>
                   <Td className="tabular-nums">{row.paidOrders}</Td>
@@ -184,7 +199,7 @@ export default async function OrigensPage({ searchParams }: { searchParams: Prom
               ))}
             </Table>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              A origem é o último link de story (/ig/) ou de cupom (/c/) que a cliente tocou <strong>no mesmo celular</strong>, até 7 dias antes da compra. Quem viu o story no Instagram e abriu o site depois pelo navegador do celular aparece como “sem origem conhecida” — o Instagram guarda o que ela tocou num navegador próprio.
+              A origem é o último link de story (/ig/) ou de cupom (/c/) que a cliente tocou <strong>no mesmo navegador</strong> em que comprou, até 7 dias antes — e vale para um pedido só. “Link de cupom” é o link que ela tocou, não o cupom que usou. Quem tocou no link dentro do Instagram e depois abriu o site pelo Safari ou pelo Chrome aparece como “sem origem conhecida”: o Instagram guarda o que ela tocou num navegador próprio. A origem começou a ser anotada em 24/09/2026; pedidos de antes também ficam “sem origem conhecida”.
             </p>
           </div>
         )}

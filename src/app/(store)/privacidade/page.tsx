@@ -95,6 +95,12 @@ export default async function PrivacyPage() {
           <li>Emitir a nota fiscal e cumprir obrigações fiscais;</li>
           <li>Atender pedidos de troca, devolução ou reembolso;</li>
           <li>
+            Saber qual divulgação trouxe o seu pedido: o seu navegador anota o
+            último link de story ou de cupom que você tocou, e o pedido guarda
+            só esse link e o dia. A anotação some do navegador depois da compra
+            ou em 7 dias;
+          </li>
+          <li>
             Enviar novidades e ofertas pelo WhatsApp — <strong>somente</strong>{" "}
             se você autorizar (veja abaixo).
           </li>

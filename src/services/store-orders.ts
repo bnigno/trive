@@ -10,6 +10,8 @@ import { InsufficientStockError } from "@/core/stock/ledger";
 import { computeOrderTotals } from "@/core/orders/totals";
 import {
   auditLog,
+  campaignLinks,
+  coupons,
   customerAddresses,
   customers,
   financialEntries,
@@ -224,9 +226,21 @@ const createStoreOrderSchema = z.object({
 
 export type CreateStoreOrderInput = z.input<typeof createStoreOrderSchema>;
 
-function orderAttribution(origin: unknown, now: Date): OrderAttribution | null {
+/**
+ * A origem que o pedido grava: válida, dentro dos 7 dias e de um link ou
+ * cupom que EXISTE — o navegador é da cliente, e um slug inventado não pode
+ * abrir linha no painel da dona.
+ */
+async function orderAttribution(tx: DbOrTx, origin: unknown, now: Date): Promise<OrderAttribution | null> {
   const parsed = storedOriginSchema.safeParse(origin);
-  return parsed.success ? attributionFrom(parsed.data, now) : null;
+  if (!parsed.success) return null;
+  const attribution = attributionFrom(parsed.data, now);
+  if (!attribution) return null;
+  const found =
+    attribution.kind === "campaign"
+      ? await tx.select({ id: campaignLinks.id }).from(campaignLinks).where(eq(campaignLinks.slug, attribution.ref)).limit(1)
+      : await tx.select({ id: coupons.id }).from(coupons).where(eq(coupons.code, attribution.ref)).limit(1);
+  return found.length > 0 ? attribution : null;
 }
 
 export interface CreateStoreOrderResult {
@@ -691,6 +705,8 @@ export async function createStoreOrder(
         }
       : null;
 
+    const attribution = await orderAttribution(tx, parsed.origin, now);
+
     const [order] = await tx
       .insert(orders)
       .values({
@@ -714,7 +730,7 @@ export async function createStoreOrder(
         neededBy,
         occasion,
         shipBy,
-        attribution: orderAttribution(parsed.origin, now),
+        attribution,
         note: "Pedido da loja",
         createdBy: null,
       })

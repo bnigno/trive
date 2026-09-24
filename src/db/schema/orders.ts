@@ -142,7 +142,7 @@ export const orders = pgTable(
      * story ou de cupom tocado no navegador, até 7 dias antes. Null = sem
      * origem rastreável. O pedido da Lia é atribuído pela ponte (site_carts).
      */
-    attribution: jsonb("attribution").$type<{ kind: "campaign" | "coupon"; ref: string; touchedAt: string }>(),
+    attribution: jsonb("attribution").$type<{ kind: "campaign" | "coupon"; ref: string; touchedOn: string }>(),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     cancelReason: text("cancel_reason"),
     createdBy: uuid("created_by"),

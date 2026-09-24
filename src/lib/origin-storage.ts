@@ -4,6 +4,8 @@
 // (core/store/attribution). Todo acesso em try/catch: modo privado ou cota
 // cheia não podem quebrar a vitrine.
 const STORAGE_KEY = "trive-origin-v1";
+/** Passou disso, nem vale mandar (o servidor recusaria): apaga. */
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type OriginKind = "campaign" | "coupon";
 
@@ -23,7 +25,19 @@ export function writeOrigin(kind: OriginKind, ref: string): void {
   }
 }
 
-/** O que estiver guardado, no formato esperado; o servidor confere o resto. */
+/**
+ * Depois de um pedido feito: a recompra de outro dia não é mérito do mesmo
+ * link (a regra da ponte da Lia: um toque, no máximo um pedido).
+ */
+export function clearOrigin(): void {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // nada guardado, nada a apagar
+  }
+}
+
+/** O que estiver guardado, no formato esperado e dentro de 7 dias; o servidor confere o resto. */
 export function readOrigin(): BrowserOrigin | undefined {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -39,8 +53,10 @@ export function readOrigin(): BrowserOrigin | undefined {
       typeof parsed.ref === "string" &&
       typeof parsed.at === "string"
     ) {
-      return { kind: parsed.kind, ref: parsed.ref, at: parsed.at };
+      const age = Date.now() - Date.parse(parsed.at);
+      if (Number.isFinite(age) && age <= MAX_AGE_MS) return { kind: parsed.kind, ref: parsed.ref, at: parsed.at };
     }
+    window.localStorage.removeItem(STORAGE_KEY);
     return undefined;
   } catch {
     return undefined;

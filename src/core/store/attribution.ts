@@ -4,6 +4,8 @@
 // checkout do site ficava invisível para "De onde vieram".
 import { z } from "zod";
 
+import { spDayKey } from "@/lib/sp-day";
+
 export const ORIGIN_KINDS = ["campaign", "coupon"] as const;
 export type OriginKind = (typeof ORIGIN_KINDS)[number];
 
@@ -27,7 +29,8 @@ export interface OrderAttribution {
   kind: OriginKind;
   /** Slug do link de story ou código do cupom, já normalizado. */
   ref: string;
-  touchedAt: string;
+  /** Só o DIA do toque (relógio de São Paulo): o painel não precisa da hora — minimização. */
+  touchedOn: string;
 }
 
 function normalizeRef(kind: OriginKind, ref: string): string | null {
@@ -49,10 +52,13 @@ export function attributionFrom(origin: StoredOrigin | null | undefined, now: Da
   if (age > ORIGIN_MAX_AGE_MS || age < -CLOCK_SKEW_MS) return null;
   const ref = normalizeRef(origin.kind, origin.ref);
   if (!ref) return null;
-  return { kind: origin.kind, ref, touchedAt: new Date(Math.min(touched, now.getTime())).toISOString() };
+  return { kind: origin.kind, ref, touchedOn: spDayKey(new Date(Math.min(touched, now.getTime()))) };
 }
 
-/** Rótulo para o painel: "/ig/dunas" ou "cupom AMIGA7K". */
-export function attributionLabel(attribution: Pick<OrderAttribution, "kind" | "ref">): string {
-  return attribution.kind === "campaign" ? `/ig/${attribution.ref}` : `cupom ${attribution.ref}`;
+/**
+ * O caminho que a cliente tocou: "/ig/dunas" ou "/c/AMIGA7K". É o LINK, não
+ * o cupom usado (esse fica em orders.coupon_code).
+ */
+export function attributionPath(attribution: Pick<OrderAttribution, "kind" | "ref">): string {
+  return attribution.kind === "campaign" ? `/ig/${attribution.ref}` : `/c/${attribution.ref}`;
 }
