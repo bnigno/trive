@@ -13,8 +13,8 @@ const COURIERS = [
   { id: "22222222-2222-4222-8222-222222222222", name: "Dani Entregas" },
 ];
 
-function motoboy(over: Partial<{ dispatchedLabel: string | null; canJoinRun: boolean; previousRun: boolean; couriers: typeof COURIERS }> = {}) {
-  return { customerName: "Klícia", dispatchedLabel: null, couriers: COURIERS, canJoinRun: false, previousRun: false, ...over };
+function motoboy(over: Partial<{ dispatchedLabel: string | null; canJoinRun: boolean; previousStop: "failed" | "canceled" | null; couriers: typeof COURIERS }> = {}) {
+  return { customerName: "Klícia", dispatchedLabel: null, couriers: COURIERS, canJoinRun: false, previousStop: null, ...over };
 }
 
 function actions(status: "paid" | "shipped", m: ReturnType<typeof motoboy>) {
@@ -24,9 +24,11 @@ function actions(status: "paid" | "shipped", m: ReturnType<typeof motoboy>) {
 }
 
 describe("DispatchForm", () => {
-  it("com motoboy cadastrado: select com o primeiro marcado e a opção 'Outro — sem link de GPS'", () => {
+  it("com motoboy cadastrado: o primeiro já marcado (num input escondido — o reset do form do React 19 não o troca) e a opção 'Outro — sem link de GPS'", () => {
     const html = renderToStaticMarkup(<DispatchForm orderId={ORDER_ID} customerName="Klícia" couriers={COURIERS} />);
-    expect(html).toContain('name="courierId"');
+    expect(html).toContain('<input type="hidden" name="courierId" value="11111111-1111-4111-8111-111111111111"/>');
+    // Um campo só com esse nome: o select é só a escolha, não vai no form.
+    expect(html.match(/name="courierId"/g)).toHaveLength(1);
     expect(html).toMatch(/<option value="11111111-1111-4111-8111-111111111111" selected="">Carlos Motoboy<\/option>/);
     expect(html).toContain('<option value="">Outro — sem link de GPS</option>');
   });
@@ -44,7 +46,8 @@ describe("CourierForOrderForm", () => {
     expect(html).not.toContain("Outro — sem link de GPS");
     expect(html).toContain("Mandar o link ao motoboy");
     expect(html).toContain("Saiu sem escolher o motoboy");
-    expect(renderToStaticMarkup(<CourierForOrderForm orderId={ORDER_ID} couriers={COURIERS} previousRun />)).toContain("A saída anterior fechou sem entregar");
+    expect(renderToStaticMarkup(<CourierForOrderForm orderId={ORDER_ID} couriers={COURIERS} previousStop="failed" />)).toContain("não conseguiu entregar");
+    expect(renderToStaticMarkup(<CourierForOrderForm orderId={ORDER_ID} couriers={COURIERS} previousStop="canceled" />)).toContain("foi cancelada");
     expect(renderToStaticMarkup(<CourierForOrderForm orderId={ORDER_ID} couriers={[]} />)).toBe("");
   });
 });

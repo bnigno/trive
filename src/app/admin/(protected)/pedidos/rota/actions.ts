@@ -10,8 +10,8 @@ import { InvalidTransitionError } from "@/core/orders/state-machine";
 import { deliveryWindowSchema } from "@/core/shipping/delivery-windows";
 import { getDb } from "@/db/client";
 import { requireUser } from "@/services/auth";
-import { completeDispatchedOrder, dispatchOrder, rescheduleOrderWindow } from "@/services/delivery-routes";
-import { createDeliveryRun } from "@/services/delivery-runs";
+import { completeDispatchedOrder, rescheduleOrderWindow } from "@/services/delivery-routes";
+import { createDeliveryRun, dispatchOrderWithCourier } from "@/services/delivery-runs";
 import { ServiceError } from "@/services/orders";
 
 export type FormState = { error?: string; success?: string };
@@ -43,33 +43,23 @@ const dispatchWithCourierSchema = dispatchSchema.extend({
   courierId: z.union([z.literal(""), z.uuid("Escolha o motoboy.")]).optional(),
 });
 
-/**
- * "Saiu". Com o motoboy escolhido vira uma saída com GPS de um pedido só
- * (createDeliveryRun faz o "Saiu" e manda o link a ele); serve também para o
- * pedido que já saiu sem motoboy — a cliente não recebe outro aviso.
- */
+/** "Saiu" — com o motoboy escolhido, ele recebe o link com o GPS (dispatchOrderWithCourier). */
 export async function dispatchOrderAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const user = await requireUser();
   try {
     const { orderId, courierId } = dispatchWithCourierSchema.parse({ orderId: formData.get("orderId"), courierId: formData.get("courierId") ?? undefined });
-    if (courierId) {
-      const created = await createDeliveryRun(getDb(), { courierId, orderIds: [orderId], userId: user.id });
-      revalidateRoute(orderId);
-      revalidatePath("/admin/pedidos/saidas");
-      const [stop] = created.stops;
+    const result = await dispatchOrderWithCourier(getDb(), { orderId, courierId: courierId || null, userId: user.id });
+    revalidateRoute(orderId);
+    if (result.withCourier) revalidatePath("/admin/pedidos/saidas");
+    const n = `#${result.orderNumber}`;
+    if (result.withCourier) {
       return {
-        success: stop.alreadyDispatched
-          ? `O motoboy recebe o link do pedido #${stop.orderNumber} no WhatsApp. A cliente não recebe outro aviso: o mapa aparece no link que ela já tem.`
-          : `Pedido #${stop.orderNumber} saiu — a cliente recebe o aviso e o motoboy, o link com o GPS no WhatsApp.`,
+        success: result.alreadyDispatched
+          ? `O motoboy recebe o link do pedido ${n} no WhatsApp. A cliente não recebe outro aviso: o mapa aparece no link que ela já tem.`
+          : `Pedido ${n} saiu — a cliente recebe o aviso e o motoboy, o link com o GPS no WhatsApp.`,
       };
     }
-    const result = await dispatchOrder(getDb(), { orderId, userId: user.id });
-    revalidateRoute(orderId);
-    return {
-      success: result.idempotent
-        ? `Pedido #${result.orderNumber} já tinha saído.`
-        : `Pedido #${result.orderNumber} saiu — a cliente recebe o aviso no WhatsApp.`,
-    };
+    return { success: result.alreadyDispatched ? `Pedido ${n} já tinha saído.` : `Pedido ${n} saiu — a cliente recebe o aviso no WhatsApp.` };
   } catch (error) {
     return friendlyError(error);
   }

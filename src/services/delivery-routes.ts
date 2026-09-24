@@ -16,7 +16,7 @@ import {
   type DeliveryWindow,
   type DeliveryWindowChoice,
 } from "@/core/shipping/delivery-windows";
-import { groupRouteOrders, isPaidAfterCutoff, type RouteOfDay } from "@/core/shipping/route";
+import { groupRouteOrders, isPaidAfterCutoff, isStillOnTheStreet, type RouteOfDay } from "@/core/shipping/route";
 import { auditLog, customers, deliveryStops, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
 import { isSpDayKey, spDayKey, spMinutesOfDay } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -50,6 +50,8 @@ export interface RouteOrder {
   paidAfterCutoff: boolean;
   /** Saiu com o motoboy ("Na rua": dinheiro ainda por receber, ou pago nas últimas 48 h). */
   dispatchedAt: Date | null;
+  /** Saiu e a última parada foi "não consegui": a peça voltou — reagendar ou outra saída (só listRouteOfDay preenche). */
+  cameBack: boolean;
 }
 
 /** Retrato gravado por createStoreOrder (tolerante: linha estranha não derruba a rota). */
@@ -177,13 +179,11 @@ export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: bo
       paidAt: row.paidAt,
       paidAfterCutoff: isPaidAfterCutoff(row.paidAt, window),
       dispatchedAt: dispatchedAt ? new Date(dispatchedAt) : null,
+      cameBack: false,
     });
   }
   return result;
 }
-
-/** Um "Saiu" mais velho que isso já não é "na rua": a dona esqueceu de fechar; não entra em saída nova. */
-export const ELIGIBLE_DISPATCH_MAX_MS = 48 * 3_600_000;
 
 /**
  * A rota como a tela mostra. `now` injetável (o "hoje" é o de São Paulo).
@@ -193,9 +193,13 @@ export const ELIGIBLE_DISPATCH_MAX_MS = 48 * 3_600_000;
 export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOrder> & { todayKey: string }> {
   const now = input.now ?? new Date();
   const todayKey = spDayKey(now);
-  const candidates = (await listRouteOrders(db, { includeShipped: true })).filter(
-    (order) => order.status !== "shipped" || order.dispatchedAt === null || now.getTime() - order.dispatchedAt.getTime() <= ELIGIBLE_DISPATCH_MAX_MS,
-  );
+  const all = await listRouteOrders(db, { includeShipped: true });
+  const cameBack = await ordersThatCameBack(db, all.filter((order) => order.dispatchedAt !== null).map((order) => order.id));
+  const candidates = all
+    .map((order) => ({ ...order, cameBack: cameBack.has(order.id) }))
+    // O dinheiro na entrega fica em "Na rua" até a baixa, por mais velho que seja (há dinheiro a
+    // receber); o que voltou sem entregar também, até reagendar.
+    .filter((order) => order.status !== "shipped" || order.dispatchedAt === null || order.cameBack || isStillOnTheStreet(order.dispatchedAt, now));
   const grouped = groupRouteOrders(candidates, todayKey, spMinutesOfDay(now));
   return { ...grouped, todayKey };
 }
@@ -427,11 +431,18 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
 
 /** A última parada (não cancelada) do pedido numa saída com GPS falhou: a peça voltou para a loja. */
 async function lastStopFailed(db: DbOrTx, orderId: string): Promise<boolean> {
-  const [stop] = await db
-    .select({ status: deliveryStops.status })
+  return (await ordersThatCameBack(db, [orderId])).has(orderId);
+}
+
+/** Voltaram para a loja: a última parada (fora as canceladas) foi "não consegui". */
+async function ordersThatCameBack(db: DbOrTx, orderIds: readonly string[]): Promise<Set<string>> {
+  if (orderIds.length === 0) return new Set();
+  const rows = await db
+    .select({ orderId: deliveryStops.orderId, status: deliveryStops.status })
     .from(deliveryStops)
-    .where(and(eq(deliveryStops.orderId, orderId), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
-    .orderBy(desc(deliveryStops.createdAt))
-    .limit(1);
-  return stop?.status === "failed";
+    .where(and(inArray(deliveryStops.orderId, [...orderIds]), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
+    .orderBy(desc(deliveryStops.createdAt));
+  const last = new Map<string, string>();
+  for (const row of rows) if (!last.has(row.orderId)) last.set(row.orderId, row.status);
+  return new Set([...last].filter(([, status]) => status === "failed").map(([orderId]) => orderId));
 }

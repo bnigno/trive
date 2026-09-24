@@ -36,6 +36,7 @@ import { needsPackingBeforeDispatch, NOT_PACKED_CODE } from "@/core/orders/packi
 import type { OrderStatus } from "@/core/orders/state-machine";
 import type { PaymentMethod } from "@/core/orders/payment-methods";
 import { windowDateLabel } from "@/core/shipping/delivery-windows";
+import { isStillOnTheStreet } from "@/core/shipping/route";
 import { auditLog, couriers, customers, deliveryPositions, deliveryRuns, deliveryStops, orders } from "@/db/schema";
 import { spDayKey } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -45,7 +46,6 @@ import {
   addressLineOf,
   completeDispatchedOrder,
   dispatchOrder,
-  ELIGIBLE_DISPATCH_MAX_MS,
   listRouteOrders,
   summarizeOrderItems,
   type RouteOrder,
@@ -111,7 +111,7 @@ export async function listRunEligibleOrders(db: DbOrTx, input: { now?: Date } = 
   return all
     .filter((order) => !alreadyDelivered.has(order.id))
     .filter((order) =>
-      order.dispatchedAt !== null ? now.getTime() - order.dispatchedAt.getTime() <= ELIGIBLE_DISPATCH_MAX_MS : order.window.dayKey >= todayKey,
+      order.dispatchedAt !== null ? isStillOnTheStreet(order.dispatchedAt, now) : order.window.dayKey >= todayKey,
     )
     // Embalar antes de sair: sem a foto do pacote não entra numa saída (quem
     // já está na rua ou voltou para a loja continua elegível).
@@ -198,18 +198,40 @@ export async function createDeliveryRun(db: DbOrTx, input: CreateDeliveryRunInpu
     if ((await deliveredAwaitingClose(tx, uniqueIds)).size > 0) {
       throw new ServiceError("ORDER_ALREADY_DELIVERED", "Um dos pedidos já foi entregue pelo motoboy — registre o pagamento e feche na ficha.");
     }
+    // Travados na ordem do id (duas saídas ao mesmo tempo não se prendem em
+    // cruz); dispatchOrder trava de novo dentro da mesma transação.
+    const rows = (
+      await tx
+        .select({ orderNumber: orders.orderNumber, status: orders.status, packagePhotoPath: orders.packagePhotoPath, deliveryWindow: orders.deliveryWindow })
+        .from(orders)
+        .where(inArray(orders.id, uniqueIds))
+        .orderBy(asc(orders.id))
+        .for("update")
+    )
+      // Pedido sem janela não é de motoboy: dispatchOrder recusa com a mensagem certa (NOT_MOTOBOY).
+      .filter((row) => row.deliveryWindow !== null)
+      .sort((a, b) => a.orderNumber - b.orderNumber)
+      .map((row) => ({ ...row, dispatchedAt: (row.deliveryWindow as { dispatchedAt?: string } | null)?.dispatchedAt ?? null }));
+    const numbers = (list: typeof rows) => list.map((row) => `#${row.orderNumber}`);
+    // A tela pode estar velha (a cliente tocou "Chegou!", a dona cancelou):
+    // dispatchOrder é idempotente para quem já saiu, então o árbitro é aqui.
+    const closed = numbers(rows.filter((row) => row.status === "delivered" || row.status === "canceled" || row.status === "refunded"));
+    if (closed.length > 0) {
+      throw new ServiceError(
+        "ORDER_CLOSED",
+        `${closed.length === 1 ? `O pedido ${closed[0]} já foi entregue ou cancelado` : `Os pedidos ${closed.join(", ")} já foram entregues ou cancelados`} — recarregue a página.`,
+      );
+    }
+    const stale = numbers(rows.filter((row) => row.dispatchedAt !== null && !isStillOnTheStreet(new Date(row.dispatchedAt), now)));
+    if (stale.length > 0) {
+      throw new ServiceError(
+        "DISPATCH_TOO_OLD",
+        `${stale.length === 1 ? `O pedido ${stale[0]} saiu` : `Os pedidos ${stale.join(", ")} saíram`} há mais de 48 h — feche a entrega na ficha em vez de montar uma saída.`,
+      );
+    }
     // Embalar antes de sair: conferido de uma vez, com TODOS os números, antes
     // de criar a saída (dispatchOrder recusaria o primeiro e desfaria tudo).
-    const unpacked = await tx
-      .select({ orderNumber: orders.orderNumber, status: orders.status, packagePhotoPath: orders.packagePhotoPath, deliveryWindow: orders.deliveryWindow })
-      .from(orders)
-      .where(inArray(orders.id, uniqueIds));
-    const semFoto = unpacked
-      // Pedido sem janela não é de motoboy: dispatchOrder recusa com a mensagem certa (NOT_MOTOBOY), não "sem foto".
-      .filter((row) => row.deliveryWindow !== null)
-      .filter((row) => needsPackingBeforeDispatch({ status: row.status, packagePhotoPath: row.packagePhotoPath, dispatchedAt: (row.deliveryWindow as { dispatchedAt?: string } | null)?.dispatchedAt ?? null }))
-      .sort((a, b) => a.orderNumber - b.orderNumber)
-      .map((row) => `#${row.orderNumber}`);
+    const semFoto = numbers(rows.filter((row) => needsPackingBeforeDispatch({ status: row.status, packagePhotoPath: row.packagePhotoPath, dispatchedAt: row.dispatchedAt })));
     if (semFoto.length > 0) {
       throw new ServiceError(
         NOT_PACKED_CODE,
@@ -276,6 +298,37 @@ export async function createDeliveryRun(db: DbOrTx, input: CreateDeliveryRunInpu
     });
     return { runId: run.id, courierToken: run.courierToken, courierUrl: url, stops };
   });
+}
+
+const dispatchWithCourierSchema = z.object({
+  orderId: z.uuid(),
+  /** null = "Outro — sem link de GPS": o "Saiu" de sempre. */
+  courierId: z.uuid().nullable(),
+  userId: z.uuid(),
+  now: z.date().optional(),
+});
+
+export interface DispatchWithCourierResult {
+  orderNumber: number;
+  withCourier: boolean;
+  /** Já tinha saído: a cliente não recebe outro aviso. */
+  alreadyDispatched: boolean;
+}
+
+/**
+ * O "Saiu" da ficha. Com o motoboy escolhido vira uma saída com GPS de um
+ * pedido só (ele recebe o link); sem motoboy, o "Saiu" de sempre. Serve
+ * também ao pedido que já saiu sem motoboy — sem segundo aviso à cliente.
+ */
+export async function dispatchOrderWithCourier(db: DbOrTx, input: z.input<typeof dispatchWithCourierSchema>): Promise<DispatchWithCourierResult> {
+  const parsed = dispatchWithCourierSchema.parse(input);
+  if (parsed.courierId === null) {
+    const result = await dispatchOrder(db, { orderId: parsed.orderId, userId: parsed.userId, now: parsed.now });
+    return { orderNumber: result.orderNumber, withCourier: false, alreadyDispatched: result.idempotent };
+  }
+  const created = await createDeliveryRun(db, { courierId: parsed.courierId, orderIds: [parsed.orderId], userId: parsed.userId, now: parsed.now });
+  const [stop] = created.stops;
+  return { orderNumber: stop.orderNumber, withCourier: true, alreadyDispatched: stop.alreadyDispatched };
 }
 
 /** Reenvia o link ao motoboy (perdeu a mensagem, trocou de celular). */

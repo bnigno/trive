@@ -635,7 +635,7 @@ export default async function PedidoDetalhePage({
                       dispatchedLabel: order.deliveryWindow.dispatchedAt ? formatDateTimeSP(order.deliveryWindow.dispatchedAt) : null,
                       couriers: couriers.map((c) => ({ id: c.id, name: c.name })),
                       canJoinRun,
-                      previousRun: stop !== null,
+                      previousStop: stop?.stopStatus === "failed" || stop?.stopStatus === "canceled" ? stop.stopStatus : null,
                     }
                   : null
               }

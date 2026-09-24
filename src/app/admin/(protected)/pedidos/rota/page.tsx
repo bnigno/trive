@@ -48,6 +48,7 @@ function rescheduleChoices(todayKey: string, nowMinutes: number, rates: { rateNa
 }
 
 function statusBadge(order: RouteOrder) {
+  if (order.cameBack) return <Badge tone="danger">Voltou sem entregar</Badge>;
   if (order.status === "shipped") return <Badge tone="neutral">Saiu</Badge>;
   if (order.status === "preparing") return <Badge tone="info">Em separação</Badge>;
   if (order.status === "pending_payment") return <Badge tone="warning">Paga ao receber</Badge>;
@@ -61,7 +62,7 @@ type RunStates = Map<string, RunState>;
 function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order: RouteOrder; todayKey: string; choices: RescheduleChoice[]; late: boolean; run: RunState | undefined; hasCouriers: boolean }) {
   const wa = waMeUrl(order.phoneE164);
   const out = order.dispatchedAt !== null;
-  const needsLook = !out && (late || order.paidAfterCutoff);
+  const needsLook = (!out && (late || order.paidAfterCutoff)) || order.cameBack;
   // Embalar antes de sair: sem a foto do pacote não há "Saiu" nem saída com GPS.
   const needsPacking = needsPackingBeforeDispatch({ status: order.status, packagePhotoPath: order.packagePhotoPath, dispatchedAt: order.dispatchedAt?.toISOString() ?? null });
   // Sem motoboy cadastrado não existe o form "montar-saida": checkbox órfão confunde.
@@ -117,7 +118,11 @@ function OrderCard({ order, todayKey, choices, late, run, hasCouriers }: { order
       </ul>
 
       <div className="flex flex-wrap items-center gap-3">
-        {out ? (
+        {order.cameBack ? (
+          <p className="text-xs text-red-700 dark:text-red-300">
+            O motoboy não conseguiu entregar e a peça voltou: combine com a cliente e reagende abaixo{canJoinRun ? ", ou leve numa nova saída" : ""}.
+          </p>
+        ) : out ? (
           <Link href={`/admin/pedidos/${order.id}`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
             Saiu {order.dispatchedAt ? formatDateTimeSP(order.dispatchedAt) : ""} — {order.collectCashCents !== null ? "registrar pagamento e entrega" : "registrar entrega"}
           </Link>
@@ -219,7 +224,9 @@ export default async function RotaPage() {
           <h2 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
             Na rua{" "}
             <span className="font-normal text-zinc-500">
-              · {route.out.length} — saiu sem motoboy escolhido? Marque &ldquo;Levar nesta saída&rdquo; e monte a saída: ele recebe o link e o GPS liga. Dinheiro na entrega: ao receber, registre o pagamento no pedido
+              · {route.out.length} —{" "}
+              {hasCouriers ? <>saiu sem motoboy escolhido? Marque &ldquo;Levar nesta saída&rdquo; e monte a saída: ele recebe o link e o GPS liga. </> : null}
+              Dinheiro na entrega: ao receber, registre o pagamento no pedido
             </span>
           </h2>
           <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

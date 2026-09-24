@@ -182,7 +182,7 @@ export function OrderActions({
    * dispatchedLabel = já saiu; canJoinRun = saiu sem motoboy e ainda dá para
    * mandar o link a um (canJoinDeliveryRun).
    */
-  motoboy?: { customerName: string; dispatchedLabel: string | null; couriers: CourierOption[]; canJoinRun: boolean; previousRun: boolean } | null;
+  motoboy?: { customerName: string; dispatchedLabel: string | null; couriers: CourierOption[]; canJoinRun: boolean; previousStop: "failed" | "canceled" | null } | null;
   /** Foto do pacote registrada: só assim "Saiu" e "Marcar como enviado" aparecem (embalar antes de sair). */
   packed: boolean;
 }) {
@@ -247,7 +247,7 @@ export function OrderActions({
             🛵 Saiu com o motoboy {motoboy.dispatchedLabel}.{" "}
             {status === "pending_payment" ? "Ao receber o dinheiro, marque como pago e depois como entregue." : "Quando ele voltar, marque como entregue."}
           </p>
-          {motoboy.canJoinRun ? <CourierForOrderForm orderId={orderId} couriers={motoboy.couriers} previousRun={motoboy.previousRun} /> : null}
+          {motoboy.canJoinRun ? <CourierForOrderForm orderId={orderId} couriers={motoboy.couriers} previousStop={motoboy.previousStop} /> : null}
           {status === "paid" || status === "preparing" || status === "shipped" ? <DeliveredForm orderId={orderId} /> : null}
         </div>
       ) : null}

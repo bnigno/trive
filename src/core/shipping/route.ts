@@ -6,6 +6,14 @@
 import { hourLabel, minutesOf, type DeliveryWindowChoice } from "@/core/shipping/delivery-windows";
 import { spDayKey, spMinutesOfDay, spNextDayKey } from "@/lib/sp-day";
 
+/** Um "Saiu" mais velho que isso já não é "na rua": a dona esqueceu de fechar; não entra em saída nova. */
+export const ON_THE_STREET_MAX_MS = 48 * 3_600_000;
+
+/** Saiu há no máximo 48 h: ainda "na rua" — dá para mandar o link a um motoboy. */
+export function isStillOnTheStreet(dispatchedAt: Date, now: Date): boolean {
+  return now.getTime() - dispatchedAt.getTime() <= ON_THE_STREET_MAX_MS;
+}
+
 /** O mínimo que a rota precisa de cada pedido (o service completa com os dados). */
 export interface RouteOrderLike {
   id: string;

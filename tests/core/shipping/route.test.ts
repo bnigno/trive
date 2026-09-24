@@ -2,7 +2,7 @@
 // horário, rótulos dos dias e "pagou depois da hora-limite" no relógio de SP.
 import { describe, expect, it } from "vitest";
 
-import { groupRouteOrders, isPaidAfterCutoff, routeDayLabel } from "@/core/shipping/route";
+import { groupRouteOrders, isPaidAfterCutoff, isStillOnTheStreet, ON_THE_STREET_MAX_MS, routeDayLabel } from "@/core/shipping/route";
 import { spWeekdayName } from "@/lib/sp-day";
 
 const W1 = { start: "09:00", end: "12:00", cutoff: "08:00" };
@@ -84,5 +84,17 @@ describe("isPaidAfterCutoff", () => {
     expect(isPaidAfterCutoff(new Date("2026-09-19T12:00:00Z"), window)).toBe(true); // dia seguinte
     expect(isPaidAfterCutoff(new Date("2026-09-17T23:00:00Z"), window)).toBe(false); // véspera
     expect(isPaidAfterCutoff(null, window)).toBe(false);
+  });
+});
+
+describe("isStillOnTheStreet", () => {
+  it("até 48 h depois do 'Saiu' ainda está na rua (dá para mandar o link ao motoboy); um minuto depois, não", () => {
+    const out = new Date("2026-09-18T19:00:00Z");
+    expect(ON_THE_STREET_MAX_MS).toBe(48 * 3_600_000);
+    expect(isStillOnTheStreet(out, out)).toBe(true);
+    expect(isStillOnTheStreet(out, new Date(out.getTime() + ON_THE_STREET_MAX_MS))).toBe(true);
+    expect(isStillOnTheStreet(out, new Date(out.getTime() + ON_THE_STREET_MAX_MS + 60_000))).toBe(false);
+    // Relógio do celular adiantado (saída "no futuro"): continua na rua.
+    expect(isStillOnTheStreet(out, new Date(out.getTime() - 60_000))).toBe(true);
   });
 });

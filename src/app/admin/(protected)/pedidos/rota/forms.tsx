@@ -19,11 +19,26 @@ export interface CourierOption {
   name: string;
 }
 
+/**
+ * O motoboy escolhido vive no estado e vai num input escondido: o React 19
+ * reseta o form depois de cada envio, e um select controlado com `name`
+ * voltaria para a primeira opção no DOM — a nova tentativa depois de um erro
+ * mandaria o link ao motoboy errado.
+ */
+function useCourierChoice(couriers: CourierOption[], allowNone: boolean) {
+  const [chosen, setChosen] = useState(couriers[0]?.id ?? "");
+  // Motoboy desativado noutra aba: cai no primeiro da lista nova, sem mentir na confirmação.
+  const valid = couriers.some((c) => c.id === chosen) || (allowNone && chosen === "");
+  const courierId = valid ? chosen : (couriers[0]?.id ?? "");
+  return { courierId, courier: couriers.find((c) => c.id === courierId), setCourierId: setChosen };
+}
+
 function CourierSelect({ couriers, value, onChange, allowNone }: { couriers: CourierOption[]; value: string; onChange: (id: string) => void; allowNone: boolean }) {
   return (
     <label className="flex min-w-48 flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
       Motoboy
-      <Select name="courierId" value={value} onChange={(event) => onChange(event.target.value)}>
+      <input type="hidden" name="courierId" value={value} />
+      <Select value={value} onChange={(event) => onChange(event.target.value)}>
         {couriers.map((courier) => (
           <option key={courier.id} value={courier.id}>
             {courier.name}
@@ -55,8 +70,7 @@ export function DispatchForm({
   mountRunHint?: boolean;
 }) {
   const [state, formAction] = useActionState(dispatchOrderAction, initialState);
-  const [courierId, setCourierId] = useState(couriers[0]?.id ?? "");
-  const courier = couriers.find((c) => c.id === courierId);
+  const { courierId, courier, setCourierId } = useCourierChoice(couriers, true);
   const noGps = mountRunHint
     ? ' Sem link de GPS: para o motoboy levar o link, marque "Levar nesta saída" e monte a saída no topo da página.'
     : couriers.length > 0
@@ -80,24 +94,24 @@ export function DispatchForm({
   );
 }
 
+const PREVIOUS_STOP_TEXT = {
+  none: "Saiu sem escolher o motoboy: o GPS está desligado. Escolha quem levou — ele recebe o link das paradas e a cliente passa a ver o mapa.",
+  failed: "O motoboy marcou que não conseguiu entregar este pedido. Se ele vai sair de novo, escolha quem leva — o motoboy recebe o link e a cliente volta a ver o mapa.",
+  canceled: "A saída com GPS deste pedido foi cancelada. Se ele está na rua, escolha quem levou — o motoboy recebe o link e a cliente volta a ver o mapa.",
+} as const;
+
 /**
- * Saiu sem escolher o motoboy (ou a saída anterior fechou sem entregar):
- * escolhe agora — ele recebe o link, o GPS liga e a cliente não recebe
- * outro aviso.
+ * Saiu sem escolher o motoboy (ou a última parada não entregou): escolhe
+ * agora — ele recebe o link, o GPS liga e a cliente não recebe outro aviso.
  */
-export function CourierForOrderForm({ orderId, couriers, previousRun = false }: { orderId: string; couriers: CourierOption[]; previousRun?: boolean }) {
+export function CourierForOrderForm({ orderId, couriers, previousStop = null }: { orderId: string; couriers: CourierOption[]; previousStop?: "failed" | "canceled" | null }) {
   const [state, formAction] = useActionState(dispatchOrderAction, initialState);
-  const [courierId, setCourierId] = useState(couriers[0]?.id ?? "");
-  const courier = couriers.find((c) => c.id === courierId);
+  const { courierId, courier, setCourierId } = useCourierChoice(couriers, false);
   if (!courier) return null;
   return (
     <form action={formAction} className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/30">
       <input type="hidden" name="orderId" value={orderId} />
-      <p className="text-sm text-amber-900 dark:text-amber-200">
-        {previousRun
-          ? "A saída anterior fechou sem entregar este pedido. Saiu de novo? Escolha quem levou — ele recebe o link das paradas e a cliente volta a ver o mapa."
-          : "Saiu sem escolher o motoboy: o GPS está desligado. Escolha quem levou — ele recebe o link das paradas e a cliente passa a ver o mapa."}
-      </p>
+      <p className="text-sm text-amber-900 dark:text-amber-200">{PREVIOUS_STOP_TEXT[previousStop ?? "none"]}</p>
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
       <div className="flex flex-wrap items-end gap-2">
@@ -210,7 +224,7 @@ export function MountRunForm({ couriers }: { couriers: { id: string; name: strin
           variant="primary"
           disabled={selected === 0}
           onMouseDown={() => setSelected(countSelected())}
-          confirmMessage={`Montar a saída com ${label}? Cada cliente recebe "Saiu da TRIVÉ" no WhatsApp agora, e o motoboy recebe o link das paradas.`}
+          confirmMessage={`Montar a saída com ${label}? Quem ainda não saiu recebe "Saiu da TRIVÉ" no WhatsApp agora (quem já saiu não recebe de novo), e o motoboy recebe o link das paradas.`}
         >
           Montar saída · {label}
         </ConfirmButton>
