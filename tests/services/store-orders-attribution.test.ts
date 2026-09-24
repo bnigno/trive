@@ -6,7 +6,8 @@ import type { DbOrTx } from "@/queue/enqueue";
 import { createStoreOrder, type CreateStoreOrderInput } from "@/services/store-orders";
 import { siteOrdersByOrigin } from "@/services/site-carts";
 import { transitionOrder } from "@/services/orders";
-import { createTestDb, createTestVariant, type TestDb } from "../helpers/db";
+import { createCoupon } from "@/services/coupons";
+import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
 let db: TestDb;
 let close: () => Promise<void>;
@@ -85,15 +86,29 @@ describe("createStoreOrder — origem do pedido do site", () => {
 
   it("origem estragada ou vencida NÃO derruba o pedido — só fica sem origem", async () => {
     const { variantId, rateId } = await setupStore();
+    await createCoupon(sdb, { code: "AMIGA7K", type: "percent", value: 10, userId: FIXED_USER_ID });
     const broken = await createStoreOrder(sdb, input(variantId, rateId, { origin: { kind: "campaign", ref: 42 } }));
     expect(await attributionOf(broken.orderId)).toBeNull();
 
+    // O cupom existe: o que derruba a origem aqui é só o prazo.
     const old = new Date(Date.now() - 8 * 24 * 3600_000).toISOString();
     const expired = await createStoreOrder(
       sdb,
       input(variantId, rateId, { customer: { fullName: "Bia Lima", phone: "(91) 99999-0002", marketingOptIn: false }, origin: { kind: "coupon", ref: "AMIGA7K", at: old } }),
     );
     expect(await attributionOf(expired.orderId)).toBeNull();
+  });
+
+  it("link de cupom que existe vira origem, com o código em maiúsculas", async () => {
+    const { variantId, rateId } = await setupStore();
+    await createCoupon(sdb, { code: "AMIGA7K", type: "percent", value: 10, userId: FIXED_USER_ID });
+    const now = new Date("2026-10-05T15:00:00.000Z");
+    const result = await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { origin: { kind: "coupon", ref: "amiga7k", at: new Date(now.getTime() - 60_000).toISOString() } }),
+      { now },
+    );
+    expect(await attributionOf(result.orderId)).toEqual({ kind: "coupon", ref: "AMIGA7K", touchedOn: "2026-10-05" });
   });
 
   it("sem origem = null (pedido antigo, navegador sem storage)", async () => {
@@ -119,10 +134,16 @@ describe("siteOrdersByOrigin", () => {
       sdb,
       input(variantId, rateId, { customer: { fullName: "Cris Melo", phone: "(91) 99999-0003", marketingOptIn: false } }),
     );
+    await createCoupon(sdb, { code: "AMIGA7K", type: "percent", value: 10, userId: FIXED_USER_ID });
+    await createStoreOrder(
+      sdb,
+      input(variantId, rateId, { customer: { fullName: "Dani Reis", phone: "(91) 99999-0004", marketingOptIn: false }, origin: { kind: "coupon", ref: "AMIGA7K", at } }),
+    );
 
     const rows = await siteOrdersByOrigin(sdb, { from: new Date(Date.now() - 3600_000), to: new Date(Date.now() + 60_000) });
     expect(rows).toEqual([
       { kind: "campaign", ref: "dunas", label: "story «Dunas no story»", path: "/ig/dunas", orders: 2, paidOrders: 1, paidCents: 4990 + 1990 },
+      { kind: "coupon", ref: "AMIGA7K", label: "link de cupom", path: "/c/AMIGA7K", orders: 1, paidOrders: 0, paidCents: 0 },
       { kind: null, ref: null, label: "sem origem conhecida", path: null, orders: 1, paidOrders: 0, paidCents: 0 },
     ]);
   });

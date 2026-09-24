@@ -96,9 +96,9 @@ export default async function PrivacyPage() {
           <li>Atender pedidos de troca, devolução ou reembolso;</li>
           <li>
             Saber qual divulgação trouxe o seu pedido: o seu navegador anota o
-            último link de story ou de cupom que você tocou, e o pedido guarda
-            só esse link e o dia. A anotação some do navegador depois da compra
-            ou em 7 dias;
+            último link de story ou de cupom que você tocou, e o pedido feito no
+            site guarda só esse link e o dia. A anotação deixa de valer em 7
+            dias e é apagada quando você compra pelo site;
           </li>
           <li>
             Enviar novidades e ofertas pelo WhatsApp — <strong>somente</strong>{" "}
