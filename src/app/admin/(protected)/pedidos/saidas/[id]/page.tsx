@@ -163,7 +163,7 @@ export default async function SaidaPage({ params }: { params: Promise<{ id: stri
                 {stop.status === "failed" ? (
                   <p className="text-sm text-red-700 dark:text-red-300">
                     Não entregue: {stop.failureReason ? FAILURE_REASON_LABELS[stop.failureReason] : "sem motivo"}
-                    {stop.failureNote ? ` — "${stop.failureNote}"` : ""}. O pedido continua como saído: combine com a cliente e reagende na Rota do dia.
+                    {stop.failureNote ? ` — "${stop.failureNote}"` : ""}. O pedido continua como saído: combine com a cliente; para mandar de novo, marque &ldquo;Levar nesta saída&rdquo; na Rota do dia (até 48 h depois da saída).
                   </p>
                 ) : null}
                 {stop.status === "canceled" ? <p className="text-xs text-zinc-500 dark:text-zinc-400">Parada cancelada junto com a saída.</p> : null}

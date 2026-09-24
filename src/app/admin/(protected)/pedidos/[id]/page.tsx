@@ -34,7 +34,8 @@ import { PackForm } from "./pack-form";
 import { DeliverForm } from "./deliver-form";
 import { canDeliverWithPhoto, deliveryPhotoUrl } from "@/services/delivery";
 import { getFeedbackForOrder } from "@/services/delivery-feedback";
-import { getStopForOrder } from "@/services/delivery-runs";
+import { listCouriers } from "@/services/couriers";
+import { canJoinDeliveryRun, getStopForOrder } from "@/services/delivery-runs";
 import { lateDeliveryForOrder } from "@/services/late-delivery";
 import { listIssuedCouponsForOrder } from "@/services/coupons";
 import { formatCouponValue, ORIGIN_LABELS } from "../../cupons/labels";
@@ -79,6 +80,9 @@ export default async function PedidoDetalhePage({
   const feedback = order.status === "delivered" || order.status === "refunded" ? await getFeedbackForOrder(db, id) : null;
   // Saída do motoboy com GPS: a prova da entrega (hora, quem recebeu, ponto).
   const stop = order.deliveryWindow ? await getStopForOrder(db, id) : null;
+  // O "Saiu" pergunta o motoboy; saiu sem ele, ainda dá para mandar o link (48 h, fora de saída aberta).
+  const couriers = order.deliveryWindow ? await listCouriers(db) : [];
+  const canJoinRun = order.deliveryWindow?.dispatchedAt && couriers.length > 0 ? await canJoinDeliveryRun(db, { orderId: id }) : false;
   const late = stop?.stopStatus === "delivered" ? await lateDeliveryForOrder(db, id) : null;
   const issuedCoupons = await listIssuedCouponsForOrder(db, id);
   const status = order.status as OrderStatus;
@@ -389,6 +393,7 @@ export default async function PedidoDetalhePage({
                           ? `não entregue: ${stop.failureReason ? FAILURE_REASON_LABELS[stop.failureReason] : ""}`
                           : STOP_STATUS_LABELS[stop.stopStatus].toLowerCase()}
                     </span>
+                    {canJoinRun ? <span className="block text-xs text-amber-700 dark:text-amber-400">saiu de novo? escolha o motoboy em Ações</span> : null}
                     {late && late.lateness.minutesLate > 0 ? (
                       <span className={late.lateness.late ? "block text-xs text-amber-700 dark:text-amber-400" : "block text-xs text-zinc-500"}>
                         {late.lateness.late ? "atrasou" : "passou"} {minutesLateLabel(late.lateness.minutesLate)} da janela
@@ -399,6 +404,14 @@ export default async function PedidoDetalhePage({
                             : " · dentro da carência"}
                       </span>
                     ) : null}
+                  </span>
+                </div>
+              ) : canJoinRun ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-zinc-500 dark:text-zinc-400">Motoboy</span>
+                  <span className="text-right text-amber-700 dark:text-amber-400">
+                    não escolhido — sem GPS
+                    <span className="block text-xs text-zinc-500">escolha quem levou em Ações</span>
                   </span>
                 </div>
               ) : null}
@@ -620,6 +633,9 @@ export default async function PedidoDetalhePage({
                   ? {
                       customerName: order.customer.fullName,
                       dispatchedLabel: order.deliveryWindow.dispatchedAt ? formatDateTimeSP(order.deliveryWindow.dispatchedAt) : null,
+                      couriers: couriers.map((c) => ({ id: c.id, name: c.name })),
+                      canJoinRun,
+                      previousStop: stop?.stopStatus === "failed" || stop?.stopStatus === "canceled" ? stop.stopStatus : null,
                     }
                   : null
               }

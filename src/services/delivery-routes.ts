@@ -16,7 +16,7 @@ import {
   type DeliveryWindow,
   type DeliveryWindowChoice,
 } from "@/core/shipping/delivery-windows";
-import { groupRouteOrders, isPaidAfterCutoff, type RouteOfDay } from "@/core/shipping/route";
+import { groupRouteOrders, isPaidAfterCutoff, isStillOnTheStreet, type RouteOfDay } from "@/core/shipping/route";
 import { auditLog, customers, deliveryStops, orderItems, orders, productVariants, shippingRates } from "@/db/schema";
 import { isSpDayKey, spDayKey, spMinutesOfDay } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
@@ -48,8 +48,14 @@ export interface RouteOrder {
   paidAt: Date | null;
   /** Pagou depois da hora-limite: a promessa "hoje" precisa de um olhar da dona. */
   paidAfterCutoff: boolean;
-  /** Saiu com o motoboy (pedido em dinheiro ainda por receber). */
+  /** Saiu com o motoboy ("Na rua": dinheiro ainda por receber, ou pago nas últimas 48 h). */
   dispatchedAt: Date | null;
+}
+
+/** O pedido na Rota do dia. */
+export interface RouteOfDayOrder extends RouteOrder {
+  /** Saiu e a última parada foi "não consegui": combinar com a cliente e mandar de novo. */
+  cameBack: boolean;
 }
 
 /** Retrato gravado por createStoreOrder (tolerante: linha estranha não derruba a rota). */
@@ -182,11 +188,24 @@ export async function listRouteOrders(db: DbOrTx, options: { includeShipped?: bo
   return result;
 }
 
-/** A rota como a tela mostra. `now` injetável (o "hoje" é o de São Paulo). */
-export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOrder> & { todayKey: string }> {
+/**
+ * A rota como a tela mostra. `now` injetável (o "hoje" é o de São Paulo).
+ * O pago que já saiu fica em "Na rua" pelas mesmas 48 h da saída com GPS:
+ * saiu sem escolher o motoboy, ainda dá para mandar o link a ele.
+ */
+export async function listRouteOfDay(db: DbOrTx, input: { now?: Date } = {}): Promise<RouteOfDay<RouteOfDayOrder> & { todayKey: string }> {
   const now = input.now ?? new Date();
   const todayKey = spDayKey(now);
-  const grouped = groupRouteOrders(await listRouteOrders(db), todayKey, spMinutesOfDay(now));
+  const candidates = (await listRouteOrders(db, { includeShipped: true })).filter(
+    // O dinheiro na entrega fica em "Na rua" até a baixa, por mais velho que seja: há dinheiro a receber.
+    (order) => order.status !== "shipped" || order.dispatchedAt === null || isStillOnTheStreet(order.dispatchedAt, now),
+  );
+  const cameBack = await ordersThatCameBack(db, candidates.filter((order) => order.dispatchedAt !== null).map((order) => order.id));
+  const grouped = groupRouteOrders(
+    candidates.map((order) => ({ ...order, cameBack: cameBack.has(order.id) })),
+    todayKey,
+    spMinutesOfDay(now),
+  );
   return { ...grouped, todayKey };
 }
 
@@ -417,11 +436,18 @@ export async function rescheduleOrderWindow(db: DbOrTx, input: z.input<typeof re
 
 /** A última parada (não cancelada) do pedido numa saída com GPS falhou: a peça voltou para a loja. */
 async function lastStopFailed(db: DbOrTx, orderId: string): Promise<boolean> {
-  const [stop] = await db
-    .select({ status: deliveryStops.status })
+  return (await ordersThatCameBack(db, [orderId])).has(orderId);
+}
+
+/** Voltaram para a loja: a última parada (fora as canceladas) foi "não consegui". */
+async function ordersThatCameBack(db: DbOrTx, orderIds: readonly string[]): Promise<Set<string>> {
+  if (orderIds.length === 0) return new Set();
+  const rows = await db
+    .select({ orderId: deliveryStops.orderId, status: deliveryStops.status })
     .from(deliveryStops)
-    .where(and(eq(deliveryStops.orderId, orderId), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
-    .orderBy(desc(deliveryStops.createdAt))
-    .limit(1);
-  return stop?.status === "failed";
+    .where(and(inArray(deliveryStops.orderId, [...orderIds]), inArray(deliveryStops.status, ["pending", "delivered", "failed"])))
+    .orderBy(desc(deliveryStops.createdAt), desc(deliveryStops.id));
+  const last = new Map<string, string>();
+  for (const row of rows) if (!last.has(row.orderId)) last.set(row.orderId, row.status);
+  return new Set([...last].filter(([, status]) => status === "failed").map(([orderId]) => orderId));
 }

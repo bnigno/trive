@@ -5,7 +5,7 @@ import { useActionState } from "react";
 import { isAutomaticRefund } from "@/core/orders/refunds";
 import type { OrderStatus } from "@/core/orders/state-machine";
 import { ConfirmButton } from "@/components/ui/confirm-button";
-import { DeliveredForm, DispatchForm } from "../rota/forms";
+import { CourierForOrderForm, DeliveredForm, DispatchForm, type CourierOption } from "../rota/forms";
 import {
   Field,
   FormError,
@@ -177,8 +177,12 @@ export function OrderActions({
   trackingCode: string | null;
   /** Reembolso lança saída no financeiro: só o dono. A action confere de novo. */
   canRefund: boolean;
-  /** Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio; dispatchedLabel = já saiu. */
-  motoboy?: { customerName: string; dispatchedLabel: string | null } | null;
+  /**
+   * Pedido com janela de motoboy: "Saiu" no lugar do envio com rastreio;
+   * dispatchedLabel = já saiu; canJoinRun = saiu sem motoboy e ainda dá para
+   * mandar o link a um (canJoinDeliveryRun).
+   */
+  motoboy?: { customerName: string; dispatchedLabel: string | null; couriers: CourierOption[]; canJoinRun: boolean; previousStop: "failed" | "canceled" | null } | null;
   /** Foto do pacote registrada: só assim "Saiu" e "Marcar como enviado" aparecem (embalar antes de sair). */
   packed: boolean;
 }) {
@@ -243,6 +247,7 @@ export function OrderActions({
             🛵 Saiu com o motoboy {motoboy.dispatchedLabel}.{" "}
             {status === "pending_payment" ? "Ao receber o dinheiro, marque como pago e depois como entregue." : "Quando ele voltar, marque como entregue."}
           </p>
+          {motoboy.canJoinRun ? <CourierForOrderForm orderId={orderId} couriers={motoboy.couriers} previousStop={motoboy.previousStop} /> : null}
           {status === "paid" || status === "preparing" || status === "shipped" ? <DeliveredForm orderId={orderId} /> : null}
         </div>
       ) : null}
@@ -251,9 +256,11 @@ export function OrderActions({
       (status === "paid" || status === "preparing" || (status === "pending_payment" && paymentMethod === "cash")) ? (
         packed ? (
           <div className="flex flex-col gap-1">
-            <DispatchForm orderId={orderId} customerName={motoboy.customerName} />
+            <DispatchForm orderId={orderId} customerName={motoboy.customerName} couriers={motoboy.couriers} />
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              A peça foi com o motoboy: a cliente recebe “Saiu da TRIVÉ, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia.
+              {motoboy.couriers.length > 0
+                ? "A peça foi com o motoboy: a cliente recebe “Saiu da TRIVÉ, chega hoje entre…” no WhatsApp e o motoboy, o link com o GPS. Vários pedidos com o mesmo motoboy? Marque todos na Rota do dia e monte uma saída só — um link para ele."
+                : "A peça foi com o motoboy: a cliente recebe “Saiu da TRIVÉ, chega hoje entre…” no WhatsApp. A rota inteira fica em Pedidos › Rota do dia."}
             </p>
           </div>
         ) : (
