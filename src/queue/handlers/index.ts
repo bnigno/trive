@@ -100,6 +100,7 @@ import {
   sendOrderRefundedWa,
 } from "@/services/order-notices";
 import { markRefundFailed, processPaymentEvent, refundOrderPayment } from "@/services/payments";
+import { markItemRefundFailed, refundReturnedItem, sendReturnNoticeWa } from "@/services/order-returns";
 import { sendPackedWa } from "@/services/packing";
 import { sendReceiptWa } from "@/services/receipts";
 import { runBotTurn, runScheduledBotTurn } from "@/services/wa-bot";
@@ -119,6 +120,7 @@ const mpPaymentEventPayloadSchema = z.object({
 
 // Avisos de pedido (cancelado/reembolsado/chargeback) só precisam do id.
 const orderNoticePayloadSchema = z.object({ orderId: z.uuid() });
+const itemReturnPayloadSchema = z.object({ returnId: z.uuid() });
 const amountDivergentPayloadSchema = orderNoticePayloadSchema.extend({
   expectedCents: z.number().int().min(0),
   paidCents: z.number().int().min(0),
@@ -787,6 +789,28 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   "mp.payment_event": async (event) => {
     const { mpPaymentId } = mpPaymentEventPayloadSchema.parse(event.payload);
     await processPaymentEvent(getDb(), getPaymentGateway(), { mpPaymentId });
+  },
+  // Uma peça voltou e o desfecho foi CRÉDITO: nada de dinheiro se move, então
+  // a cliente pode saber na hora — com o código do crédito.
+  "order.item_returned": async (event) => {
+    const { returnId } = itemReturnPayloadSchema.parse(event.payload);
+    const result = await sendReturnNoticeWa(getDb(), getMessagingProvider(), { returnId });
+    console.info(`[order.item_returned] ${returnId}:`, result);
+  },
+  // Uma peça voltou e o desfecho foi DINHEIRO: estorno PARCIAL no vendor, com
+  // chave de idempotência por devolução, e o aviso só depois que o valor sai.
+  "payment.refund_item": async (event) => {
+    const { returnId } = itemReturnPayloadSchema.parse(event.payload);
+    const last = event.attempts + 1 >= getRetryPolicy("payment.refund_item").maxAttempts;
+    try {
+      const outcome = await refundReturnedItem(getDb(), getPaymentGateway(), { returnId });
+      console.info(`[payment.refund_item] ${returnId}:`, outcome);
+      const notice = await sendReturnNoticeWa(getDb(), getMessagingProvider(), { returnId });
+      console.info(`[payment.refund_item] ${returnId}: aviso à cliente`, notice);
+    } catch (error) {
+      if (last) await markItemRefundFailed(getDb(), { returnId });
+      throw error;
+    }
   },
   // Devolve o dinheiro no Mercado Pago e só então deixa a cliente saber. A
   // ordem é o ponto: antes disto o sistema anunciava "reembolso confirmado" no

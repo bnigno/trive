@@ -18,6 +18,7 @@ import { coupons } from "./coupons";
 import { customers } from "./customers";
 import { productVariants } from "./catalog";
 import { priceVersions } from "./pricing";
+import { users } from "./governance";
 import { shippingQuotes } from "./shipping";
 
 export const orders = pgTable(
@@ -255,5 +256,45 @@ export const orderStatusHistory = pgTable(
       table.orderId,
       table.createdAt,
     ),
+  ],
+);
+
+/**
+ * Uma peça que voltou, sem o pedido inteiro cair. O pedido segue 'delivered':
+ * ele não foi reembolsado — uma peça voltou.
+ *
+ * `refundCents` é o que a cliente pagou PELO ITEM, já abatida a parte do cupom
+ * que coube a ele (o desconto vive só no cabeçalho do pedido, então é rateio).
+ * Nunca o preço de etiqueta, e nunca com frete dentro.
+ */
+export const orderItemReturns = pgTable(
+  "order_item_returns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "restrict" }),
+    orderItemId: uuid("order_item_id")
+      .notNull()
+      .references(() => orderItems.id, { onDelete: "restrict" }),
+    quantity: integer("quantity").notNull(),
+    refundCents: bigint("refund_cents", { mode: "number" }).notNull(),
+    /** credito = vira cupom pessoal (a "troca"); dinheiro = estorno parcial no MP. */
+    resolution: text("resolution").notNull(),
+    state: text("state").notNull().default("pendente"),
+    mpRefundId: text("mp_refund_id"),
+    couponId: uuid("coupon_id").references(() => coupons.id, { onDelete: "set null" }),
+    reason: text("reason"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("order_item_returns_order_id_idx").on(table.orderId),
+    index("order_item_returns_order_item_id_idx").on(table.orderItemId),
+    check("order_item_returns_quantity_check", sql`${table.quantity} > 0`),
+    check("order_item_returns_refund_cents_check", sql`${table.refundCents} >= 0`),
+    check("order_item_returns_resolution_check", sql`${table.resolution} IN ('credito', 'dinheiro')`),
+    check("order_item_returns_state_check", sql`${table.state} IN ('pendente', 'concluida', 'falhou')`),
   ],
 );

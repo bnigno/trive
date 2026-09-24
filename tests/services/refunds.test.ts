@@ -110,7 +110,7 @@ describe("estorno no Mercado Pago", () => {
     const row = await orderRow(order.orderId);
     expect(row.refundState).toBe("devolvido");
     expect(row.refundedAt).not.toBeNull();
-    expect(row.mpRefundId).toBe(`fake-refund-${order.mpPaymentId}`);
+    expect(row.mpRefundId).toMatch(/^fake-refund-/);
 
     // A saída "Reembolso do pedido #N" não fica pendente esperando a mão do dono.
     const [refundEntry] = await db

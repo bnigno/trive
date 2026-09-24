@@ -46,6 +46,8 @@ export const COUPON_ORIGINS = [
   "referral_reward",
   // Mimo de boas-vindas de quem entra no Provador pela Lia (primeira compra).
   "provador_welcome",
+  // Crédito de uma peça devolvida: é assim que a troca acontece na prática.
+  "troca",
 ] as const;
 
 export const coupons = pgTable(
@@ -139,7 +141,7 @@ export const coupons = pgTable(
     ),
     check(
       "coupons_origin_check",
-      sql`${table.origin} IN ('manual', 'late_delivery', 'price_protection', 'look_photo', 'paper_voucher', 'lia_gift', 'referral', 'referral_reward', 'provador_welcome')`,
+      sql`${table.origin} IN ('manual', 'late_delivery', 'price_protection', 'look_photo', 'paper_voucher', 'lia_gift', 'referral', 'referral_reward', 'provador_welcome', 'troca')`,
     ),
     check(
       "coupons_note_check",

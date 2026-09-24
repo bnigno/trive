@@ -7,6 +7,8 @@ import { getFileStorage } from "@/adapters/storage";
 import { InvalidTransitionError, type OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { requireOwner, requireUser } from "@/services/auth";
+import { returnOrderItem } from "@/services/order-returns";
+import { formatCentsBRL } from "@/lib/money";
 import {
   ServiceError,
   deliverByHand,
@@ -233,6 +235,38 @@ export async function packOrderAction(
         : result.status === "pending_payment"
           ? "Foto guardada: o pedido já pode sair com o motoboy (pagamento na entrega). Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes."
           : "Foto guardada e pedido em separação. Se a cliente aceitou avisos, ela recebe a foto pelo WhatsApp em instantes.",
+    };
+  } catch (error) {
+    return friendlyError(error);
+  }
+}
+
+/**
+ * Uma peça voltou. Só o dono: mexe em estoque e em dinheiro (crédito ou
+ * estorno parcial). O valor vem calculado da tela, mas quem confirma é ele.
+ */
+export async function returnOrderItemAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("financeiro");
+  const refundRaw = String(formData.get("refundCents") ?? "").trim();
+  try {
+    const result = await returnOrderItem(getDb(), {
+      orderId: String(formData.get("orderId") ?? ""),
+      orderItemId: String(formData.get("orderItemId") ?? ""),
+      quantity: Number(formData.get("quantity") ?? 1),
+      resolution: String(formData.get("resolution") ?? "") === "dinheiro" ? "dinheiro" : "credito",
+      ...(refundRaw === "" ? {} : { refundCents: Math.round(Number(refundRaw.replace(",", ".")) * 100) }),
+      reason: String(formData.get("reason") ?? "").trim() || undefined,
+      userId: user.id,
+    });
+    revalidateOrder(String(formData.get("orderId") ?? ""));
+    return {
+      success:
+        result.resolution === "credito"
+          ? `Peça devolvida ao estoque. Crédito de ${formatCentsBRL(result.refundCents)} no cupom ${result.couponCode} — a cliente recebe o código pelo WhatsApp.`
+          : `Peça devolvida ao estoque. Estorno de ${formatCentsBRL(result.refundCents)} pedido ao Mercado Pago — a cliente é avisada quando o dinheiro sair.`,
     };
   } catch (error) {
     return friendlyError(error);

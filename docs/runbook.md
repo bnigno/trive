@@ -1216,6 +1216,46 @@ a origem ("Desculpas pelo atraso") e pode ser desativado.
   ou reembolsado desativa os vales não usados. Produção:
   `scripts/sync-seed.ts --settings paper_voucher_enabled,paper_voucher_percent,referral_percent,referral_reward_percent,paper_voucher_days --templates referral_reward_coupon`.
 
+## Devolução de peça (troca ou dinheiro de um item só)
+
+Quando a cliente devolve **uma peça** e fica com o resto do pedido. O pedido
+**não** muda de status — ele não foi reembolsado, uma peça voltou. "Reembolsar"
+continua sendo para o pedido inteiro.
+
+Na ficha do pedido, card **Devolução de peça**: escolha a peça, confira o valor
+e diga como resolver.
+
+**O valor já vem certo, e não é o preço de etiqueta.** Se o pedido teve cupom, a
+peça carregou parte do desconto: no pedido #1009, os óculos de R$ 54,99 num
+pedido com 10% valem **R$ 49,50** de devolução. O campo é editável — dinheiro de
+cliente é decisão sua. **Frete não volta** em devolução de item: a política só
+devolve frete no arrependimento integral.
+
+Dois desfechos:
+
+| Desfecho | O que acontece |
+| --- | --- |
+| **Crédito** | Vira um **cupom pessoal** de valor fixo, uso único, 90 dias, no nome dela. É assim que a troca acontece: ela escolhe outra peça e usa o código. Nenhum dinheiro se move. |
+| **Dinheiro** | **Estorno parcial** no Mercado Pago. A cliente é avisada **depois** que o valor sai. |
+
+A peça volta ao estoque nos dois casos, com vínculo ao pedido.
+
+**Duas devoluções no mesmo pedido funcionam.** Cada uma tem chave própria no
+vendor — com a chave por pagamento, o segundo estorno parcial seria descartado
+em silêncio pelo Mercado Pago e a cliente ficaria sem o dinheiro.
+
+**Aviso sobre a taxa do MP:** na devolução parcial a taxa **não** é mexida. O MP
+devolve só a proporcional, e a taxa de financiamento do parcelado provavelmente
+não volta — então a conta fica por sua conta, conferindo no painel deles. No
+reembolso **total** a taxa continua sendo cancelada sozinha.
+
+**Cupom com escopo de peça:** se o cupom do pedido valia só para alguns
+produtos, a tela avisa que o valor é sugestão — o pedido não guarda quais peças
+eram elegíveis.
+
+Produção: migração 0064 (`order_item_returns` + origem `troca` nos cupons) e
+`scripts/sync-seed.ts --templates order_item_refunded,order_item_credit`.
+
 ## Reembolso: quem devolve o dinheiro
 
 Desde 24/09/2026 o botão **Reembolsar** devolve o dinheiro de verdade — mas só

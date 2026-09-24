@@ -30,6 +30,12 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // instabilidade do vendor não pode virar reembolso perdido. A cliente só é
   // avisada depois do sucesso; esgotando as tentativas, o pedido fica
   // "falhou" e o dono devolve à mão.
+  // Estorno de UMA peça: mesma régua do estorno total — é dinheiro da cliente.
+  "payment.refund_item": {
+    maxAttempts: 8,
+    baseDelayMs: 10_000,
+    maxDelayMs: 3_600_000,
+  },
   "payment.refund": {
     maxAttempts: 8,
     baseDelayMs: 10_000,

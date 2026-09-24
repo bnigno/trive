@@ -3,6 +3,7 @@ import type {
   CreateCheckoutPreferenceInput,
   Payment,
   PaymentGateway,
+  RefundOptions,
   RefundResult,
 } from "./index";
 
@@ -39,20 +40,29 @@ export class FakePaymentGateway implements PaymentGateway {
     return { ...this.requirePayment(paymentId) };
   }
 
-  async refundPayment(paymentId: string): Promise<RefundResult> {
+  async refundPayment(paymentId: string, options: RefundOptions = {}): Promise<RefundResult> {
     const payment = this.requirePayment(paymentId);
+    const parcial = options.amountCents !== undefined;
+    // Parcial não encerra o pagamento: dá para devolver outra peça depois.
     if (payment.status !== "approved") {
       throw new Error(
         `FakePaymentGateway: cannot refund payment in status ${payment.status}`,
       );
     }
-    payment.status = "refunded";
-    this.refundCalls.push(paymentId);
-    return { refundId: `fake-refund-${paymentId}`, status: "approved" };
+    // A chave repetida é o que o MP descarta em silêncio — aqui isso aparece.
+    const key = options.idempotencyKey ?? `refund:${paymentId}`;
+    if (this.refundKeys.has(key)) {
+      return { refundId: `fake-refund-${key}`, status: "approved" };
+    }
+    this.refundKeys.add(key);
+    if (!parcial) payment.status = "refunded";
+    this.refundCalls.push({ paymentId, amountCents: options.amountCents ?? null });
+    return { refundId: `fake-refund-${key}`, status: "approved" };
   }
 
-  /** Teste: quantas vezes o vendor foi realmente chamado (estorno duplicado é dinheiro a mais). */
-  readonly refundCalls: string[] = [];
+  /** Teste: cada chamada real ao vendor (estorno duplicado é dinheiro a mais). */
+  readonly refundCalls: { paymentId: string; amountCents: number | null }[] = [];
+  private readonly refundKeys = new Set<string>();
 
   // --- Helpers de teste (não fazem parte da interface PaymentGateway) ---
 

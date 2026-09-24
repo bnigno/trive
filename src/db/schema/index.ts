@@ -16,7 +16,7 @@ export {
   pricingPolicies,
   variantCosts,
 } from "./pricing";
-export { orderItems, orders, orderStatusHistory } from "./orders";
+export { orderItemReturns, orderItems, orders, orderStatusHistory } from "./orders";
 export { stockLevels, stockMovements } from "./stock";
 export { stockAlerts, stockHolds } from "./holds";
 export { customerProfiles } from "./style";

@@ -7,6 +7,7 @@ import type {
   PaymentGateway,
   PaymentMethod,
   PaymentStatus,
+  RefundOptions,
   RefundResult,
 } from "./index";
 
@@ -178,14 +179,17 @@ export class MercadoPagoPaymentGateway implements PaymentGateway {
     };
   }
 
-  async refundPayment(paymentId: string): Promise<RefundResult> {
+  async refundPayment(paymentId: string, options: RefundOptions = {}): Promise<RefundResult> {
     const raw = await this.request(
       `/v1/payments/${encodeURIComponent(paymentId)}/refunds`,
       {
         method: "POST",
-        // Reembolso total: uma chave por pagamento evita reembolso duplicado.
-        idempotencyKey: `refund:${paymentId}`,
-        body: {},
+        // A chave é o que impede estorno em dobro. No parcial ela TEM de vir de
+        // fora (uma por devolução): reusar a do pagamento faria o MP descartar
+        // o segundo estorno sem avisar.
+        idempotencyKey: options.idempotencyKey ?? `refund:${paymentId}`,
+        // Body vazio = total. Com valor = parcial (o MP espera reais).
+        body: options.amountCents === undefined ? {} : { amount: options.amountCents / 100 },
       },
     );
     const parsed = mpRefundResponseSchema.parse(raw);
