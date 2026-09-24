@@ -323,7 +323,17 @@ export async function dispatchOrder(db: DbOrTx, input: z.input<typeof dispatchSc
     await tx.update(orders).set({ deliveryWindow: snapshot }).where(eq(orders.id, order.id));
     // Dinheiro na entrega que voltou e foi pago antes de sair de novo: o
     // order.shipped cai na chave do "saiu" da primeira vez — o aviso vai por aqui.
-    if (again) await notice();
+    if (again) {
+      await notice();
+      await tx.insert(auditLog).values({
+        actorType: "user",
+        actorId: parsed.userId,
+        action: "order.dispatch",
+        entityType: "order",
+        entityId: order.id,
+        after: { dispatchedAt: snapshot.dispatchedAt, again: true },
+      });
+    }
     return { ...base, to: "shipped", idempotent: false };
   });
 }
@@ -462,7 +472,7 @@ async function cameBackToStore(db: DbOrTx, order: { id: string; dispatchedAt: Da
  * consegui" e o pedido não saiu de novo depois dela (o "Saiu" sem motoboy de
  * quem foi reagendado não cria parada — a que falhou continua a última).
  */
-async function ordersThatCameBack(db: DbOrTx, list: readonly { id: string; dispatchedAt: Date | null }[]): Promise<Set<string>> {
+export async function ordersThatCameBack(db: DbOrTx, list: readonly { id: string; dispatchedAt: Date | null }[]): Promise<Set<string>> {
   if (list.length === 0) return new Set();
   const rows = await db
     .select({ orderId: deliveryStops.orderId, status: deliveryStops.status, closedAt: deliveryStops.updatedAt })

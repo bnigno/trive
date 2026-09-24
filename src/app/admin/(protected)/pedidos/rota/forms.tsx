@@ -120,7 +120,8 @@ const PREVIOUS_STOP_TEXT = {
 
 /**
  * Saiu sem escolher o motoboy (ou a última parada não entregou): escolhe
- * agora — ele recebe o link, o GPS liga e a cliente não recebe outro aviso.
+ * agora — ele recebe o link e o GPS liga. A cliente não recebe outro aviso,
+ * a não ser que o pedido tenha voltado (aí ele sai de novo, com aviso novo).
  */
 export function CourierForOrderForm({ orderId, couriers, previousStop = null }: { orderId: string; couriers: CourierOption[]; previousStop?: "failed" | "canceled" | null }) {
   const [state, formAction] = useActionState(dispatchOrderAction, initialState);
@@ -137,7 +138,11 @@ export function CourierForOrderForm({ orderId, couriers, previousStop = null }: 
         <ConfirmButton
           variant="primary"
           size="sm"
-          confirmMessage={`${courier.name} recebe no WhatsApp o link das paradas com o GPS. A cliente não recebe outro aviso: o mapa aparece no link que ela já tem.`}
+          confirmMessage={
+            previousStop === "failed"
+              ? `O pedido sai de novo: ${courier.name} recebe no WhatsApp o link das paradas com o GPS, e a cliente recebe um aviso novo de saída.`
+              : `${courier.name} recebe no WhatsApp o link das paradas com o GPS. A cliente não recebe outro aviso: o mapa aparece no link que ela já tem.`
+          }
         >
           Mandar o link ao motoboy
         </ConfirmButton>
@@ -242,7 +247,7 @@ export function MountRunForm({ couriers }: { couriers: { id: string; name: strin
           variant="primary"
           disabled={selected === 0}
           onMouseDown={() => setSelected(countSelected())}
-          confirmMessage={`Montar a saída com ${label}? Quem ainda não saiu recebe "Saiu da TRIVÉ" no WhatsApp agora (quem já saiu não recebe de novo), e o motoboy recebe o link das paradas.`}
+          confirmMessage={`Montar a saída com ${label}? Quem ainda não saiu recebe "Saiu da TRIVÉ" no WhatsApp agora (quem já saiu não recebe de novo; quem voltou sem entregar recebe um aviso novo), e o motoboy recebe o link das paradas.`}
         >
           Montar saída · {label}
         </ConfirmButton>
