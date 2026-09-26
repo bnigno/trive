@@ -17,8 +17,9 @@ const ACCESSORY_TYPES: ReadonlySet<string> = new Set<PieceType>(["bolsa", "cinto
 
 /**
  * O texto de movimento, em inglês (é o que o modelo do vendor entende
- * melhor): câmera parada, gesto natural e pequeno, tecido caindo de verdade,
- * e a proibição explícita de mudar a peça. Com as costas, a modelo gira até
+ * melhor): cena e luz da própria foto (as fotos-base são editoriais desde
+ * 23/09), câmera parada, gesto natural e pequeno com a expressão calma da
+ * modelo, tecido caindo de verdade, e a proibição explícita de mudar a peça. Com as costas, a modelo gira até
  * o quadro final. `movement` troca SÓ a frase do gesto: a proibição fica.
  */
 export function buildVideoMotionPrompt(input: { pieceType: string | null; withBackView: boolean; movement?: string }): string {
@@ -29,10 +30,10 @@ export function buildVideoMotionPrompt(input: { pieceType: string | null; withBa
     : input.withBackView
       ? "She turns slowly and naturally to show the back of the outfit, ending on the back view."
       : accessory
-        ? "She makes a small natural gesture that shows the accessory, with a relaxed smile."
-        : "She shifts her weight and turns slightly, letting the fabric move naturally, with a relaxed smile.";
+        ? "She makes a small natural gesture that shows the accessory, keeping a calm, confident expression."
+        : "She shifts her weight and turns slightly, letting the fabric move naturally, keeping a calm, confident expression.";
   return [
-    "Realistic smartphone video in soft natural daylight; the camera stays steady.",
+    "Realistic video that keeps the scene, background and lighting exactly as in the image; the camera stays steady.",
     movement,
     "Keep the garment exactly as in the image: same color, print, buttons, belt, length and fit. Do not add accessories, text or logos. Keep her face and body the same.",
   ].join(" ");

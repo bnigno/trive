@@ -36,6 +36,9 @@ describe("buildVideoMotionPrompt", () => {
     expect(prompt).toContain("Keep the garment exactly as in the image");
     expect(prompt).toContain("Do not add accessories, text or logos");
     expect(prompt).not.toMatch(/back/i);
+    // A cena e a luz são as da foto (editorial): nada de "celular" ou "luz do dia" que troque o clima.
+    expect(prompt).toContain("keeps the scene, background and lighting exactly as in the image");
+    expect(prompt).not.toMatch(/smartphone|daylight|smile/i);
   });
 
   it("com a foto das costas: a modelo gira até o quadro final", () => {
