@@ -585,6 +585,8 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   ai_photos_default_model: z.enum(HOUSE_MODEL_KEYS, { error: "Modelo desconhecido." }),
   /** Foto de IA também na vitrine (padrão: só no post do Instagram e nos cartões da Lia). */
   ai_photos_in_store: z.boolean(),
+  ai_video_enabled: z.boolean(),
+  ai_video_daily_limit: z.number().int().min(1, "No mínimo 1 vídeo por dia.").max(20, "No máximo 20 vídeos por dia."),
   /** Janela de envio em lote (avisos de "voltou", convites VIP), horas de São Paulo. */
   wa_send_window_start: z.number().int().min(0).max(23),
   wa_send_window_end: z.number().int().min(1).max(24),

@@ -11,6 +11,9 @@ import { getProductDetail, thumbPathFor } from "@/services/catalog";
 import { listProductReadiness } from "@/services/catalog-readiness";
 import { getAtelierIntakeForProduct } from "@/services/atelier";
 import { listStudioBasePhotos, listStudioRequestsForProduct, loadStudioSettings } from "@/services/studio";
+import { listStudioVideoPanel } from "@/services/studio-video";
+import { getProductVideoCaption } from "@/services/product-posts";
+import { isImageStudioConfigured } from "@/adapters/image-studio";
 import { countPublicLooksForProduct } from "@/services/customer-looks";
 import { getFitSignalsForProduct } from "@/services/delivery-feedback";
 import { FIT_SIGNAL_LABELS } from "@/core/catalog/fit-signal";
@@ -42,6 +45,7 @@ import { EditProductForm } from "./edit-product-form";
 import { ImageColorForm } from "./image-color-form";
 import { ImageUploadForm } from "./image-upload-form";
 import { StudioBlock } from "./studio-block";
+import { StudioVideoBlock } from "./studio-video-block";
 import { AddVariantForm, EditVariantForm } from "./variant-forms";
 import { MeasurementsForm } from "./measurements-form";
 import { readinessIssueHref } from "../readiness-badge";
@@ -123,9 +127,13 @@ export default async function ProdutoDetalhePage({
   ]);
   // O ensaio (foto no corpo) é do dono: custo e vendor não viajam para a equipe.
   const studio = owner
-    ? await Promise.all([loadStudioSettings(db), listStudioBasePhotos(db), listStudioRequestsForProduct(db, id)]).then(
-        ([settings, basePhotos, requests]) => ({ settings, basePhotos, requests }),
-      )
+    ? await Promise.all([
+        loadStudioSettings(db),
+        listStudioBasePhotos(db),
+        listStudioRequestsForProduct(db, id),
+        listStudioVideoPanel(db, id, new Date()),
+        getProductVideoCaption(db, id),
+      ]).then(([settings, basePhotos, requests, video, videoCaption]) => ({ settings, basePhotos, requests, video, videoCaption }))
     : null;
   // Vindo do selo "sem peso": abre e foca a primeira variação ativa sem peso.
   const focusWeightVariantId =
@@ -490,6 +498,16 @@ export default async function ProdutoDetalhePage({
           settings={studio.settings}
           basePhotos={studio.basePhotos}
           requests={studio.requests}
+          storage={storage}
+        />
+      ) : null}
+
+      {studio ? (
+        <StudioVideoBlock
+          productId={detail.id}
+          panel={studio.video}
+          caption={studio.videoCaption}
+          configured={isImageStudioConfigured()}
           storage={storage}
         />
       ) : null}

@@ -45,3 +45,17 @@ export async function isAiPhotosEnabled(db: DbOrTx): Promise<boolean> {
 export async function isAiPhotosInStore(db: DbOrTx): Promise<boolean> {
   return (await loadStudioSettings(db)).inStore;
 }
+
+export type StudioVideoSettings = { enabled: boolean; dailyLimit: number };
+
+export const STUDIO_VIDEO_SETTING_KEYS = ["ai_video_enabled", "ai_video_daily_limit"] as const;
+
+/** "A peça se mexe": interruptor (nasce desligado) e teto de vídeos por dia. */
+export async function loadStudioVideoSettings(db: DbOrTx): Promise<StudioVideoSettings> {
+  const map = await getSettingsMap(db, [...STUDIO_VIDEO_SETTING_KEYS]);
+  const limit = map["ai_video_daily_limit"];
+  return {
+    enabled: map["ai_video_enabled"] === true,
+    dailyLimit: typeof limit === "number" && Number.isInteger(limit) && limit >= 1 ? limit : 2,
+  };
+}

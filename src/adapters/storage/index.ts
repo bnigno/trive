@@ -10,7 +10,8 @@ export type UploadInput = {
 
 export interface FileStorage {
   upload(input: UploadInput): Promise<{ path: string }>;
-  publicUrl(path: string): string;
+  /** Com `download`, o link baixa o arquivo com esse nome (Content-Disposition) em vez de abrir no navegador. */
+  publicUrl(path: string, options?: { download?: string }): string;
   remove(path: string): Promise<void>;
   /** Lê um arquivo do bucket (ex.: foto de produto para compor uma imagem). Lança se não existir. */
   download(path: string): Promise<{ data: Buffer; contentType: string | null }>;

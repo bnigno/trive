@@ -3,7 +3,8 @@
 // candidatas que cada pedido gerou (aprovadas ou não pelo portão de
 // fidelidade). A escolhida vira product_images com origin = 'ai'; a
 // proveniência e o custo ficam aqui e no audit_log, mesmo que a loja não
-// rotule a foto.
+// rotule a foto. "A peça se mexe": a foto escolhida vira vídeo curto
+// (studio_videos) — só para o Instagram, nunca na vitrine.
 import { sql } from "drizzle-orm";
 import { bigint, boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
@@ -14,6 +15,8 @@ export const STUDIO_BASE_PHOTO_STATUSES = ["candidate", "chosen", "discarded"] a
 export const STUDIO_REQUEST_STATUSES = ["queued", "done", "failed"] as const;
 export const STUDIO_REQUEST_SOURCES = ["admin", "atelier", "auto"] as const;
 export const STUDIO_CANDIDATE_STATUSES = ["candidate", "rejected", "chosen", "discarded", "failed"] as const;
+/** Espelha STUDIO_VIDEO_STATUSES do core (um teste prende os dois juntos). */
+export const STUDIO_VIDEO_STATUSES = ["queued", "submitting", "processing", "done", "failed", "discarded"] as const;
 
 export const studioBasePhotos = pgTable(
   "studio_base_photos",
@@ -107,5 +110,60 @@ export const studioCandidates = pgTable(
     uniqueIndex("studio_candidates_request_option_attempt_unique_idx").on(table.requestId, table.optionNo, table.attempt),
     index("studio_candidates_created_at_idx").on(table.createdAt),
     check("studio_candidates_status_check", sql`${table.status} IN ('candidate', 'rejected', 'chosen', 'discarded', 'failed')`),
+  ],
+);
+
+export const studioVideos = pgTable(
+  "studio_videos",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => studioCandidates.id, { onDelete: "cascade" }),
+    /** A foto (JPEG da candidata) no momento do pedido: primeiro quadro e capa do vídeo. */
+    sourceStoragePath: text("source_storage_path").notNull(),
+    color: text("color"),
+    durationSeconds: integer("duration_seconds").notNull(),
+    resolution: text("resolution").notNull(),
+    prompt: text("prompt").notNull(),
+    status: text("status").notNull().default("queued"),
+    /** Id do pedido na FASHN: com ele, buscar de novo nunca paga de novo. */
+    vendorJobId: text("vendor_job_id"),
+    vendor: text("vendor"),
+    vendorModel: text("vendor_model"),
+    /** Contador que só sobe: a chave de dedupe de cada rodada de espera. */
+    polls: integer("polls").notNull().default(0),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    giveUpAt: timestamp("give_up_at", { withTimezone: true }),
+    storagePath: text("storage_path"),
+    bytes: integer("bytes"),
+    /** Créditos do vídeo pela tabela, gravados no pedido. */
+    credits: integer("credits").notNull(),
+    /** Gasto registrado, em centavos de dólar: o real quando pronto; a estimativa quando pode ter sido cobrado; 0 quando certamente não foi. */
+    usdCents: integer("usd_cents").notNull().default(0),
+    elapsedMs: integer("elapsed_ms"),
+    /** "codigo: mensagem" (failureLabel lê o código antes dos dois-pontos). */
+    errorDetail: text("error_detail"),
+    requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("studio_videos_product_id_created_at_idx").on(table.productId, table.createdAt),
+    index("studio_videos_created_at_idx").on(table.createdAt),
+    // Um pedido da FASHN = uma linha: o árbitro contra pagar duas vezes.
+    uniqueIndex("studio_videos_vendor_job_id_unique_idx").on(table.vendorJobId),
+    // Clique duplo nunca vira dois vídeos da mesma foto ao mesmo tempo: o árbitro é o banco.
+    uniqueIndex("studio_videos_candidate_in_flight_unique_idx")
+      .on(table.candidateId)
+      .where(sql`${table.status} IN ('queued', 'submitting', 'processing')`),
+    check("studio_videos_status_check", sql`${table.status} IN ('queued', 'submitting', 'processing', 'done', 'failed', 'discarded')`),
+    check("studio_videos_duration_check", sql`${table.durationSeconds} IN (5, 10)`),
+    check("studio_videos_resolution_check", sql`${table.resolution} IN ('480p', '720p', '1080p')`),
+    check("studio_videos_money_check", sql`${table.credits} >= 0 AND ${table.usdCents} >= 0`),
   ],
 );

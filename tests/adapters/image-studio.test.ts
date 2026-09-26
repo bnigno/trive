@@ -333,6 +333,10 @@ describe("FashnImageStudio.animate (a peça se mexe)", () => {
     expect(await reasonOf(videoServer({ statuses: [{ status: "completed", output: ["data:video/mp4;base64,AAAA"] }] }))).toBe("invalid_response");
     expect(await reasonOf(videoServer({ statuses: [{ status: "completed", output: [] }] }))).toBe("invalid_response");
     expect(await reasonOf(videoServer({ cdnStatus: 403 }))).toBe("unavailable");
+    // O status do CDN não vai no erro: 404 ao baixar não é "a FASHN não conhece o pedido".
+    const cdn404 = await failureOf(client(videoServer({ cdnStatus: 404 })).animate(input));
+    expect(cdn404.status).toBeUndefined();
+    expect(cdn404.message).toContain("404");
     expect(await reasonOf(videoServer({ statuses: [{ status: "failed", error: { name: "ContentModerationError", message: "corpo" } }] }))).toBe("rejected");
     vi.stubEnv("FASHN_API_KEY", "");
     expect(await reasonOf(videoServer())).toBe("no_key");
@@ -474,7 +478,17 @@ describe("FakeImageStudio + seleção por ADAPTER_MODE", () => {
     const ids: string[] = [];
     await fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", onSubmitted: (id) => ids.push(id) });
     await fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", resumeJobId: "x", onSubmitted: (id) => ids.push(id) });
-    expect(ids).toEqual(["fake-video-2"]);
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toMatch(/^fake-video-2-[0-9a-f]{8}$/);
+    fake.failAfterSubmitNext();
+    const accepted: string[] = [];
+    await expect(
+      fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", onSubmitted: (id) => accepted.push(id) }),
+    ).rejects.toMatchObject({ reason: "timeout" });
+    expect(accepted).toHaveLength(1);
+    expect(await fake.creditsBalance()).toBeNull();
+    fake.balance = 3;
+    expect(await fake.creditsBalance()).toBe(3);
     await expect(
       fake.animate({ image: { data: Buffer.from("nao-e-imagem"), mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p" }),
     ).rejects.toMatchObject({ reason: "rejected" });

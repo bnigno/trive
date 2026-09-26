@@ -9,6 +9,7 @@ import { ImageResponse } from "next/og";
 import { editionHeadline } from "@/core/digest/editions";
 import type { DailyDigestData } from "@/core/digest/types";
 import type { ReceiptAssets } from "@/core/receipts/types";
+import { studioSpendLabel } from "@/core/studio/labels";
 import { formatCentsBRL, formatUsdCents } from "@/lib/money";
 
 export const DIGEST_WIDTH = 1080;
@@ -261,7 +262,10 @@ function Digest({ data, lockup }: { data: DailyDigestData; lockup: string }) {
           />
         </Section>
         <div style={{ marginTop: 8, fontSize: 20, color: C.ink500 }}>
-          {`Custo estimado da IA no dia: ${formatUsdCents(bot.costUsdCents)}${bot.studioImages > 0 ? ` · fotos no corpo: ${formatUsdCents(bot.studioUsdCents)} (${bot.studioImages})` : ""}`}
+          {(() => {
+            const spend = studioSpendLabel({ images: bot.studioImages, videos: bot.studioVideos });
+            return `Custo estimado da IA no dia: ${formatUsdCents(bot.costUsdCents)}${spend ? ` · ${spend.what}: ${formatUsdCents(bot.studioUsdCents)} (${spend.count})` : ""}`;
+          })()}
         </div>
 
         <Section title="ESTOQUE BAIXO">

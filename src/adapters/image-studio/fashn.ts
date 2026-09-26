@@ -328,7 +328,8 @@ export class FashnImageStudio implements ImageStudio {
     } catch (error) {
       throw networkError(error);
     }
-    if (!response.ok) throw new StudioUnavailableError(`O vídeo da FASHN respondeu HTTP ${response.status}.`, "unavailable", response.status);
+    // Sem o status HTTP no erro: um 404/403 do CDN não é "a FASHN não conhece o pedido" (esse vem da consulta).
+    if (!response.ok) throw new StudioUnavailableError(`O vídeo da FASHN respondeu HTTP ${response.status}.`, "unavailable");
     if (Number(response.headers.get("content-length") ?? 0) > VIDEO_MAX_BYTES) {
       throw new StudioUnavailableError("O vídeo da FASHN veio grande demais.", "invalid_response");
     }

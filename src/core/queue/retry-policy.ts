@@ -98,6 +98,10 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // espera de 1 min dobrando, 4 tentativas, e a dona vê "falhou" no painel.
   "product.ai_photo": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
   "studio.base_photo": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+  // Vídeo da peça: só volta à fila o que não gastou (429 na entrada, rede ao
+  // baixar a foto) ou o que já foi pago e só falta guardar — a retomada pelo
+  // id do pedido nunca paga de novo. As rodadas de espera são eventos novos.
+  "product.ai_video": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
   // Push: servidor da Apple/Google fora do ar volta em segundos; depois de
   // 3 tentativas o aviso perdeu o sentido (a próxima mensagem gera outro).
   "push.new_message": { maxAttempts: 3, baseDelayMs: 15_000, maxDelayMs: 60_000 },
@@ -152,6 +156,8 @@ export const HANDLER_RESERVE_MS: Record<string, number> = {
   // menos é ser morto no meio de uma geração já paga.
   "product.ai_photo": 30_000,
   "studio.base_photo": 30_000,
+  // Uma rodada de espera + subir o MP4 (~16 MB): menos que isso, nem começa.
+  "product.ai_video": 30_000,
 };
 
 export function handlerReserveMs(eventType: string): number {

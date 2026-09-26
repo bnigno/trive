@@ -431,11 +431,13 @@ export async function updateStudioSettingsAction(_prev: FormState, formData: For
   const user = await requireOwner("configuracoes");
   try {
     const dailyQuota = parseIntField(String(formData.get("dailyQuota") ?? ""), "Imagens por dia");
+    const videoDailyLimit = parseIntField(String(formData.get("videoDailyLimit") ?? ""), "Vídeos por dia");
     const db = getDb();
     await updateSetting(db, { key: "ai_photos_daily_quota", value: dailyQuota, userId: user.id });
     await updateSetting(db, { key: "ai_photos_quality", value: String(formData.get("quality") ?? ""), userId: user.id });
     await updateSetting(db, { key: "ai_photos_default_scene", value: String(formData.get("defaultScene") ?? ""), userId: user.id });
     await updateSetting(db, { key: "ai_photos_default_model", value: String(formData.get("defaultModel") ?? ""), userId: user.id });
+    await updateSetting(db, { key: "ai_video_daily_limit", value: videoDailyLimit, userId: user.id });
     revalidatePath("/admin/configuracoes");
     return { success: "Foto no corpo salva." };
   } catch (error) {

@@ -1,7 +1,7 @@
 // Rótulos do ensaio (core, puro): a candidata e o pedido em português.
 import { describe, expect, it } from "vitest";
 
-import { candidateLabel, failureLabel, requestLabel } from "@/core/studio/labels";
+import { candidateLabel, failureLabel, requestLabel, studioSpendLabel, videoLabel } from "@/core/studio/labels";
 
 const OK = { mesma_peca: true, cor_ok: true, estampa_ok: true, corte_ok: true, artefatos: [], nota: 9 };
 
@@ -19,6 +19,30 @@ describe("rótulos do ensaio", () => {
     expect(failureLabel("sem_foto_base")).toBe("a foto-base da modelo foi descartada");
     expect(failureLabel("algo estranho")).toBe("algo estranho");
     expect(failureLabel(null)).toBe("motivo desconhecido");
+  });
+
+  it("vídeo: cada estado em português; a falha diz se ainda dá para buscar sem pagar", () => {
+    expect(videoLabel({ status: "queued", errorDetail: null })).toEqual({ label: "Na fila", tone: "info" });
+    expect(videoLabel({ status: "submitting", errorDetail: null })).toEqual({ label: "Enviando à FASHN…", tone: "info" });
+    expect(videoLabel({ status: "processing", errorDetail: null })).toEqual({ label: "Fazendo o vídeo… (uns 5 min)", tone: "info" });
+    expect(videoLabel({ status: "done", errorDetail: null })).toEqual({ label: "Pronto", tone: "success" });
+    expect(videoLabel({ status: "discarded", errorDetail: null })).toEqual({ label: "Descartado", tone: "neutral" });
+    expect(videoLabel({ status: "failed", errorDetail: "demorou_demais: 30 min" }).label).toBe(
+      "Falhou: a FASHN não entregou em 30 min — dá para buscar de novo por 3 dias, sem pagar",
+    );
+    expect(videoLabel({ status: "failed", errorDetail: "envio_incerto: rede" }).label).toContain("confira o saldo da FASHN");
+    expect(videoLabel({ status: "failed", errorDetail: "no_credits: 402" }).label).toBe("Falhou: sem créditos na FASHN");
+    for (const code of ["nao_salvou", "pedido_sumiu", "video_desligado", "sem_envio"]) {
+      expect(failureLabel(code)).not.toBe(code);
+    }
+  });
+
+  it("gasto do estúdio: só fotos como sempre; com vídeo, diz quantos de cada; nada = null", () => {
+    expect(studioSpendLabel({ images: 0, videos: 0 })).toBeNull();
+    expect(studioSpendLabel({ images: 9, videos: 0 })).toEqual({ what: "fotos no corpo", count: "9" });
+    expect(studioSpendLabel({ images: 9, videos: 1 })).toEqual({ what: "fotos e vídeos no corpo", count: "9 fotos · 1 vídeo" });
+    expect(studioSpendLabel({ images: 1, videos: 2 })).toEqual({ what: "fotos e vídeos no corpo", count: "1 foto · 2 vídeos" });
+    expect(studioSpendLabel({ images: 0, videos: 1 })).toEqual({ what: "vídeos no corpo", count: "1 vídeo" });
   });
 
   it("pedido: na fila com a contagem, pronto, falhou", () => {

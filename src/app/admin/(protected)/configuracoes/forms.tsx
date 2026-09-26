@@ -700,7 +700,7 @@ export function StudioSettingsForm({
   scenes,
   models,
 }: {
-  defaults: { dailyQuota: number; quality: "economica" | "alta"; defaultScene: string; defaultModel: string };
+  defaults: { dailyQuota: number; quality: "economica" | "alta"; defaultScene: string; defaultModel: string; videoDailyLimit: number };
   scenes: { key: string; label: string }[];
   models: { key: string; label: string }[];
 }) {
@@ -735,6 +735,9 @@ export function StudioSettingsForm({
               </option>
             ))}
           </Select>
+        </Field>
+        <Field label="Vídeos por dia" hint="Cada vídeo de 5 s custa ≈ R$ 2,48 (6 créditos da FASHN). Vídeo que falhou sem cobrança não conta. Chegou no teto, o botão recusa até amanhã.">
+          <Input name="videoDailyLimit" type="number" min={1} max={20} step={1} required defaultValue={String(defaults.videoDailyLimit)} />
         </Field>
       </div>
 

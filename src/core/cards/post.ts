@@ -44,6 +44,8 @@ export type PostCaptionInput = {
   editionName: string | null;
   storeName: string;
   productUrl: string;
+  /** Linha extra no fim do texto (antes das hashtags): o aviso de IA do vídeo. */
+  notice?: string;
 };
 
 /**
@@ -71,7 +73,9 @@ export function buildPostCaption(input: PostCaptionInput): string {
   const unique = [...new Set(tags)];
 
   const fim = input.productUrl.trim();
-  const cabeca = [abertura, segunda, convite].join("\n");
+  const notice = (input.notice ?? "").trim();
+  const texto = [abertura, segunda, convite].join("\n");
+  const cabeca = notice !== "" ? `${texto}\n${notice}` : texto;
   let caption = [cabeca, unique.join(" "), fim].join("\n\n");
 
   while (caption.length > MAX_CAPTION && unique.length > 0) {
@@ -79,9 +83,10 @@ export function buildPostCaption(input: PostCaptionInput): string {
     caption = [cabeca, unique.join(" "), fim].join("\n\n");
   }
   if (caption.length > MAX_CAPTION) {
-    // Sem hashtags ainda passou (nome gigante): corta a cabeça, guarda o link.
-    const espaco = MAX_CAPTION - fim.length - 2;
-    caption = [cabeca.slice(0, Math.max(0, espaco)).trimEnd(), fim].join("\n\n");
+    // Sem hashtags ainda passou (nome gigante): corta o texto, guarda o aviso e o link.
+    const espaco = MAX_CAPTION - fim.length - 2 - (notice !== "" ? notice.length + 1 : 0);
+    const cortado = texto.slice(0, Math.max(0, espaco)).trimEnd();
+    caption = [notice !== "" ? `${cortado}\n${notice}` : cortado, fim].join("\n\n");
   }
   return caption;
 }

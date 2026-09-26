@@ -4,7 +4,26 @@
 import { describe, expect, it } from "vitest";
 
 import { FASHN_VIDEO_CREDITS, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, creditsToUsdCents, videoCreditsFor } from "@/core/studio/cost";
-import { buildVideoMotionPrompt, VIDEO_AI_NOTICE, VIDEO_DEFAULTS, videoFitsBudget } from "@/core/studio/video";
+import { STUDIO_VIDEO_STATUSES as SCHEMA_VIDEO_STATUSES } from "@/db/schema/studio";
+import {
+  assertVideoTransition,
+  buildVideoMotionPrompt,
+  canRefetchVideo,
+  canTransitionVideo,
+  checkVideoRequest,
+  classifyVideoFailure,
+  stalledVideoFailure,
+  InvalidVideoTransitionError,
+  isVideoInFlight,
+  nextVideoPollAt,
+  STUDIO_VIDEO_STATUSES,
+  VIDEO_AI_NOTICE,
+  VIDEO_CAPTION_NOTICE,
+  VIDEO_DEFAULTS,
+  VIDEO_TIMING,
+  VIDEO_TRANSITIONS,
+  videoFitsBudget,
+} from "@/core/studio/video";
 
 describe("custo do vídeo", () => {
   it("segue a tabela da FASHN: 5 s = 1/3/6 e 10 s = 2/6/12 créditos", () => {
@@ -77,5 +96,160 @@ describe("videoFitsBudget", () => {
     expect(videoFitsBudget({ durationSeconds: 10, resolution: "1080p", budgetCredits: 6, balanceCredits: 0 })).toEqual({ ok: false, credits: 12, reason: "teto" });
     expect(videoFitsBudget({ durationSeconds: 5, resolution: "1080p", budgetCredits: 6, balanceCredits: 5 })).toEqual({ ok: false, credits: 6, reason: "saldo" });
     expect(videoFitsBudget({ durationSeconds: 5, resolution: "480p", budgetCredits: 1, balanceCredits: null })).toEqual({ ok: true, credits: 1 });
+  });
+});
+
+describe("estados do vídeo no estúdio", () => {
+  it("o core e o banco têm os mesmos estados", () => {
+    expect([...STUDIO_VIDEO_STATUSES]).toEqual([...SCHEMA_VIDEO_STATUSES]);
+  });
+
+  it("só as transições previstas passam; o resto lança", () => {
+    const allowed = new Set(Object.entries(VIDEO_TRANSITIONS).flatMap(([from, tos]) => tos.map((to) => `${from}>${to}`)));
+    expect([...allowed].sort()).toEqual(
+      [
+        "done>discarded",
+        "failed>discarded",
+        "failed>processing",
+        "processing>done",
+        "processing>failed",
+        "queued>failed",
+        "queued>submitting",
+        "submitting>failed",
+        "submitting>processing",
+        "submitting>queued",
+      ].sort(),
+    );
+    for (const from of STUDIO_VIDEO_STATUSES) {
+      for (const to of STUDIO_VIDEO_STATUSES) {
+        const ok = allowed.has(`${from}>${to}`);
+        expect(canTransitionVideo(from, to)).toBe(ok);
+        if (ok) expect(() => assertVideoTransition(from, to)).not.toThrow();
+        else expect(() => assertVideoTransition(from, to)).toThrow(InvalidVideoTransitionError);
+      }
+    }
+    // Um vídeo pronto nunca volta a ser feito: só "descartar".
+    expect(canTransitionVideo("done", "processing")).toBe(false);
+    expect(canTransitionVideo("discarded", "processing")).toBe(false);
+  });
+
+  it("em andamento = na fila, enviando ou fazendo", () => {
+    expect(STUDIO_VIDEO_STATUSES.filter(isVideoInFlight)).toEqual(["queued", "submitting", "processing"]);
+  });
+});
+
+describe("classifyVideoFailure — nunca pagar duas vezes", () => {
+  const noJob = (reason: string, status?: number) => classifyVideoFailure({ reason, status, jobId: null });
+  const withJob = (reason: string, status?: number) => classifyVideoFailure({ reason, status, jobId: "job-1" });
+
+  it("sem id (o envio): 429 volta à fila; recusa < 500 ou sem chave fecha sem cobrança; o resto é incerto", () => {
+    expect(noJob("rate_limited", 429)).toBe("retry_not_charged");
+    expect(noJob("no_credits", 402)).toBe("closed_not_charged");
+    expect(noJob("no_key", undefined)).toBe("closed_not_charged");
+    expect(noJob("no_key", 401)).toBe("closed_not_charged");
+    expect(noJob("rejected", 400)).toBe("closed_not_charged");
+    expect(noJob("rejected", 422)).toBe("closed_not_charged");
+    expect(noJob("unavailable", 500)).toBe("uncertain_submit");
+    expect(noJob("unavailable", 503)).toBe("uncertain_submit");
+    expect(noJob("network")).toBe("uncertain_submit");
+    expect(noJob("timeout")).toBe("uncertain_submit");
+    expect(noJob("invalid_response")).toBe("uncertain_submit");
+  });
+
+  it("com id (a espera): 'failed' no status fecha sem cobrança; 404 = pedido sumiu; o resto continua esperando", () => {
+    expect(withJob("rejected", undefined)).toBe("closed_not_charged");
+    expect(withJob("rejected", 404)).toBe("closed_job_gone");
+    // 404 ao BAIXAR o MP4 (o CDN) não é "a FASHN não conhece o pedido": continua esperando/buscável.
+    expect(withJob("unavailable", 404)).toBe("keep_open");
+    expect(withJob("unavailable", undefined)).toBe("keep_open");
+    expect(withJob("rejected", 408)).toBe("keep_open");
+    expect(withJob("timeout")).toBe("keep_open");
+    expect(withJob("network")).toBe("keep_open");
+    expect(withJob("invalid_response")).toBe("keep_open");
+    expect(withJob("rate_limited", 429)).toBe("keep_open");
+    expect(withJob("unavailable", 503)).toBe("keep_open");
+    expect(withJob("no_key", 401)).toBe("keep_open");
+  });
+});
+
+describe("nextVideoPollAt", () => {
+  const submittedAt = new Date("2026-09-25T12:00:00Z");
+  const giveUpAt = new Date(submittedAt.getTime() + VIDEO_TIMING.giveUpAfterMs);
+
+  it("a 1ª espera é 4 min depois do envio; as seguintes, 20 s depois de agora", () => {
+    expect(nextVideoPollAt({ submittedAt, giveUpAt, now: new Date(submittedAt.getTime() + 3_000), first: true })).toEqual(
+      new Date(submittedAt.getTime() + 240_000),
+    );
+    const now = new Date(submittedAt.getTime() + 300_000);
+    expect(nextVideoPollAt({ submittedAt, giveUpAt, now, first: false })).toEqual(new Date(now.getTime() + 20_000));
+    // "1ª" atrasada (a fila demorou): nunca no passado.
+    const late = new Date(submittedAt.getTime() + 600_000);
+    expect(nextVideoPollAt({ submittedAt, giveUpAt, now: late, first: true })).toEqual(new Date(late.getTime() + 1_500));
+  });
+
+  it("passou do prazo de desistir: null", () => {
+    expect(nextVideoPollAt({ submittedAt, giveUpAt, now: new Date(giveUpAt.getTime() - 10_000), first: false })).toBeNull();
+    expect(nextVideoPollAt({ submittedAt, giveUpAt, now: new Date(giveUpAt.getTime() - 30_000), first: false })).toEqual(
+      new Date(giveUpAt.getTime() - 10_000),
+    );
+  });
+});
+
+describe("canRefetchVideo", () => {
+  const submittedAt = new Date("2026-09-25T12:00:00Z");
+  const base = { vendorJobId: "job-1", submittedAt, updatedAt: submittedAt };
+  const at = (ms: number) => new Date(submittedAt.getTime() + ms);
+
+  it("falha que ainda tem vídeo (demorou, não salvou), dentro dos 3 dias: sim", () => {
+    expect(canRefetchVideo({ ...base, status: "failed", errorDetail: "demorou_demais: x" }, at(3_600_000))).toBe(true);
+    expect(canRefetchVideo({ ...base, status: "failed", errorDetail: "nao_salvou" }, at(3_600_000))).toBe(true);
+    expect(canRefetchVideo({ ...base, status: "failed", errorDetail: "nao_salvou" }, at(VIDEO_TIMING.refetchWindowMs))).toBe(false);
+  });
+
+  it("sem id, falha sem vídeo, pronto ou descartado: não", () => {
+    expect(canRefetchVideo({ ...base, vendorJobId: null, status: "failed", errorDetail: "envio_incerto" }, at(60_000))).toBe(false);
+    expect(canRefetchVideo({ ...base, status: "failed", errorDetail: "rejected: x" }, at(60_000))).toBe(false);
+    expect(canRefetchVideo({ ...base, status: "failed", errorDetail: "pedido_sumiu" }, at(60_000))).toBe(false);
+    expect(canRefetchVideo({ ...base, status: "done", errorDetail: null }, at(60_000))).toBe(false);
+    expect(canRefetchVideo({ ...base, status: "discarded", errorDetail: null }, at(60_000))).toBe(false);
+  });
+
+  it("fazendo e parado há mais de 10 min: libera; ainda andando: não", () => {
+    expect(canRefetchVideo({ ...base, status: "processing", errorDetail: null, updatedAt: at(0) }, at(VIDEO_TIMING.stallMs + 1))).toBe(true);
+    expect(canRefetchVideo({ ...base, status: "processing", errorDetail: null, updatedAt: at(0) }, at(VIDEO_TIMING.stallMs))).toBe(false);
+  });
+});
+
+describe("checkVideoRequest", () => {
+  it("teto de vídeos do dia vem antes do saldo; saldo desconhecido não bloqueia", () => {
+    expect(checkVideoRequest({ dailyLimit: 2, usedToday: 1, credits: 6, balanceCredits: 6 })).toEqual({ ok: true });
+    expect(checkVideoRequest({ dailyLimit: 2, usedToday: 2, credits: 6, balanceCredits: 100 })).toEqual({ ok: false, reason: "teto" });
+    expect(checkVideoRequest({ dailyLimit: 2, usedToday: 0, credits: 6, balanceCredits: 5 })).toEqual({ ok: false, reason: "saldo" });
+    expect(checkVideoRequest({ dailyLimit: 2, usedToday: 0, credits: 6, balanceCredits: null })).toEqual({ ok: true });
+  });
+
+  it("o aviso da legenda é a mesma ideia do aviso curto", () => {
+    expect(VIDEO_CAPTION_NOTICE.toLowerCase()).toContain(VIDEO_AI_NOTICE.toLowerCase());
+  });
+});
+
+describe("stalledVideoFailure — vídeo parado sem o handler rodar", () => {
+  const updatedAt = new Date("2026-09-25T12:00:00Z");
+  const after = (ms: number) => new Date(updatedAt.getTime() + ms);
+
+  it("dentro do prazo, ou já andando/terminado: nada", () => {
+    expect(stalledVideoFailure({ status: "queued", vendorJobId: null, updatedAt }, after(VIDEO_TIMING.stuckInQueueMs))).toBeNull();
+    for (const status of ["processing", "done", "failed", "discarded"]) {
+      expect(stalledVideoFailure({ status, vendorJobId: "job-1", updatedAt }, after(VIDEO_TIMING.stuckInQueueMs + 1))).toBeNull();
+    }
+  });
+
+  it("na fila = nada pedido; enviando sem id = incerto (pode ter cobrado); enviando com id = buscável pelo id", () => {
+    const late = after(VIDEO_TIMING.stuckInQueueMs + 1);
+    expect(stalledVideoFailure({ status: "queued", vendorJobId: null, updatedAt }, late)).toEqual({ errorDetail: "sem_envio: ficou parado na fila", charged: false });
+    expect(stalledVideoFailure({ status: "submitting", vendorJobId: null, updatedAt }, late)).toMatchObject({ charged: true, errorDetail: expect.stringMatching(/^envio_incerto:/) });
+    const withJob = stalledVideoFailure({ status: "submitting", vendorJobId: "job-1", updatedAt }, late);
+    expect(withJob).toMatchObject({ charged: true, errorDetail: expect.stringMatching(/^nao_salvou:/) });
+    expect(canRefetchVideo({ status: "failed", vendorJobId: "job-1", errorDetail: withJob!.errorDetail, submittedAt: updatedAt, updatedAt: late }, late)).toBe(true);
   });
 });

@@ -33,6 +33,12 @@ const FAILURE_LABELS: Record<string, string> = {
   peca_nao_encontrada: "a peça foi apagada",
   imagem_ilegivel: "o gerador devolveu uma imagem ilegível",
   vendor_sem_imagem: "o gerador não devolveu imagem",
+  envio_incerto: "não deu para confirmar o envio — confira o saldo da FASHN daqui a 10 min antes de pedir de novo",
+  demorou_demais: "a FASHN não entregou em 30 min — dá para buscar de novo por 3 dias, sem pagar",
+  nao_salvou: "a espera parou antes de o vídeo ser guardado — dá para buscar de novo por 3 dias, sem pagar",
+  pedido_sumiu: "a FASHN não reconhece mais o pedido",
+  video_desligado: "o vídeo foi desligado antes de sair",
+  sem_envio: "não deu para enviar à FASHN depois de 4 tentativas — nada foi cobrado",
 };
 
 export function failureLabel(errorDetail: string | null): string {
@@ -48,4 +54,36 @@ export function requestLabel(request: RequestLike): StudioLabel {
   if (request.status === "done") return { label: "Pronto", tone: "success" };
   if (request.status === "failed") return { label: "Falhou", tone: "danger" };
   return { label: `Na fila (${request.optionsDone} de ${request.optionsWanted})`, tone: "info" };
+}
+
+export type VideoLike = { status: string; errorDetail: string | null };
+
+/** "Na fila", "Fazendo o vídeo…", "Pronto", "Falhou: …". */
+export function videoLabel(video: VideoLike): StudioLabel {
+  switch (video.status) {
+    case "queued":
+      return { label: "Na fila", tone: "info" };
+    case "submitting":
+      return { label: "Enviando à FASHN…", tone: "info" };
+    case "processing":
+      return { label: "Fazendo o vídeo… (uns 5 min)", tone: "info" };
+    case "done":
+      return { label: "Pronto", tone: "success" };
+    case "discarded":
+      return { label: "Descartado", tone: "neutral" };
+    default:
+      return { label: `Falhou: ${failureLabel(video.errorDetail)}`, tone: "danger" };
+  }
+}
+
+/**
+ * O gasto do estúdio numa linha: "fotos no corpo (9)" como sempre; com vídeo,
+ * "fotos e vídeos no corpo (9 fotos · 1 vídeo)". null = nada gasto.
+ */
+export function studioSpendLabel(input: { images: number; videos: number }): { what: string; count: string } | null {
+  if (input.images <= 0 && input.videos <= 0) return null;
+  if (input.videos <= 0) return { what: "fotos no corpo", count: String(input.images) };
+  const videos = `${input.videos} ${input.videos === 1 ? "vídeo" : "vídeos"}`;
+  if (input.images <= 0) return { what: "vídeos no corpo", count: videos };
+  return { what: "fotos e vídeos no corpo", count: `${input.images} ${input.images === 1 ? "foto" : "fotos"} · ${videos}` };
 }

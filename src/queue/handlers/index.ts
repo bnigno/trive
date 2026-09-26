@@ -17,7 +17,7 @@ import { getFileStorage } from "@/adapters/storage";
 import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
-import { runStudioBasePhotos, runStudioOption } from "@/queue/handlers/studio";
+import { runStudioBasePhotos, runStudioOption, runStudioVideo } from "@/queue/handlers/studio";
 import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderVoucherPng } from "@/receipts/render-voucher";
@@ -472,6 +472,12 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       { db: getDb(), studio: getImageStudio(), assistant: getSalesAssistant(), storage: getFileStorage() },
       event,
     );
+  },
+  // Vídeo da peça: envia uma vez (o id do pedido fica gravado) e acompanha em
+  // rodadas curtas (eventos novos com hora marcada). Nunca pede de novo o que
+  // a FASHN pode ter aceitado — buscar de novo é sempre pelo id.
+  "product.ai_video": async (event) => {
+    await runStudioVideo({ db: getDb(), studio: getImageStudio(), storage: getFileStorage() }, event);
   },
   // Cartão editorial fora do cache: desenha, publica e manda logo depois do
   // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).

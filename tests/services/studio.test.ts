@@ -191,7 +191,7 @@ describe("generateStudioOption — a opção de ponta a ponta", () => {
     expect((await audits("studio.judge"))[0]?.after).toMatchObject({ passed: true, summary: "8/10", estimatedCostUsdCents: 3 });
     // A cota conta as imagens pagas de hoje: 3 candidatas + 1 foto-base.
     expect(await countStudioImagesToday(sdb, NOW)).toBe(4);
-    expect(await summarizeStudioCosts(sdb, { from: new Date("2026-09-22T00:00:00Z"), to: new Date("2026-09-23T00:00:00Z") })).toEqual({ images: 4, usdCents: 33 + 23 });
+    expect(await summarizeStudioCosts(sdb, { from: new Date("2026-09-22T00:00:00Z"), to: new Date("2026-09-23T00:00:00Z") })).toEqual({ images: 4, videos: 0, usdCents: 33 + 23 });
     const [view] = await listStudioRequestsForProduct(sdb, productId);
     expect(view?.candidates).toHaveLength(3);
   });

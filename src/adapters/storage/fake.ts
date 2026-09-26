@@ -20,8 +20,8 @@ export class FakeFileStorage implements FileStorage {
     return { path: input.path };
   }
 
-  publicUrl(path: string): string {
-    return `memory://${path}`;
+  publicUrl(path: string, options?: { download?: string }): string {
+    return `memory://${path}${options?.download ? `?download=${encodeURIComponent(options.download)}` : ""}`;
   }
 
   async remove(path: string): Promise<void> {

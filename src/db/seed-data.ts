@@ -57,6 +57,10 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "ai_photos_default_scene", value: "sala_clara" },
   { key: "ai_photos_default_model", value: "modelo_a" },
   { key: "ai_photos_in_store", value: false },
+  // "A peça se mexe": a foto no corpo escolhida vira vídeo de 5 s para o
+  // Instagram (≈ R$ 2,48 cada). Nasce desligado; teto em vídeos por dia.
+  { key: "ai_video_enabled", value: false },
+  { key: "ai_video_daily_limit", value: 2 },
   { key: "wa_send_window_start", value: 9 },
   { key: "wa_send_window_end", value: 21 },
   { key: "wa_bulk_interval_seconds", value: 20 },
