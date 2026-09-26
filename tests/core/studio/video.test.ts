@@ -35,7 +35,7 @@ describe("buildVideoMotionPrompt", () => {
     expect(prompt).toContain("letting the fabric move naturally");
     expect(prompt).toContain("Keep the garment exactly as in the image");
     expect(prompt).toContain("Do not add accessories, text or logos");
-    expect(prompt).not.toMatch(/back/i);
+    expect(prompt).not.toMatch(/\bback\b/i);
     // A cena e a luz são as da foto (editorial): nada de "celular" ou "luz do dia" que troque o clima.
     expect(prompt).toContain("keeps the scene, background and lighting exactly as in the image");
     expect(prompt).not.toMatch(/smartphone|daylight|smile/i);
