@@ -145,7 +145,7 @@ export function StudioVideoBlock({
       title="Vídeo da peça"
       description="A foto no corpo que já está na peça vira um vídeo de 5 s para o Reels. Nunca aparece na vitrine — no Instagram vai sempre com o aviso de imagem feita com IA."
     >
-      {panel.inFlight ? <VideoAutoRefresh>{content}</VideoAutoRefresh> : content}
+      <VideoAutoRefresh active={panel.inFlight}>{content}</VideoAutoRefresh>
     </Card>
   );
 }

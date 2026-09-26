@@ -16,6 +16,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { StudioUnavailableError, type ImageStudio, type StudioVideo as VendorVideo } from "@/adapters/image-studio";
 import type { FileStorage } from "@/adapters/storage";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import { creditsToUsdCents } from "@/core/studio/cost";
 import {
   assertVideoTransition,
@@ -215,7 +216,12 @@ async function handleVendorFailure(
       await failVideo(db, video, from, { errorDetail: detailOf(error.reason, error), usdCents: 0, now: input.now });
       return { outcome: "failed", reason: error.reason };
     case "closed_job_gone":
-      await failVideo(db, video, from, { errorDetail: detailOf("pedido_sumiu", error), usdCents: 0, now: input.now });
+      // A FASHN aceitou o pedido um dia: sem prova de que não cobrou, o gasto registrado nunca desce.
+      await failVideo(db, video, from, {
+        errorDetail: detailOf("pedido_sumiu", error),
+        usdCents: Math.max(video.usdCents, estimateUsdCents(video)),
+        now: input.now,
+      });
       return { outcome: "failed", reason: "pedido_sumiu" };
     case "uncertain_submit":
       await failVideo(db, video, from, { errorDetail: detailOf("envio_incerto", error), usdCents: estimateUsdCents(video), now: input.now });
@@ -250,17 +256,23 @@ export async function generateStudioVideo(
   }
   const signal = waitSignal(options.deadlineAt, clock());
 
-  if (video.status === "submitting") {
-    // O envio caiu entre o pedido e a gravação do id: pode ter sido feito e cobrado. Nunca pedir de novo.
-    await failVideo(db, video, "submitting", {
-      errorDetail: "envio_incerto: o envio foi interrompido antes de a resposta da FASHN ser gravada",
-      usdCents: estimateUsdCents(video),
-      now: clock(),
-    });
-    return { outcome: "failed", reason: "envio_incerto" };
+  let current: StudioVideo = video;
+  if (current.status === "submitting") {
+    if (!current.vendorJobId) {
+      // O envio caiu entre o pedido e a gravação do id: pode ter sido feito e cobrado. Nunca pedir de novo.
+      await failVideo(db, current, "submitting", {
+        errorDetail: "envio_incerto: o envio foi interrompido antes de a resposta da FASHN ser gravada",
+        usdCents: estimateUsdCents(current),
+        now: clock(),
+      });
+      return { outcome: "failed", reason: "envio_incerto" };
+    }
+    // O id chegou a ser gravado (pela gravação mínima), só a mudança de estado caiu: segue pelo id.
+    current = await markSubmitted(db, current, current.vendorJobId, clock());
   }
 
-  if (video.status === "processing") {
+  if (current.status === "processing") {
+    const video = current;
     if (!video.vendorJobId) {
       await failVideo(db, video, "processing", { errorDetail: "envio_incerto: sem o id do pedido na FASHN", usdCents: estimateUsdCents(video), now: clock() });
       return { outcome: "failed", reason: "envio_incerto" };
@@ -297,6 +309,11 @@ export async function generateStudioVideo(
   }
   // Baixar a foto antes de marcar "enviando": se falhar aqui, nada foi pedido e a fila tenta de novo.
   const source = await deps.storage.download(video.sourceStoragePath);
+  // Pouco tempo sobrando nesta invocação: não envia (um envio cortado no meio seria "incerto").
+  if (options.deadlineAt) {
+    const remainingMs = options.deadlineAt.getTime() - clock().getTime();
+    if (remainingMs < VIDEO_TIMING.minSubmitMs) throw new HandlerOutOfTimeError(remainingMs);
+  }
 
   assertVideoTransition("queued", "submitting");
   const [claimed] = await db
@@ -316,10 +333,12 @@ export async function generateStudioVideo(
         prompt: claimed.prompt,
         durationSeconds: claimed.durationSeconds === 10 ? 10 : 5,
         resolution: claimed.resolution === "480p" || claimed.resolution === "720p" ? claimed.resolution : "1080p",
-        signal: AbortSignal.any([accepted.signal, signal]),
+        // O envio tem o próprio teto do adapter (15 s); aceito, esta invocação não espera os ~4 min.
+        signal: accepted.signal,
         onSubmitted: (id) => {
           jobId = id;
-          // Aceito: esta invocação não espera os ~4 min — grava o id e agenda a 1ª espera.
+          // O id no log antes de tudo: é a última pista se o banco falhar logo em seguida.
+          console.info(`[${STUDIO_VIDEO_EVENT}] ${video.id}: pedido ${id} aceito pela FASHN`);
           accepted.abort();
         },
       }),
@@ -328,17 +347,26 @@ export async function generateStudioVideo(
     outcome = { error };
   }
 
-  let current: StudioVideo = claimed;
+  let submitted: StudioVideo = claimed;
   if (jobId !== null || "video" in outcome) {
     try {
-      current = await markSubmitted(db, claimed, jobId, clock());
+      submitted = await markSubmitted(db, claimed, jobId, clock());
     } catch (dbError) {
-      // O id vai para o last_error da fila; a próxima tentativa cai em "enviando sem id" e nunca pede de novo.
-      throw new Error(`pedido ${jobId ?? "?"} aceito pela FASHN mas não gravado: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+      const message = dbError instanceof Error ? dbError.message : String(dbError);
+      console.error(`[${STUDIO_VIDEO_EVENT}] ${video.id}: pedido ${jobId ?? "?"} aceito pela FASHN mas não gravado: ${message}`);
+      if (jobId !== null) {
+        // Gravação mínima só do id (sem mudar estado): a próxima tentativa segue por ele em vez de dar "envio incerto".
+        await db
+          .update(studioVideos)
+          .set({ vendorJobId: jobId })
+          .where(and(eq(studioVideos.id, video.id), eq(studioVideos.status, "submitting")))
+          .catch(() => undefined);
+      }
+      throw new Error(`pedido ${jobId ?? "?"} aceito pela FASHN mas não gravado: ${message}`);
     }
   }
-  if ("video" in outcome) return finishVideo(db, deps, current, outcome.video, clock());
-  return handleVendorFailure(db, current, outcome.error, { first: true, now: clock() });
+  if ("video" in outcome) return finishVideo(db, deps, submitted, outcome.video, clock());
+  return handleVendorFailure(db, submitted, outcome.error, { first: true, now: clock() });
 }
 
 /**

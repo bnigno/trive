@@ -4,13 +4,14 @@
 // o handler envia UMA vez, grava o id do pedido, acompanha em rodadas com
 // hora marcada e nunca pede de novo o que a FASHN pode ter aceitado; buscar
 // de novo é pelo id; descartar apaga o arquivo; o custo entra na conta.
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StudioUnavailableError } from "@/adapters/image-studio";
 import { FakeImageStudio } from "@/adapters/image-studio/fake";
 import { FakeFileStorage } from "@/adapters/storage/fake";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import { VIDEO_TIMING } from "@/core/studio/video";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
@@ -289,7 +290,15 @@ describe("generateStudioVideo — envia uma vez, acompanha pelo id", () => {
     const gone = await request(await seedChosenCandidate(productId));
     studio.failAfterSubmitNext(new StudioUnavailableError("HTTP 404 (NotFound)", "rejected", 404));
     expect(await run(gone.videoId)).toEqual({ outcome: "failed", reason: "pedido_sumiu" });
-    expect((await videoRow(gone.videoId)).errorDetail).toMatch(/^pedido_sumiu:/);
+    const goneRow = await videoRow(gone.videoId);
+    expect(goneRow.errorDetail).toMatch(/^pedido_sumiu:/);
+    // Aceito um dia: sem prova de que não cobrou, o gasto fica registrado (e conta no teto).
+    expect(goneRow.usdCents).toBe(45);
+
+    // 404 ao BAIXAR o MP4 (o CDN, sem status no erro) não encerra: continua esperando pelo id.
+    const cdn = await request(await seedChosenCandidate(productId));
+    studio.failAfterSubmitNext(new StudioUnavailableError("O vídeo da FASHN respondeu HTTP 404.", "unavailable"));
+    expect(await run(cdn.videoId)).toMatchObject({ outcome: "polling" });
   });
 
   it("desligado com o vídeo ainda na fila: não envia; peça apagada: não envia", async () => {
@@ -361,5 +370,100 @@ describe("descartar, painel e custo", () => {
     await expect(refetchStudioVideo(sdb, { videoId, userId: FIXED_USER_ID }, clock)).rejects.toMatchObject({ code: "nao_da_para_buscar" });
     await run(videoId);
     await expect(refetchStudioVideo(sdb, { videoId, userId: FIXED_USER_ID }, clock)).rejects.toMatchObject({ code: "nao_da_para_buscar" });
+  });
+});
+
+describe("achados da revisão", () => {
+  it("o banco cai logo depois de a FASHN aceitar: o id fica gravado e a próxima tentativa segue por ele (nunca pede de novo)", async () => {
+    const { videoId } = await request(await seedChosenCandidate(await seedProduct()));
+    // Uma vez só: a mudança "enviando → fazendo" falha como uma queda do banco
+    // (a sequência não volta atrás com o erro; uma tabela de marca voltaria).
+    await db.execute(sql`CREATE SEQUENCE trip_seq`);
+    await db.execute(sql`
+      CREATE FUNCTION trip_once() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.status = 'submitting' AND NEW.status = 'processing' AND nextval('trip_seq') = 1 THEN
+          RAISE EXCEPTION 'conexão caiu (teste)';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await db.execute(sql`CREATE TRIGGER trip_once BEFORE UPDATE ON studio_videos FOR EACH ROW EXECUTE FUNCTION trip_once()`);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    studio.failAfterSubmitNext();
+
+    await expect(run(videoId)).rejects.toThrow(/aceito pela FASHN mas não gravado/);
+    const stuck = await videoRow(videoId);
+    expect(stuck.status).toBe("submitting");
+    expect(stuck.vendorJobId).toMatch(/^fake-video-1-/);
+
+    // A fila tenta de novo: segue pelo id gravado e termina — sem novo pedido.
+    expect(await run(videoId)).toMatchObject({ outcome: "done" });
+    expect(studio.animations.filter((call) => call.resumeJobId === undefined)).toHaveLength(1);
+    expect(studio.animations.at(-1)!.resumeJobId).toBe(stuck.vendorJobId);
+  });
+
+  it("pouco tempo sobrando na invocação: não envia; a fila devolve a linha sem contar tentativa", async () => {
+    const { videoId } = await request(await seedChosenCandidate(await seedProduct()));
+    await expect(
+      generateStudioVideo(sdb, { studio, storage }, { videoId }, { now: () => clock, deadlineAt: new Date(clock.getTime() + 10_000) }),
+    ).rejects.toBeInstanceOf(HandlerOutOfTimeError);
+    expect((await videoRow(videoId)).status).toBe("queued");
+    expect(studio.animations).toHaveLength(0);
+    expect(await generateStudioVideo(sdb, { studio, storage }, { videoId }, { now: () => clock, deadlineAt: new Date(clock.getTime() + 40_000) })).toMatchObject({ outcome: "done" });
+  });
+
+  it("descartar um vídeo que falhou sem cobrança não passa a contar no teto do dia", async () => {
+    const productId = await seedProduct();
+    const refused = await request(await seedChosenCandidate(productId));
+    studio.failNext(new StudioUnavailableError("sem crédito", "no_credits", 402));
+    await run(refused.videoId);
+    await discardStudioVideo(sdb, storage, { videoId: refused.videoId, userId: FIXED_USER_ID });
+    expect(await countStudioVideosToday(sdb, clock)).toBe(0);
+  });
+
+  it("buscar de novo com outro vídeo da mesma foto em andamento: recusa com o motivo, e o botão nem aparece", async () => {
+    const productId = await seedProduct();
+    const candidateId = await seedChosenCandidate(productId);
+    const old = await request(candidateId);
+    studio.failAfterSubmitNext();
+    await run(old.videoId);
+    clock = new Date(NOW.getTime() + VIDEO_TIMING.giveUpAfterMs);
+    studio.failAfterSubmitNext();
+    await run(old.videoId);
+    expect((await videoRow(old.videoId)).status).toBe("failed");
+
+    const fresh = await request(candidateId);
+    const panel = await listStudioVideoPanel(sdb, productId, clock);
+    expect(panel.videos.find((video) => video.id === old.videoId)!.canRefetch).toBe(false);
+    await expect(refetchStudioVideo(sdb, { videoId: old.videoId, userId: FIXED_USER_ID }, clock)).rejects.toMatchObject({ code: "video_em_andamento" });
+
+    await run(fresh.videoId);
+    const after = await listStudioVideoPanel(sdb, productId, clock);
+    expect(after.videos.find((video) => video.id === old.videoId)!.canRefetch).toBe(true);
+  });
+
+  it("vídeo parado na fila ou no envio (a linha da fila morreu): vira falha com o motivo e libera a foto", async () => {
+    const productId = await seedProduct();
+    const queuedCandidate = await seedChosenCandidate(productId);
+    const queued = await request(queuedCandidate);
+    const submitting = await request(await seedChosenCandidate(productId));
+    await db.update(schema.studioVideos).set({ status: "submitting" }).where(eq(schema.studioVideos.id, submitting.videoId));
+
+    // Antes do prazo: nada muda.
+    expect((await listStudioVideoPanel(sdb, productId, new Date(NOW.getTime() + 60_000))).inFlight).toBe(true);
+
+    clock = new Date(NOW.getTime() + VIDEO_TIMING.stuckInQueueMs + 60_000);
+    const panel = await listStudioVideoPanel(sdb, productId, clock);
+    expect(panel.inFlight).toBe(false);
+    const q = await videoRow(queued.videoId);
+    expect(q).toMatchObject({ status: "failed", usdCents: 0 });
+    expect(q.errorDetail).toMatch(/^sem_envio:/);
+    const s = await videoRow(submitting.videoId);
+    expect(s).toMatchObject({ status: "failed", usdCents: 45 });
+    expect(s.errorDetail).toMatch(/^envio_incerto:/);
+    expect(await audits("studio.video_fail")).toHaveLength(2);
+
+    // A foto destravou: dá para pedir outro vídeo dela.
+    expect(await request(queuedCandidate)).toMatchObject({ credits: 6 });
   });
 });

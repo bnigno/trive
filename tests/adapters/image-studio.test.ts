@@ -333,6 +333,10 @@ describe("FashnImageStudio.animate (a peça se mexe)", () => {
     expect(await reasonOf(videoServer({ statuses: [{ status: "completed", output: ["data:video/mp4;base64,AAAA"] }] }))).toBe("invalid_response");
     expect(await reasonOf(videoServer({ statuses: [{ status: "completed", output: [] }] }))).toBe("invalid_response");
     expect(await reasonOf(videoServer({ cdnStatus: 403 }))).toBe("unavailable");
+    // O status do CDN não vai no erro: 404 ao baixar não é "a FASHN não conhece o pedido".
+    const cdn404 = await failureOf(client(videoServer({ cdnStatus: 404 })).animate(input));
+    expect(cdn404.status).toBeUndefined();
+    expect(cdn404.message).toContain("404");
     expect(await reasonOf(videoServer({ statuses: [{ status: "failed", error: { name: "ContentModerationError", message: "corpo" } }] }))).toBe("rejected");
     vi.stubEnv("FASHN_API_KEY", "");
     expect(await reasonOf(videoServer())).toBe("no_key");

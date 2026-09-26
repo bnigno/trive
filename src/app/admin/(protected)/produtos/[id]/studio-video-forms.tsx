@@ -130,22 +130,30 @@ export function VideoCaption({ caption, notice }: { caption: string | null; noti
   );
 }
 
-/** Enquanto um vídeo é feito, a tela se atualiza sozinha a cada 20 s (parada com a aba escondida). */
-export function VideoAutoRefresh({ children }: { children: React.ReactNode }) {
+/**
+ * Enquanto um vídeo é feito (`active`), a tela se atualiza sozinha a cada
+ * 20 s (parada com a aba escondida). Sempre embrulha o bloco — ligado ou não
+ * — para o React não remontar os formulários (e perder a mensagem) quando o
+ * vídeo termina.
+ */
+export function VideoAutoRefresh({ active, children }: { active: boolean; children: React.ReactNode }) {
   const router = useRouter();
   useEffect(() => {
+    if (!active) return;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
       router.refresh();
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [router]);
+  }, [active, router]);
   return (
     <div className="flex flex-col gap-2">
       {children}
-      <p className="text-[11px] text-zinc-500 dark:text-zinc-400" aria-live="polite">
-        A tela atualiza sozinha enquanto o vídeo é feito.
-      </p>
+      {active ? (
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400" aria-live="polite">
+          A tela atualiza sozinha enquanto o vídeo é feito.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
   checkVideoRequest,
   isStudioVideoStatus,
   isVideoInFlight,
+  stalledVideoFailure,
   VIDEO_DEFAULTS,
   VIDEO_TIMING,
 } from "@/core/studio/video";
@@ -50,15 +51,15 @@ export function studioVideoDedupeKey(videoId: string, step: "submit" | { poll: n
 
 /**
  * Vídeos que contam no teto do dia (dia de São Paulo): todo pedido de hoje,
- * menos os que certamente não foram cobrados (falharam com custo zero).
- * Descartado conta: foi pago.
+ * menos os que certamente não foram cobrados (falharam com custo zero —
+ * descartados depois ou não). Descartado que foi pago conta.
  */
 export async function countStudioVideosToday(db: DbOrTx, now: Date): Promise<number> {
   const since = spDayStart(spDayKey(now));
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(studioVideos)
-    .where(and(gte(studioVideos.createdAt, since), sql`NOT (${studioVideos.status} = 'failed' AND ${studioVideos.usdCents} = 0)`));
+    .where(and(gte(studioVideos.createdAt, since), sql`NOT (${studioVideos.status} IN ('failed', 'discarded') AND ${studioVideos.usdCents} = 0)`));
   return row?.n ?? 0;
 }
 
@@ -69,6 +70,52 @@ async function safeBalance(studio: Pick<ImageStudio, "creditsBalance">): Promise
   } catch {
     return null;
   }
+}
+
+/**
+ * Vídeo parado "na fila"/"enviando" além do prazo (a linha da fila morreu
+ * sem o handler rodar) vira falha com o motivo: senão a foto fica travada
+ * (um vídeo em andamento por foto) e a tela se atualiza para sempre.
+ */
+export async function healStalledStudioVideos(
+  db: DbOrTx,
+  scope: { productId: string } | { candidateId: string },
+  now: Date,
+): Promise<number> {
+  const rows = await db
+    .select()
+    .from(studioVideos)
+    .where(
+      and(
+        "productId" in scope ? eq(studioVideos.productId, scope.productId) : eq(studioVideos.candidateId, scope.candidateId),
+        inArray(studioVideos.status, ["queued", "submitting"]),
+      ),
+    );
+  let healed = 0;
+  for (const video of rows) {
+    const failure = stalledVideoFailure(video, now);
+    if (!failure || !isStudioVideoStatus(video.status)) continue;
+    assertVideoTransition(video.status, "failed");
+    const usdCents = failure.charged ? Math.max(video.usdCents, creditsToUsdCents(video.credits)) : video.usdCents;
+    const done = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(studioVideos)
+        .set({ status: "failed", errorDetail: failure.errorDetail, usdCents, finishedAt: now, updatedAt: now })
+        .where(and(eq(studioVideos.id, video.id), eq(studioVideos.status, video.status), eq(studioVideos.updatedAt, video.updatedAt)))
+        .returning({ id: studioVideos.id });
+      if (!updated) return false;
+      await tx.insert(auditLog).values({
+        actorType: "system",
+        action: "studio.video_fail",
+        entityType: "studio_video",
+        entityId: video.id,
+        after: { from: video.status, errorDetail: failure.errorDetail, usdCents, vendorJobId: video.vendorJobId, stalled: true },
+      });
+      return true;
+    });
+    if (done) healed += 1;
+  }
+  return healed;
 }
 
 /** A candidata escolhida que ainda é foto da peça: é dela que sai o vídeo. */
@@ -110,6 +157,7 @@ export async function requestStudioVideo(
   }
   const product = await requireProductForStudio(db, source.productId);
 
+  await healStalledStudioVideos(db, { candidateId: source.candidateId }, now);
   const [inFlight] = await db
     .select({ id: studioVideos.id })
     .from(studioVideos)
@@ -194,6 +242,21 @@ export async function refetchStudioVideo(db: DbOrTx, rawInput: unknown, now = ne
     if (!video) throw new ServiceError("nao_encontrado", "Vídeo não encontrado.");
     if (!canRefetchVideo(video, now)) {
       throw new ServiceError("nao_da_para_buscar", "Este vídeo não tem mais o que buscar (ou ainda está sendo feito).");
+    }
+    // Um vídeo em andamento por foto (o índice parcial): outro da mesma foto na frente, espera ele.
+    const [sibling] = await tx
+      .select({ id: studioVideos.id })
+      .from(studioVideos)
+      .where(
+        and(
+          eq(studioVideos.candidateId, video.candidateId),
+          ne(studioVideos.id, video.id),
+          inArray(studioVideos.status, ["queued", "submitting", "processing"]),
+        ),
+      )
+      .limit(1);
+    if (sibling) {
+      throw new ServiceError("video_em_andamento", "Esta foto já está virando outro vídeo — espere ele terminar para buscar este de novo.");
     }
     if (video.status === "failed") assertVideoTransition("failed", "processing");
     const [updated] = await tx
@@ -286,6 +349,7 @@ export type StudioVideoPanel = {
 
 export async function listStudioVideoPanel(db: DbOrTx, productId: string, now: Date): Promise<StudioVideoPanel> {
   const id = z.uuid().parse(productId);
+  await healStalledStudioVideos(db, { productId: id }, now);
   const [settings, sources, videos, usedToday] = await Promise.all([
     loadStudioVideoSettings(db),
     db
@@ -313,7 +377,13 @@ export async function listStudioVideoPanel(db: DbOrTx, productId: string, now: D
   return {
     settings,
     sources: sources.map((source) => ({ ...source, storagePath: source.storagePath as string })),
-    videos: videos.map((video) => ({ ...video, canRefetch: canRefetchVideo(video, now) })),
+    videos: videos.map((video) => ({
+      ...video,
+      // Outro vídeo da mesma foto em andamento: buscar este esbarraria no "um por foto".
+      canRefetch:
+        canRefetchVideo(video, now) &&
+        !videos.some((other) => other.id !== video.id && other.candidateId === video.candidateId && isVideoInFlight(other.status)),
+    })),
     inFlight: videos.some((video) => isVideoInFlight(video.status)),
     estimate: { credits, usdCents, brlCents: usdCentsToBrlCents(usdCents) },
     usedToday,

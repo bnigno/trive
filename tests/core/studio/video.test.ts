@@ -12,6 +12,7 @@ import {
   canTransitionVideo,
   checkVideoRequest,
   classifyVideoFailure,
+  stalledVideoFailure,
   InvalidVideoTransitionError,
   isVideoInFlight,
   nextVideoPollAt,
@@ -158,6 +159,9 @@ describe("classifyVideoFailure — nunca pagar duas vezes", () => {
   it("com id (a espera): 'failed' no status fecha sem cobrança; 404 = pedido sumiu; o resto continua esperando", () => {
     expect(withJob("rejected", undefined)).toBe("closed_not_charged");
     expect(withJob("rejected", 404)).toBe("closed_job_gone");
+    // 404 ao BAIXAR o MP4 (o CDN) não é "a FASHN não conhece o pedido": continua esperando/buscável.
+    expect(withJob("unavailable", 404)).toBe("keep_open");
+    expect(withJob("unavailable", undefined)).toBe("keep_open");
     expect(withJob("rejected", 408)).toBe("keep_open");
     expect(withJob("timeout")).toBe("keep_open");
     expect(withJob("network")).toBe("keep_open");
@@ -226,5 +230,26 @@ describe("checkVideoRequest", () => {
 
   it("o aviso da legenda é a mesma ideia do aviso curto", () => {
     expect(VIDEO_CAPTION_NOTICE.toLowerCase()).toContain(VIDEO_AI_NOTICE.toLowerCase());
+  });
+});
+
+describe("stalledVideoFailure — vídeo parado sem o handler rodar", () => {
+  const updatedAt = new Date("2026-09-25T12:00:00Z");
+  const after = (ms: number) => new Date(updatedAt.getTime() + ms);
+
+  it("dentro do prazo, ou já andando/terminado: nada", () => {
+    expect(stalledVideoFailure({ status: "queued", vendorJobId: null, updatedAt }, after(VIDEO_TIMING.stuckInQueueMs))).toBeNull();
+    for (const status of ["processing", "done", "failed", "discarded"]) {
+      expect(stalledVideoFailure({ status, vendorJobId: "job-1", updatedAt }, after(VIDEO_TIMING.stuckInQueueMs + 1))).toBeNull();
+    }
+  });
+
+  it("na fila = nada pedido; enviando sem id = incerto (pode ter cobrado); enviando com id = buscável pelo id", () => {
+    const late = after(VIDEO_TIMING.stuckInQueueMs + 1);
+    expect(stalledVideoFailure({ status: "queued", vendorJobId: null, updatedAt }, late)).toEqual({ errorDetail: "sem_envio: ficou parado na fila", charged: false });
+    expect(stalledVideoFailure({ status: "submitting", vendorJobId: null, updatedAt }, late)).toMatchObject({ charged: true, errorDetail: expect.stringMatching(/^envio_incerto:/) });
+    const withJob = stalledVideoFailure({ status: "submitting", vendorJobId: "job-1", updatedAt }, late);
+    expect(withJob).toMatchObject({ charged: true, errorDetail: expect.stringMatching(/^nao_salvou:/) });
+    expect(canRefetchVideo({ status: "failed", vendorJobId: "job-1", errorDetail: withJob!.errorDetail, submittedAt: updatedAt, updatedAt: late }, late)).toBe(true);
   });
 });

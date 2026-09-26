@@ -122,6 +122,10 @@ export const VIDEO_TIMING = {
   refetchWindowMs: 72 * 3_600_000,
   /** "Fazendo" parado há tanto tempo = a fila perdeu a rodada; libera "Buscar de novo". */
   stallMs: 10 * 60_000,
+  /** Menos que isto até o fim da invocação: não envia (a fila devolve a linha sem contar tentativa). */
+  minSubmitMs: 20_000,
+  /** "Na fila"/"enviando" parado há tanto tempo = a linha da fila morreu sem o handler rodar (4 tentativas cabem em ~12 min). */
+  stuckInQueueMs: 30 * 60_000,
 } as const;
 
 /**
@@ -129,7 +133,7 @@ export const VIDEO_TIMING = {
  * FASHN PODE ter aceitado nunca é pedido de novo (seria pagar duas vezes).
  * - retry_not_charged: 429 na entrada — nada cobrado, a fila tenta de novo.
  * - closed_not_charged: recusa certa (resposta < 500 na entrada, chave ausente, ou "failed" no status) — nada cobrado.
- * - closed_job_gone: a FASHN não conhece o pedido (404).
+ * - closed_job_gone: a consulta do pedido respondeu 404 (a FASHN não o conhece). 404 ao BAIXAR o MP4 não é isto.
  * - uncertain_submit: a resposta do envio não chegou (rede, prazo, 5xx) — pode ter sido feito e cobrado; nunca reenviar.
  * - keep_open: pedido aceito e ainda aberto (prazo, rede, 408, 429, 5xx, saída estranha) — continua esperando pelo id.
  */
@@ -143,7 +147,7 @@ export function classifyVideoFailure(input: { reason: string; status: number | u
     return "uncertain_submit";
   }
   if (input.reason === "rejected" && input.status === undefined) return "closed_not_charged";
-  if (input.status === 404) return "closed_job_gone";
+  if (input.reason === "rejected" && input.status === 404) return "closed_job_gone";
   return "keep_open";
 }
 
@@ -186,6 +190,24 @@ export function checkVideoRequest(input: {
   if (input.usedToday >= input.dailyLimit) return { ok: false, reason: "teto" };
   if (input.balanceCredits !== null && input.credits > input.balanceCredits) return { ok: false, reason: "saldo" };
   return { ok: true };
+}
+
+/**
+ * Vídeo parado "na fila" ou "enviando" além do prazo (a linha da fila morreu
+ * por tempo esgotado, sem o handler rodar): vira falha para não travar a foto
+ * nem o teto. Na fila = nada foi pedido; enviando com id = buscável pelo id;
+ * enviando sem id = pode ter sido cobrado (envio incerto).
+ */
+export function stalledVideoFailure(
+  video: { status: string; vendorJobId: string | null; updatedAt: Date },
+  now: Date,
+): { errorDetail: string; charged: boolean } | null {
+  if (now.getTime() - video.updatedAt.getTime() <= VIDEO_TIMING.stuckInQueueMs) return null;
+  if (video.status === "queued") return { errorDetail: "sem_envio: ficou parado na fila", charged: false };
+  if (video.status !== "submitting") return null;
+  return video.vendorJobId
+    ? { errorDetail: "nao_salvou: ficou parado depois de a FASHN aceitar o pedido", charged: true }
+    : { errorDetail: "envio_incerto: ficou parado no envio", charged: true };
 }
 
 /** A linha que vai na legenda do vídeo (a mesma ideia de VIDEO_AI_NOTICE, como frase). */
