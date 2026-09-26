@@ -32,7 +32,7 @@ import {
   type VideoDurationSeconds,
   type VideoResolution,
 } from "@/core/studio/cost";
-import { buildVideoMotionPrompt, VIDEO_AI_NOTICE, VIDEO_DEFAULTS, videoFitsBudget } from "@/core/studio/video";
+import { buildVideoMotionPrompt, classifyVideoFailure, VIDEO_AI_NOTICE, VIDEO_DEFAULTS, videoFitsBudget } from "@/core/studio/video";
 import { formatCentsBRL } from "@/lib/money";
 
 /** O vídeo leva minutos (o 1º teste: 266 s); o adapter espera até 10 min, isto é a folga do download. */
@@ -117,40 +117,37 @@ function resumeCommand(out: string): string {
  * pedido aberto para retomar, porque ele pode ainda terminar e ser cobrado.
  */
 function failureNote(error: StudioUnavailableError, jobId: string | null, resumed: boolean, out: string): { text: string; closeOrder: boolean } {
-  if (jobId === null) {
-    // Sem id: ou a FASHN respondeu recusando (qualquer HTTP abaixo de 500, ou a chave faltando aqui), ou a resposta não chegou.
-    const refusedAtTheDoor = error.reason === "no_key" || (error.status !== undefined && error.status < 500);
-    return {
-      closeOrder: false,
-      text: refusedAtTheDoor
-        ? "A FASHN recusou o pedido na entrada: nada foi cobrado."
-        : "A resposta da FASHN não chegou, então não dá para saber se ela recebeu o pedido. Confira o saldo daqui a uns 10 minutos antes de pedir de novo (se caiu, o vídeo foi feito — fale com o suporte deles pelo painel da FASHN).",
-    };
+  // A mesma regra da fila (core/studio/video): um pedido que a FASHN pode ter aceitado nunca é pedido de novo.
+  switch (classifyVideoFailure({ reason: error.reason, status: error.status, jobId })) {
+    case "retry_not_charged":
+    case "closed_not_charged":
+      return jobId === null
+        ? { closeOrder: false, text: "A FASHN recusou o pedido na entrada: nada foi cobrado." }
+        : {
+            closeOrder: true,
+            text: `A FASHN terminou o pedido ${jobId} sem vídeo (recusou a foto ou o movimento): ela só cobra saída pronta, então nada foi cobrado. Pode pedir de novo nesta pasta.`,
+          };
+    case "uncertain_submit":
+      return {
+        closeOrder: false,
+        text: "A resposta da FASHN não chegou, então não dá para saber se ela recebeu o pedido. Confira o saldo daqui a uns 10 minutos antes de pedir de novo (se caiu, o vídeo foi feito — fale com o suporte deles pelo painel da FASHN).",
+      };
+    case "closed_job_gone":
+      return {
+        closeOrder: true,
+        text: resumed
+          ? `A FASHN não reconhece mais o pedido ${jobId} (a saída dela vale 3 dias, ou a chave mudou). O vídeo não dá mais para buscar; o saldo antes/agora acima mostra se houve cobrança.`
+          : `A FASHN não reconhece o pedido ${jobId} que ela mesma acabou de aceitar: sem vídeo. Confira o saldo daqui a uns 10 minutos antes de pedir de novo.`,
+      };
+    case "keep_open":
+      return {
+        closeOrder: false,
+        text:
+          error.reason === "invalid_response"
+            ? `O pedido ${jobId} terminou, mas a saída veio fora do formato — pode ter sido cobrado. Dá para tentar baixar de novo sem pagar (vale por 3 dias): ${resumeCommand(out)}. Se falhar igual, a saída deles veio com defeito.`
+            : `O pedido ${jobId} foi aceito e pode ainda terminar (a FASHN cobra quando termina, então o saldo pode cair depois). Para buscar o vídeo sem pagar de novo (vale por 3 dias): ${resumeCommand(out)}`,
+      };
   }
-  if (error.reason === "rejected" && error.status === undefined) {
-    return {
-      closeOrder: true,
-      text: `A FASHN terminou o pedido ${jobId} sem vídeo (recusou a foto ou o movimento): ela só cobra saída pronta, então nada foi cobrado. Pode pedir de novo nesta pasta.`,
-    };
-  }
-  if (error.status === 404) {
-    return {
-      closeOrder: true,
-      text: resumed
-        ? `A FASHN não reconhece mais o pedido ${jobId} (a saída dela vale 3 dias, ou a chave mudou). O vídeo não dá mais para buscar; o saldo antes/agora acima mostra se houve cobrança.`
-        : `A FASHN não reconhece o pedido ${jobId} que ela mesma acabou de aceitar: sem vídeo. Confira o saldo daqui a uns 10 minutos antes de pedir de novo.`,
-    };
-  }
-  if (error.reason === "invalid_response") {
-    return {
-      closeOrder: false,
-      text: `O pedido ${jobId} terminou, mas a saída veio fora do formato — pode ter sido cobrado. Dá para tentar baixar de novo sem pagar (vale por 3 dias): ${resumeCommand(out)}. Se falhar igual, a saída deles veio com defeito.`,
-    };
-  }
-  return {
-    closeOrder: false,
-    text: `O pedido ${jobId} foi aceito e pode ainda terminar (a FASHN cobra quando termina, então o saldo pode cair depois). Para buscar o vídeo sem pagar de novo (vale por 3 dias): ${resumeCommand(out)}`,
-  };
 }
 
 async function main() {

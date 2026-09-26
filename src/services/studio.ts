@@ -24,7 +24,7 @@ import { findColorAxis, imagesForColor } from "@/core/catalog/product-images";
 import { creditsFor, estimateRequestUsdCents, type StudioRequestEstimate } from "@/core/studio/cost";
 import { BODY_SIZE_KEYS, HOUSE_MODEL_KEYS, SCENE_KEYS, STUDIO_QUALITIES, type StudioQuality } from "@/core/studio/presets";
 import { garmentCategoryFor } from "@/core/studio/prompts";
-import { auditLog, outboxEvents, productImages, products, studioBasePhotos, studioCandidates, studioRequests } from "@/db/schema";
+import { auditLog, outboxEvents, productImages, products, studioBasePhotos, studioCandidates, studioRequests, studioVideos } from "@/db/schema";
 import { spDayKey, spDayStart } from "@/lib/sp-day";
 import { enqueueOutboxEvent, type DbOrTx } from "@/queue/enqueue";
 import { addProductImage, type ServiceDb } from "@/services/catalog";
@@ -84,9 +84,9 @@ export async function countStudioImagesToday(db: DbOrTx, now: Date): Promise<num
   return (candidates?.n ?? 0) + (bases?.n ?? 0);
 }
 
-export type StudioCostSummary = { images: number; usdCents: number };
+export type StudioCostSummary = { images: number; videos: number; usdCents: number };
 
-/** Gasto do ensaio no período (candidatas + fotos-base), para o painel e o "Bom dia". */
+/** Gasto do ensaio no período (candidatas + fotos-base + vídeos), para o painel e o "Bom dia". */
 export async function summarizeStudioCosts(db: DbOrTx, range: { from: Date; to: Date }): Promise<StudioCostSummary> {
   const [candidates] = await db
     .select({ n: sql<number>`count(*)::int`, usd: sql<number>`coalesce(sum(${studioCandidates.usdCents}), 0)::int` })
@@ -96,7 +96,19 @@ export async function summarizeStudioCosts(db: DbOrTx, range: { from: Date; to: 
     .select({ n: sql<number>`count(*)::int`, usd: sql<number>`coalesce(sum(${studioBasePhotos.usdCents}), 0)::int` })
     .from(studioBasePhotos)
     .where(and(gte(studioBasePhotos.createdAt, range.from), sql`${studioBasePhotos.createdAt} < ${range.to}`));
-  return { images: (candidates?.n ?? 0) + (bases?.n ?? 0), usdCents: (candidates?.usd ?? 0) + (bases?.usd ?? 0) };
+  // Vídeo conta quando teve gasto registrado (pronto, ou possivelmente cobrado).
+  const [videos] = await db
+    .select({
+      n: sql<number>`count(*) FILTER (WHERE ${studioVideos.usdCents} > 0)::int`,
+      usd: sql<number>`coalesce(sum(${studioVideos.usdCents}), 0)::int`,
+    })
+    .from(studioVideos)
+    .where(and(gte(studioVideos.createdAt, range.from), sql`${studioVideos.createdAt} < ${range.to}`));
+  return {
+    images: (candidates?.n ?? 0) + (bases?.n ?? 0),
+    videos: videos?.n ?? 0,
+    usdCents: (candidates?.usd ?? 0) + (bases?.usd ?? 0) + (videos?.usd ?? 0),
+  };
 }
 
 // ---------------------------------------------------------------------------

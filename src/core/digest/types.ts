@@ -36,8 +36,9 @@ export interface DailyDigestData {
     orders: number;
     ordersCents: number;
     costUsdCents: number;
-    /** Foto no corpo no dia: imagens geradas e o gasto delas. */
+    /** Foto no corpo no dia: imagens e vídeos gerados e o gasto deles. */
     studioImages: number;
+    studioVideos: number;
     studioUsdCents: number;
   };
   /** Até 3 variações no limiar ou abaixo, as mais vazias primeiro. */

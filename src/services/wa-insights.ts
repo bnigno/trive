@@ -42,6 +42,7 @@ export interface BotActivityWindow {
   costUsdCents: number;
   /** Foto no corpo na janela: imagens geradas (opções e fotos-base) e o gasto delas. */
   studioImages: number;
+  studioVideos: number;
   studioUsdCents: number;
 }
 
@@ -124,6 +125,7 @@ export async function summarizeBotActivity(
     ordersCents: Number(botOrders?.totalCents ?? 0),
     costUsdCents,
     studioImages: studio.images,
+    studioVideos: studio.videos,
     studioUsdCents: studio.usdCents,
   };
 }
@@ -138,8 +140,9 @@ export interface BotActivitySummary {
   ordersByBot: number;
   ordersByBotCents: number;
   estimatedCostUsdCents: number;
-  /** Foto no corpo na janela: imagens geradas e o gasto delas (separado da Lia). */
+  /** Foto no corpo na janela: imagens e vídeos gerados e o gasto deles (separado da Lia). */
   studioImages: number;
+  studioVideos: number;
   studioUsdCents: number;
 }
 
@@ -168,6 +171,7 @@ export async function getBotActivitySummary(db: DbOrTx): Promise<BotActivitySumm
     ordersByBotCents: window.ordersCents,
     estimatedCostUsdCents: window.costUsdCents,
     studioImages: window.studioImages,
+    studioVideos: window.studioVideos,
     studioUsdCents: window.studioUsdCents,
   };
 }

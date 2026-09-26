@@ -97,6 +97,8 @@ export interface ImageStudio {
   generateOnModel(input: GenerateOnModelInput): Promise<StudioImage[]>;
   /** "A peça se mexe": a foto vira um vídeo curto (MP4). */
   animate(input: AnimateInput): Promise<StudioVideo>;
+  /** Saldo de créditos da conta (consulta grátis); null = desconhecido. */
+  creditsBalance(signal?: AbortSignal): Promise<number | null>;
 }
 
 /**

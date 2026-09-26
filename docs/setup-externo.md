@@ -121,6 +121,11 @@ Desde a nota da curadora (2026-09-12) ele aceita imagens (`image/webp`,
 (`receipts/<orderId>/comprovante.jpg`, gerado pelo evento `order.receipt`)
 depende de `image/jpeg`; a nota da curadora depende dos áudios.
 
+Desde o vídeo da peça (2026-09-25) ele também aceita **`video/mp4`**, e o
+limite por arquivo subiu para **50MB** (o teto do plano Free): o vídeo de 5 s
+em 1080p tem ~16 MB. As imagens continuam passando pelo acabamento do app, e
+as server actions param em 8 MB.
+
 `scripts/setup-storage.ts` é idempotente: cria o bucket se não existir e, se
 já existir, atualiza a lista de formatos. Rodar de novo a cada formato novo:
 

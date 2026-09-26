@@ -35,6 +35,6 @@ export { waFollowups } from "./followups";
 export { waSuggestions } from "./suggestions";
 export { couriers, deliveryPositions, deliveryRuns, deliveryStops } from "./delivery";
 export { waGroupMembers, waGroupPosts, waGroups, waGroupSignals } from "./groups";
-export { studioBasePhotos, studioCandidates, studioRequests } from "./studio";
+export { studioBasePhotos, studioCandidates, studioRequests, studioVideos } from "./studio";
 export { pushSubscriptions } from "./push";
 export { friendAnswers, friendRounds } from "./friends";

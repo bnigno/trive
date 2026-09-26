@@ -12,7 +12,9 @@ import {
   carouselEyebrow,
   postEyebrow,
   type CarouselEntry,
+  type PostCaptionInput,
 } from "@/core/cards/post";
+import { VIDEO_CAPTION_NOTICE } from "@/core/studio/video";
 import { fold, orderImagesByPolicy, pickCoverImage } from "@/core/catalog/product-images";
 import { categories, products } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
@@ -57,6 +59,8 @@ type PostBasis = {
   colors: CarouselEntry[];
   omittedColors: string[];
   caption: string;
+  /** O que gerou a legenda (o vídeo refaz a mesma legenda com o aviso de IA). */
+  captionInput: PostCaptionInput;
 };
 
 /** Preço do post: o da peça, ou "a partir de" quando as variações diferem. */
@@ -141,6 +145,14 @@ async function loadBasis(db: DbOrTx, productId: string): Promise<PostBasis> {
   const editionName = text("edition_name");
   const categoryName = category[0]?.name ?? null;
   const priceLabel = priceLabelOf(prices);
+  const captionInput: PostCaptionInput = {
+    name: detail.name,
+    priceLabel,
+    categoryName,
+    editionName: editionName !== "" ? editionName : null,
+    storeName,
+    productUrl: `${siteBaseUrl()}/produto/${detail.slug}`,
+  };
 
   const plan = carouselColors({
     attributesSchema: detail.attributesSchema,
@@ -183,14 +195,8 @@ async function loadBasis(db: DbOrTx, productId: string): Promise<PostBasis> {
         },
       ],
     }),
-    caption: buildPostCaption({
-      name: detail.name,
-      priceLabel,
-      categoryName,
-      editionName: editionName !== "" ? editionName : null,
-      storeName,
-      productUrl: `${siteBaseUrl()}/produto/${detail.slug}`,
-    }),
+    caption: buildPostCaption(captionInput),
+    captionInput,
   };
 }
 
@@ -292,12 +298,36 @@ export async function getProductPostPreview(
 }
 
 /** "longo-dunas-terracota.jpg": nome do arquivo baixado, só ASCII. */
-function downloadFilename(slug: string, suffix: string): string {
+function downloadFilename(slug: string, suffix: string, extension: "jpg" | "mp4" = "jpg"): string {
   const clean = (value: string) =>
     fold(value)
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
-  return `${clean(slug)}-${clean(suffix)}.jpg`;
+  return `${clean(slug)}-${clean(suffix)}.${extension}`;
+}
+
+/**
+ * O vídeo da peça para o Instagram: a legenda do post com o aviso de IA
+ * ("Imagem ilustrativa…") e o nome do arquivo baixado. Sem post possível
+ * (sem preço, sem foto, fora da vitrine) a legenda é null — o aviso sozinho
+ * a tela mostra mesmo assim.
+ */
+export async function getProductVideoCaption(
+  db: DbOrTx,
+  productId: string,
+): Promise<{ caption: string | null; filename: string; slug: string | null }> {
+  const id = z.uuid().parse(productId);
+  try {
+    const basis = await loadBasis(db, id);
+    return {
+      caption: buildPostCaption({ ...basis.captionInput, notice: VIDEO_CAPTION_NOTICE }),
+      filename: downloadFilename(basis.slug, "video", "mp4"),
+      slug: basis.slug,
+    };
+  } catch (error) {
+    if (!(error instanceof ServiceError)) throw error;
+    return { caption: null, filename: downloadFilename(id, "video", "mp4"), slug: null };
+  }
 }
 
 /** O JPEG do cache, servido pela própria origem (sem CORS do Storage). */

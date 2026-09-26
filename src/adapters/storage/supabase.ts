@@ -35,9 +35,10 @@ export class SupabaseFileStorage implements FileStorage {
     return { path: input.path };
   }
 
-  publicUrl(path: string): string {
-    return this.client.storage.from(PRODUCT_IMAGES_BUCKET).getPublicUrl(path)
-      .data.publicUrl;
+  publicUrl(path: string, options?: { download?: string }): string {
+    return this.client.storage
+      .from(PRODUCT_IMAGES_BUCKET)
+      .getPublicUrl(path, options?.download ? { download: options.download } : undefined).data.publicUrl;
   }
 
   async download(path: string): Promise<{ data: Buffer; contentType: string | null }> {

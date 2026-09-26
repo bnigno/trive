@@ -41,6 +41,7 @@ import {
 import type { LiaGiftPolicy } from "@/core/coupons/lia-gift";
 import { countLiaGiftsToday, loadLiaGiftPolicy } from "@/services/lia-gifts";
 import { INTERVIEW_STATUS_LABELS } from "@/core/atelier/interview";
+import { studioSpendLabel } from "@/core/studio/labels";
 import {
   INTERVIEW_PROBLEM_TEXT,
   interviewProblems,
@@ -88,6 +89,7 @@ interface PageData {
   atelierEnabled: boolean;
   aiPhotosEnabled: boolean;
   aiPhotosInStore: boolean;
+  aiVideoEnabled: boolean;
   feedbackAskEnabled: boolean;
   customerLooksEnabled: boolean;
   audioNotesEnabled: boolean;
@@ -158,6 +160,7 @@ async function loadPageData(): Promise<PageData | null> {
         "lia_gift_enabled",
         "ai_photos_enabled",
         "ai_photos_in_store",
+        "ai_video_enabled",
         "friends_vote_enabled",
       ]),
       listWaTemplates(db),
@@ -211,6 +214,7 @@ async function loadPageData(): Promise<PageData | null> {
     atelierEnabled: settingsMap["atelier_enabled"] !== false,
     aiPhotosEnabled: settingsMap["ai_photos_enabled"] === true,
     aiPhotosInStore: settingsMap["ai_photos_in_store"] === true,
+    aiVideoEnabled: settingsMap["ai_video_enabled"] === true,
     feedbackAskEnabled: settingsMap["feedback_ask_enabled"] !== false,
     customerLooksEnabled: settingsMap["customer_looks_enabled"] !== false,
     audioNotesEnabled: settingsMap["bot_audio_notes_enabled"] !== false,
@@ -308,6 +312,7 @@ export default async function WhatsappPage() {
     lastDigest,
     liaGift,
   } = data;
+  const studioSpend = studioSpendLabel({ images: summary.studioImages, videos: summary.studioVideos });
 
   // O interruptor sozinho não liga a vendedora em produção: sem a chave da
   // Anthropic na hospedagem, o inbound segue para o dono (isBotEnabled).
@@ -493,13 +498,19 @@ export default async function WhatsappPage() {
               label="Foto no corpo também na vitrine"
               hint="Desligado, a foto gerada aparece só no post do Instagram e nos cartões da Lia; a loja segue com as fotos reais. Ligue quando gostar da qualidade."
             />
+            <ToggleSwitch
+              settingKey="ai_video_enabled"
+              checked={data.aiVideoEnabled}
+              label="Fazer vídeo da foto no corpo"
+              hint="Na peça, o bloco “Vídeo da peça” transforma a foto no corpo escolhida num vídeo de 5 s para o Reels (≈ R$ 2,48 cada, pronto em uns 5 minutos). Nunca aparece na vitrine; a legenda já sai com o aviso de imagem feita com IA. Teto de vídeos por dia em Configurações."
+            />
           </div>
           <div className="flex flex-wrap gap-4 text-sm">
             <Link href="/admin/produtos/modelos-da-casa" className="font-medium text-zinc-900 underline dark:text-zinc-100">
               Modelos da casa (fotos-base)
             </Link>
             <Link href="/admin/configuracoes#foto-no-corpo" className="font-medium text-zinc-900 underline dark:text-zinc-100">
-              Cota, qualidade e cena padrão
+              Cota, qualidade, cena padrão e teto de vídeos
             </Link>
           </div>
           {data.aiPhotosEnabled && !isImageStudioConfigured() ? (
@@ -641,9 +652,9 @@ export default async function WhatsappPage() {
                 <dt className="text-xs text-zinc-500 dark:text-zinc-400">Custo estimado da IA</dt>
                 <dd className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                   {usdCents(summary.estimatedCostUsdCents)}
-                  {summary.studioImages > 0 ? (
+                  {studioSpend ? (
                     <span className="ml-1 text-xs font-normal text-zinc-500">
-                      + fotos no corpo {usdCents(summary.studioUsdCents)} ({summary.studioImages})
+                      + {studioSpend.what} {usdCents(summary.studioUsdCents)} ({studioSpend.count})
                     </span>
                   ) : null}
                 </dd>

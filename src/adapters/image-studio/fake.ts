@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import sharp from "sharp";
 
 import { creditsFor, creditsToUsdCents, videoCreditsFor } from "@/core/studio/cost";
@@ -57,6 +59,9 @@ export class FakeImageStudio implements ImageStudio {
   readonly generations: GenerateOnModelInput[] = [];
   readonly animations: AnimateInput[] = [];
   private readonly failures: Error[] = [];
+  private readonly afterSubmitFailures: Error[] = [];
+  /** Saldo da conta de mentira: null = desconhecido (nunca bloqueia). */
+  balance: number | null = null;
 
   failNext(error: Error = new StudioUnavailableError("gerador fora do ar (fake)", "unavailable")): void {
     this.failures.push(error);
@@ -106,15 +111,33 @@ export class FakeImageStudio implements ImageStudio {
     return images;
   }
 
+  /**
+   * Simula "a FASHN aceitou (e vai cobrar), depois a espera falhou": o erro
+   * sai DEPOIS do id do pedido (ou na retomada). failNext() falha antes do envio.
+   */
+  failAfterSubmitNext(error: Error = new StudioUnavailableError("a FASHN não terminou no prazo (fake)", "timeout")): void {
+    this.afterSubmitFailures.push(error);
+  }
+
+  async creditsBalance(): Promise<number | null> {
+    return this.balance;
+  }
+
   async animate(input: AnimateInput): Promise<StudioVideo> {
     this.animations.push(input);
     this.throwIfScripted();
-    if (input.resumeJobId === undefined) input.onSubmitted?.(`fake-video-${this.animations.length}`);
-    try {
-      await sharp(input.image.data).metadata();
-    } catch {
-      throw new StudioUnavailableError("A foto não é uma imagem válida (fake).", "rejected");
+    if (input.resumeJobId === undefined) {
+      // Como a FASHN: foto que não abre é recusada NA ENTRADA (400), antes de existir pedido.
+      try {
+        await sharp(input.image.data).metadata();
+      } catch {
+        throw new StudioUnavailableError("A foto não é uma imagem válida (fake).", "rejected", 400);
+      }
+      // Id único por processo e entre reinícios: o banco exige um pedido = uma linha.
+      input.onSubmitted?.(`fake-video-${this.animations.length}-${randomUUID().slice(0, 8)}`);
     }
+    const afterSubmit = this.afterSubmitFailures.shift();
+    if (afterSubmit) throw afterSubmit;
     const credits = videoCreditsFor(input.durationSeconds, input.resolution);
     return {
       data: fakeMp4(`${input.durationSeconds}s ${input.resolution}${input.endImage ? " com costas" : ""}`),
@@ -131,6 +154,8 @@ export class FakeImageStudio implements ImageStudio {
     this.modelPhotos.length = 0;
     this.generations.length = 0;
     this.animations.length = 0;
+    this.afterSubmitFailures.length = 0;
+    this.balance = null;
     this.failures.length = 0;
   }
 

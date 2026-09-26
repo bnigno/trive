@@ -14,6 +14,7 @@ import { editionDigestLine } from "@/core/digest/editions";
 import { openingFor } from "@/core/digest/openings";
 import type { DailyDigestData } from "@/core/digest/types";
 import { normalizeReceiptText } from "@/core/receipts/types";
+import { studioSpendLabel } from "@/core/studio/labels";
 import { auditLog, orders, settings, waMessages, waTemplates } from "@/db/schema";
 import { formatCentsBRL, formatUsdCents } from "@/lib/money";
 import { isValidE164 } from "@/lib/phone";
@@ -211,7 +212,10 @@ export function buildDigestVars(data: DailyDigestData): Record<string, string> {
     lia_conversas: String(data.bot.conversations),
     lia_pedidos: String(data.bot.orders),
     lia_custo: formatUsdCents(data.bot.costUsdCents),
-    fotos_custo: data.bot.studioImages > 0 ? `${formatUsdCents(data.bot.studioUsdCents)} (${data.bot.studioImages})` : "—",
+    fotos_custo: (() => {
+      const spend = studioSpendLabel({ images: data.bot.studioImages, videos: data.bot.studioVideos });
+      return spend ? `${formatUsdCents(data.bot.studioUsdCents)} (${spend.count})` : "—";
+    })(),
     loja: data.storeName,
     // Traz a própria quebra de linha: sem edição, a legenda termina no 🤎 sem linha vazia.
     edicoes: (() => {

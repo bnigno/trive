@@ -6,6 +6,8 @@ import { PIECE_TYPE_SLUGS, type PieceType } from "@/core/catalog/piece-types";
 import { getDb } from "@/db/client";
 import { getFileStorage } from "@/adapters/storage";
 import { getTranscriber } from "@/adapters/transcription";
+import { getImageStudio, isImageStudioConfigured } from "@/adapters/image-studio";
+import { discardStudioVideo, refetchStudioVideo, requestStudioVideo } from "@/services/studio-video";
 import {
   recordCuratorNote,
   removeCuratorAudio,
@@ -562,6 +564,62 @@ export async function chooseStudioCandidateAction(_prev: FormState, formData: Fo
   }
   revalidateProduct(parsed.data.productId);
   return { success: "Guardada como foto da peça (depois das reais)." };
+}
+
+const videoRequestSchema = z.object({
+  candidateId: z.uuid("Não foi possível identificar esta foto."),
+  productId: z.uuid("Não foi possível identificar este produto."),
+});
+const videoSchema = z.object({
+  videoId: z.uuid("Não foi possível identificar este vídeo."),
+  productId: z.uuid("Não foi possível identificar este produto."),
+});
+
+/** "A peça se mexe": a foto no corpo que está na peça vira vídeo de 5 s (pela fila). Nada muda na vitrine. */
+export async function requestStudioVideoAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const parsed = videoRequestSchema.safeParse({
+    candidateId: String(formData.get("candidateId") ?? ""),
+    productId: String(formData.get("productId") ?? ""),
+  });
+  if (!parsed.success) return toErrorState(parsed.error);
+  try {
+    await requestStudioVideo(
+      getDb(),
+      { studio: getImageStudio(), configured: isImageStudioConfigured() },
+      { candidateId: parsed.data.candidateId, userId: user.id },
+    );
+  } catch (error) {
+    return toErrorState(error);
+  }
+  revalidatePath(`/admin/produtos/${parsed.data.productId}`);
+  return { success: "Vídeo na fila — fica pronto em uns 5 minutos. A tela atualiza sozinha." };
+}
+
+export async function refetchStudioVideoAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const parsed = videoSchema.safeParse({ videoId: String(formData.get("videoId") ?? ""), productId: String(formData.get("productId") ?? "") });
+  if (!parsed.success) return toErrorState(parsed.error);
+  try {
+    await refetchStudioVideo(getDb(), { videoId: parsed.data.videoId, userId: user.id });
+  } catch (error) {
+    return toErrorState(error);
+  }
+  revalidatePath(`/admin/produtos/${parsed.data.productId}`);
+  return { success: "Buscando o mesmo vídeo na FASHN (sem pagar de novo)." };
+}
+
+export async function discardStudioVideoAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireOwner("produtos");
+  const parsed = videoSchema.safeParse({ videoId: String(formData.get("videoId") ?? ""), productId: String(formData.get("productId") ?? "") });
+  if (!parsed.success) return toErrorState(parsed.error);
+  try {
+    await discardStudioVideo(getDb(), getFileStorage(), { videoId: parsed.data.videoId, userId: user.id });
+  } catch (error) {
+    return toErrorState(error);
+  }
+  revalidatePath(`/admin/produtos/${parsed.data.productId}`);
+  return { success: "Vídeo descartado." };
 }
 
 export async function discardStudioCandidateAction(_prev: FormState, formData: FormData): Promise<FormState> {

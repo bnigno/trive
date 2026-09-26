@@ -69,6 +69,20 @@ describe("buildPostCaption", () => {
     expect(belem).toHaveLength(1);
     expect(BELEM_HASHTAGS.length).toBeGreaterThan(3);
   });
+
+  it("com aviso (vídeo de IA): a linha entra antes das hashtags, o link segue no fim e o aviso nunca é cortado", () => {
+    const aviso = "Imagem ilustrativa (feita com IA a partir da peça real).";
+    const caption = buildPostCaption({ ...BASE, notice: aviso });
+    expect(caption).toContain(`Toque no link para ver a peça inteira e falar com a gente.\n${aviso}`);
+    expect(caption.indexOf(aviso)).toBeLessThan(caption.indexOf("#"));
+    expect(caption.endsWith(BASE.productUrl)).toBe(true);
+    expect(buildPostCaption({ ...BASE, notice: "   " })).toBe(buildPostCaption(BASE));
+
+    const gigante = buildPostCaption({ ...BASE, name: "P".repeat(2300), notice: aviso });
+    expect(gigante.length).toBeLessThanOrEqual(POST_CAPTION_MAX);
+    expect(gigante).toContain(aviso);
+    expect(gigante.endsWith(BASE.productUrl)).toBe(true);
+  });
 });
 
 describe("carouselColors", () => {

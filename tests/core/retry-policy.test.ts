@@ -4,6 +4,7 @@ import {
   RETRY_POLICIES,
   classifyOutcome,
   getRetryPolicy,
+  handlerReserveMs,
   nextAttemptDelayMs,
   type RetryPolicy,
 } from "../../src/core/queue/retry-policy";
@@ -112,6 +113,12 @@ describe("wa.card_render", () => {
 });
 
 describe("política do pré-desenho do post", () => {
+  it("vídeo da peça: 4 tentativas espaçadas e reserva de 30 s por rodada (cabe na varredura de 40 s)", () => {
+    expect(getRetryPolicy("product.ai_video")).toEqual({ maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 });
+    expect(handlerReserveMs("product.ai_video")).toBe(30_000);
+    expect(handlerReserveMs("product.ai_video")).toBeLessThan(40_000);
+  });
+
   it("product.published e product.card_refresh tentam poucas vezes e rápido (ninguém espera na tela)", () => {
     for (const eventType of ["product.published", "product.card_refresh"]) {
       const policy = getRetryPolicy(eventType);

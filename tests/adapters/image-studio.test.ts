@@ -474,7 +474,17 @@ describe("FakeImageStudio + seleção por ADAPTER_MODE", () => {
     const ids: string[] = [];
     await fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", onSubmitted: (id) => ids.push(id) });
     await fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", resumeJobId: "x", onSubmitted: (id) => ids.push(id) });
-    expect(ids).toEqual(["fake-video-2"]);
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toMatch(/^fake-video-2-[0-9a-f]{8}$/);
+    fake.failAfterSubmitNext();
+    const accepted: string[] = [];
+    await expect(
+      fake.animate({ image: { data: photo, mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p", onSubmitted: (id) => accepted.push(id) }),
+    ).rejects.toMatchObject({ reason: "timeout" });
+    expect(accepted).toHaveLength(1);
+    expect(await fake.creditsBalance()).toBeNull();
+    fake.balance = 3;
+    expect(await fake.creditsBalance()).toBe(3);
     await expect(
       fake.animate({ image: { data: Buffer.from("nao-e-imagem"), mimeType: "image/jpeg" }, prompt: "p", durationSeconds: 5, resolution: "480p" }),
     ).rejects.toMatchObject({ reason: "rejected" });

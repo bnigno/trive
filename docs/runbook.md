@@ -1018,6 +1018,47 @@ Em 22/09/2026, em produção: os dois interruptores **desligados** e
 então cada foto custa 3 créditos. Falta comprar crédito, gerar as fotos-base e
 ligar.
 
+### Vídeo da peça ("a peça se mexe")
+
+A foto no corpo **escolhida** (a que já está na peça) vira um vídeo de 5 s em
+1080p para o Reels — bloco **Vídeo da peça** na ficha, logo abaixo de Foto no
+corpo. Custa **6 créditos ≈ R$ 2,48** e fica pronto em uns 5 minutos (o
+primeiro teste real levou 266 s). **Nunca aparece na vitrine** nem nas
+mensagens da Lia (há um teste que garante); a legenda já sai com a linha
+"Imagem ilustrativa (feita com IA a partir da peça real)." e, ao publicar, o
+rótulo de IA do Instagram também vai ligado.
+
+Interruptor `ai_video_enabled` (Vendedora & WhatsApp, cartão Foto no corpo) e
+teto `ai_video_daily_limit` (Configurações → Foto no corpo, padrão 2 vídeos
+por dia; vídeo que falhou sem cobrança não conta).
+
+**Como anda pela fila** (`product.ai_video`,
+`src/services/studio-video-generate.ts`): a primeira rodada envia o pedido e
+grava o **id do pedido na FASHN** (`studio_videos.vendor_job_id`); as rodadas
+seguintes só acompanham esse id (eventos novos com hora marcada: a 1ª espera
+é 4 min depois, depois a cada ~1 min, até 30 min). **Nunca se pede de novo o
+que a FASHN pode ter aceitado** — seria pagar duas vezes.
+
+**Os motivos de falha, na tela:**
+
+- *envio incerto*: a resposta do envio não chegou (rede, 5xx, invocação
+  interrompida). Pode ter sido feito e cobrado. Conferir o saldo da FASHN
+  depois de uns 10 minutos antes de pedir outro.
+- *demorou demais* / *não salvou*: o vídeo tem id — o botão **Buscar de novo
+  (sem pagar)** acompanha o mesmo pedido por até 3 dias (a saída da FASHN
+  expira depois disso).
+- *sem créditos na FASHN*, *recusou*: nada foi cobrado.
+- Na fila, a linha morta (`/admin/fila`) traz o id do pedido no `last_error`
+  quando a falha foi depois do envio.
+
+Antes de gastar em série, ou para testar outro gesto: `scripts/preview-video.ts`
+(consulta o saldo, para no teto, grava `pedido.json` e retoma com `--retomar`).
+
+Produção, **nesta ordem**: migração 0065 **antes** do deploy (a página lê a
+tabela); `scripts/setup-storage.ts` (o bucket passa a aceitar `video/mp4` até
+50MB — antes era 10MB e só imagem/áudio); `scripts/sync-seed.ts --settings
+ai_video_enabled,ai_video_daily_limit`; o dono liga o interruptor.
+
 ## A Lia passou a conversa com "Assistente de IA indisponível"
 
 O motivo entre parênteses diz o que a API da Anthropic respondeu:

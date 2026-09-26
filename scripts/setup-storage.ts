@@ -31,10 +31,14 @@ async function main() {
   // A mesma lista nos dois ramos (criar e atualizar): o Supabase compara o
   // mime por igualdade, então os áudios entram já canônicos (core decide).
   const IMAGE_MIMES = ["image/webp", "image/png", "image/jpeg", "image/avif"];
+  // "A peça se mexe": o vídeo de 5 s em 1080p tem ~16 MB (10 s, ~33 MB).
+  // 50MB é o teto por arquivo do plano Free; as imagens continuam passando
+  // pelo acabamento do app (e as server actions param em 8 MB).
+  const VIDEO_MIMES = ["video/mp4"];
   const bucketConfig = {
     public: true,
-    fileSizeLimit: "10MB",
-    allowedMimeTypes: [...IMAGE_MIMES, ...CURATOR_AUDIO_CANONICAL_MIMES],
+    fileSizeLimit: "50MB",
+    allowedMimeTypes: [...IMAGE_MIMES, ...CURATOR_AUDIO_CANONICAL_MIMES, ...VIDEO_MIMES],
   };
 
   if (buckets?.some((bucket) => bucket.name === BUCKET)) {
@@ -45,7 +49,7 @@ async function main() {
       console.error(`Falha ao atualizar bucket '${BUCKET}': ${updateError.message}`);
       process.exit(1);
     }
-    console.log(`Bucket '${BUCKET}' atualizado: imagens e áudio da nota da curadora.`);
+    console.log(`Bucket '${BUCKET}' atualizado: imagens, áudio da nota da curadora e vídeo da peça (até 50MB).`);
     return;
   }
 

@@ -1,7 +1,9 @@
 // Migração 0056 (foto no corpo) no PGlite: origin em product_images com
 // default 'upload' e CHECK; uma foto-base escolhida por modela × cena ×
 // corpo (índice parcial); candidata única por pedido × opção × tentativa;
-// settings do ensaio semeados desligados e dentro das chaves permitidas.
+// settings do ensaio semeados desligados e dentro das chaves permitidas;
+// migração 0065 (vídeo da peça): estados fechados, um vídeo em andamento
+// por foto e um pedido da FASHN por linha.
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -63,6 +65,33 @@ describe("schema do ensaio", () => {
     expect(await db.select().from(schema.studioCandidates)).toHaveLength(0);
   });
 
+  it("vídeo da peça: estados, duração e resolução fechados; um em andamento por foto; um pedido da FASHN = uma linha", async () => {
+    const [product] = await db.insert(schema.products).values({ name: "P", slug: "p", status: "active" }).returning({ id: schema.products.id });
+    const [request] = await db
+      .insert(schema.studioRequests)
+      .values({ productId: product!.id, sceneKey: "estudio", modelKey: "modelo_a", sizeKey: "M", quality: "alta", optionsWanted: 1 })
+      .returning({ id: schema.studioRequests.id });
+    const [candidate] = await db.insert(schema.studioCandidates).values({ requestId: request!.id, optionNo: 1, storagePath: "c.jpg", status: "chosen" }).returning({ id: schema.studioCandidates.id });
+    const base = { productId: product!.id, candidateId: candidate!.id, sourceStoragePath: "c.jpg", durationSeconds: 5, resolution: "1080p", prompt: "p", credits: 6 };
+
+    const [first] = await db.insert(schema.studioVideos).values(base).returning();
+    expect(first).toMatchObject({ status: "queued", usdCents: 0, polls: 0, vendorJobId: null });
+    await violates(db.insert(schema.studioVideos).values(base), "studio_videos_candidate_in_flight_unique_idx");
+    await db.execute(sql`update studio_videos set status = 'done', vendor_job_id = 'job-1' where id = ${first!.id}`);
+    // Pronto não segura a foto: outro vídeo dela pode ser pedido; o mesmo pedido da FASHN nunca vira duas linhas.
+    const [second] = await db.insert(schema.studioVideos).values(base).returning({ id: schema.studioVideos.id });
+    await violates(db.execute(sql`update studio_videos set vendor_job_id = 'job-1' where id = ${second!.id}`), "studio_videos_vendor_job_id_unique_idx");
+    await db.execute(sql`update studio_videos set status = 'failed' where id = ${second!.id}`);
+
+    await violates(db.insert(schema.studioVideos).values({ ...base, status: "rendering" }), "studio_videos_status_check");
+    await violates(db.insert(schema.studioVideos).values({ ...base, durationSeconds: 7 }), "studio_videos_duration_check");
+    await violates(db.insert(schema.studioVideos).values({ ...base, resolution: "4k" }), "studio_videos_resolution_check");
+    await violates(db.insert(schema.studioVideos).values({ ...base, usdCents: -1 }), "studio_videos_money_check");
+    // Apagar a peça leva os vídeos junto.
+    await db.execute(sql`delete from products where id = ${product!.id}`);
+    expect(await db.select().from(schema.studioVideos)).toHaveLength(0);
+  });
+
   it("settings do ensaio: semeados desligados, com padrões, dentro das chaves permitidas", () => {
     const seeded = Object.fromEntries(initialSettings.map((setting) => [setting.key, setting.value]));
     expect(seeded["ai_photos_enabled"]).toBe(false);
@@ -71,7 +100,9 @@ describe("schema do ensaio", () => {
     expect(seeded["ai_photos_quality"]).toBe("economica");
     expect(seeded["ai_photos_default_scene"]).toBe("sala_clara");
     expect(seeded["ai_photos_default_model"]).toBe("modelo_a");
-    for (const key of ["ai_photos_enabled", "ai_photos_in_store", "ai_photos_daily_quota", "ai_photos_quality", "ai_photos_default_scene", "ai_photos_default_model"]) {
+    expect(seeded["ai_video_enabled"]).toBe(false);
+    expect(seeded["ai_video_daily_limit"]).toBe(2);
+    for (const key of ["ai_photos_enabled", "ai_photos_in_store", "ai_photos_daily_quota", "ai_photos_quality", "ai_photos_default_scene", "ai_photos_default_model", "ai_video_enabled", "ai_video_daily_limit"]) {
       expect(ALLOWED_SETTING_KEYS).toContain(key);
     }
   });
