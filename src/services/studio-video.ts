@@ -77,16 +77,9 @@ async function safeBalance(studio: Pick<ImageStudio, "creditsBalance">): Promise
  * sem o handler rodar) vira falha com o motivo: senão a foto fica travada
  * (um vídeo em andamento por foto) e a tela se atualiza para sempre.
  */
-export async function healStalledStudioVideos(
-  db: DbOrTx,
-  scope: { productId: string } | "all",
-  now: Date,
-): Promise<number> {
-  const inFlight = inArray(studioVideos.status, ["queued", "submitting"]);
-  const rows = await db
-    .select()
-    .from(studioVideos)
-    .where(scope === "all" ? inFlight : and(eq(studioVideos.productId, scope.productId), inFlight));
+export async function healStalledStudioVideos(db: DbOrTx, now: Date): Promise<number> {
+  // Todas as peças: um parado de outra peça também ocupa o teto do dia (e a tela conta igual ao botão).
+  const rows = await db.select().from(studioVideos).where(inArray(studioVideos.status, ["queued", "submitting"]));
   let healed = 0;
   for (const video of rows) {
     const failure = stalledVideoFailure(video, now);
@@ -162,7 +155,7 @@ export async function requestStudioVideo(
   const product = await requireProductForStudio(db, source.productId);
 
   // Parados de qualquer peça: senão travam a foto (um em andamento por foto) e ocupam o teto do dia.
-  await healStalledStudioVideos(db, "all", now);
+  await healStalledStudioVideos(db, now);
   const [inFlight] = await db
     .select({ id: studioVideos.id })
     .from(studioVideos)
@@ -354,7 +347,7 @@ export type StudioVideoPanel = {
 
 export async function listStudioVideoPanel(db: DbOrTx, productId: string, now: Date): Promise<StudioVideoPanel> {
   const id = z.uuid().parse(productId);
-  await healStalledStudioVideos(db, { productId: id }, now);
+  await healStalledStudioVideos(db, now);
   const [settings, sources, videos, usedToday] = await Promise.all([
     loadStudioVideoSettings(db),
     db

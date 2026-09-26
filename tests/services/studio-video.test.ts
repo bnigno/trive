@@ -439,8 +439,12 @@ describe("achados da revisão", () => {
     await db.update(schema.settings).set({ value: 1 }).where(eq(schema.settings.key, "ai_video_daily_limit"));
     const other = await request(await seedChosenCandidate(await seedProduct()));
     clock = new Date(NOW.getTime() + VIDEO_TIMING.stuckInQueueMs + 60_000);
-    expect(await request(await seedChosenCandidate(await seedProduct()))).toMatchObject({ credits: 6 });
+    // A tela de outra peça conta igual ao botão: o parado não aparece como teto usado.
+    const productId = await seedProduct();
+    const candidateId = await seedChosenCandidate(productId);
+    expect((await listStudioVideoPanel(sdb, productId, clock)).usedToday).toBe(0);
     expect(await videoRow(other.videoId)).toMatchObject({ status: "failed", usdCents: 0 });
+    expect(await request(candidateId)).toMatchObject({ credits: 6 });
   });
 
   it("pouco tempo sobrando na invocação: não envia; a fila devolve a linha sem contar tentativa", async () => {
