@@ -2,13 +2,15 @@
 // injetadas: o evento é roteado, o resultado vai para o log, e na ÚLTIMA
 // tentativa da fila o vídeo não fica "na fila" para sempre — vira "falhou"
 // com o motivo antes de a linha da fila morrer (e relança).
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StudioUnavailableError } from "@/adapters/image-studio";
 import { FakeImageStudio } from "@/adapters/image-studio/fake";
 import { FakeFileStorage } from "@/adapters/storage/fake";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
+import { canRefetchVideo } from "@/core/studio/video";
 import * as schema from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { outboxHandlers } from "@/queue/handlers";
@@ -82,5 +84,39 @@ describe("runStudioVideo", () => {
     const [video] = await db.select().from(schema.studioVideos).where(eq(schema.studioVideos.id, videoId));
     expect(video).toMatchObject({ status: "failed", usdCents: 0 });
     expect(video!.errorDetail).toMatch(/^sem_envio:/);
+  });
+});
+
+describe("runStudioVideo — última tentativa não joga fora o que pode ser salvo", () => {
+  it("sem tempo na invocação (mesmo na 4ª): relança para a fila devolver a linha, e o vídeo segue na fila", async () => {
+    const videoId = await seedQueuedVideo();
+    await expect(
+      runStudioVideo({ db: db as unknown as DbOrTx, studio, storage, now: () => NOW }, { ...event(videoId, 3), deadlineAt: new Date(NOW.getTime() + 5_000) }),
+    ).rejects.toBeInstanceOf(HandlerOutOfTimeError);
+    const [video] = await db.select().from(schema.studioVideos).where(eq(schema.studioVideos.id, videoId));
+    expect(video!.status).toBe("queued");
+    expect(studio.animations).toHaveLength(0);
+  });
+
+  it("aceito, o banco caiu na última tentativa e o id foi salvo: 'não salvou', buscável pelo id (nunca 'envio incerto')", async () => {
+    const videoId = await seedQueuedVideo();
+    await db.execute(sql`CREATE SEQUENCE trip_last`);
+    await db.execute(sql`
+      CREATE FUNCTION trip_last() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.status = 'submitting' AND NEW.status = 'processing' AND nextval('trip_last') = 1 THEN
+          RAISE EXCEPTION 'conexão caiu (teste)';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await db.execute(sql`CREATE TRIGGER trip_last BEFORE UPDATE ON studio_videos FOR EACH ROW EXECUTE FUNCTION trip_last()`);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    studio.failAfterSubmitNext();
+    await expect(runStudioVideo({ db: db as unknown as DbOrTx, studio, storage, now: () => NOW }, event(videoId, 3))).rejects.toThrow(/não gravado/);
+    const [video] = await db.select().from(schema.studioVideos).where(eq(schema.studioVideos.id, videoId));
+    expect(video).toMatchObject({ status: "failed", usdCents: 45, submittedAt: NOW });
+    expect(video!.vendorJobId).toMatch(/^fake-video-1-/);
+    expect(video!.errorDetail).toMatch(/^nao_salvou:/);
+    expect(canRefetchVideo(video!, new Date(NOW.getTime() + 60_000))).toBe(true);
   });
 });

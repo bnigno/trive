@@ -35,7 +35,7 @@ const FAILURE_LABELS: Record<string, string> = {
   vendor_sem_imagem: "o gerador não devolveu imagem",
   envio_incerto: "não deu para confirmar o envio — confira o saldo da FASHN daqui a 10 min antes de pedir de novo",
   demorou_demais: "a FASHN não entregou em 30 min — dá para buscar de novo por 3 dias, sem pagar",
-  nao_salvou: "o vídeo ficou pronto mas não foi guardado — dá para buscar de novo, sem pagar",
+  nao_salvou: "a espera parou antes de o vídeo ser guardado — dá para buscar de novo por 3 dias, sem pagar",
   pedido_sumiu: "a FASHN não reconhece mais o pedido",
   video_desligado: "o vídeo foi desligado antes de sair",
   sem_envio: "não deu para enviar à FASHN depois de 4 tentativas — nada foi cobrado",

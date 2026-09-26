@@ -79,18 +79,14 @@ async function safeBalance(studio: Pick<ImageStudio, "creditsBalance">): Promise
  */
 export async function healStalledStudioVideos(
   db: DbOrTx,
-  scope: { productId: string } | { candidateId: string },
+  scope: { productId: string } | "all",
   now: Date,
 ): Promise<number> {
+  const inFlight = inArray(studioVideos.status, ["queued", "submitting"]);
   const rows = await db
     .select()
     .from(studioVideos)
-    .where(
-      and(
-        "productId" in scope ? eq(studioVideos.productId, scope.productId) : eq(studioVideos.candidateId, scope.candidateId),
-        inArray(studioVideos.status, ["queued", "submitting"]),
-      ),
-    );
+    .where(scope === "all" ? inFlight : and(eq(studioVideos.productId, scope.productId), inFlight));
   let healed = 0;
   for (const video of rows) {
     const failure = stalledVideoFailure(video, now);
@@ -100,7 +96,15 @@ export async function healStalledStudioVideos(
     const done = await db.transaction(async (tx) => {
       const [updated] = await tx
         .update(studioVideos)
-        .set({ status: "failed", errorDetail: failure.errorDetail, usdCents, finishedAt: now, updatedAt: now })
+        .set({
+          status: "failed",
+          errorDetail: failure.errorDetail,
+          usdCents,
+          finishedAt: now,
+          updatedAt: now,
+          // Com o id, "Buscar de novo" precisa da hora do envio (a janela de 3 dias conta dela).
+          ...(video.vendorJobId && !video.submittedAt ? { submittedAt: video.updatedAt } : {}),
+        })
         .where(and(eq(studioVideos.id, video.id), eq(studioVideos.status, video.status), eq(studioVideos.updatedAt, video.updatedAt)))
         .returning({ id: studioVideos.id });
       if (!updated) return false;
@@ -157,7 +161,8 @@ export async function requestStudioVideo(
   }
   const product = await requireProductForStudio(db, source.productId);
 
-  await healStalledStudioVideos(db, { candidateId: source.candidateId }, now);
+  // Parados de qualquer peça: senão travam a foto (um em andamento por foto) e ocupam o teto do dia.
+  await healStalledStudioVideos(db, "all", now);
   const [inFlight] = await db
     .select({ id: studioVideos.id })
     .from(studioVideos)

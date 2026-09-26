@@ -402,6 +402,47 @@ describe("achados da revisão", () => {
     expect(studio.animations.at(-1)!.resumeJobId).toBe(stuck.vendorJobId);
   });
 
+  it("id salvo pela gravação mínima e ninguém tentou de novo: o vídeo parado vira 'não salvou' e 'Buscar de novo' funciona", async () => {
+    const productId = await seedProduct();
+    const { videoId } = await request(await seedChosenCandidate(productId));
+    await db.execute(sql`CREATE SEQUENCE trip_seq2`);
+    await db.execute(sql`
+      CREATE FUNCTION trip_once2() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.status = 'submitting' AND NEW.status = 'processing' AND nextval('trip_seq2') = 1 THEN
+          RAISE EXCEPTION 'conexão caiu (teste)';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await db.execute(sql`CREATE TRIGGER trip_once2 BEFORE UPDATE ON studio_videos FOR EACH ROW EXECUTE FUNCTION trip_once2()`);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    studio.failAfterSubmitNext();
+    await expect(run(videoId)).rejects.toThrow(/aceito pela FASHN mas não gravado/);
+    const saved = await videoRow(videoId);
+    expect(saved).toMatchObject({ status: "submitting", submittedAt: NOW });
+    expect(saved.vendorJobId).toMatch(/^fake-video-1-/);
+
+    // A fila parou (linha morta por tempo esgotado): 30 min depois a tela cura o vídeo parado.
+    clock = new Date(NOW.getTime() + VIDEO_TIMING.stuckInQueueMs + 60_000);
+    const panel = await listStudioVideoPanel(sdb, productId, clock);
+    const healed = await videoRow(videoId);
+    expect(healed).toMatchObject({ status: "failed", usdCents: 45, vendorJobId: saved.vendorJobId });
+    expect(healed.errorDetail).toMatch(/^nao_salvou:/);
+    expect(panel.videos[0]!.canRefetch).toBe(true);
+
+    await refetchStudioVideo(sdb, { videoId, userId: FIXED_USER_ID }, clock);
+    expect(await run(videoId)).toMatchObject({ outcome: "done" });
+    expect(studio.animations.filter((call) => call.resumeJobId === undefined)).toHaveLength(1);
+  });
+
+  it("vídeo parado de OUTRA peça não ocupa o teto do dia de quem pede", async () => {
+    await db.update(schema.settings).set({ value: 1 }).where(eq(schema.settings.key, "ai_video_daily_limit"));
+    const other = await request(await seedChosenCandidate(await seedProduct()));
+    clock = new Date(NOW.getTime() + VIDEO_TIMING.stuckInQueueMs + 60_000);
+    expect(await request(await seedChosenCandidate(await seedProduct()))).toMatchObject({ credits: 6 });
+    expect(await videoRow(other.videoId)).toMatchObject({ status: "failed", usdCents: 0 });
+  });
+
   it("pouco tempo sobrando na invocação: não envia; a fila devolve a linha sem contar tentativa", async () => {
     const { videoId } = await request(await seedChosenCandidate(await seedProduct()));
     await expect(

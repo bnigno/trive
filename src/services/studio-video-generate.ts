@@ -71,10 +71,12 @@ async function failVideo(
   input: { errorDetail: string; usdCents: number; now: Date },
 ): Promise<boolean> {
   assertVideoTransition(from, "failed");
+  // Com o id do pedido, "Buscar de novo" precisa da hora do envio (a janela de 3 dias conta dela).
+  const submittedAt = video.vendorJobId && !video.submittedAt ? { submittedAt: video.updatedAt } : {};
   return db.transaction(async (tx) => {
     const [updated] = await tx
       .update(studioVideos)
-      .set({ status: "failed", errorDetail: input.errorDetail, usdCents: input.usdCents, finishedAt: input.now, updatedAt: input.now })
+      .set({ status: "failed", errorDetail: input.errorDetail, usdCents: input.usdCents, finishedAt: input.now, updatedAt: input.now, ...submittedAt })
       .where(and(eq(studioVideos.id, video.id), eq(studioVideos.status, from)))
       .returning({ id: studioVideos.id });
     if (!updated) return false;
@@ -355,10 +357,12 @@ export async function generateStudioVideo(
       const message = dbError instanceof Error ? dbError.message : String(dbError);
       console.error(`[${STUDIO_VIDEO_EVENT}] ${video.id}: pedido ${jobId ?? "?"} aceito pela FASHN mas não gravado: ${message}`);
       if (jobId !== null) {
-        // Gravação mínima só do id (sem mudar estado): a próxima tentativa segue por ele em vez de dar "envio incerto".
+        // Gravação mínima do id e da hora do envio (sem mudar estado): a próxima tentativa segue por ele em
+        // vez de dar "envio incerto", e "Buscar de novo" funciona mesmo se ninguém tentar de novo.
+        const at = clock();
         await db
           .update(studioVideos)
-          .set({ vendorJobId: jobId })
+          .set({ vendorJobId: jobId, submittedAt: at, giveUpAt: new Date(at.getTime() + VIDEO_TIMING.giveUpAfterMs) })
           .where(and(eq(studioVideos.id, video.id), eq(studioVideos.status, "submitting")))
           .catch(() => undefined);
       }
@@ -379,7 +383,9 @@ export async function markStudioVideoGaveUp(db: DbOrTx, input: { videoId: string
   if (video.status === "queued") {
     await failVideo(db, video, "queued", { errorDetail: detailOf("sem_envio", input.error), usdCents: 0, now });
   } else if (video.status === "submitting") {
-    await failVideo(db, video, "submitting", { errorDetail: detailOf("envio_incerto", input.error), usdCents: estimateUsdCents(video), now });
+    // Com o id gravado (a gravação mínima), o pedido é buscável; sem ele, pode ter sido cobrado e não se sabe qual.
+    const code = video.vendorJobId ? "nao_salvou" : "envio_incerto";
+    await failVideo(db, video, "submitting", { errorDetail: detailOf(code, input.error), usdCents: estimateUsdCents(video), now });
   } else if (video.status === "processing") {
     await failVideo(db, video, "processing", { errorDetail: detailOf("nao_salvou", input.error), usdCents: estimateUsdCents(video), now });
   }

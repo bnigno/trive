@@ -5,6 +5,7 @@
 import type { SalesAssistant } from "@/adapters/assistant";
 import type { ImageStudio } from "@/adapters/image-studio";
 import type { FileStorage } from "@/adapters/storage";
+import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import { getRetryPolicy } from "@/core/queue/retry-policy";
 import type { DbOrTx } from "@/queue/enqueue";
 import {
@@ -65,6 +66,8 @@ export async function runStudioVideo(deps: StudioVideoHandlerDeps, event: Studio
     console.info(`[${event.eventType}] ${JSON.stringify({ ...event.payload, ...result })}`);
     return result;
   } catch (error) {
+    // Sem tempo nesta invocação: a fila devolve a linha sem contar tentativa — não é desistir.
+    if (error instanceof HandlerOutOfTimeError) throw error;
     const payload = studioVideoPayloadSchema.safeParse(event.payload);
     if (last && payload.success) {
       await markStudioVideoGaveUp(deps.db, { videoId: payload.data.videoId, error }, (deps.now ?? (() => new Date()))());
