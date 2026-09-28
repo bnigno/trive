@@ -34,7 +34,7 @@ import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import { formatCentsBRL } from "@/lib/money";
 import { isValidE164, isWaLid, sameE164, toE164BR } from "@/lib/phone";
 import { spDayKey, spNextDayKey, spWeekdayName } from "@/lib/sp-day";
-import type { DbOrTx } from "@/queue/enqueue";
+import { enqueueOutboxEvent, kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap, ServiceError } from "@/services/settings";
 
 export { ServiceError };
@@ -321,31 +321,55 @@ async function insertOrResumeOutboundMessage(
   return { waMessageId: existing.id };
 }
 
+/** Mensagem de pedido que descobriu "número sem WhatsApp": a dona é avisada (um aviso por pedido e número). */
+export const ORDER_NO_WHATSAPP_EVENT = "order.customer_no_whatsapp";
+
 /**
  * A Z-API aceita envio para número SEM WhatsApp em silêncio (caso real do
  * pedido #1000): o serviço consulta antes. Falha PERMANENTE — a linha fica
  * visível como 'failed' no admin e o evento da fila conclui sem retry (skip).
+ * Se a mensagem é de um pedido, a dona é avisada pela fila (caso real do
+ * #1011: um dígito errado no checkout e a cliente não recebeu nada, nem o
+ * link de acompanhamento, sem ninguém saber).
  */
 async function failNumberWithoutWhatsapp(
   db: DbOrTx,
   waMessageId: string,
   phoneE164: string,
+  orderId: string | null,
 ): Promise<{ skipped: "numero_sem_whatsapp" }> {
-  await db
-    .update(waMessages)
-    .set({
-      status: "failed",
-      errorDetail: "Número sem WhatsApp — confira o telefone do cliente.",
-    })
-    .where(eq(waMessages.id, waMessageId));
-  await db.insert(auditLog).values({
-    actorType: "system",
-    actorId: null,
-    action: "wa.send_failed",
-    entityType: "wa_message",
-    entityId: waMessageId,
-    after: { phoneE164, reason: "numero_sem_whatsapp" },
+  const eventId = await db.transaction(async (tx) => {
+    await tx
+      .update(waMessages)
+      .set({
+        status: "failed",
+        errorDetail: "Número sem WhatsApp — confira o telefone do cliente.",
+      })
+      .where(eq(waMessages.id, waMessageId));
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "wa.send_failed",
+      entityType: "wa_message",
+      entityId: waMessageId,
+      after: { phoneE164, reason: "numero_sem_whatsapp", orderId },
+    });
+    if (!orderId) return null;
+    return enqueueOutboxEvent(
+      tx,
+      {
+        eventType: ORDER_NO_WHATSAPP_EVENT,
+        // Um aviso por pedido e número: os 5 avisos do mesmo pedido viram UM
+        // alerta; se o telefone corrigido também falhar, esse é outro alerta.
+        dedupeKey: `${ORDER_NO_WHATSAPP_EVENT}:${orderId}:${phoneE164.replace(/\D/g, "")}`,
+        aggregateType: "order",
+        aggregateId: orderId,
+        payload: { orderId, phoneE164 },
+      },
+      { kick: false },
+    );
   });
+  if (eventId) await kickOutbox(eventId, { eventType: ORDER_NO_WHATSAPP_EVENT });
   return { skipped: "numero_sem_whatsapp" };
 }
 
@@ -483,7 +507,7 @@ export async function sendTemplateMessage(
   const { waMessageId } = insertResult;
 
   if (parsed.verifyPhone && !(await provider.phoneExists(parsed.phoneE164))) {
-    return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164);
+    return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164, parsed.orderId ?? null);
   }
 
   return deliverOutboundMessage(db, {
@@ -623,7 +647,7 @@ export async function sendMediaMessage(
   const { waMessageId } = insertResult;
 
   if (parsed.verifyPhone && !(await provider.phoneExists(parsed.phoneE164))) {
-    return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164);
+    return failNumberWithoutWhatsapp(db, waMessageId, parsed.phoneE164, parsed.orderId ?? null);
   }
 
   return deliverOutboundMessage(db, {

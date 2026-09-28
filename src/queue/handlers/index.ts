@@ -76,6 +76,7 @@ import {
   sendPollWinnerNotice,
 } from "@/services/wa-group-lia";
 import { getMessagingProvider } from "@/adapters/zapi";
+import { notifyOwnerCustomerNoWhatsapp } from "@/services/order-no-whatsapp";
 import { getGeocoder } from "@/adapters/geocoding";
 import { GEOCODE_MAX_ROUNDS, geocodeRunStops } from "@/services/delivery-runs";
 import { getDb } from "@/db/client";
@@ -378,6 +379,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       kind: "confirmed",
     });
     await sendOrderWa(orderId, "store_created");
+  },
+  // Telefone do pedido sem WhatsApp: a dona fica sabendo na hora (uma vez por
+  // pedido e número), com a dica do número certo quando um parecido falou com
+  // a loja. Telefone já corrigido = nada a avisar.
+  "order.customer_no_whatsapp": async (event) => {
+    const result = await notifyOwnerCustomerNoWhatsapp(getDb(), getMessagingProvider(), event.payload);
+    console.info(`[order.customer_no_whatsapp] ${String(event.payload.orderId)}:`, result);
   },
   "order.paid": async (event) => {
     const orderId = String(event.payload.orderId);

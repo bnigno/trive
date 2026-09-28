@@ -17,6 +17,8 @@ import { spDayKey, spDayLabel, spTimeLabel } from "@/lib/sp-day";
 import { getDb } from "@/db/client";
 import { isOwner, requireUser } from "@/services/auth";
 import { getOrderDetail } from "@/services/orders";
+import { getOrderWhatsappProblem } from "@/services/order-no-whatsapp";
+import { formatPhoneBR } from "@/lib/phone";
 import { OrderTimeline } from "@/components/admin/order-timeline";
 import { orderPublicUrl } from "@/services/wa-messaging";
 
@@ -88,6 +90,8 @@ export default async function PedidoDetalhePage({
   const canJoinRun = runEligibility.canJoin;
   const late = stop?.stopStatus === "delivered" ? await lateDeliveryForOrder(db, id) : null;
   const issuedCoupons = await listIssuedCouponsForOrder(db, id);
+  // Telefone do pedido sem WhatsApp: a cliente não recebe nenhum aviso (caso do #1011).
+  const whatsappProblem = await getOrderWhatsappProblem(db, id);
   const returnableItems = await listReturnableItems(getDb(), order.id);
   const status = order.status as OrderStatus;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
@@ -124,6 +128,31 @@ export default async function PedidoDetalhePage({
           </Link>
         }
       />
+
+      {whatsappProblem ? (
+        <div
+          role="alert"
+          className="flex flex-col gap-1 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+        >
+          <p className="font-semibold">⚠️ A cliente não está recebendo os avisos do WhatsApp</p>
+          <p>
+            O telefone do cadastro, {formatPhoneBR(whatsappProblem.phoneE164)}, não tem WhatsApp:{" "}
+            {whatsappProblem.failedCount === 1 ? "1 aviso deste pedido não chegou" : `${whatsappProblem.failedCount} avisos deste pedido não chegaram`}, e o link
+            de acompanhamento também não.
+          </p>
+          {whatsappProblem.intendedPhone ? (
+            <p>
+              Parece erro de digitação: o {formatPhoneBR(whatsappProblem.intendedPhone)} falou com a loja nos últimos dias e muda só um dígito.
+            </p>
+          ) : null}
+          <p>
+            <Link href={`/admin/clientes/${whatsappProblem.customerId}`} className="font-medium underline">
+              Corrija o telefone no cadastro da cliente
+            </Link>{" "}
+            — os próximos avisos já vão para o número certo. Os que falharam não são reenviados: mande o link abaixo pela conversa com a cliente.
+          </p>
+        </div>
+      ) : null}
 
       <Card title="Link do pedido — envie ao cliente pelo WhatsApp">
         <div className="flex flex-col gap-2">

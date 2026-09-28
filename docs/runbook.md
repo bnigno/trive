@@ -123,6 +123,19 @@ o que depende só dele — pedidos do site, cartões, e-mail — leva meio minut
 e isso é normal; minutos seguidos, não. Se não chegar: **/admin/fila** →
 **Reprocessar** os itens em falha definitiva e ler o motivo mostrado no item.
 
+**"Número sem WhatsApp"** (caso do #1011, 28/09/2026: um dígito errado no
+checkout e a cliente não recebeu confirmação, pagamento nem o link de
+acompanhamento). Antes de mandar, o sistema pergunta à Z-API se o número tem
+WhatsApp; se não tem, a mensagem fica "falhou" e **não** é repetida. Quando é
+um aviso de pedido, a dona recebe no WhatsApp dela, uma vez por pedido e
+número, o alerta "⚠️ Cliente sem WhatsApp" (modelo
+`owner_customer_no_whatsapp`, evento `order.customer_no_whatsapp`), com a dica
+do número certo quando um número que muda só um dígito falou com a loja nos
+últimos 3 dias. A página do pedido mostra o mesmo alerta até o telefone ser
+corrigido no cadastro da cliente. Corrigido o telefone, os próximos avisos
+vão para o número novo; os que falharam **não** são reenviados — mande o link
+do pedido pela conversa com ela.
+
 Sinais que a cliente vê enquanto a Lia pensa: ✓✓ azul na mensagem dela assim
 que o turno começa (só quando é a Lia que vai responder — nunca em conversa
 "com você" nem em copiloto) e "digitando…" por 1–2 s antes de cada balão

@@ -339,6 +339,17 @@ export const initialWaTemplates: Array<{
     variables: ["pedido", "total", "metodo"],
   },
   {
+    // Pedido com telefone sem WhatsApp (caso do #1011): a cliente não recebe
+    // nenhum aviso do pedido — a dona precisa saber na hora. {{dica}} traz o
+    // número parecido que falou com a loja, quando há, e o que fazer.
+    key: "owner_customer_no_whatsapp",
+    label: "[interno] Cliente sem WhatsApp",
+    bodyTemplate:
+      "⚠️ Cliente sem WhatsApp — pedido #{{pedido}}\n" +
+      "{{cliente}} fez o pedido com o telefone {{telefone}}, que não tem WhatsApp: os avisos do pedido e o link de acompanhamento não estão chegando.{{dica}}",
+    variables: ["pedido", "cliente", "telefone", "dica"],
+  },
+  {
     // Chargeback sinalizado pelo MP: sem transição automática — o dono decide.
     key: "owner_chargeback",
     label: "[interno] Chargeback",
