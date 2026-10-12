@@ -12,6 +12,7 @@ import {
   type PurchaseOrderSummary,
 } from "@/core/bot/purchases";
 import { formatCartLines } from "@/core/bot/memory";
+import { creditConsent } from "@/core/coupons/credit";
 import { confirmQuoteUnchanged, resolveApprovedQuote } from "@/core/bot/shipping";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
@@ -38,7 +39,7 @@ import { orderPublicUrl } from "@/services/wa-messaging";
 import { confirmDeliveryForCustomer, lastShipmentMemoryLine } from "@/services/delivery";
 
 import { resolveVariantBySku } from "./catalog";
-import { reconcileCartLines } from "./cart";
+import { creditQuestionAnswered, isStoreCreditCode, reconcileCartLines } from "./cart";
 import { loadSavedRegistration, resolveSavedIdentity } from "./customer";
 import type { OrderIdentity } from "./customer";
 import { DRY_RUN_TEXT, PIX_MANUAL_TTL_HOURS, readBotState, resolveConversationCustomerId, updateBotState } from "./shared";
@@ -52,9 +53,39 @@ export async function execCriarPedido(
   ctx: BotExecutorContext,
   input: BotToolInputs["criar_pedido"],
 ): Promise<ToolResult> {
+  const state = await readBotState(db, ctx);
+
+  // Crédito dela (troca, proteção de preço) nunca entra sozinho: só com o
+  // código explícito, numa mensagem dela DEPOIS da pergunta (caso do #1030).
+  // Vem antes do ensaio para o ensaio mostrar a mesma trava. Nada é criado.
+  // Conversa de antes desta trava (cupom validado sem a marca): confere a origem no banco.
+  const couponIsCredit = state.coupon ? Boolean(state.coupon.credit) || (await isStoreCreditCode(db, state.coupon.code)) : false;
+  const validatedCredit = state.coupon && couponIsCredit ? { code: state.coupon.code, askedInbound: state.coupon.askedInbound ?? null } : null;
+  const consent = creditConsent({
+    explicitCode: input.cupom,
+    explicitIsCredit: input.cupom !== undefined && (await isStoreCreditCode(db, input.cupom)),
+    validatedCredit,
+    questionAnswered: validatedCredit?.askedInbound ? await creditQuestionAnswered(db, ctx, validatedCredit.askedInbound) : false,
+  });
+  if (!consent.ok) {
+    // Este turno é o da pergunta: o SIM só vale numa mensagem dela depois dele (uma nova tentativa agora também não).
+    if (validatedCredit && consent.reason !== "not_asked") {
+      await updateBotState(db, ctx, (current) =>
+        current.coupon ? { ...current, coupon: { ...current.coupon, credit: true, askedInbound: ctx.lastInboundId } } : current,
+      );
+    }
+    const code = (input.cupom?.trim() || state.coupon?.code || "").toUpperCase();
+    const text =
+      consent.reason === "omitted"
+        ? `O ${code} é crédito dela (uso único; o que passar da compra se perde) e só entra no pedido com o SIM dela. Pergunte se quer usar o crédito agora e ESPERE a resposta (não chame criar_pedido de novo neste turno): sim → criar_pedido com cupom "${code}"; não → com cupom "".`
+        : consent.reason === "not_asked"
+          ? `O ${code} é crédito dela: antes, chame validar_cupom com ele (diz o valor) e pergunte se ela quer usar agora; só com o SIM dela, numa mensagem depois da pergunta, passe o código em criar_pedido.`
+          : `Você acabou de perguntar sobre o crédito ${code}: ESPERE a resposta dela — não chame criar_pedido de novo neste turno. Com o SIM, criar_pedido com cupom "${code}"; com o não, com cupom "".`;
+    return { ok: false, text };
+  }
+
   if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
 
-  const state = await readBotState(db, ctx);
   let identity: OrderIdentity;
 
   if (input.usar_cadastro_salvo) {

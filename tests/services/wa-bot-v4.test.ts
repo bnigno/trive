@@ -12,6 +12,7 @@ import { transitionOrder } from "@/services/orders";
 import { createStoreOrder, type CreateStoreOrderInput } from "@/services/store-orders";
 import { formatPurchaseDate, NO_PURCHASES_TEXT } from "@/core/bot/purchases";
 import { loadPurchaseHistory, purchaseMemoryLineFor } from "@/services/bot/orders";
+import { storeCreditMemoryLineFor } from "@/services/bot/cart";
 import { buildToolExecutor } from "@/services/wa-bot";
 import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
@@ -92,14 +93,40 @@ function orderInput(variantId: string, rateId: string, over: Partial<CreateStore
   };
 }
 
-function executor(dryRun = false) {
+function executor(dryRun = false, lastInboundId = INBOUND_ID, proactive = false) {
   return buildToolExecutor(sdb, {
     conversationId: CONVERSATION_ID,
     phoneE164: PHONE,
     customerId: null,
-    lastInboundId: INBOUND_ID,
+    lastInboundId,
     ...(dryRun ? { dryRun: true } : {}),
+    ...(proactive ? { proactive: true } : {}),
   });
+}
+
+/** As mensagens seguintes dela (os turnos seguintes da conversa). */
+const NEXT_INBOUND_ID = "00000000-0000-4000-8000-00000000beef";
+const THIRD_INBOUND_ID = "00000000-0000-4000-8000-0000000cafe0";
+
+/** Histórico da conversa em ordem: mensagens dela (inbound, com id) e falas da Lia (outbound). */
+async function seedHistory(rows: ({ inbound: string } | { outbound: true })[]): Promise<void> {
+  const start = Date.now() - 60 * 60_000;
+  await db.insert(schema.waMessages).values(
+    rows.map((row, index) => ({
+      ...("inbound" in row ? { id: row.inbound } : {}),
+      conversationId: CONVERSATION_ID,
+      direction: "inbound" in row ? "inbound" : "outbound",
+      body: "inbound" in row ? "mensagem dela" : "fala da Lia",
+      status: "inbound" in row ? "delivered" : "sent",
+      createdAt: new Date(start + index * 60_000),
+    })),
+  );
+}
+
+const CLOSE_INPUT = { nome_completo: "Sabrina Rodrigues", cpf: VALID_CPF, cep: "01310100", rua: "Avenida Paulista", numero: "1000", bairro: "Bela Vista", cidade: "São Paulo", uf: "SP" };
+
+async function seedCredit(over: Partial<typeof schema.coupons.$inferInsert> = {}): Promise<void> {
+  await db.insert(schema.coupons).values({ code: "SABRINA-HN5U7", type: "fixed", value: 4950, origin: "troca", maxUses: 1, perCustomerLimit: 1, phoneE164: PHONE, ...over });
 }
 
 async function botState() {
@@ -372,6 +399,206 @@ describe("validar_cupom", () => {
     expect(order.shippingCents).toBe(0);
     expect(order.discountCents).toBe(0);
     expect(order.totalCents).toBe(8990);
+  });
+
+  it("crédito dela (troca): valida perguntando; criar_pedido sem o código NÃO cria nada; com o código (o SIM dela) aplica — caso do #1030", async () => {
+    await setupStore();
+    await db.insert(schema.coupons).values({
+      code: "SABRINA-HN5U7",
+      type: "fixed",
+      value: 4950,
+      origin: "troca",
+      maxUses: 1,
+      perCustomerLimit: 1,
+      phoneE164: PHONE,
+      expiresAt: new Date(Date.now() + 30 * 86_400_000),
+    });
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+
+    // O caderninho já conta do crédito ativo dela.
+    expect(await storeCreditMemoryLineFor(sdb, { customerId: null, phoneE164: PHONE }, new Date())).toContain(
+      `Crédito dela: SABRINA-HN5U7 — ${formatCentsBRL(4950)}`,
+    );
+
+    const validated = await execute("validar_cupom", { cupom: "sabrina-hn5u7" });
+    expect(validated.ok).toBe(true);
+    expect(validated.text).toContain(`SABRINA-HN5U7 é crédito de troca (peça devolvida) dela: ${formatCentsBRL(4950)} de desconto nesta sacola`);
+    expect(validated.text).toContain("Pergunte se ela quer usar o crédito AGORA");
+    expect((await botState()).coupon).toMatchObject({ code: "SABRINA-HN5U7", credit: true });
+
+    const fechar = {
+      nome_completo: "Sabrina Rodrigues",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+    };
+    await execute("cotar_frete", { cep: "01310100" });
+    // Sem o código explícito: nada é criado, o crédito segue inteiro.
+    const semSim = await execute("criar_pedido", fechar);
+    expect(semSim.ok).toBe(false);
+    expect(semSim.text).toContain("só entra no pedido com o SIM dela");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+    expect((await db.select().from(schema.coupons))[0]!.usedCount).toBe(0);
+
+    // Ela disse NÃO: fecha sem o crédito, que continua valendo para outra compra.
+    const semCredito = await execute("criar_pedido", { ...fechar, cupom: "" });
+    expect(semCredito.ok).toBe(true);
+    const [order] = await db.select().from(schema.orders);
+    expect(order!.couponCode).toBeNull();
+    expect((await db.select().from(schema.coupons))[0]!.usedCount).toBe(0);
+    expect(await storeCreditMemoryLineFor(sdb, { customerId: null, phoneE164: PHONE }, new Date())).toContain("SABRINA-HN5U7");
+  });
+
+  it("crédito dela com o SIM: o código explícito no MESMO turno da pergunta é recusado; na mensagem seguinte dela, aplica; usado, some do caderninho", async () => {
+    await setupStore();
+    await db.insert(schema.coupons).values({ code: "SABRINA-HN5U7", type: "fixed", value: 4950, origin: "troca", maxUses: 1, perCustomerLimit: 1, phoneE164: PHONE });
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    await execute("validar_cupom", { cupom: "SABRINA-HN5U7" });
+    await execute("cotar_frete", { cep: "01310100" });
+    const fechar = {
+      nome_completo: "Sabrina Rodrigues",
+      cpf: VALID_CPF,
+      cep: "01310100",
+      rua: "Avenida Paulista",
+      numero: "1000",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+      cupom: "SABRINA-HN5U7",
+    };
+    // Mesmo turno da pergunta: a Lia ainda não ouviu a resposta dela.
+    await seedHistory([{ inbound: INBOUND_ID }, { outbound: true }, { inbound: NEXT_INBOUND_ID }]);
+    const mesmoTurno = await execute("criar_pedido", fechar);
+    expect(mesmoTurno.ok).toBe(false);
+    expect(mesmoTurno.text).toContain("ESPERE a resposta dela");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+
+    // Ela respondeu "sim" (mensagem nova): aplica.
+    const created = await executor(false, NEXT_INBOUND_ID)("criar_pedido", fechar);
+    expect(created.ok).toBe(true);
+    const [order] = await db.select().from(schema.orders);
+    expect(order!.couponCode).toBe("SABRINA-HN5U7");
+    expect(order!.discountCents).toBe(4950);
+    expect((await db.select().from(schema.coupons))[0]!.usedCount).toBe(1);
+    expect(await storeCreditMemoryLineFor(sdb, { customerId: null, phoneE164: PHONE }, new Date())).toBeNull();
+  });
+
+  it("a sacola muda depois de validar o crédito: continua crédito (não entra sozinho); código de crédito sem passar pela pergunta é recusado; o ensaio mostra a mesma trava", async () => {
+    await setupStore();
+    await db.insert(schema.coupons).values({ code: "SABRINA-HN5U7", type: "fixed", value: 4950, origin: "troca", maxUses: 1, perCustomerLimit: 1, phoneE164: PHONE });
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    await execute("validar_cupom", { cupom: "SABRINA-HN5U7" });
+    // "Põe mais uma": a sacola é recalculada e o crédito segue marcado.
+    const add = await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 2 });
+    expect(add.text).toContain("continua sendo crédito de troca (peça devolvida) dela");
+    expect((await botState()).coupon).toMatchObject({ code: "SABRINA-HN5U7", credit: true, askedInbound: INBOUND_ID });
+
+    await execute("cotar_frete", { cep: "01310100" });
+    const fechar = { nome_completo: "Sabrina Rodrigues", cpf: VALID_CPF, cep: "01310100", rua: "Avenida Paulista", numero: "1000", bairro: "Bela Vista", cidade: "São Paulo", uf: "SP" };
+    const next = executor(false, NEXT_INBOUND_ID);
+    const omitido = await next("criar_pedido", fechar);
+    expect(omitido.ok).toBe(false);
+    expect(omitido.text).toContain("só entra no pedido com o SIM dela");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+
+    // Ensaio: a mesma trava (não finge que fechou).
+    const ensaio = await executor(true, NEXT_INBOUND_ID)("criar_pedido", fechar);
+    expect(ensaio.ok).toBe(false);
+    expect(ensaio.text).toContain("só entra no pedido com o SIM dela");
+
+    // Código de crédito passado direto, sem validar_cupom (sem a pergunta): recusado.
+    await db.update(schema.waConversations).set({ botState: { ...(await botState()), coupon: undefined } }).where(eq(schema.waConversations.id, CONVERSATION_ID));
+    const direto = await next("criar_pedido", { ...fechar, cupom: "sabrina-hn5u7" });
+    expect(direto.ok).toBe(false);
+    expect(direto.text).toContain("antes, chame validar_cupom com ele");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("recusa por cupom omitido marca a pergunta neste turno: a nova tentativa no MESMO turno também é recusada; na resposta seguinte dela, aplica", async () => {
+    await setupStore();
+    await seedCredit();
+    await seedHistory([{ inbound: INBOUND_ID }, { outbound: true }, { inbound: NEXT_INBOUND_ID }, { outbound: true }, { inbound: THIRD_INBOUND_ID }]);
+    await executor()("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    await executor()("validar_cupom", { cupom: "SABRINA-HN5U7" });
+    await executor()("cotar_frete", { cep: "01310100" });
+    // Turno B ("pode fechar no pix"): omitido → pergunta agora.
+    const turnB = executor(false, NEXT_INBOUND_ID);
+    expect((await turnB("criar_pedido", CLOSE_INPUT)).ok).toBe(false);
+    expect((await botState()).coupon).toMatchObject({ askedInbound: NEXT_INBOUND_ID });
+    // A nova tentativa no mesmo turno, com o código: ainda é a pergunta.
+    const retry = await turnB("criar_pedido", { ...CLOSE_INPUT, cupom: "SABRINA-HN5U7" });
+    expect(retry.ok).toBe(false);
+    expect(retry.text).toContain("ESPERE a resposta dela");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+    // Turno C (ela respondeu "sim"): aplica.
+    expect((await executor(false, THIRD_INBOUND_ID)("criar_pedido", { ...CLOSE_INPUT, cupom: "SABRINA-HN5U7" })).ok).toBe(true);
+    expect((await db.select().from(schema.orders))[0]!.couponCode).toBe("SABRINA-HN5U7");
+  });
+
+  it("revalidar o mesmo crédito no turno do SIM não reinicia a pergunta: o SIM vale", async () => {
+    await setupStore();
+    await seedCredit();
+    await seedHistory([{ inbound: INBOUND_ID }, { outbound: true }, { inbound: NEXT_INBOUND_ID }]);
+    await executor()("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    await executor()("validar_cupom", { cupom: "SABRINA-HN5U7" });
+    await executor()("cotar_frete", { cep: "01310100" });
+    const yes = executor(false, NEXT_INBOUND_ID);
+    await yes("validar_cupom", { cupom: "SABRINA-HN5U7" });
+    expect((await botState()).coupon).toMatchObject({ askedInbound: INBOUND_ID });
+    expect((await yes("criar_pedido", { ...CLOSE_INPUT, cupom: "SABRINA-HN5U7" })).ok).toBe(true);
+  });
+
+  it("mensagem dela enviada ANTES de a pergunta sair (rajada) e turno de iniciativa não são o SIM", async () => {
+    await setupStore();
+    await seedCredit();
+    // Ela mandou B enquanto a Lia ainda pensava em A: a fala da Lia (a pergunta) saiu depois de B.
+    await seedHistory([{ inbound: INBOUND_ID }, { inbound: NEXT_INBOUND_ID }, { outbound: true }]);
+    await executor()("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    await executor()("validar_cupom", { cupom: "SABRINA-HN5U7" });
+    await executor()("cotar_frete", { cep: "01310100" });
+    const burst = await executor(false, NEXT_INBOUND_ID)("criar_pedido", { ...CLOSE_INPUT, cupom: "SABRINA-HN5U7" });
+    expect(burst.ok).toBe(false);
+    expect(burst.text).toContain("ESPERE a resposta dela");
+    // Iniciativa da Lia (retorno combinado): ela não escreveu nada.
+    const proactive = await executor(false, THIRD_INBOUND_ID, true)("criar_pedido", { ...CLOSE_INPUT, cupom: "SABRINA-HN5U7" });
+    expect(proactive.ok).toBe(false);
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("conversa de antes da trava (cupom validado sem a marca de crédito): o crédito não entra sozinho", async () => {
+    await setupStore();
+    await seedCredit();
+    const execute = executor();
+    await execute("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    await execute("cotar_frete", { cep: "01310100" });
+    const state = await botState();
+    await db
+      .update(schema.waConversations)
+      .set({ botState: { ...state, coupon: { code: "SABRINA-HN5U7", discountCents: 4950, at: new Date().toISOString() } } })
+      .where(eq(schema.waConversations.id, CONVERSATION_ID));
+    const result = await execute("criar_pedido", CLOSE_INPUT);
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain("só entra no pedido com o SIM dela");
+    expect(await db.select().from(schema.orders)).toHaveLength(0);
+  });
+
+  it("caderninho: crédito de outra cliente no mesmo telefone não aparece; proteção de preço é chamada pelo nome certo", async () => {
+    await setupStore();
+    const [other] = await db.insert(schema.customers).values({ fullName: "Outra Cliente", phoneE164: OTHER_PHONE }).returning({ id: schema.customers.id });
+    await seedCredit({ customerId: other!.id });
+    expect(await storeCreditMemoryLineFor(sdb, { customerId: null, phoneE164: PHONE }, new Date())).toBeNull();
+    await db.insert(schema.coupons).values({ code: "MARIA-PRECO", type: "fixed", value: 1000, origin: "price_protection", maxUses: 1, phoneE164: PHONE });
+    expect(await storeCreditMemoryLineFor(sdb, { customerId: null, phoneE164: PHONE }, new Date())).toContain("MARIA-PRECO");
+    await executor()("adicionar_a_sacola", { sku: "DUNAS-AREIA-M", quantidade: 1 });
+    const validated = await executor()("validar_cupom", { cupom: "MARIA-PRECO" });
+    expect(validated.text).toContain("MARIA-PRECO é crédito de proteção de preço");
   });
 
   it("no ensaio (dryRun) as ferramentas do turno se enxergam (sacola → cupom → sacola) e nada é gravado", async () => {

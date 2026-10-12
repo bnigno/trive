@@ -255,6 +255,8 @@ export interface CouponQuote {
   hint: string | null;
   /** Cupom da turma: texto pronto para mandar a uma amiga (com o link /c/CÓDIGO); null nos demais. */
   shareText: string | null;
+  /** De onde o cupom veio: crédito dela (troca, proteção de preço) pede o SIM antes de entrar no pedido. */
+  origin: CouponOrigin;
 }
 
 /** Preço ATIVO, produto e categoria de cada linha — nunca o que veio do navegador. */
@@ -402,6 +404,7 @@ export async function quoteCoupon(db: DbOrTx, input: QuoteCouponInput): Promise<
     forced: result.forced,
     hint: collective ? collectiveCustomerHint(coupon, distinctRedeemers) : scheduleCustomerHint(coupon, now),
     shareText: collective ? await shareTextFor(db, coupon, distinctRedeemers) : null,
+    origin: coupon.origin,
   };
 }
 
