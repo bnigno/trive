@@ -190,7 +190,7 @@ export async function execListarProdutos(
   // As dicas (adjetivos: "Longo Dunas") só valem para a peça sem tipo cujo nome
   // não tem substantivo de outro tipo — "KIMONO LONGO" continua kimono.
   const base = {
-    ...(busca ? { q: busca, includeDescription: true } : {}),
+    ...(busca ? { q: busca, includeFicha: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
     ...(editionSlug ? { editionSlug } : {}),
     viewer: { customerId: ctx.customerId },
@@ -279,7 +279,27 @@ export async function execListarProdutos(
   })();
   const filtrosDaCliente = pieceType ? filtros.map((f) => (f.startsWith("tipo ") ? tipoParaCliente : f)) : filtros;
   const descricaoFiltro = filtros.length > 0 ? ` (${filtros.join(", ")})` : "";
+  // Busca com filtros que não achou nada: quantas a MESMA palavra acha na loja
+  // inteira? Negar "não temos poliamida" quando há 10 peças de poliamida em
+  // outra categoria é o erro que mais custa (caso real, 04/10/2026) — a Lia
+  // precisa saber que a palavra existe antes de dizer que não.
+  const temFiltroAlemDaBusca =
+    categorySlug !== undefined ||
+    editionSlug !== undefined ||
+    pieceType !== undefined ||
+    input.cor !== undefined ||
+    input.tamanho !== undefined ||
+    input.preco_maximo_reais !== undefined;
+  const naLojaInteira =
+    items.length === 0 && busca && temFiltroAlemDaBusca
+      ? (await listPublicProducts(db, { q: busca, includeFicha: true, viewer: base.viewer, aiPhotos: "prefer", limit: 200 })).length
+      : 0;
+
   if (items.length === 0) {
+    const foraDoFiltro =
+      naLojaInteira > 0
+        ? ` ATENÇÃO: "${busca}" aparece em ${naLojaInteira} peça(s) da loja fora desse filtro — NÃO diga que a loja não tem; chame listar_produtos de novo só com busca.`
+        : "";
     const jaProcurei = pieceType
       ? procurouEmTodas
         ? parecidasAntesDosFiltros > 0
@@ -290,7 +310,7 @@ export async function execListarProdutos(
     return {
       ok: true,
       text: filtros.length > 0
-        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${jaProcurei} — e diga isso à cliente com honestidade.`
+        ? `Nenhuma peça encontrada${descricaoFiltro}. Tente afrouxar um filtro (outra cor, outro tamanho, sem teto de preço) ou busque por outra palavra${jaProcurei} — e diga isso à cliente com honestidade.${foraDoFiltro}`
         : "O catálogo está vazio no momento — em breve teremos novidades!",
     };
   }

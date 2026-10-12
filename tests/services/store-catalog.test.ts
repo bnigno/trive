@@ -61,6 +61,9 @@ async function createPublicProduct(
     categoryId?: string;
     attributesSchema?: string[];
     createdAt?: Date;
+    description?: string;
+    composition?: string;
+    fitNotes?: string;
     variants: VariantSpec[];
   },
 ): Promise<{ productId: string; variantIds: string[] }> {
@@ -73,6 +76,9 @@ async function createPublicProduct(
       brand: opts.brand ?? null,
       categoryId: opts.categoryId ?? null,
       attributesSchema: opts.attributesSchema ?? [],
+      ...(opts.description ? { description: opts.description } : {}),
+      ...(opts.composition ? { composition: opts.composition } : {}),
+      ...(opts.fitNotes ? { fitNotes: opts.fitNotes } : {}),
       ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
     })
     .returning({ id: schema.products.id });
@@ -146,6 +152,36 @@ describe("listPublicProducts", () => {
 
     const rows = await listPublicProducts(db);
     expect(rows.map((row) => row.name)).toEqual(["Com Preço"]);
+  });
+
+  it("acha a peça pelo TECIDO e pelo caimento, não só pelo nome", async () => {
+    // Caso real de 04/10/2026: a cliente perguntou por blusa de poliamida; a
+    // busca só olhava nome e descrição, a Lia respondeu "não achei nenhuma" e
+    // um minuto depois, ao abrir a peça, disse "é de poliamida premium sim".
+    await createPublicProduct({
+      name: "Blusa Maelle",
+      composition: "92% poliamida premium, 8% elastano",
+      fitNotes: "Veste soltinha no busto.",
+      variants: [{ sku: "MAELLE-M", priceCents: 5499 }],
+    });
+    await createPublicProduct({
+      name: "Vestido Linho",
+      composition: "100% linho",
+      variants: [{ sku: "LINHO-M", priceCents: 9900 }],
+    });
+
+    // Sem a ficha, o tecido é invisível — era o defeito.
+    expect(await listPublicProducts(db, { q: "poliamida" })).toEqual([]);
+
+    const porTecido = await listPublicProducts(db, { q: "poliamida", includeFicha: true });
+    expect(porTecido.map((row) => row.name)).toEqual(["Blusa Maelle"]);
+
+    const porCaimento = await listPublicProducts(db, { q: "soltinha", includeFicha: true });
+    expect(porCaimento.map((row) => row.name)).toEqual(["Blusa Maelle"]);
+
+    // Palavra que não está em ficha nenhuma continua devolvendo vazio: a ficha
+    // amplia a busca, não inventa resultado.
+    expect(await listPublicProducts(db, { q: "veludo", includeFicha: true })).toEqual([]);
   });
 
   it("não lista produto draft nem produto cuja única variante com preço está inativa", async () => {
