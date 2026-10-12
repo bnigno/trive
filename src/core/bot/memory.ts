@@ -113,6 +113,10 @@ export const botStateSchema = z
         freeShipping: z.boolean().optional(),
         /** Cupom que muda com o tempo: "Hoje vale 10%. Em 9 dias…" (para a Lia contar). */
         hint: z.string().optional(),
+        /** Crédito dela (troca, proteção de preço): NÃO entra sozinho — só com o SIM, pelo código explícito. */
+        credit: z.boolean().optional(),
+        /** A mensagem dela quando a Lia perguntou do crédito: o SIM tem de vir numa mensagem DEPOIS desta. */
+        askedInbound: z.string().optional(),
         at: z.string(),
       })
       .optional(),
@@ -367,10 +371,10 @@ function todayLine(now: Date): string {
 /**
  * Teto de linhas extras no caderninho — acima da soma dos máximos de cada
  * fonte (cartela 1 + reserva 1 + avisos 1 + feedback 3 + fotos 3 + compra 1 +
- * envio 1 + ponte 1 + retorno 2 + destaques 2 = 16): nada legítimo cai; é
- * guarda contra uma fonte nova sem teto. Linhas vazias não contam.
+ * envio 1 + ponte 1 + retorno 2 + destaques 2 + crédito 1 = 17): nada
+ * legítimo cai; é guarda contra uma fonte nova sem teto. Linhas vazias não contam.
  */
-export const EXTRA_LINES_MAX = 16;
+export const EXTRA_LINES_MAX = 17;
 
 export function renderContextNote(
   state: BotState,
@@ -435,7 +439,9 @@ export function renderContextNote(
       ? "frete grátis no fechamento"
       : `desconto de ${formatCentsBRL(state.coupon.discountCents)} nesta sacola`;
     linhas.push(
-      `• Cupom validado nesta conversa: ${state.coupon.code} (${efeito}${state.coupon.hint ? ` · ${state.coupon.hint}` : ""}) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
+      state.coupon.credit
+        ? `• Crédito dela validado nesta conversa: ${state.coupon.code} (${efeito}) — NÃO entra sozinho: só com o SIM dela, passe cupom "${state.coupon.code}" em criar_pedido`
+        : `• Cupom validado nesta conversa: ${state.coupon.code} (${efeito}${state.coupon.hint ? ` · ${state.coupon.hint}` : ""}) — criar_pedido aplica sozinho e recalcula no fechamento; para NÃO usar, passe cupom vazio ""`,
     );
   }
   if (state.liaGift) {

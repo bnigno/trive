@@ -54,6 +54,7 @@ import {
   execRemoverDaSacola,
   execValidarCupom,
   execVerSacola,
+  storeCreditMemoryLineFor,
 } from "./bot/cart";
 import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/catalog";
 import { execPedirOpiniaoDasAmigas, turnToolsFor } from "./bot/friends";
@@ -531,12 +532,14 @@ export async function loadTurnHistory(
     };
   });
   const state = parseBotState(conversation.botState);
-  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines, friendLines, highlightLines] = await Promise.all([
+  const [memoryLines, purchaseLine, creditLine, shipmentLine, bridgeLine, followupLines, friendLines, highlightLines] = await Promise.all([
     loadMemoryLines(tx, conversation.phoneE164),
     purchaseMemoryLineFor(tx, {
       customerId: conversation.customerId,
       phoneE164: conversation.phoneE164,
     }),
+    // Crédito dela (troca, proteção de preço): a Lia sabe que existe e pergunta antes de usar.
+    storeCreditMemoryLineFor(tx, { customerId: conversation.customerId, phoneE164: conversation.phoneE164 }, now),
     shipmentMemoryLineFor(tx, {
       customerId: conversation.customerId,
       phoneE164: conversation.phoneE164,
@@ -556,6 +559,7 @@ export async function loadTurnHistory(
     lines: [
       ...memoryLines,
       ...(purchaseLine ? [purchaseLine] : []),
+      ...(creditLine ? [creditLine] : []),
       ...(shipmentLine ? [shipmentLine] : []),
       ...(bridgeLine ? [bridgeLine] : []),
       ...followupLines,

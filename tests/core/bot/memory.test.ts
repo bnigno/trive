@@ -320,6 +320,12 @@ describe("renderContextNote", () => {
     // Gentileza já oferecida: sobrevive ao fechamento do pedido e avisa para não oferecer outra.
     const gift = renderContextNote(parseBotState({ liaGift: { code: "MARIA-CARINHO", motivo: "hesitou no preço", at: "2026-09-21T18:00:00.000Z", expiresAt: "2026-09-24T02:59:59.000Z" } }));
     expect(gift).toContain("• Gentileza já oferecida nesta conversa: cupom MARIA-CARINHO (motivo: hesitou no preço) — não ofereça outra");
+    // Crédito dela (troca): a linha diz que NÃO entra sozinho (caso do #1030).
+    const credito = renderContextNote(parseBotState({ coupon: { code: "SABRINA-HN5U7", discountCents: 4950, credit: true, at: "2026-10-02T10:00:00.000Z" } }));
+    expect(credito).toContain(
+      `• Crédito dela validado nesta conversa: SABRINA-HN5U7 (desconto de ${formatCentsBRL(4950)} nesta sacola) — NÃO entra sozinho: só com o SIM dela, passe cupom "SABRINA-HN5U7" em criar_pedido`,
+    );
+    expect(credito).not.toContain("criar_pedido aplica sozinho");
   });
 
   it("guarda quando a cotação foi feita", () => {

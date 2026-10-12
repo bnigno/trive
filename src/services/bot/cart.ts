@@ -1,10 +1,14 @@
 // Ferramentas da sacola da vendedora.
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+
 import { cartAdd, cartIndexOf, cartRemoveAt, cartSubtotalCents, findCartItem, formatCartLines, mergeCartByVariant, quoteKey, sameProductName, type BotCartItem, type BotState } from "@/core/bot/memory";
 import type { BotToolInputs } from "@/core/bot/tools";
 import { variantLabel } from "@/core/catalog/attributes";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
+import { creditLeftoverCents, isStoreCredit, STORE_CREDIT_ORIGINS, storeCreditLabel, storeCreditMemoryLine } from "@/core/coupons/credit";
 import { pendingNotice } from "@/core/coupons/messages";
+import { coupons, waMessages } from "@/db/schema";
 import { quoteCoupon, ServiceError as CouponServiceError, type CouponQuote } from "@/services/coupons";
 import { computeTotalWeightGrams, getSellableVariantById, getSellableVariantBySku } from "@/services/store-catalog";
 
@@ -73,9 +77,21 @@ async function refreshCoupon(
   }
   try {
     const quote = await quoteCartCoupon(db, ctx, state, code);
+    // Crédito dela continua crédito (e a pergunta já feita continua valendo): sem a marca, entraria sozinho no fechamento.
+    const credit = isStoreCredit(quote.origin);
     return {
-      coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, hint: quote.hint ?? undefined, at: new Date().toISOString() },
-      note: `[Cupom ${quote.code} continua válido: ${quoteSummary(quote, cartSubtotalCents(cart))}.${quote.hint ? ` ${quote.hint}` : ""}]`,
+      coupon: {
+        code: quote.code,
+        discountCents: quote.discountCents,
+        freeShipping: quote.freeShipping || undefined,
+        hint: quote.hint ?? undefined,
+        credit: credit || undefined,
+        askedInbound: credit ? state.coupon.askedInbound : undefined,
+        at: new Date().toISOString(),
+      },
+      note: credit
+        ? `[${quote.code} continua sendo ${storeCreditLabel(quote.origin)} dela: ${quoteSummary(quote, cartSubtotalCents(cart))} — só entra no pedido com o SIM dela.]`
+        : `[Cupom ${quote.code} continua válido: ${quoteSummary(quote, cartSubtotalCents(cart))}.${quote.hint ? ` ${quote.hint}` : ""}]`,
     };
   } catch (error) {
     if (error instanceof CouponServiceError) {
@@ -349,11 +365,36 @@ export async function execValidarCupom(
     }
     throw error;
   }
+  const credit = isStoreCredit(quote.origin);
   await updateBotState(db, ctx, (current) => ({
     ...current,
-    coupon: { code: quote.code, discountCents: quote.discountCents, freeShipping: quote.freeShipping || undefined, hint: quote.hint ?? undefined, at: new Date().toISOString() },
+    coupon: {
+      code: quote.code,
+      discountCents: quote.discountCents,
+      freeShipping: quote.freeShipping || undefined,
+      hint: quote.hint ?? undefined,
+      credit: credit || undefined,
+      // A pergunta nasce aqui: o SIM tem de vir numa mensagem dela DEPOIS desta.
+      // Revalidar o MESMO crédito (no turno do SIM) não reinicia a pergunta já feita.
+      askedInbound: credit
+        ? (current.coupon?.credit && current.coupon.code === quote.code && current.coupon.askedInbound) || ctx.lastInboundId
+        : undefined,
+      at: new Date().toISOString(),
+    },
   }));
   const notice = pendingNotice(quote.pending);
+  if (credit) {
+    // Crédito dela (uso único; a sobra se perde): só entra com o SIM — caso do #1030.
+    const leftover = creditLeftoverCents(quote.appliedValue, quote.discountCents);
+    return {
+      ok: true,
+      text: [
+        `${quote.code} é ${storeCreditLabel(quote.origin)} dela: ${formatCentsBRL(quote.discountCents)} de desconto nesta sacola${leftover > 0 ? ` — sobrariam ${formatCentsBRL(leftover)} que se perdem (uso único)` : " (uso único)"}.`,
+        ...(notice ? [`[${notice}]`] : []),
+        `[Pergunte se ela quer usar o crédito AGORA (ou guardar para outra compra) e ESPERE a resposta dela. Só com o SIM, numa mensagem dela depois da pergunta, passe cupom: "${quote.code}" em criar_pedido — sem o código explícito o crédito NÃO é aplicado.]`,
+      ].join("\n"),
+    };
+  }
   return {
     ok: true,
     text: [
@@ -367,4 +408,78 @@ export async function execValidarCupom(
       `Passe cupom: "${quote.code}" em criar_pedido — o desconto só é aplicado ao fechar o pedido, e o resumo oficial virá com o valor final.`,
     ].join("\n"),
   };
+}
+
+/**
+ * O crédito ativo dela (troca, proteção de preço), para o caderninho: a Lia
+ * sabe que existe e pergunta antes de usar. Por cliente da conversa ou pelo
+ * telefone; vencido, esgotado ou desativado fica de fora.
+ */
+export async function storeCreditMemoryLineFor(
+  db: DbOrTx,
+  ctx: Pick<BotExecutorContext, "customerId" | "phoneE164">,
+  now: Date,
+): Promise<string | null> {
+  const customerId = await resolveConversationCustomerId(db, ctx);
+  // Pelo telefone, só o crédito sem dona ou desta mesma cliente: um número que mudou de mão não revela o código de outra.
+  const owner = customerId
+    ? or(eq(coupons.customerId, customerId), and(eq(coupons.phoneE164, ctx.phoneE164), isNull(coupons.customerId)))
+    : and(eq(coupons.phoneE164, ctx.phoneE164), isNull(coupons.customerId));
+  const rows = await db
+    .select({ code: coupons.code, value: coupons.value, expiresAt: coupons.expiresAt })
+    .from(coupons)
+    .where(
+      and(
+        owner,
+        inArray(coupons.origin, [...STORE_CREDIT_ORIGINS]),
+        eq(coupons.isActive, true),
+        eq(coupons.type, "fixed"),
+        or(isNull(coupons.maxUses), sql`${coupons.usedCount} < ${coupons.maxUses}`),
+        or(isNull(coupons.expiresAt), gt(coupons.expiresAt, now)),
+      ),
+    )
+    .orderBy(asc(coupons.expiresAt))
+    .limit(2);
+  return storeCreditMemoryLine(
+    rows.map((row) => ({ code: row.code, valueCents: row.value, expiresAt: row.expiresAt })),
+    now,
+  );
+}
+
+/** O código é crédito dela (troca, proteção de preço)? Para a trava do criar_pedido quando o código vem direto. */
+export async function isStoreCreditCode(db: DbOrTx, code: string): Promise<boolean> {
+  const normalized = code.trim().toUpperCase();
+  if (normalized === "") return false;
+  const [row] = await db.select({ origin: coupons.origin }).from(coupons).where(eq(coupons.code, normalized)).limit(1);
+  return isStoreCredit(row?.origin);
+}
+
+/**
+ * Ela respondeu à pergunta do crédito? Fato do histórico: depois da mensagem
+ * dela em que a Lia perguntou (askedInbound) houve uma fala da Lia e, DEPOIS
+ * dessa fala, a mensagem atual dela. Turno de iniciativa (sem mensagem dela),
+ * o mesmo turno ou uma mensagem enviada antes de a pergunta sair não contam.
+ */
+export async function creditQuestionAnswered(db: DbOrTx, ctx: BotExecutorContext, askedInbound: string): Promise<boolean> {
+  if (ctx.proactive || askedInbound === ctx.lastInboundId) return false;
+  const rows = await db
+    .select({ id: waMessages.id, createdAt: waMessages.createdAt })
+    .from(waMessages)
+    .where(and(eq(waMessages.conversationId, ctx.conversationId), eq(waMessages.direction, "inbound"), inArray(waMessages.id, [askedInbound, ctx.lastInboundId])));
+  const asked = rows.find((row) => row.id === askedInbound);
+  const current = rows.find((row) => row.id === ctx.lastInboundId);
+  if (!asked || !current || current.createdAt.getTime() <= asked.createdAt.getTime()) return false;
+  const [between] = await db
+    .select({ id: waMessages.id })
+    .from(waMessages)
+    .where(
+      and(
+        eq(waMessages.conversationId, ctx.conversationId),
+        eq(waMessages.direction, "outbound"),
+        gt(waMessages.createdAt, asked.createdAt),
+        lt(waMessages.createdAt, current.createdAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(between);
 }
