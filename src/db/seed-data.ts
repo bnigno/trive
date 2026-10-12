@@ -159,6 +159,28 @@ export const initialWaTemplates: Array<{
     variables: ["nome", "pedido", "total", "link"],
   },
   {
+    // Pedido refeito (mudança antes de pagar): sai NO LUGAR da confirmação do
+    // pedido novo; o antigo, cancelado como substituído, não manda "cancelado".
+    key: "order_updated",
+    label: "Pedido atualizado (refeito antes de pagar)",
+    bodyTemplate:
+      "Oi, {{nome}}! Seu pedido #{{pedido_anterior}} foi atualizado e agora é o #{{pedido}}, no valor de {{total}}. 💛\n" +
+      "O que mudou: {{mudancas}}.\n" +
+      "{{reserva}}Para pagar, use só este link novo: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido_anterior", "pedido", "total", "mudancas", "reserva", "link"],
+  },
+  {
+    key: "order_updated_cash",
+    label: "Pedido atualizado (refeito antes de pagar, dinheiro na entrega)",
+    bodyTemplate:
+      "Oi, {{nome}}! Seu pedido #{{pedido_anterior}} foi atualizado e agora é o #{{pedido}}, no valor de {{total}}. 💛\n" +
+      "O que mudou: {{mudancas}}.\n" +
+      "O pagamento é em dinheiro na entrega. Acompanhe seu pedido: {{link}}\n" +
+      "Para não receber avisos, responda SAIR.",
+    variables: ["nome", "pedido_anterior", "pedido", "total", "mudancas", "link"],
+  },
+  {
     key: "payment_approved",
     label: "Pagamento aprovado",
     bodyTemplate:
@@ -318,6 +340,17 @@ export const initialWaTemplates: Array<{
     variables: ["pedido", "total", "cliente", "presente"],
   },
   {
+    key: "owner_order_updated",
+    label: "[interno] Pedido refeito",
+    bodyTemplate:
+      "Pedido refeito 🔁\n" +
+      "O #{{pedido_anterior}} agora é o #{{pedido}} — {{total}}\n" +
+      "Cliente: {{cliente}}{{presente}}\n" +
+      "O que mudou: {{mudancas}}\n" +
+      "Quem refez: {{quem}}",
+    variables: ["pedido_anterior", "pedido", "total", "cliente", "presente", "mudancas", "quem"],
+  },
+  {
     // Bilhete do presente (legenda da imagem): sai quando o pedido é
     // presente, junto da prévia do bilhete; só com opt-in; uma vez por pedido.
     key: "gift_note_preview",
@@ -368,6 +401,17 @@ export const initialWaTemplates: Array<{
       "Pedido: {{esperado}} · Pago: {{pago}} · Diferença: {{diferenca}}\n" +
       "Confira no painel e acerte a diferença com a cliente.",
     variables: ["pedido", "cliente", "esperado", "pago", "diferenca"],
+  },
+  {
+    // O Mercado Pago aprovou um pagamento num pedido JÁ cancelado (o link
+    // antigo de um pedido refeito, ou a reserva vencida). Um aviso por pedido.
+    key: "owner_paid_canceled_order",
+    label: "[interno] Pagamento num pedido cancelado",
+    bodyTemplate:
+      "Pagamento num pedido cancelado ⚠️\n" +
+      "Pedido #{{pedido}} — {{cliente}} pagou {{pago}}, mas o pedido está cancelado.\n" +
+      "{{orientacao}}",
+    variables: ["pedido", "cliente", "pago", "orientacao"],
   },
   {
     key: "owner_low_stock",

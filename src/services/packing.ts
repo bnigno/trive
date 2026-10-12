@@ -137,8 +137,19 @@ export async function packOrder(
   await storage.upload({ path, data: jpeg, contentType: "image/jpeg" });
 
   return db.transaction(async (tx) => {
+    // A foto subiu fora da transação: o pedido pode ter mudado nesse meio-tempo
+    // (cancelado, refeito com número novo). Trava e confere de novo.
+    const [locked] = await tx
+      .select({ status: orders.status, paymentMethod: orders.paymentMethod })
+      .from(orders)
+      .where(eq(orders.id, order.id))
+      .for("update");
+    const lockedCashPending = locked?.status === "pending_payment" && locked.paymentMethod === "cash";
+    if (!locked || (locked.status !== "paid" && locked.status !== "preparing" && !lockedCashPending)) {
+      throw new ServiceError("STATUS_INVALIDO", "O pedido mudou enquanto a foto subia (foi cancelado ou refeito). Recarregue a página.");
+    }
     let transitioned = false;
-    let status = order.status as OrderStatus;
+    let status = locked.status as OrderStatus;
     if (status === "paid") {
       const result = await transitionOrder(tx, {
         orderId: order.id,

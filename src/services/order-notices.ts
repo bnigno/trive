@@ -7,9 +7,11 @@ import { z } from "zod";
 
 import type { MessagingProvider } from "@/adapters/zapi";
 import { friendlyCancelReason } from "@/core/orders/reasons";
+import { paidCanceledOrderGuidance } from "@/core/orders/redo";
 import { customers, orders } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
+import { findLatestReplacement } from "@/services/order-replacements";
 import { getSettingsMap } from "@/services/settings";
 import {
   buildOrderVars,
@@ -23,10 +25,11 @@ export const ORDER_REFUNDED_TEMPLATE_KEY = "order_refunded";
 export const OWNER_CHARGEBACK_TEMPLATE_KEY = "owner_chargeback";
 export const OWNER_FEE_DIVERGENT_TEMPLATE_KEY = "owner_fee_divergent";
 export const OWNER_AMOUNT_DIVERGENT_TEMPLATE_KEY = "owner_amount_divergent";
+export const OWNER_PAID_CANCELED_TEMPLATE_KEY = "owner_paid_canceled_order";
 
 export type OrderNoticeResult =
   | SendWaMessageResult
-  | { skipped: "pedido_inexistente" | "sem_telefone" | "status_diferente" };
+  | { skipped: "pedido_inexistente" | "sem_telefone" | "status_diferente" | "substituido" };
 
 const orderIdSchema = z.object({ orderId: z.uuid() });
 
@@ -41,6 +44,7 @@ async function loadOrderNoticeContext(db: DbOrTx, orderId: string) {
       totalCents: orders.totalCents,
       paymentMethod: orders.paymentMethod,
       cancelReason: orders.cancelReason,
+      replacedByOrderId: orders.replacedByOrderId,
       isGift: orders.isGift,
       customerId: customers.id,
       customerName: customers.fullName,
@@ -81,6 +85,8 @@ export async function sendOrderCanceledWa(
   const ctx = await loadOrderNoticeContext(db, orderId);
   if (!ctx) return { skipped: "pedido_inexistente" };
   if (ctx.status !== "canceled") return { skipped: "status_diferente" };
+  // Pedido refeito: a cliente recebe "seu pedido foi atualizado — agora é o #N" do novo, nunca "cancelado".
+  if (ctx.replacedByOrderId) return { skipped: "substituido" };
   if (!ctx.phoneE164) return { skipped: "sem_telefone" };
   return sendTemplateMessage(db, provider, {
     templateKey: ORDER_CANCELED_TEMPLATE_KEY,
@@ -184,5 +190,32 @@ export async function notifyOwnerAmountDivergent(
       diferenca: `${difference > 0 ? "+" : difference < 0 ? "-" : ""}${formatCentsBRL(Math.abs(difference))}`,
     },
     dedupeKey: `wa.owner_amount_divergent:${parsed.orderId}`,
+  });
+}
+
+const paidCanceledSchema = orderIdSchema.extend({ paidCents: z.number().int().min(0), mpPaymentId: z.string().min(1).optional() });
+
+/**
+ * Dono: pagaram um pedido JÁ cancelado — o link antigo de um pedido refeito,
+ * ou a reserva que venceu. Diz o que fazer (estornar, mandar o link do novo,
+ * venda manual) olhando o fim da cadeia de pedidos refeitos.
+ */
+export async function notifyOwnerPaidCanceledOrder(
+  db: DbOrTx,
+  provider: MessagingProvider,
+  input: { orderId: string; paidCents: number; mpPaymentId?: string },
+): Promise<OrderNoticeResult> {
+  const parsed = paidCanceledSchema.parse(input);
+  const ctx = await loadOrderNoticeContext(db, parsed.orderId);
+  if (!ctx) return { skipped: "pedido_inexistente" };
+  const latest = await findLatestReplacement(db, parsed.orderId);
+  return sendToOwner(db, provider, {
+    templateKey: OWNER_PAID_CANCELED_TEMPLATE_KEY,
+    vars: {
+      ...ctx.vars,
+      pago: formatCentsBRL(parsed.paidCents),
+      orientacao: paidCanceledOrderGuidance({ orderNumber: ctx.orderNumber, latest }),
+    },
+    dedupeKey: `wa.owner_paid_canceled:${parsed.orderId}${parsed.mpPaymentId ? `:${parsed.mpPaymentId}` : ""}`,
   });
 }

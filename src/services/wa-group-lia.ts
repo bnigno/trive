@@ -631,9 +631,12 @@ export async function fanOutPollWinnerNotices(db: DbOrTx, input: { variantId: st
   const schedule = staggerWithinWindow(targets.length, { from: now, intervalSeconds: GROUP_NOTICE_INTERVAL_SECONDS, window: policy.cadence.window });
   let queued = 0;
   for (const [index, target] of targets.entries()) {
+    // A chave do EVENTO é por chegada (movimento): uma chegada falsa (a peça
+    // solta e reservada de novo na mesma transação, como no refazer pedido)
+    // não pode gastar o aviso. A MENSAGEM continua uma só (a chave dela é por post e cliente).
     const id = await enqueueOutboxEvent(db, {
       eventType: GROUP_POLL_WINNER_NOTICE_EVENT,
-      dedupeKey: `${GROUP_POLL_WINNER_NOTICE_EVENT}:${target.postId}:${target.customerId}`,
+      dedupeKey: `${GROUP_POLL_WINNER_NOTICE_EVENT}:${target.postId}:${target.customerId}:${input.movementId}`,
       aggregateType: "wa_group_post",
       aggregateId: target.postId,
       payload: { postId: target.postId, variantId: input.variantId, customerId: target.customerId },

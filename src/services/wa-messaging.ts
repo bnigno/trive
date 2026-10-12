@@ -13,7 +13,8 @@
 //     reembolso. É parte da compra; exigir consentimento de marketing aqui
 //     deixava a cliente sem notícia do próprio pedido.
 // Avisos internos ao DONO nunca precisam.
-import { and, eq, gt, isNull, lt, ne } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, ne, notExists } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 import { getAdapterMode } from "@/adapters/adapter-mode";
@@ -750,6 +751,8 @@ export interface RecoverUnpaidOrdersResult {
 
 const DEFAULT_RECOVERY_AFTER_MINUTES = 60;
 
+const replacedOrders = alias(orders, "replaced_orders");
+
 export async function recoverUnpaidOrders(
   db: DbOrTx,
   provider: MessagingProvider,
@@ -798,6 +801,14 @@ export async function recoverUnpaidOrders(
         eq(orders.channel, "store"),
         lt(orders.createdAt, createdBefore),
         gt(orders.paymentDueAt, now),
+        // Pedido refeito: ela acabou de mexer nele (e o antigo pode já ter
+        // recebido o lembrete) — "o único lembrete" continua único.
+        notExists(
+          db
+            .select({ id: replacedOrders.id })
+            .from(replacedOrders)
+            .where(eq(replacedOrders.replacedByOrderId, orders.id)),
+        ),
       ),
     );
 

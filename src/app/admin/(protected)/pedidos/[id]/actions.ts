@@ -1,9 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z, ZodError } from "zod";
 
 import { getFileStorage } from "@/adapters/storage";
+import { getCorreiosQuoter } from "@/adapters/superfrete";
 import { InvalidTransitionError, type OrderStatus } from "@/core/orders/state-machine";
 import { getDb } from "@/db/client";
 import { requireOwner, requireUser } from "@/services/auth";
@@ -16,6 +18,7 @@ import {
   transitionOrder,
 } from "@/services/orders";
 import { deliverOrderWithPhoto } from "@/services/delivery";
+import { quoteRedoDelivery, redoChangesSchema, redoPendingOrder } from "@/services/order-redo";
 import { PACKAGE_PHOTO_MAX_BYTES, packOrder } from "@/services/packing";
 
 export type FormState = { error?: string; success?: string };
@@ -270,5 +273,59 @@ export async function returnOrderItemAction(
     };
   } catch (error) {
     return friendlyError(error);
+  }
+}
+
+function parseJsonField(value: FormDataEntryValue | string | null): unknown {
+  try {
+    return JSON.parse(String(value ?? ""));
+  } catch {
+    return null;
+  }
+}
+
+/** Validação do refazer: a mensagem do campo ("Diga para quem é o presente.") vale mais que "recarregue". */
+function redoError(error: unknown): FormState {
+  if (error instanceof ZodError) {
+    const issue = error.issues[0];
+    return { error: issue && issue.path.length > 0 ? issue.message : "Dados inválidos. Recarregue a página e tente novamente." };
+  }
+  return friendlyError(error);
+}
+
+/** Refazer pedido ainda não pago: cancela como "substituído" e abre o pedido novo. */
+export async function redoOrderAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  let newOrderId: string;
+  try {
+    const orderId = orderIdSchema.parse(formData.get("orderId"));
+    const changes = redoChangesSchema.parse(parseJsonField(formData.get("changes")));
+    // O painel escolhe a entrega pela cotação ("option"); a entrega montada à mão é só da Lia.
+    if (changes.delivery?.kind === "ship") return { error: "Escolha a entrega pela cotação." };
+    const result = await redoPendingOrder(
+      getDb(),
+      { orderId, changes, actor: { type: "user", userId: user.id }, allowPaymentAttempt: formData.get("allowPaymentAttempt") === "on" },
+      { correios: getCorreiosQuoter() },
+    );
+    revalidateOrder(orderId);
+    revalidateOrder(result.newOrderId);
+    newOrderId = result.newOrderId;
+  } catch (error) {
+    return redoError(error);
+  }
+  redirect(`/admin/pedidos/${newOrderId}`);
+}
+
+/** "Cotar entrega com estas peças" do card Refazer pedido. */
+export async function quoteRedoDeliveryAction(
+  orderId: string,
+  itemsJson: string,
+): Promise<{ options: { optionKey: string; label: string; priceCents: number }[] } | { error: string }> {
+  await requireUser();
+  try {
+    const { items } = redoChangesSchema.pick({ items: true }).parse({ items: parseJsonField(itemsJson) });
+    return { options: await quoteRedoDelivery(getDb(), { orderId, items }, { correios: getCorreiosQuoter() }) };
+  } catch (error) {
+    return { error: redoError(error).error ?? "Não consegui cotar agora." };
   }
 }

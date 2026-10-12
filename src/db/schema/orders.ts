@@ -12,6 +12,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { coupons } from "./coupons";
@@ -146,6 +147,11 @@ export const orders = pgTable(
     attribution: jsonb("attribution").$type<{ kind: "campaign" | "coupon"; ref: string; touchedOn: string }>(),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     cancelReason: text("cancel_reason"),
+    /**
+     * Pedido refeito ("Refazer pedido"): o novo que substituiu este (cancelado
+     * na mesma transação). Um pedido novo substitui no máximo um antigo.
+     */
+    replacedByOrderId: uuid("replaced_by_order_id").references((): AnyPgColumn => orders.id, { onDelete: "restrict" }),
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -172,6 +178,13 @@ export const orders = pgTable(
     uniqueIndex("orders_mp_payment_id_unique_idx")
       .on(table.mpPaymentId)
       .where(sql`${table.mpPaymentId} IS NOT NULL`),
+    uniqueIndex("orders_replaced_by_order_id_unique_idx")
+      .on(table.replacedByOrderId)
+      .where(sql`${table.replacedByOrderId} IS NOT NULL`),
+    check(
+      "orders_replaced_by_check",
+      sql`${table.replacedByOrderId} IS NULL OR (${table.status} = 'canceled' AND ${table.replacedByOrderId} <> ${table.id})`,
+    ),
     check("orders_received_by_check", sql`${table.receivedBy} IS NULL OR char_length(${table.receivedBy}) <= 60`),
     check(
       "orders_delivery_confirmed_by_check",

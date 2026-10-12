@@ -5,6 +5,9 @@
 export const RESERVATION_EXPIRED_REASON =
   "Reserva expirada — pagamento não confirmado no prazo";
 
+/** Pedido refeito (com mudanças): o antigo é cancelado e substituído por um número novo. */
+export const SUPERSEDED_CANCEL_REASON = "Pedido refeito — substituído por um novo pedido";
+
 export const CANCEL_REASON_MAX_CHARS = 200;
 
 const FALLBACK = "a pedido da loja";
@@ -20,6 +23,7 @@ export function friendlyCancelReason(reason: string | null | undefined): string 
   if (text.toLowerCase().startsWith("reserva expirada")) {
     return "o prazo de pagamento terminou e a reserva foi liberada";
   }
+  if (text === SUPERSEDED_CANCEL_REASON) return "o pedido foi atualizado e ganhou um número novo";
   if (text.length <= CANCEL_REASON_MAX_CHARS) return text;
   return `${text.slice(0, CANCEL_REASON_MAX_CHARS - 1).trimEnd()}…`;
 }

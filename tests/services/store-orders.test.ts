@@ -809,6 +809,8 @@ describe("getPublicOrder", () => {
         "deliveredPhotoPath",
         "deliveredPhotoAt",
         "receivedBy",
+        // Pedido refeito: só número, token e situação do pedido novo (sem PII).
+        "replacedBy",
         "packagePhotoPath",
         "isGift",
         "giftRecipientName",
