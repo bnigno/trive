@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 
 import { customers, orders, settings } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
+import { findAnnouncedPredecessor, findReplacedOrder } from "@/services/order-replacements";
 import { buildOrderVars } from "@/services/wa-messaging";
 
 export interface OrderWaContext {
@@ -15,6 +16,10 @@ export interface OrderWaContext {
   paymentMethod: string | null;
   /** Motoboy: o "enviado" vira "saiu da maison, chega hoje entre 19h e 21h". */
   hasDeliveryWindow: boolean;
+  /** Pedido refeito: o antigo que este substituiu ("seu pedido #A foi atualizado e agora é o #B"). */
+  replaces: { id: string; orderNumber: number } | null;
+  /** Os pedidos refeitos desde o número que ela conhece até o anterior direto (o "o que mudou" soma todos). */
+  redoHops: string[];
   customer: {
     id: string;
     fullName: string;
@@ -61,30 +66,41 @@ export async function loadOrderWaContext(
     typeof storeNameRow?.value === "string" && storeNameRow.value.trim() !== ""
       ? storeNameRow.value.trim()
       : undefined;
+  const replaced = await findReplacedOrder(db, row.id);
+  const announced = replaced ? await findAnnouncedPredecessor(db, row.id) : null;
 
   return {
     orderId: row.id,
     paymentMethod: row.paymentMethod,
     hasDeliveryWindow: row.deliveryWindow !== null,
+    replaces: replaced
+      ? { id: replaced.id, orderNumber: replaced.orderNumber }
+      : null,
+    redoHops: announced?.hops ?? [],
     customer: {
       id: row.customerId,
       fullName: row.customerName,
       phoneE164: row.customerPhone,
     },
-    vars: buildOrderVars({
-      orderNumber: row.orderNumber,
-      customerName: row.customerName,
-      totalCents: row.totalCents,
-      publicToken: row.publicToken,
-      paymentDueAt: row.paymentDueAt,
-      trackingCode: row.trackingCode,
-      storeName,
-      paymentMethod: row.paymentMethod,
-      isGift: row.isGift,
-      deliveryWindow: row.deliveryWindow,
-      // {{dia}} vale pela hora em que a peça SAIU, não pela hora em que a
-      // fila rodou (retry depois da meia-noite não vira "ontem").
-      now: row.deliveryWindow?.dispatchedAt ? new Date(row.deliveryWindow.dispatchedAt) : undefined,
-    }),
+    vars: {
+      ...buildOrderVars({
+        orderNumber: row.orderNumber,
+        customerName: row.customerName,
+        totalCents: row.totalCents,
+        publicToken: row.publicToken,
+        paymentDueAt: row.paymentDueAt,
+        trackingCode: row.trackingCode,
+        storeName,
+        paymentMethod: row.paymentMethod,
+        isGift: row.isGift,
+        deliveryWindow: row.deliveryWindow,
+        // {{dia}} vale pela hora em que a peça SAIU, não pela hora em que a
+        // fila rodou (retry depois da meia-noite não vira "ontem").
+        now: row.deliveryWindow?.dispatchedAt
+          ? new Date(row.deliveryWindow.dispatchedAt)
+          : undefined,
+      }),
+      ...(announced ? { pedido_anterior: String(announced.orderNumber) } : {}),
+    },
   };
 }

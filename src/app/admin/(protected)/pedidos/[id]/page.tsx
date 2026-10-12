@@ -47,6 +47,9 @@ import { FEEDBACK_LABELS } from "@/core/orders/feedback";
 import { giftNoteUrl } from "@/services/gifts";
 import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { packagePhotoUrl } from "@/services/packing";
+import { getRedoFormData } from "@/services/order-redo";
+import { getOrderReplacementLinks } from "@/services/order-replacements";
+import { RedoOrderForm } from "./redo-order-form";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +93,8 @@ export default async function PedidoDetalhePage({
   const issuedCoupons = await listIssuedCouponsForOrder(db, id);
   const returnableItems = await listReturnableItems(getDb(), order.id);
   const status = order.status as OrderStatus;
+  const replacement = await getOrderReplacementLinks(db, order);
+  const redoForm = status === "pending_payment" ? await getRedoFormData(db, order.id) : null;
   // Os cartões: quantos o pedido tem e se os gerados ficaram velhos (a mesma
   // régua da tela dos cartões). "Gerar de novo" só enquanto a caixa está
   // aberta: depois de embalado, o cartão que foi já foi.
@@ -124,6 +129,29 @@ export default async function PedidoDetalhePage({
           </Link>
         }
       />
+
+      {replacement.replacedBy || replacement.replaces ? (
+        <div className="flex flex-col gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">
+          {replacement.replacedBy ? (
+            <p>
+              Este pedido foi refeito e substituído pelo{" "}
+              <Link href={`/admin/pedidos/${replacement.replacedBy.id}`} className="font-medium underline">
+                #{replacement.replacedBy.orderNumber}
+              </Link>
+              . A cliente não recebe “cancelado”: recebe “seu pedido foi atualizado”, com o link novo.
+            </p>
+          ) : null}
+          {replacement.replaces ? (
+            <p>
+              Refeito a partir do{" "}
+              <Link href={`/admin/pedidos/${replacement.replaces.id}`} className="font-medium underline">
+                #{replacement.replaces.orderNumber}
+              </Link>
+              .
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <Card title="Link do pedido — envie ao cliente pelo WhatsApp">
         <div className="flex flex-col gap-2">
@@ -202,6 +230,12 @@ export default async function PedidoDetalhePage({
               </div>
             </dl>
           </Card>
+
+          {redoForm ? (
+            <Card title="Refazer pedido (mudança antes do pagamento)">
+              <RedoOrderForm data={redoForm} />
+            </Card>
+          ) : null}
 
           {/* Uma peça voltou: o pedido NÃO muda de status — não foi
               reembolsado, uma peça voltou. Só o dono vê (mexe em dinheiro). */}

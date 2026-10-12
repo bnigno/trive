@@ -440,6 +440,19 @@ describe("recoverUnpaidOrders", () => {
     expect(provider.sentMessages).toHaveLength(0);
   });
 
+  it("pedido refeito não ganha lembrete: ela acabou de mexer nele (o antigo pode já ter recebido o único)", async () => {
+    await enableWa();
+    await seedTemplates();
+    const customerId = await createCustomer(true);
+    const novo = await createStoreOrder(customerId);
+    await createStoreOrder(customerId, { status: "canceled", replacedByOrderId: novo.id });
+
+    const result = await recoverUnpaidOrders(sdb, provider);
+
+    expect(result).toEqual({ checked: 0, sent: 0, skipped: 0, failed: 0 });
+    expect(provider.sentMessages).toHaveLength(0);
+  });
+
   it("wa desligado → contadores zerados, nenhuma consulta de envio", async () => {
     await seedTemplates();
     const customerId = await createCustomer(true);

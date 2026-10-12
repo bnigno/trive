@@ -136,6 +136,10 @@ export default async function OrderPage({
     isPendingPayment &&
     (query.collection_status === "approved" || query.status === "approved");
   const mpUnavailable = isPendingPayment && query.pagamento === "indisponivel";
+  // Voltou do Mercado Pago aprovado num pedido que já tinha sido refeito (aba antiga do link).
+  const paidOldLink =
+    order.replacedBy !== null &&
+    (query.collection_status === "approved" || query.status === "approved");
   const justConfirmed = order.status === "delivered" && query.chegou === "1";
   const confirmFailed = query.chegou === "0";
   const confirmAction = confirmDeliveryAction.bind(null, token);
@@ -191,8 +195,9 @@ export default async function OrderPage({
       ? `${getFileStorage().publicUrl(order.packagePhotoPath)}?v=${order.packedAt.getTime()}`
       : null;
 
+  // Pedido refeito: o bilhete que vale é o do pedido novo.
   const giftNoteUrl =
-    order.isGift && order.giftNotePath
+    order.isGift && order.giftNotePath && !order.replacedBy
       ? `${getFileStorage().publicUrl(order.giftNotePath)}?v=${order.createdAt.getTime()}`
       : null;
 
@@ -235,7 +240,31 @@ export default async function OrderPage({
 
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-x-16">
         <div className="flex flex-col gap-8">
-          {isCanceled ? (
+          {order.replacedBy && paidOldLink ? (
+            <Notice tone="gold" role="alert" title="Recebemos um pagamento neste pedido antigo">
+              <p>
+                Este pedido já tinha sido atualizado para o nº{" "}
+                {order.replacedBy.orderNumber}. Não pague de novo: a equipe vai
+                falar com você para acertar.
+              </p>
+              <Link href={`/pedido/${order.replacedBy.publicToken}`} className={cx(btnPrimary, "mt-5")}>
+                Ver o pedido nº {order.replacedBy.orderNumber}
+              </Link>
+            </Notice>
+          ) : order.replacedBy ? (
+            <Notice tone="gold" role="status" title={`Este pedido foi atualizado — agora é o nº ${order.replacedBy.orderNumber}`}>
+              <p>
+                As mudanças que você pediu entraram num pedido novo, com número
+                novo. Este aqui não vale mais:{" "}
+                {order.replacedBy.status === "pending_payment"
+                  ? `acompanhe e pague pelo pedido nº ${order.replacedBy.orderNumber}.`
+                  : `acompanhe pelo pedido nº ${order.replacedBy.orderNumber}.`}
+              </p>
+              <Link href={`/pedido/${order.replacedBy.publicToken}`} className={cx(btnPrimary, "mt-5")}>
+                Ver o pedido nº {order.replacedBy.orderNumber}
+              </Link>
+            </Notice>
+          ) : isCanceled ? (
             <Notice
               tone="claret"
               role="alert"

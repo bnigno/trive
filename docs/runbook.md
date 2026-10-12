@@ -1297,6 +1297,50 @@ eram elegíveis.
 Produção: migração 0064 (`order_item_returns` + origem `troca` nos cupons) e
 `scripts/sync-seed.ts --templates order_item_refunded,order_item_credit`.
 
+## Refazer pedido (mudar antes do pagamento)
+
+Quando a cliente quer mudar um pedido que **ainda não foi pago** — tirar ou
+trocar o cupom, passar para dinheiro na entrega (ou voltar para o link), trocar
+o tamanho, acrescentar ou tirar uma peça, mudar o bilhete do presente ou a
+entrega. Antes isto virava transferência e o pedido pendente segurava o estoque
+e o cupom até vencer (casos #1030 e #1020).
+
+Na ficha do pedido aguardando pagamento, card **Refazer pedido**. O pedido
+antigo é cancelado como **"substituído"** e nasce um pedido com **número novo**,
+numa transação só: a peça passa direto do antigo para o novo (nunca dá
+"esgotado" por causa do próprio pedido) e o cupom de uso único também.
+Qualquer recusa — tamanho esgotado, cupom que não vale, preço que mudou — **não
+muda nada**: o antigo continua valendo.
+
+| O que fica | Como |
+| --- | --- |
+| **Cupom mantido** | Vale como na data do pedido antigo (validade, horário, degraus). Trocar por outro: vale o de hoje. |
+| **Preço das peças** | O do pedido antigo. Se o preço subiu, a tela recusa; com o SIM da cliente, marque "Cobrar o preço de hoje". |
+| **Entrega mantida** | Mesma janela e mesmo frete, sem recotar. Peças com outro peso ou janela de um dia que já passou pedem "Escolher outra" → "Cotar entrega". |
+
+**Quem recebe o quê:** a cliente **não** recebe "cancelado". Recebe "seu pedido
+#A foi atualizado e agora é o #B" com o link novo (`order_updated`, ou
+`order_updated_cash`). Você recebe "Pedido refeito" com o que mudou e quem refez
+(`owner_order_updated`). Bilhete igual não reenvia a prévia; o lembrete único de
+pagamento não vai para o pedido refeito. A página do pedido antigo mostra "Este
+pedido foi atualizado — agora é o nº B", com o botão para o novo.
+
+**Pagamento em andamento:** se o pedido já tem uma tentativa no Mercado Pago, o
+card pede para conferir no MP antes (refazer faria ela pagar de novo). A Lia
+nunca passa por cima disso; a equipe passa marcando a caixa.
+
+**Pagaram o link antigo:** se o Mercado Pago aprovar um pagamento num pedido já
+cancelado (o link antigo de um pedido refeito, ou depois de a reserva vencer),
+você recebe **"Pagamento num pedido cancelado"** (`owner_paid_canceled_order`)
+com o caminho: estornar e mandar o link do novo, ou fazer uma venda manual.
+Antes, esse pagamento ficava sem aviso nenhum.
+
+Venda manual (canal do painel) não refaz: cancele e faça uma venda manual nova.
+
+Produção, **nesta ordem**: migração 0066 (`orders.replaced_by_order_id`)
+**antes** do deploy (o código lê a coluna em toda página de pedido) e
+`scripts/sync-seed.ts --templates order_updated,order_updated_cash,owner_order_updated,owner_paid_canceled_order`.
+
 ## Reembolso: quem devolve o dinheiro
 
 Desde 24/09/2026 o botão **Reembolsar** devolve o dinheiro de verdade — mas só

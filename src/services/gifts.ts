@@ -15,6 +15,7 @@ import { renderTemplate } from "@/core/whatsapp/render";
 import { customers, orders, waMessages, waTemplates } from "@/db/schema";
 import { STORE_NAME_DEFAULT } from "@/lib/brand";
 import type { DbOrTx } from "@/queue/enqueue";
+import { findReplacedOrder } from "@/services/order-replacements";
 import { getSettingsMap } from "@/services/settings";
 import {
   buildOrderVars,
@@ -56,6 +57,7 @@ async function loadGiftOrder(db: DbOrTx, orderId: string) {
   const [row] = await db
     .select({
       id: orders.id,
+      status: orders.status,
       orderNumber: orders.orderNumber,
       publicToken: orders.publicToken,
       paymentDueAt: orders.paymentDueAt,
@@ -119,9 +121,28 @@ export async function publishGiftNote(
   return { path, url: giftNoteUrl(storage, path, updatedAt) };
 }
 
+async function sameGiftNoteAlreadySeen(
+  db: DbOrTx,
+  input: { orderId: string; recipientName: string | null; message: string | null },
+): Promise<boolean> {
+  let currentId = input.orderId;
+  for (let hop = 0; hop < 20; hop += 1) {
+    const replaced = await findReplacedOrder(db, currentId);
+    if (!replaced || replaced.giftRecipientName !== input.recipientName || (replaced.giftMessage ?? "") !== (input.message ?? "")) return false;
+    const [previous] = await db
+      .select({ status: waMessages.status })
+      .from(waMessages)
+      .where(eq(waMessages.dedupeKey, giftNoteDedupeKey(replaced.id)))
+      .limit(1);
+    if (previous && (previous.status === "sent" || previous.status === "delivered" || previous.status === "read")) return true;
+    currentId = replaced.id;
+  }
+  return false;
+}
+
 export type SendGiftNoteResult =
   | SendWaMessageResult
-  | { skipped: "nao_presente" | "sem_telefone" | "sem_template" };
+  | { skipped: "nao_presente" | "sem_telefone" | "sem_template" | "bilhete_igual" | "pedido_cancelado" };
 
 /**
  * Publica o bilhete (sempre) e manda a prévia à compradora: WhatsApp ligado,
@@ -138,9 +159,18 @@ export async function sendGiftNoteWa(
   const { orderId } = orderIdSchema.parse(input);
   const row = await loadGiftOrder(db, orderId);
   if (!row.isGift) return { skipped: "nao_presente" };
+  // Cancelado (ou refeito) antes de a fila chegar: a prévia com o link velho só confundiria.
+  if (row.status === "canceled") return { skipped: "pedido_cancelado" };
 
   const published = await publishGiftNote(db, storage, render, { orderId });
   if ("skipped" in published) return published;
+
+  // Pedido refeito com o MESMO bilhete e a prévia de algum dos anteriores
+  // entregue (#A → #B → #C): ela já viu. A imagem do novo é publicada acima,
+  // para a equipe imprimir.
+  if (await sameGiftNoteAlreadySeen(db, { orderId, recipientName: row.giftRecipientName, message: row.giftMessage })) {
+    return { skipped: "bilhete_igual" };
+  }
 
   if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
   if (!row.phoneE164) return { skipped: "sem_telefone" };

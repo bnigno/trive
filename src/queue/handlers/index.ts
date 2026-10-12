@@ -95,6 +95,7 @@ import { sendOrderEmail } from "@/services/notifications";
 import {
   notifyOwnerChargeback,
   notifyOwnerAmountDivergent,
+  notifyOwnerPaidCanceledOrder,
   notifyOwnerFeeDivergent,
   sendOrderCanceledWa,
   sendOrderRefundedWa,
@@ -111,6 +112,8 @@ import {
   sendTemplateMessage,
   sendToOwner,
 } from "@/services/wa-messaging";
+import { orderWaPlan, type OrderWaMilestone } from "@/core/whatsapp/order-milestones";
+import { redoNoticeVars } from "@/services/order-redo";
 import { loadOrderWaContext } from "./wa-helpers";
 
 // Payload mínimo do evento de pagamento (Zod na fronteira da fila).
@@ -126,6 +129,11 @@ const amountDivergentPayloadSchema = orderNoticePayloadSchema.extend({
   paidCents: z.number().int().min(0),
 });
 
+const paidCanceledPayloadSchema = orderNoticePayloadSchema.extend({
+  paidCents: z.number().int().min(0),
+  mpPaymentId: z.string().min(1).optional(),
+});
+
 const feeDivergentPayloadSchema = orderNoticePayloadSchema.extend({
   estimatedCents: z.number().int().min(0),
   actualCents: z.number().int().min(0),
@@ -138,37 +146,9 @@ const feeDivergentPayloadSchema = orderNoticePayloadSchema.extend({
 // via audit, WhatsApp retoma/pula via dedupe_key.
 // ---------------------------------------------------------------------------
 
-const ORDER_WA_MILESTONES = {
-  store_created: {
-    clientTemplate: "order_confirmed",
-    clientDedupePrefix: "wa.order_confirmed:",
-    ownerTemplate: "owner_new_order",
-    ownerDedupePrefix: "wa.owner_new:",
-  },
-  paid: {
-    clientTemplate: "payment_approved",
-    clientDedupePrefix: "wa.payment_approved:",
-    ownerTemplate: "owner_payment_approved",
-    ownerDedupePrefix: "wa.owner_paid:",
-  },
-  shipped: {
-    clientTemplate: "order_shipped",
-    clientDedupePrefix: "wa.order_shipped:",
-    ownerTemplate: null,
-    ownerDedupePrefix: null,
-  },
-  // Dinheiro na entrega saiu com o motoboy (sem transição de status).
-  out_for_delivery: {
-    clientTemplate: "order_out_for_delivery",
-    clientDedupePrefix: "wa.order_out_for_delivery:",
-    ownerTemplate: null,
-    ownerDedupePrefix: null,
-  },
-} as const;
-
 async function sendOrderWa(
   orderId: string,
-  milestone: keyof typeof ORDER_WA_MILESTONES,
+  milestone: OrderWaMilestone,
   /** Segunda saída do pedido que voltou: o "saiu" da primeira vez já usou a chave. */
   dedupeSuffix = "",
 ): Promise<void> {
@@ -178,44 +158,47 @@ async function sendOrderWa(
   const ctx = await loadOrderWaContext(db, orderId);
   if (!ctx) return;
 
-  const spec = ORDER_WA_MILESTONES[milestone];
-  // Dinheiro na entrega: confirmação SEM link de pagamento nem prazo de
-  // reserva (o template order_confirmed quebraria com {{prazo}} vazio).
-  // Motoboy: "enviado" não tem rastreio — é "saiu da maison, chega hoje
-  // entre 19h e 21h". A chave de dedupe é a mesma do despacho em dinheiro
-  // (order.out_for_delivery): um pedido só recebe "saiu" uma vez, por
-  // qualquer caminho.
-  const motoboyOut = ctx.hasDeliveryWindow && (milestone === "shipped" || milestone === "out_for_delivery");
-  const clientTemplate =
-    milestone === "store_created" && ctx.paymentMethod === "cash"
-      ? "order_confirmed_cash"
-      : motoboyOut
-        ? "order_out_for_delivery"
-        : spec.clientTemplate;
-  const clientDedupePrefix = motoboyOut ? ORDER_WA_MILESTONES.out_for_delivery.clientDedupePrefix : spec.clientDedupePrefix;
-  // Dinheiro na entrega: "pagamento aprovado, já estamos preparando" não
-  // faz sentido — o pagamento é a própria entrega. Só a dona é avisada.
-  const skipClient = milestone === "paid" && ctx.paymentMethod === "cash";
+  const plan = orderWaPlan({
+    milestone,
+    paymentMethod: ctx.paymentMethod,
+    hasDeliveryWindow: ctx.hasDeliveryWindow,
+    replacesOrder: ctx.replaces !== null,
+  });
+  // Pedido refeito: o que mudou (desde o número que ela conhece), quem refez e a reserva.
+  const redo = milestone === "store_created" && ctx.replaces ? await redoNoticeVars(db, { redoHops: ctx.redoHops, prazo: ctx.vars.prazo ?? "" }) : null;
+  const vars: Record<string, string> = redo ? { ...ctx.vars, ...redo } : ctx.vars;
+  // Pedido refeito com o modelo novo ainda não sincronizado (ou desligado no
+  // painel): a confirmação de sempre, com o número novo — nunca silêncio.
+  const fallback = redo
+    ? orderWaPlan({ milestone, paymentMethod: ctx.paymentMethod, hasDeliveryWindow: ctx.hasDeliveryWindow, replacesOrder: false })
+    : null;
+  const phoneE164 = ctx.customer.phoneE164;
   // Cliente sem telefone não é erro: o e-mail (quando houver) já cobriu.
-  if (ctx.customer.phoneE164 && !skipClient) {
-    await sendTemplateMessage(db, provider, {
-      templateKey: clientTemplate,
-      phoneE164: ctx.customer.phoneE164,
-      vars: ctx.vars,
-      customerId: ctx.customer.id,
-      orderId,
-      dedupeKey: `${clientDedupePrefix}${orderId}${dedupeSuffix}`,
-      // Aviso do PEDIDO DELA: não depende do opt-in, que vale para novidades
-      // e ofertas. Quem compra espera saber que o pedido foi confirmado.
-      requireOptIn: false,
-    });
+  if (phoneE164 && plan.client) {
+    const sendClient = (spec: { template: string; dedupePrefix: string }) =>
+      sendTemplateMessage(db, provider, {
+        templateKey: spec.template,
+        phoneE164,
+        vars,
+        customerId: ctx.customer.id,
+        orderId,
+        dedupeKey: `${spec.dedupePrefix}${orderId}${dedupeSuffix}`,
+        // Aviso do PEDIDO DELA: não depende do opt-in, que vale para novidades
+        // e ofertas. Quem compra espera saber que o pedido foi confirmado.
+        requireOptIn: false,
+      });
+    const result = await sendClient(plan.client);
+    if (fallback?.client && "skipped" in result && result.skipped === "sem_template") {
+      await sendClient(fallback.client);
+    }
   }
-  if (spec.ownerTemplate && spec.ownerDedupePrefix) {
-    await sendToOwner(db, provider, {
-      templateKey: spec.ownerTemplate,
-      vars: ctx.vars,
-      dedupeKey: `${spec.ownerDedupePrefix}${orderId}`,
-    });
+  if (plan.owner) {
+    const sendOwner = (spec: { template: string; dedupePrefix: string }) =>
+      sendToOwner(db, provider, { templateKey: spec.template, vars, dedupeKey: `${spec.dedupePrefix}${orderId}` });
+    const result = await sendOwner(plan.owner);
+    if (fallback?.owner && "skipped" in result && result.skipped === "sem_template") {
+      await sendOwner(fallback.owner);
+    }
   }
 }
 
@@ -360,10 +343,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     // de estreia nascem já na criação. O dedupe_key é o mesmo do order.paid:
     // uma geração por pedido, a que vier primeiro.
     const [order] = await getDb()
-      .select({ paymentMethod: orders.paymentMethod })
+      .select({ paymentMethod: orders.paymentMethod, status: orders.status })
       .from(orders)
       .where(eq(orders.id, orderId))
       .limit(1);
+    // Já cancelado quando a fila chegou (refeito segundos depois, ou retry
+    // depois de a reserva vencer): "recebemos seu pedido" seria falso.
+    if (order?.status === "canceled") return;
     if (order?.paymentMethod === "cash") {
       await enqueueOutboxEvent(getDb(), {
         eventType: "order.edition_cards",
@@ -875,6 +861,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const result = await notifyOwnerAmountDivergent(getDb(), getMessagingProvider(), payload);
     console.info(`[mp.amount_divergent] ${payload.orderId}:`, result);
   },
+  // Pagaram um pedido já cancelado (o link antigo de um pedido refeito, ou a
+  // reserva vencida): a dona é avisada com o que fazer, uma vez por pedido.
+  "payment.approved_on_canceled": async (event) => {
+    const payload = paidCanceledPayloadSchema.parse(event.payload);
+    const result = await notifyOwnerPaidCanceledOrder(getDb(), getMessagingProvider(), payload);
+    console.info(`[payment.approved_on_canceled] ${payload.orderId}:`, result);
+  },
   // Chargeback sinalizado: sem transição automática, mas o dono fica sabendo.
   "payment.chargeback": async (event) => {
     const { orderId } = orderNoticePayloadSchema.parse(event.payload);
@@ -893,10 +886,10 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const orderId = String(event.payload.orderId ?? event.aggregateId ?? "");
     if (!orderId) return;
     const [row] = await db
-      .select({ channel: orders.channel })
+      .select({ channel: orders.channel, status: orders.status })
       .from(orders)
       .where(eq(orders.id, orderId));
-    if (!row || row.channel === "store") return;
+    if (!row || row.channel === "store" || row.status === "canceled") return;
     await sendOrderEmail(db, getEmailProvider(), { orderId, kind: "confirmed" });
     await sendOrderWa(orderId, "store_created");
   },

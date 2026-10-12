@@ -55,6 +55,7 @@ export type PaymentEventAction =
   | "paid"
   | "refunded"
   | "chargeback_flagged"
+  | "paid_canceled_flagged"
   | "noop";
 
 // ---------------------------------------------------------------------------
@@ -190,7 +191,8 @@ export async function processPaymentEvent(
     // (2b) O que o MP recebeu tem de ser o total do pedido. Divergiu, o pedido
     // segue sendo marcado como pago — a cliente pagou de verdade, travar aqui
     // a deixaria no limbo —, mas o dono é avisado para acertar a diferença.
-    if (payment.status === "approved") {
+    // Pedido cancelado tem aviso próprio (abaixo), com o valor pago.
+    if (payment.status === "approved" && from !== "canceled") {
       await checkAmountDivergence(tx, {
         orderId: order.id,
         orderNumber: order.orderNumber,
@@ -211,13 +213,40 @@ export async function processPaymentEvent(
             reason: "Pagamento aprovado pelo Mercado Pago",
           });
           action = "paid";
+        } else if (from === "canceled" && order.paidAt === null) {
+          // Pagou o link antigo de um pedido refeito, ou depois de a reserva
+          // vencer: não há transição válida, mas o dinheiro entrou — a dona é
+          // avisada (uma vez por pagamento) com o que fazer. Pedido que FOI
+          // pago e depois cancelado não entra: o reenvio do MP não é dinheiro novo.
+          const enqueuedId = await enqueueOutboxEvent(tx, {
+            eventType: "payment.approved_on_canceled",
+            dedupeKey: `payment.approved_on_canceled:${order.id}:${payment.paymentId}`,
+            aggregateType: "order",
+            aggregateId: order.id,
+            payload: { orderId: order.id, paidCents: payment.amountCents, mpPaymentId: payment.paymentId },
+          });
+          if (enqueuedId !== null) {
+            await tx.insert(auditLog).values({
+              actorType: "system",
+              actorId: null,
+              action: "payment.approved_on_canceled",
+              entityType: "order",
+              entityId: order.id,
+              after: { mpPaymentId: payment.paymentId, paidCents: payment.amountCents, replacedByOrderId: order.replacedByOrderId },
+              reason: "Pagamento aprovado num pedido cancelado",
+            });
+          }
+          action = "paid_canceled_flagged";
         }
         // Já pago (ou além): reprocessamento/reenvio de webhook → no-op.
-        // canceled/refunded (ex.: pagou após a reserva expirar): não há
-        // transição válida — o dono resolve o estorno no admin (fase futura).
+        // refunded: o dinheiro já voltou — nada a fazer.
         break;
 
       case "refunded":
+        // Estornou o pagamento que caiu num pedido cancelado: a taxa pendente desse pagamento cai junto.
+        if (from === "canceled" && order.paidAt === null) {
+          await cancelPendingMpFeeEntry(tx, order.id);
+        }
         if (PAID_LIKE_STATUSES.includes(from)) {
           await transitionOrder(tx, {
             orderId: order.id,
