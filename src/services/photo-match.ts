@@ -215,7 +215,7 @@ async function listPublicItems(sdb: ServiceDb, customerId: string | null, scope:
   // Categoria que não existe não pode zerar a busca: só cai.
   const categorySlug = scope.categoria ? await resolveCategorySlug(sdb as unknown as DbOrTx, scope.categoria) : null;
   const base = {
-    ...(scope.busca ? { q: scope.busca, includeDescription: true } : {}),
+    ...(scope.busca ? { q: scope.busca, includeFicha: true } : {}),
     ...(categorySlug ? { categorySlug } : {}),
     viewer: { customerId },
     // A comparação visual é com a peça esticada (o que a cliente fotografa),

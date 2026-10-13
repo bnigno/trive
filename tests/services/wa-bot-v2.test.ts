@@ -1163,6 +1163,35 @@ describe("balões", () => {
 // ---------------------------------------------------------------------------
 
 describe("listar_produtos 2.0", () => {
+  it("não nega o que a loja tem: a palavra existe fora do filtro e a Lia é avisada", async () => {
+    // Caso real de 04/10/2026: "blusa de poliamida" não achou nada e a Lia
+    // disse que a loja não tinha — tinha 10 peças, o tecido só não era
+    // pesquisável. Com a ficha na busca ela acha; com filtro pelo meio, o
+    // resultado vazio precisa dizer que a palavra existe em outro lugar.
+    const { productId } = await createSimpleProduct("MAELLE-M", "Blusa Maelle", 5499);
+    await db
+      .update(schema.products)
+      .set({ composition: "92% poliamida premium, 8% elastano", pieceType: "blusa" })
+      .where(eq(schema.products.id, productId));
+    const executor = executorFor(await createConversation());
+
+    // Sem filtro: acha pelo tecido.
+    const porTecido = await executor("listar_produtos", { busca: "poliamida" });
+    expect(porTecido.ok).toBe(true);
+    expect(porTecido.text).toContain("Blusa Maelle");
+
+    // Com um filtro que exclui a peça, o vazio AVISA que a palavra existe.
+    const comFiltro = await executor("listar_produtos", { busca: "poliamida", categoria: "vestido" });
+    expect(comFiltro.ok).toBe(true);
+    expect(comFiltro.text).toContain("Nenhuma peça encontrada");
+    expect(comFiltro.text).toContain('"poliamida" aparece em 1 peça(s) da loja fora desse filtro');
+    expect(comFiltro.text).toContain("NÃO diga que a loja não tem");
+
+    // Palavra que não existe em ficha nenhuma: sem aviso, o vazio é honesto.
+    const inexistente = await executor("listar_produtos", { busca: "veludo", categoria: "vestido" });
+    expect(inexistente.text).not.toContain("fora desse filtro");
+  });
+
   it("filtra por categoria, cor, tamanho e preço; categoria inexistente é erro", async () => {
     const vestidos = await createCategory("Vestidos", "vestidos");
     const blusas = await createCategory("Blusas", "blusas");
