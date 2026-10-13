@@ -57,7 +57,20 @@ async function sellable(name: string, sku: string): Promise<string> {
   return productId;
 }
 
-async function cirio() {
+/** Dia de São Paulo, N dias a partir de hoje, no formato YYYY-MM-DD. */
+function diaSP(offset: number): string {
+  return new Date(Date.now() + offset * 86_400_000).toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
+/**
+ * A janela padrão é FIXA porque os testes de ordenação injetam o relógio
+ * (IN_CIRIO, BEFORE) e dependem dela. Quem usa o relógio REAL passa uma
+ * janela em volta de hoje — senão o teste vence sozinho, como venceu em
+ * 13/10/2026, um dia depois do endsOn.
+ */
+async function cirio(janela?: { startsOn: string; endsOn: string }) {
   return createCityEdition(sdb, {
     isActive: true,
     fields: {
@@ -65,8 +78,8 @@ async function cirio() {
       openingLine: "Vestida para o Círio",
       body: "Um parágrafo.\n\nOutro parágrafo.",
       districts: "Nazaré, Batista Campos\nUmarizal",
-      startsOn: "2026-10-01",
-      endsOn: "2026-10-12",
+      startsOn: janela?.startsOn ?? "2026-10-01",
+      endsOn: janela?.endsOn ?? "2026-10-12",
     },
     userId: FIXED_USER_ID,
   });
@@ -207,7 +220,9 @@ describe("leitura pública", () => {
   });
 
   it("lançamento ligado à edição: a /estreia recebe a frase de abertura; edição desativada não vaza", async () => {
-    const { editionId } = await cirio();
+    // getUpcomingDropTeaser usa o relógio REAL: a edição precisa estar
+    // vigente HOJE, qualquer que seja o dia em que a suíte rodar.
+    const { editionId } = await cirio({ startsOn: diaSP(-7), endsOn: diaSP(7) });
     const p1 = await sellable("Longo Dunas", "DUNAS");
     const publishAt = new Date(Date.now() + 3 * 3_600_000);
     const { dropId } = await createDrop(sdb, { name: "Estreia do Círio", publishAt, cityEditionId: editionId, userId: FIXED_USER_ID });
