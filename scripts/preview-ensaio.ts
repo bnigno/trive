@@ -6,12 +6,19 @@
 // vai para a pasta de saída: fotos-base, opções brutas, julgamentos,
 // opções acabadas, custo.txt (a conta) e LEIA-ME.txt (o que olhar).
 //
+// Com --cliente, a pessoa é uma CLIENTE (foto dela por --modelo-foto, com a
+// autorização dela): o comando pede a mesma pessoa, corpo, fundo e luz, a
+// foto vai sem EXIF (GPS) e sem acabamento editorial, e cada prévia sai numa
+// montagem "sua foto | a peça | prévia" para comparar. Qualidade alta e 1
+// opção por padrão.
+//
 // Uso (fake):  npx tsx scripts/preview-ensaio.ts [--peca foto.jpg] [--cena sala_clara] [--modelo modelo_a] [--tamanho M] [--tipo vestido] [--opcoes 3] [pasta-de-saida]
 // Uso (real):  npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --peca foto.jpg [--modelo-foto base.jpg] [--qualidade economica|alta|ambas] [--teto-centavos 1000] [--sem-portao] [pasta-de-saida]
+// Uso (cliente): npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --cliente --peca peca.jpg --modelo-foto cliente.jpg --tipo blusa [--teto-centavos 2000] [pasta-de-saida]
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 
 import { FakeSalesAssistant } from "@/adapters/assistant/fake";
 import type { SalesAssistant } from "@/adapters/assistant/index";
@@ -24,7 +31,7 @@ import { parsePieceType } from "@/core/catalog/piece-types";
 import { creditsFor, creditsToUsdCents, JUDGE_USD_CENTS_PER_IMAGE, studioCostTable, usdCentsToBrlCents } from "@/core/studio/cost";
 import { FIDELITY_JSON_SCHEMA, FIDELITY_SYSTEM_PROMPT, FIDELITY_USER_TEXT, fidelityJudgmentSchema, fidelitySummary, passesFidelity } from "@/core/studio/fidelity";
 import { bodySizeByKey, houseModelByKey, sceneByKey, type StudioQuality } from "@/core/studio/presets";
-import { buildModelPhotoPrompt, buildScenePrompt, garmentCategoryFor } from "@/core/studio/prompts";
+import { buildCustomerTryOnPrompt, buildModelPhotoPrompt, buildScenePrompt, garmentCategoryFor } from "@/core/studio/prompts";
 import { formatCentsBRL } from "@/lib/money";
 import { finishStudioImage } from "@/services/studio-finish";
 import { prepareImageForModel } from "@/services/wa-media";
@@ -52,6 +59,49 @@ async function sampleGarment(): Promise<Buffer> {
   const stripes = Array.from({ length: 12 }, (_, i) => `<rect x="0" y="${i * 100}" width="800" height="50" fill="#b23a48"/>`).join("");
   const svg = `<svg width="800" height="1200" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="1200" fill="#f1e9dc"/><g clip-path="url(#p)"><rect width="800" height="1200" fill="#e8c9a0"/>${stripes}</g><defs><clipPath id="p"><path d="M300 120 L500 120 L560 320 L620 1100 L180 1100 L240 320 Z"/></clipPath></defs></svg>`;
   return sharp(Buffer.from(svg)).jpeg({ quality: 88 }).toBuffer();
+}
+
+/**
+ * A foto da cliente como o celular gravou: gira pela orientação do EXIF e sai
+ * em JPEG sem metadados (o sharp não copia o EXIF — some o GPS de onde ela
+ * tirou a foto), no máximo 2048 px no lado maior.
+ */
+async function prepareCustomerPhoto(photo: Buffer): Promise<Buffer> {
+  return sharp(photo)
+    .rotate()
+    .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
+/** "Sua foto | a peça | prévia" lado a lado, na mesma altura, com o rótulo em cima. */
+async function montage(panels: Array<{ image: Buffer; label: string }>): Promise<Buffer> {
+  const height = 1200;
+  const gap = 24;
+  const band = 64;
+  const resized = await Promise.all(
+    panels.map(async (panel) => {
+      const { data, info } = await sharp(panel.image).rotate().resize({ height }).jpeg({ quality: 88 }).toBuffer({ resolveWithObject: true });
+      return { data, width: info.width, label: panel.label };
+    }),
+  );
+  const width = resized.reduce((sum, panel) => sum + panel.width, 0) + gap * (resized.length + 1);
+  const totalHeight = band + height + gap;
+  const layers: OverlayOptions[] = [];
+  const labels: string[] = [];
+  let left = gap;
+  for (const panel of resized) {
+    layers.push({ input: panel.data, left, top: band });
+    labels.push(
+      `<text x="${left + panel.width / 2}" y="${band - 22}" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" letter-spacing="3" fill="#2b2420">${panel.label}</text>`,
+    );
+    left += panel.width + gap;
+  }
+  layers.unshift({ input: Buffer.from(`<svg width="${width}" height="${totalHeight}" xmlns="http://www.w3.org/2000/svg">${labels.join("")}</svg>`), left: 0, top: 0 });
+  return sharp({ create: { width, height: totalHeight, channels: 3, background: "#f4efe7" } })
+    .composite(layers)
+    .jpeg({ quality: 86 })
+    .toBuffer();
 }
 
 type Ledger = { lines: string[]; usdCents: number; brlCents: number; tetoBrlCents: number };
@@ -98,16 +148,17 @@ async function judge(assistant: SalesAssistant, garment: Buffer, candidate: Buff
 
 async function main() {
   const real = flag("--real");
-  const out = positional() ?? join(".preview", "ensaio");
+  const cliente = flag("--cliente");
+  const out = positional() ?? join(".preview", cliente ? "vestir-cliente" : "ensaio");
   mkdirSync(out, { recursive: true });
 
   const sceneKey = arg("--cena") ?? "sala_clara";
   const modelKey = arg("--modelo") ?? "modelo_a";
   const sizeKey = arg("--tamanho") ?? "M";
-  const options = Math.min(4, Math.max(1, Number(arg("--opcoes") ?? 3) || 3));
+  const options = Math.min(4, Math.max(1, Number(arg("--opcoes") ?? (cliente ? 1 : 3)) || 3));
   const pieceType = parsePieceType(arg("--tipo") ?? "vestido");
   const category = garmentCategoryFor(pieceType) ?? "auto";
-  const qualityArg = arg("--qualidade") ?? (real ? "ambas" : "economica");
+  const qualityArg = arg("--qualidade") ?? (real ? (cliente ? "alta" : "ambas") : "economica");
   const qualities = (qualityArg === "ambas" ? ["economica", "alta"] : [qualityArg]) as StudioQuality[];
   const withGate = !flag("--sem-portao");
   const tetoBrlCents = Number(arg("--teto-centavos") ?? 1000) || 1000;
@@ -119,6 +170,7 @@ async function main() {
   }
 
   const pecaPath = arg("--peca");
+  if (cliente && !arg("--modelo-foto")) throw new Error("--cliente exige --modelo-foto <foto da cliente, com a autorização dela>.");
   if (real && !pecaPath) throw new Error("--real exige --peca <foto da peça>.");
   if (real && !process.env.FASHN_API_KEY?.trim()) throw new Error("Defina FASHN_API_KEY (em .env.prod.local ou no ambiente) para o ensaio real.");
   if (real && withGate && !process.env.ANTHROPIC_API_KEY?.trim()) throw new Error("Defina ANTHROPIC_API_KEY para o portão de fidelidade (ou use --sem-portao).");
@@ -128,12 +180,16 @@ async function main() {
   const studio: ImageStudio = real ? new FashnImageStudio() : new FakeImageStudio();
   const assistant: SalesAssistant = real ? new ClaudeSalesAssistant() : new FakeSalesAssistant();
   const ledger: Ledger = { lines: [], usdCents: 0, brlCents: 0, tetoBrlCents };
-  console.log(`${real ? "REAL (FASHN + Anthropic)" : "FAKE"} — cena ${sceneKey}, modelo ${modelKey}, tamanho ${sizeKey}, tipo ${pieceType ?? "?"} (${category}), ${options} opções, qualidade ${qualities.join("+")}, teto ${formatCentsBRL(tetoBrlCents)} → ${out}`);
+  console.log(`${real ? "REAL (FASHN + Anthropic)" : "FAKE"}${cliente ? " — FOTO DA CLIENTE" : ` — cena ${sceneKey}, modelo ${modelKey}, tamanho ${sizeKey}`}, tipo ${pieceType ?? "?"} (${category}), ${options} opções, qualidade ${qualities.join("+")}, teto ${formatCentsBRL(tetoBrlCents)} → ${out}`);
 
   // 1. Foto-base da modelo: a que veio por --modelo-foto, ou gerada agora.
   let modelPhoto: Buffer;
   const modelPhotoPath = arg("--modelo-foto");
-  if (modelPhotoPath) {
+  if (modelPhotoPath && cliente) {
+    modelPhoto = await prepareCustomerPhoto(readFileSync(modelPhotoPath));
+    writeFileSync(join(out, "foto-cliente.jpg"), modelPhoto);
+    console.log(`foto da cliente: ${modelPhotoPath} (sem EXIF/GPS)`);
+  } else if (modelPhotoPath) {
     modelPhoto = readFileSync(modelPhotoPath);
     console.log(`foto-base: ${modelPhotoPath}`);
   } else {
@@ -168,7 +224,7 @@ async function main() {
         garment: { data: garment, mimeType: "image/jpeg" },
         model: { data: modelPhoto, mimeType: "image/jpeg" },
         category,
-        scenePrompt: buildScenePrompt(sceneKey),
+        scenePrompt: cliente ? buildCustomerTryOnPrompt() : buildScenePrompt(sceneKey),
         count,
         quality,
         signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
@@ -185,7 +241,7 @@ async function main() {
 
     for (const [index, image] of images.entries()) {
       const tag = `${quality}-${index + 1}`;
-      writeFileSync(join(out, `opcao-${tag}-bruta.jpg`), image.data);
+      if (!cliente) writeFileSync(join(out, `opcao-${tag}-bruta.jpg`), image.data);
       let verdict = "sem portão";
       let approved = true;
       if (withGate) {
@@ -200,9 +256,19 @@ async function main() {
           verdict = "julgamento fora do formato";
         }
       }
-      const finished = await finishStudioImage(image.data);
-      const file = approved ? `opcao-${tag}.jpg` : `opcao-${tag}-reprovada.jpg`;
+      // A prévia da cliente vai como saiu: grão e vinheta são do feed, não da foto dela.
+      const finished = cliente ? image.data : await finishStudioImage(image.data);
+      const prefix = cliente ? "previa" : "opcao";
+      const file = approved ? `${prefix}-${tag}.jpg` : `${prefix}-${tag}-reprovada.jpg`;
       writeFileSync(join(out, file), finished);
+      if (cliente) {
+        const panels = [
+          { image: modelPhoto, label: "SUA FOTO" },
+          { image: garment, label: "A PEÇA" },
+          { image: finished, label: approved ? "PRÉVIA (IA)" : "PRÉVIA (IA) — REPROVADA" },
+        ];
+        writeFileSync(join(out, `montagem-${tag}.jpg`), await montage(panels));
+      }
       summary.push(`${file}: ${verdict} — ${formatUsdCents(image.usdCents)} + julgamento, semente ${image.seed ?? "?"}`);
       console.log(summary[summary.length - 1]);
     }
@@ -229,9 +295,18 @@ async function main() {
     ...summary.map((line) => `  ${line}`),
   ].join("\n");
   writeFileSync(join(out, "custo.txt"), `${custo}\n`);
+  const leiaMeCliente = [
+    "O que olhar, nesta ordem (prévia na foto da cliente):",
+    "1. montagem-*.jpg — é a MESMA pessoa? Rosto, cabelo, tom de pele, corpo (nem mais magra, nem mais alta), pose, fundo e luz iguais aos da foto dela?",
+    "2. A peça na prévia ao lado de \"A PEÇA\" — estampa, cor, botões, comprimento e corte são OS MESMOS? Mãos e rosto estão certos?",
+    "3. julgamento-*.json — o portão da peça concordou com o seu olho? (o portão do corpo entra no PR seguinte, calibrado com estas fotos)",
+    "4. A pergunta que decide: você mandaria esta imagem para a cliente, com a legenda \"prévia feita com IA\"?",
+    "5. custo.txt — quanto custou cada prévia.",
+    "A foto da cliente fica só nesta pasta (fora do git). Apague a pasta depois de decidir.",
+  ];
   writeFileSync(
     join(out, "LEIA-ME.txt"),
-    [
+    (cliente ? leiaMeCliente : [
       "O que olhar, nesta ordem:",
       "1. modelo-*.jpg — a foto-base: parece foto de celular numa tarde em Belém? Pele real, luz natural, fundo com vida? Se não, é o prompt em src/core/studio/prompts.ts que muda, antes de qualquer peça.",
       "2. opcao-*-bruta.jpg ao lado de peca.jpg — a estampa, a cor e o corte são OS MESMOS? Mãos e rosto estão certos?",
@@ -239,7 +314,7 @@ async function main() {
       "4. opcao-*.jpg (acabada) — ao lado de uma foto real do feed, ela salta ou some no meio? É essa que iria para o Instagram.",
       "5. custo.txt — a conta por foto, por peça e por mês, nas duas qualidades.",
       "Reprovadas ficam com o sufixo -reprovada: se você discorda do portão, o corte (FIDELITY_MIN_SCORE) está em src/core/studio/fidelity.ts.",
-    ].join("\n") + "\n",
+    ]).join("\n") + "\n",
   );
   console.log(`\n${custo}\n\nArquivos em ${out}`);
 }

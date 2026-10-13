@@ -16,7 +16,14 @@ import {
   sceneByKey,
   STUDIO_QUALITIES,
 } from "@/core/studio/presets";
-import { buildModelPhotoPrompt, buildScenePrompt, garmentCategoryFor, NEGATIVE_PROMPT, PHOTOGRAPHY_PROMPT } from "@/core/studio/prompts";
+import {
+  buildCustomerTryOnPrompt,
+  buildModelPhotoPrompt,
+  buildScenePrompt,
+  garmentCategoryFor,
+  NEGATIVE_PROMPT,
+  PHOTOGRAPHY_PROMPT,
+} from "@/core/studio/prompts";
 
 describe("presets do ensaio", () => {
   it("cenas, modelos, corpos e qualidades são listas fechadas sem chave repetida", () => {
@@ -47,6 +54,16 @@ describe("presets do ensaio", () => {
     expect(() => buildModelPhotoPrompt({ modelKey: "modelo_z", sceneKey: "varanda_16h", sizeKey: "M" })).toThrow(/Preset desconhecido/);
     expect(buildScenePrompt("azulejo")).toContain(sceneByKey("azulejo")!.prompt);
     expect(() => buildScenePrompt("praia")).toThrow(/Cena desconhecida/);
+  });
+
+  it("a prévia na foto da cliente mantém a pessoa e o corpo dela e não traz cena nem acabamento de campanha", () => {
+    const prompt = buildCustomerTryOnPrompt();
+    expect(prompt).toContain("same face");
+    expect(prompt).toContain("body shape, body proportions and weight");
+    expect(prompt).toContain("same background");
+    expect(prompt).toContain("Do not retouch, slim, reshape or beautify");
+    expect(prompt).not.toMatch(/editorial|campaign|retouched to a clean finish/i);
+    for (const scene of SCENE_PRESETS) expect(prompt).not.toContain(scene.prompt);
   });
 
   it("categoria do try-on: peça inteira, parte de cima ou de baixo; acessório não tem ensaio", () => {

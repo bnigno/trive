@@ -47,6 +47,16 @@ export function buildScenePrompt(sceneKey: string): string {
   return `Keep the same person, pose and setting: ${scene.prompt}. Soft editorial lighting, real skin texture, refined campaign finish.`;
 }
 
+/**
+ * Try-on na foto que a CLIENTE mandou: ao contrário do ensaio, nada de cena,
+ * luz editorial ou retoque — a foto é dela. O corpo tem de continuar o dela
+ * (afinar ou "embelezar" fere a autoestima e promete um caimento que a peça
+ * não entrega); só a roupa muda.
+ */
+export function buildCustomerTryOnPrompt(): string {
+  return "Keep the exact same person: same face, skin tone, hair, body shape, body proportions and weight, same pose, same background, same lighting and same camera framing. Only replace her outfit with the product, worn naturally. Do not retouch, slim, reshape or beautify her body or face.";
+}
+
 export type StudioGarmentCategory = "tops" | "bottoms" | "one-pieces";
 
 /**
