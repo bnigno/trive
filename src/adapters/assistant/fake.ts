@@ -32,6 +32,12 @@ export const FAKE_PRODUCT_DRAFT_JSON = {
 export type FakeTurnScript = {
   toolCalls?: { name: BotToolName; input: unknown }[];
   replyTemplate: string | ((toolTexts: string[]) => string);
+  /**
+   * O modelo pediu ajuda sem chamar ferramenta: recusa (`stop_reason:
+   * "refusal"`) ou estouro das 6 iterações. Só o adapter real produz isso, e
+   * o turno precisa transferir de verdade — não só prometer.
+   */
+  handedOff?: boolean;
 };
 
 /**
@@ -144,7 +150,7 @@ export class FakeSalesAssistant implements SalesAssistant {
   ): Promise<AssistantTurn> {
     const toolTexts: string[] = [];
     const toolCalls: { name: string; ok: boolean }[] = [];
-    let handedOff = false;
+    let handedOff = script.handedOff === true;
 
     for (const call of script.toolCalls ?? []) {
       const result = await input.executeTool(call.name, call.input);

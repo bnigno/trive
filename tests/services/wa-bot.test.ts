@@ -433,6 +433,54 @@ describe("runBotTurn", () => {
     expect(audit.after).toMatchObject({ silenceHours: 2 });
   });
 
+  it("sem nada a dizer, a cliente NÃO fica no vácuo: a mensagem vai para a dona", async () => {
+    // Em autônoma, resposta vazia entregava zero balões e ninguém era avisado
+    // (em copiloto já alertava). O rastro era só 'bubbles: 0' no audit.
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "oi, tudo bem?");
+    assistant.enqueueScript({ replyTemplate: "" });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+
+    expect(result).toMatchObject({ replied: false, handedOff: false });
+    expect(provider.sentMessages).toHaveLength(0);
+    const encaminhado = (await db.select().from(schema.outboxEvents)).find(
+      (evento) => evento.eventType === "wa.owner_forward",
+    );
+    expect(encaminhado).toBeDefined();
+    // A Lia segue ligada para as outras clientes: encaminhar não é transferir.
+    const [conversa] = await db
+      .select({ status: schema.waConversations.status })
+      .from(schema.waConversations)
+      .where(eq(schema.waConversations.id, conversationId));
+    expect(conversa.status).toBe("open");
+  });
+
+  it("prometeu uma pessoa, transfere de verdade — e não transfere duas vezes", async () => {
+    // Recusa do modelo / estouro das iterações: a cortesia "alguém da equipe
+    // vai te responder" saía, mas a conversa continuava 'open' e a dona nunca
+    // era avisada. Era promessa sem entrega.
+    const conversationId = await createConversation();
+    await addInbound(conversationId, "preciso de ajuda com uma coisa complicada");
+    assistant.enqueueScript({ replyTemplate: "", handedOff: true });
+
+    const result = await runBotTurn(sdb, assistant, provider, { conversationId });
+    expect(result).toMatchObject({ handedOff: true });
+
+    const [conversa] = await db
+      .select({ status: schema.waConversations.status })
+      .from(schema.waConversations)
+      .where(eq(schema.waConversations.id, conversationId));
+    expect(conversa.status).toBe("human");
+    // UMA transferência: a ferramenta transfere por dentro, e quem não usou a
+    // ferramenta transfere aqui — nunca os dois.
+    const audits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "wa.bot_handoff"));
+    expect(audits).toHaveLength(1);
+  });
+
   it("transferir_para_atendente: marca human + audit + aviso ao dono e PARA o turno", async () => {
     const before = Date.now();
     const conversationId = await createConversation();

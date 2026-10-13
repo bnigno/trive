@@ -52,6 +52,9 @@ export const auditLog = pgTable(
       .defaultNow(),
   },
   (table) => [
+    // O boletim da Lia conta turnos por ação numa janela: sem este índice,
+    // cada consulta varre a tabela inteira.
+    index("audit_log_action_created_at_idx").on(table.action, table.createdAt),
     index("audit_log_entity_type_entity_id_created_at_idx").on(
       table.entityType,
       table.entityId,

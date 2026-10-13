@@ -1147,6 +1147,32 @@ export async function runBotTurn(
       return { suggested: true, suggestionId };
     }
 
+    // Ela prometeu uma pessoa (recusa do modelo ou estouro das iterações): a
+    // cortesia já vai na entrega, mas a transferência de verdade não
+    // acontecia — a conversa seguia 'open' e a dona nunca era avisada.
+    // Quando foi a FERRAMENTA que transferiu, ela já fez tudo: transferir de
+    // novo duplicaria o registro e o aviso ao dono.
+    const transferidaPelaFerramenta = turn.toolCalls.some(
+      (chamada) => chamada.name === "transferir_para_atendente" && chamada.ok,
+    );
+    if (turn.handedOff && !transferidaPelaFerramenta) {
+      await handOffToHuman(
+        tx,
+        { conversationId, phoneE164: conversation.phoneE164, lastInboundId: lastInbound.id },
+        "A vendedora pediu ajuda (não conseguiu responder)",
+      );
+    }
+
+    // Autônoma sem nada a dizer: a cliente ficava no vácuo e NINGUÉM era
+    // avisado — em copiloto isso já alerta a dona (acima), aqui não alertava.
+    // Encaminhar é mais leve que transferir: a Lia segue atendendo as outras,
+    // e a dona recebe a mensagem que ficou sem resposta.
+    if (!turn.handedOff && bubbles.length === 0 && attachments.length === 0) {
+      const forwarded = await forwardUnansweredInboundToOwner(tx, conversation);
+      await writeTurnAudit({ deliveryMs: null, firstSentAt: null });
+      return { replied: false, handedOff: false, forwarded };
+    }
+
     const deliveryStartedAt = Date.now();
     const { replied, firstSentAt } = await deliverBotTurn(tx, provider, {
       conversation,

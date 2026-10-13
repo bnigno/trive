@@ -1,6 +1,6 @@
 // Rotina do Inngest falhou → o dono sabe (WhatsApp + e-mail), 1x por hora
 // por rotina, e o alerta nunca alerta a si mesmo.
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { FakeEmailProvider } from "@/adapters/email/fake";
@@ -59,7 +59,13 @@ describe("alertFunctionFailure", () => {
     expect(other).toMatchObject({ alerted: true });
     expect(provider.sentMessages.filter((m) => m.toE164 === "+5511988887777")).toHaveLength(3);
 
-    const audits = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "system.function_failed_alert"));
+    // Ordem explícita: sem ORDER BY o Postgres devolve na ordem que quiser (o
+    // plano muda com os índices), e duas destas linhas têm o mesmo horário.
+    const audits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, "system.function_failed_alert"))
+      .orderBy(asc(schema.auditLog.id));
     expect(audits.map((a) => a.entityId)).toEqual(["trive-daily-digest", "trive-daily-digest", "trive-email-poll"]);
   });
 

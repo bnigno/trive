@@ -9,7 +9,7 @@ import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
 import { OUTBOX_SOURCES, type OutboxSource } from "@/core/queue/outbox-source";
 import { BOT_UNAVAILABLE_REPLY } from "@/services/bot/shared";
 import { summarizeStudioCosts } from "@/services/studio";
-import { auditLog, customers, orders, waConversations, waMessages } from "@/db/schema";
+import { auditLog, customers, orders, outboxEvents, settings, waConversations, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 
 const WINDOW_DAYS = 7;
@@ -376,4 +376,139 @@ export async function listRecentBotActivity(
   ];
   events.sort((a, b) => b.at.getTime() - a.at.getTime());
   return events.slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Boletim da Lia: o que deu errado e quem ficou esperando
+//
+// Em 04/10/2026 a Lia foi desligada e ninguém percebeu por 8 dias — 277
+// mensagens encaminhadas ao WhatsApp da dona, 294 respostas na mão e três
+// clientes (82 mensagens) sem resposta de ninguém. Nada no painel contava
+// isso. Estes números saem todos de audit_log e wa_messages; não há coluna
+// nova nem instrumentação a mais.
+// ---------------------------------------------------------------------------
+
+/** Depois disto, cliente sem resposta vira linha do boletim. */
+export const WAITING_ALERT_HOURS = 2;
+
+export type LiaWaitingCustomer = {
+  conversationId: string;
+  phoneE164: string;
+  displayName: string | null;
+  lastInboundAt: Date;
+  hoursWaiting: number;
+  /** O começo da última fala dela — para a dona reconhecer sem abrir. */
+  preview: string;
+};
+
+export type LiaBulletin = {
+  /** Null quando ela está respondendo; preenchido quando está muda. */
+  muted: { since: Date | null; days: number | null; forwardedSince: number } | null;
+  waiting: LiaWaitingCustomer[];
+  windowDays: number;
+  /** Turnos que rodaram e não produziram balão nenhum (cliente no vácuo). */
+  turnsWithoutReply: number;
+  /** Prometeu "alguém da equipe te responde" e não transferiu de fato. */
+  promisedHumanWithoutHandoff: number;
+  /** Afirmou preço, estoque ou prazo sem consultar ferramenta. */
+  assertedWithoutTool: number;
+};
+
+export async function getLiaBulletin(db: DbOrTx): Promise<LiaBulletin> {
+  const now = new Date();
+  const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000);
+
+  const [toggle] = await db
+    .select({ value: settings.value, updatedAt: settings.updatedAt })
+    .from(settings)
+    .where(eq(settings.key, "bot_enabled"))
+    .limit(1);
+  const ligada = toggle?.value === true;
+  let muted: LiaBulletin["muted"] = null;
+  if (!ligada) {
+    const desde = toggle?.updatedAt ?? null;
+    const [encaminhadas] = await db
+      .select({ n: sql<string>`count(*)` })
+      .from(outboxEvents)
+      .where(
+        and(
+          eq(outboxEvents.eventType, "wa.owner_forward"),
+          ...(desde ? [gte(outboxEvents.createdAt, desde)] : []),
+        ),
+      );
+    muted = {
+      since: desde,
+      // A conta sai daqui, não da tela: componente que chama Date.now() no
+      // render é impuro e o lint recusa, com razão.
+      days: desde ? Math.floor((now.getTime() - desde.getTime()) / 86_400_000) : null,
+      forwardedSince: Number(encaminhadas?.n ?? 0),
+    };
+  }
+
+  // A última palavra foi da cliente e ninguém respondeu depois dela. Conversa
+  // encerrada fica de fora: ali o silêncio é a decisão, não o esquecimento.
+  const limite = new Date(now.getTime() - WAITING_ALERT_HOURS * 3_600_000);
+  const esperando = await db
+    .select({
+      conversationId: waConversations.id,
+      phoneE164: waConversations.phoneE164,
+      botState: waConversations.botState,
+      lastInboundAt: waConversations.lastInboundAt,
+      lastOutboundAt: waConversations.lastOutboundAt,
+    })
+    .from(waConversations)
+    .where(
+      and(
+        ne(waConversations.status, "closed"),
+        lt(waConversations.lastInboundAt, limite),
+        sql`${waConversations.lastInboundAt} is not null`,
+        sql`(${waConversations.lastOutboundAt} is null or ${waConversations.lastOutboundAt} < ${waConversations.lastInboundAt})`,
+      ),
+    )
+    .orderBy(desc(waConversations.lastInboundAt))
+    .limit(30);
+
+  const waiting: LiaWaitingCustomer[] = [];
+  for (const linha of esperando) {
+    if (!linha.lastInboundAt) continue;
+    const [ultima] = await db
+      .select({ body: waMessages.body, kind: waMessages.kind })
+      .from(waMessages)
+      .where(and(eq(waMessages.conversationId, linha.conversationId), eq(waMessages.direction, "inbound")))
+      .orderBy(desc(waMessages.createdAt))
+      .limit(1);
+    const estado = linha.botState as { displayName?: unknown } | null;
+    waiting.push({
+      conversationId: linha.conversationId,
+      phoneE164: linha.phoneE164,
+      displayName: typeof estado?.displayName === "string" ? estado.displayName : null,
+      lastInboundAt: linha.lastInboundAt,
+      hoursWaiting: Math.floor((now.getTime() - linha.lastInboundAt.getTime()) / 3_600_000),
+      preview: (ultima?.body ?? `(${ultima?.kind ?? "mídia"})`).replace(/\s+/g, " ").slice(0, 90),
+    });
+  }
+
+  const contar = async (condicao: ReturnType<typeof sql>): Promise<number> => {
+    const [row] = await db
+      .select({ n: sql<string>`count(*)` })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "wa.bot_turn"), gte(auditLog.createdAt, since), condicao));
+    return Number(row?.n ?? 0);
+  };
+
+  return {
+    muted,
+    waiting,
+    windowDays: WINDOW_DAYS,
+    turnsWithoutReply: await contar(sql`(${auditLog.after} ->> 'bubbles')::int = 0`),
+    // Marcou que passou para humano, mas a transferência de verdade não existe.
+    promisedHumanWithoutHandoff: await contar(
+      sql`${auditLog.after} ->> 'handedOff' = 'true' and not exists (
+        select 1 from audit_log h
+        where h.action = 'wa.bot_handoff' and h.entity_id = ${auditLog.entityId}
+          and h.created_at between ${auditLog.createdAt} - interval '1 minute' and ${auditLog.createdAt} + interval '1 minute'
+      )`,
+    ),
+    assertedWithoutTool: await contar(sql`${auditLog.after} ->> 'assertedWithoutTool' = 'true'`),
+  };
 }
