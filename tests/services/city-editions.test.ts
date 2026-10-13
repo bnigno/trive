@@ -22,6 +22,7 @@ import {
   updateCityEdition,
 } from "@/services/city-editions";
 import { createDrop, getDrop, getUpcomingDropTeaser, setDropProducts } from "@/services/drops";
+import { spDayKey } from "@/lib/sp-day";
 import { listPublicProducts } from "@/services/store-catalog";
 import { createTestDb, createTestVariant, FIXED_USER_ID, type TestDb } from "../helpers/db";
 
@@ -57,7 +58,7 @@ async function sellable(name: string, sku: string): Promise<string> {
   return productId;
 }
 
-async function cirio() {
+async function cirio(window: { startsOn: string; endsOn: string } = { startsOn: "2026-10-01", endsOn: "2026-10-12" }) {
   return createCityEdition(sdb, {
     isActive: true,
     fields: {
@@ -65,8 +66,7 @@ async function cirio() {
       openingLine: "Vestida para o Círio",
       body: "Um parágrafo.\n\nOutro parágrafo.",
       districts: "Nazaré, Batista Campos\nUmarizal",
-      startsOn: "2026-10-01",
-      endsOn: "2026-10-12",
+      ...window,
     },
     userId: FIXED_USER_ID,
   });
@@ -207,7 +207,9 @@ describe("leitura pública", () => {
   });
 
   it("lançamento ligado à edição: a /estreia recebe a frase de abertura; edição desativada não vaza", async () => {
-    const { editionId } = await cirio();
+    // O teaser lê o relógio real (o lançamento sai daqui a 3 h): a edição tem de estar em curso HOJE — com as
+    // datas fixas do Círio de 2026, o teste venceu em 13/10/2026.
+    const { editionId } = await cirio({ startsOn: spDayKey(new Date(Date.now() - 86_400_000)), endsOn: spDayKey(new Date(Date.now() + 30 * 86_400_000)) });
     const p1 = await sellable("Longo Dunas", "DUNAS");
     const publishAt = new Date(Date.now() + 3 * 3_600_000);
     const { dropId } = await createDrop(sdb, { name: "Estreia do Círio", publishAt, cityEditionId: editionId, userId: FIXED_USER_ID });
