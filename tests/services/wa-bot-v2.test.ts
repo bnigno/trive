@@ -1736,10 +1736,13 @@ describe("detalhar_produto 2.0", () => {
     const exato = await executor("detalhar_produto", { produto: "produto:saia-midi" });
     expect(exato.ok).toBe(true);
     expect(exato.text.startsWith("Saia Midi")).toBe(true);
-    expect((await botState(conversationId)).focus).toEqual({
+    // `at` é o carimbo da leitura da ficha: o caderninho usa a idade para
+    // mandar conferir preço e estoque antes de afirmar.
+    expect((await botState(conversationId)).focus).toMatchObject({
       slug: "saia-midi",
       nome: "Saia Midi",
       cor: null,
+      at: expect.any(String),
     });
   });
 

@@ -663,7 +663,7 @@ export async function execDetalharProduto(
   // Peça em vista no caderninho: o próximo turno sabe do que a conversa fala.
   await updateBotState(db, ctx, (state) => ({
     ...state,
-    focus: { slug: detail.slug, nome: detail.name, cor: chosenColor ?? null },
+    focus: { slug: detail.slug, nome: detail.name, cor: chosenColor ?? null, at: new Date().toISOString() },
   }));
 
   // Foto da cor escolhida; sem foto daquela cor, cai na genérica.

@@ -275,6 +275,34 @@ describe("renderContextNote", () => {
     expect(note).toContain("• Último pedido nesta conversa: #1042");
   });
 
+  it("ficha vista há pouco vale; vista há tempo, manda conferir antes de afirmar", () => {
+    // 46 dos 291 turnos em produção afirmaram preço, estoque ou prazo sem
+    // consultar nada — repetindo o que a própria Lia disse no começo da
+    // conversa. A idade da ficha é o que a faz conferir de novo.
+    const agora = new Date("2026-10-04T12:00:00Z");
+    const recente = renderContextNote(
+      { focus: { slug: "vestido-dunas", nome: "Vestido Dunas", cor: "Preto", at: "2026-10-04T11:57:00Z" } },
+      { now: agora },
+    );
+    expect(recente).toContain("• Peça em vista: Vestido Dunas (cor Preto)");
+    expect(recente).not.toContain("NÃO afirme");
+
+    const velha = renderContextNote(
+      { focus: { slug: "vestido-dunas", nome: "Vestido Dunas", cor: "Preto", at: "2026-10-04T11:20:00Z" } },
+      { now: agora },
+    );
+    expect(velha).toContain("ficha lida há 40 min");
+    expect(velha).toContain("NÃO afirme preço, estoque nem tamanho sem chamar detalhar_produto de novo");
+
+    // Conversa antiga, sem carimbo: segue como era, sem inventar idade.
+    const semCarimbo = renderContextNote(
+      { focus: { slug: "vestido-dunas", nome: "Vestido Dunas", cor: null } },
+      { now: agora },
+    );
+    expect(semCarimbo).toContain("• Peça em vista: Vestido Dunas");
+    expect(semCarimbo).not.toContain("ficha lida há");
+  });
+
   it("CEP sem cotação (a sacola mudou): avisa que o frete ainda NÃO foi cotado", () => {
     const note = renderContextNote({ lastCep: "68795000" });
     expect(note).toContain(
