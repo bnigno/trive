@@ -215,6 +215,7 @@ describe("processPaymentEvent", () => {
     const stub = new StubPaymentGateway({
       paymentId: "mp-pend-1",
       status: "pending",
+      statusDetail: null,
       externalReference: pending.orderId,
       amountCents: pending.totalCents,
       feeCents: pending.totalCents, // o que o adapter quebrado devolvia
@@ -240,6 +241,7 @@ describe("processPaymentEvent", () => {
     const stub = new StubPaymentGateway({
       paymentId: "mp-div-1",
       status: "approved",
+      statusDetail: null,
       externalReference: pending.orderId,
       amountCents: pending.totalCents + 289,
       feeCents: 100,
@@ -376,6 +378,7 @@ describe("processPaymentEvent", () => {
     const stub = new StubPaymentGateway({
       paymentId: "mp-cb-1",
       status: "approved",
+      statusDetail: null,
       externalReference: pending.orderId,
       amountCents: pending.totalCents,
       feeCents: null,
@@ -425,6 +428,48 @@ describe("processPaymentEvent", () => {
     const level = await getLevel(pending.variantId);
     expect(level.onHand).toBe(10);
     expect(level.reserved).toBe(2); // reserva expira sozinha depois
+
+    // O PORQUÊ fica gravado: era descartado e o dono só sabia pela cliente.
+    expect(order.mpStatusDetail).toBe("cc_rejected_high_risk");
+    // Método e parcelas NÃO: descrevem um pagamento que não aconteceu, e o
+    // painel mostrava "Cartão · 2×" num pedido que ninguém pagou.
+    expect(order.paymentMethod).toBeNull();
+    expect(order.installments).toBeNull();
+  });
+
+  it("recusa avisa o dono uma vez, com o motivo — mesmo com a cliente tentando 6 vezes", async () => {
+    // Em 09/10/2026 uma cliente tentou 6 vezes em 20 minutos. Seis avisos no
+    // WhatsApp do dono seriam ruído; um aviso é informação.
+    const pending = await createPendingStoreOrder();
+    const paymentId = await createFakePayment(pending);
+    gateway.rejectPayment(paymentId);
+
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+
+    const avisos = await outboxOfType("mp.payment_rejected");
+    expect(avisos).toHaveLength(1);
+    expect(avisos[0].dedupeKey).toBe(`mp.payment_rejected:${pending.orderId}`);
+    expect(avisos[0].payload).toMatchObject({ statusDetail: "cc_rejected_high_risk" });
+    expect(await auditOfAction("payment.rejected")).toHaveLength(1);
+
+    // Reprocessar o mesmo evento não vira aviso novo.
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+    expect(await outboxOfType("mp.payment_rejected")).toHaveLength(1);
+  });
+
+  it("pagamento aprovado continua gravando método e parcelas", async () => {
+    // A guarda da recusa não pode ter cortado o caminho feliz.
+    const pending = await createPendingStoreOrder();
+    const paymentId = await createFakePayment(pending);
+    gateway.approvePayment(paymentId, { installments: 3, paymentMethod: "credit_card" });
+
+    await processPaymentEvent(sdb, gateway, { mpPaymentId: paymentId });
+
+    const order = await getOrder(pending.orderId);
+    expect(order.paymentMethod).toBe("credit_card");
+    expect(order.installments).toBe(3);
+    expect(order.mpStatusDetail).toBe("accredited");
+    expect(await outboxOfType("mp.payment_rejected")).toHaveLength(0);
   });
 
   it("pagamento sem pedido correspondente lança ServiceError (evento vai para a DLQ)", async () => {

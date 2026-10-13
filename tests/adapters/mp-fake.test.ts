@@ -40,6 +40,8 @@ describe("FakePaymentGateway (contrato atualizado)", () => {
     expect(payment).toEqual({
       paymentId,
       status: "pending",
+      // O motivo do MP, que o adapter real descartava: o fake agora imita.
+      statusDetail: "pending_waiting_transfer",
       externalReference: ORDER_ID,
       amountCents: 2 * 4990 + 2900,
       feeCents: null,

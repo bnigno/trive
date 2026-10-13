@@ -39,6 +39,12 @@ export type PaymentMethod = "pix" | "credit_card" | "boleto" | "other";
 export type Payment = {
   paymentId: string;
   status: PaymentStatus;
+  /**
+   * O motivo do MP, cru (`cc_rejected_high_risk`, `accredited`…). Era
+   * descartado no schema: sem ele, era impossível saber pelo sistema POR QUE
+   * um cartão foi recusado — só abrindo o painel do Mercado Pago.
+   */
+  statusDetail: string | null;
   externalReference: string | null;
   amountCents: number;
   /** Taxa REAL cobrada pelo MP, em centavos; null quando ainda desconhecida. */

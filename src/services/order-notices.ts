@@ -11,6 +11,7 @@ import { customers, orders } from "@/db/schema";
 import { formatCentsBRL } from "@/lib/money";
 import type { DbOrTx } from "@/queue/enqueue";
 import { getSettingsMap } from "@/services/settings";
+import { explainRejection } from "@/core/orders/payment-rejection";
 import {
   buildOrderVars,
   sendTemplateMessage,
@@ -23,6 +24,7 @@ export const ORDER_REFUNDED_TEMPLATE_KEY = "order_refunded";
 export const OWNER_CHARGEBACK_TEMPLATE_KEY = "owner_chargeback";
 export const OWNER_FEE_DIVERGENT_TEMPLATE_KEY = "owner_fee_divergent";
 export const OWNER_AMOUNT_DIVERGENT_TEMPLATE_KEY = "owner_amount_divergent";
+export const OWNER_PAYMENT_REJECTED_TEMPLATE_KEY = "owner_payment_rejected";
 
 export type OrderNoticeResult =
   | SendWaMessageResult
@@ -184,5 +186,26 @@ export async function notifyOwnerAmountDivergent(
       diferenca: `${difference > 0 ? "+" : difference < 0 ? "-" : ""}${formatCentsBRL(Math.abs(difference))}`,
     },
     dedupeKey: `wa.owner_amount_divergent:${parsed.orderId}`,
+  });
+}
+
+const paymentRejectedSchema = orderIdSchema.extend({
+  statusDetail: z.string().nullable().optional(),
+});
+
+/** Dono: um cartão foi recusado — com o motivo em português e o que fazer. */
+export async function notifyOwnerPaymentRejected(
+  db: DbOrTx,
+  provider: MessagingProvider,
+  input: { orderId: string; statusDetail?: string | null },
+): Promise<OrderNoticeResult> {
+  const parsed = paymentRejectedSchema.parse(input);
+  const ctx = await loadOrderNoticeContext(db, parsed.orderId);
+  if (!ctx) return { skipped: "pedido_inexistente" };
+  const { motivo, acao } = explainRejection(parsed.statusDetail ?? null);
+  return sendToOwner(db, provider, {
+    templateKey: OWNER_PAYMENT_REJECTED_TEMPLATE_KEY,
+    vars: { ...ctx.vars, motivo, acao: acao ?? "" },
+    dedupeKey: `wa.owner_payment_rejected:${parsed.orderId}`,
   });
 }

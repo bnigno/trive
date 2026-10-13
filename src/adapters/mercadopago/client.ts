@@ -35,6 +35,8 @@ const mpFeeDetailSchema = z.object({
 const mpPaymentResponseSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
   status: z.string(),
+  /** O PORQUÊ: cc_rejected_high_risk, cc_rejected_bad_filled_security_code… */
+  status_detail: z.string().nullish(),
   external_reference: z.string().nullish(),
   transaction_amount: z.number().nullish(),
   installments: z.number().int().nullish(),
@@ -168,6 +170,7 @@ export class MercadoPagoPaymentGateway implements PaymentGateway {
     return {
       paymentId: parsed.id,
       status: mapStatus(parsed.status),
+      statusDetail: parsed.status_detail ?? null,
       externalReference: parsed.external_reference ?? null,
       amountCents: reaisToCents(parsed.transaction_amount ?? 0),
       feeCents: extractFeeCents(parsed),

@@ -47,6 +47,7 @@ import { FEEDBACK_LABELS } from "@/core/orders/feedback";
 import { giftNoteUrl } from "@/services/gifts";
 import { editionCardsStatusByOrder } from "@/services/edition-cards";
 import { packagePhotoUrl } from "@/services/packing";
+import { explainRejection } from "@/core/orders/payment-rejection";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,12 @@ export default async function PedidoDetalhePage({
   const db = getDb();
   const order = await getOrderDetail(db, id);
   if (!order) notFound();
+  // O motivo só vale enquanto o pedido NÃO foi pago: depois de pago, a recusa
+  // de uma tentativa anterior é história, não aviso.
+  const recusa =
+    order.mpStatusDetail && order.paidAt === null
+      ? explainRejection(order.mpStatusDetail)
+      : null;
   const feedback = order.status === "delivered" || order.status === "refunded" ? await getFeedbackForOrder(db, id) : null;
   // Saída do motoboy com GPS: a prova da entrega (hora, quem recebeu, ponto).
   const stop = order.deliveryWindow ? await getStopForOrder(db, id) : null;
@@ -212,6 +219,22 @@ export default async function PedidoDetalhePage({
           </OwnerOnly>
 
           <Card title="Pagamento">
+            {/* Recusa não pode ser silêncio: sem isto o dono só descobria
+                pela cliente reclamando (7 cartões em 09-10/2026). */}
+            {recusa ? (
+              <div
+                role="alert"
+                className="mb-4 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm dark:border-red-800 dark:bg-red-950"
+              >
+                <p className="font-semibold text-red-800 dark:text-red-200">
+                  Pagamento recusado — nada foi cobrado.
+                </p>
+                <p className="mt-1 text-red-700 dark:text-red-300">{recusa.motivo}</p>
+                {recusa.acao ? (
+                  <p className="mt-1 text-red-700 dark:text-red-300">{recusa.acao}</p>
+                ) : null}
+              </div>
+            ) : null}
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-start sm:gap-0.5">
                 <dt className="text-zinc-500 dark:text-zinc-400">Método</dt>
