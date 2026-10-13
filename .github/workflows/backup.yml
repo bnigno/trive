@@ -17,13 +17,18 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      # O postgresql-client do Ubuntu está uma major ATRASADO (16.x) e o
-      # pg_dump se RECUSA a falar com servidor mais novo ("aborting because of
-      # server version mismatch") — foi o que deixou este backup vermelho sem
-      # ninguém notar. O repositório oficial PGDG traz o cliente mais recente,
-      # e cliente mais NOVO que o servidor é caso suportado pelo PostgreSQL.
-      # Por isso NÃO fixamos a major aqui: quando o Supabase subir de 17 para
-      # 18, este job continua funcionando sozinho.
+      # O pg_dump que vem no runner está uma major ATRASADO (16.x) e se RECUSA
+      # a falar com servidor mais novo ("aborting because of server version
+      # mismatch") — foi o que deixou este backup vermelho sem ninguém notar.
+      # Instalamos o cliente do repositório oficial PGDG, sem fixar a major:
+      # cliente mais NOVO que o servidor é caso suportado pelo PostgreSQL,
+      # então quando o Supabase subir de 17 para 18 o job segue funcionando.
+      #
+      # PEGADINHA: instalar não basta. O /usr/bin/pg_dump do Ubuntu é um
+      # wrapper (pg_wrapper) que escolhe a versão pelo CLUSTER local, e o
+      # runner tem um PostgreSQL 16 instalado — ou seja, ele continuava
+      # chamando o 16 mesmo com o 18 no disco. Por isso o PATH aponta direto
+      # para o bin da major mais nova que existir.
       - name: Instalar postgresql-client mais recente (PGDG)
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -33,7 +38,9 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y postgresql-client
-          pg_dump --version
+          PGBIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          echo "$PGBIN" >> "$GITHUB_PATH"
+          "$PGBIN/pg_dump" --version
 
       # O nome do arquivo é calculado UMA vez: antes, cada passo chamava
       # `date +%F` de novo e um job que virasse a meia-noite UTC procurava um
@@ -49,6 +56,7 @@ jobs:
             echo "ERRO: secret DATABASE_URL não cadastrado no repositório." >&2
             exit 1
           fi
+          pg_dump --version
           pg_dump "$DATABASE_URL" --no-owner --format=custom --file="$DUMP_FILE"
           ls -lh "$DUMP_FILE"
 
