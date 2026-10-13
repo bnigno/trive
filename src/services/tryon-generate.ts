@@ -11,14 +11,14 @@
 // - submitting sem id: o envio caiu no meio — pode ter sido cobrado, então
 //   NUNCA pede de novo (a regra de ouro de services/studio-video-generate).
 //
-// Nenhuma imagem é guardada: nem a foto dela, nem a prévia (só o que os
-// portões disseram, em texto). Os avisos à cliente saem ANTES da mudança de
-// estado final, com dedupe — se o envio cair, a fila repete sem duplicar.
+// Nenhuma imagem é guardada: nem a foto dela, nem a prévia; do julgamento,
+// só o veredito (nada do corpo dela além de "preservado: sim/não"). Os
+// avisos à cliente saem PELA FILA, na mesma transação da mudança de estado
+// final — o pedido nunca fica preso porque o WhatsApp caiu.
 import { and, eq } from "drizzle-orm";
 import sharp from "sharp";
-import { z } from "zod";
 
-import type { SalesAssistant } from "@/adapters/assistant";
+import { AssistantUnavailableError, type SalesAssistant } from "@/adapters/assistant";
 import { StudioUnavailableError, type ImageStudio, type StudioImage } from "@/adapters/image-studio";
 import type { FileStorage } from "@/adapters/storage";
 import type { MessagingProvider } from "@/adapters/zapi";
@@ -26,19 +26,19 @@ import { estimateUsageCostUsdCents } from "@/core/ai/model-cost";
 import { parsePieceType } from "@/core/catalog/piece-types";
 import { HandlerOutOfTimeError } from "@/core/queue/handler-errors";
 import { creditsFor, creditsToUsdCents } from "@/core/studio/cost";
-import { buildCustomerTryOnPrompt } from "@/core/studio/prompts";
+import { buildCustomerTryOnPrompt, type StudioGarmentCategory } from "@/core/studio/prompts";
 import { classifyVideoFailure } from "@/core/studio/video";
 import {
   GARMENT_JUDGE_JSON_SCHEMA,
   GARMENT_JUDGE_SYSTEM_PROMPT,
   GARMENT_JUDGE_USER_TEXT,
   garmentJudgmentSchema,
-  passesTryOnVerdict,
   PERSON_JUDGE_JSON_SCHEMA,
   PERSON_JUDGE_SYSTEM_PROMPT,
   PERSON_JUDGE_USER_TEXT,
   personJudgmentSchema,
-  tryOnVerdictSummary,
+  storedTryOnVerdict,
+  storedVerdictApproves,
   type TryOnVerdict,
 } from "@/core/tryon/judge";
 import {
@@ -47,12 +47,14 @@ import {
   PHOTO_CHECK_USER_TEXT,
   photoCheckSchema,
   photoCheckVerdict,
+  type PhotoCheckVerdict,
 } from "@/core/tryon/photo-check";
 import {
   failureText,
   photoProblemText,
   requiredFraming,
   TRYON_MAX_ATTEMPTS,
+  TRYON_PHOTO_PROBLEMS,
   TRYON_TIMING,
   tryOnCaption,
   tryOnCategoryFor,
@@ -62,16 +64,19 @@ import {
 import { assertTryOnTransition, isTryOnStatus, type TryOnStatus } from "@/core/tryon/status";
 import { auditLog, tryonRequests, waMessages } from "@/db/schema";
 import { spDayKey } from "@/lib/sp-day";
-import type { DbOrTx } from "@/queue/enqueue";
+import { kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import { mdPathFor } from "@/services/catalog";
 import { garmentImageFor, requireProductForStudio, ServiceError, type ProductForStudio } from "@/services/studio";
-import { TRYON_EVENT, tryOnMessageDedupeKey, tryOnPayloadSchema, type TryOnRequest } from "@/services/tryon";
+import { enqueueTryOnNotice, TRYON_EVENT, tryOnMessageDedupeKey, tryOnPayloadSchema, type TryOnRequest } from "@/services/tryon";
 import { loadTryOnSettings } from "@/services/tryon-settings";
 import { INBOUND_IMAGE_MAX_BYTES, prepareImageForModel } from "@/services/wa-media";
-import { sendMediaMessage, sendTemplateMessage, sendToOwner } from "@/services/wa-messaging";
+import { sendMediaMessage, sendToOwner } from "@/services/wa-messaging";
 
 /** Os portões usam o modelo mais atento: decote e estampa são o que está em jogo. */
 export const TRYON_JUDGE_MODEL = "claude-sonnet-5";
+
+/** Créditos de uma tentativa pela tabela (tryon-max 2K balanced): a estimativa quando a FASHN pode ter cobrado. */
+const ATTEMPT_CREDITS = creditsFor("tryon", "alta", 1);
 
 export type TryOnDeps = {
   studio: ImageStudio;
@@ -105,26 +110,21 @@ function ensureTime(options: Options, clock: Clock, neededMs: number): void {
   if (left < neededMs) throw new HandlerOutOfTimeError(left);
 }
 
-/** Quanto esperar pela FASHN: o prazo da fila menos o portão e o envio. */
-function waitSignal(options: Options, clock: Clock): AbortSignal {
-  return budgetSignal(options, clock, TRYON_TIMING.finishReserveMs);
-}
-
-/** O prazo da fila menos uma folga (para gravar e responder depois da chamada). */
-function budgetSignal(options: Options, clock: Clock, reserveMs = 3_000): AbortSignal {
+/** O prazo da fila menos uma folga (para o que vem depois da chamada). */
+function budgetSignal(options: Options, clock: Clock, reserveMs: number): AbortSignal {
   const left = remainingMs(options, clock);
   if (!Number.isFinite(left)) return AbortSignal.timeout(90_000);
   return AbortSignal.timeout(Math.max(1_000, left - reserveMs));
 }
 
-/** O veredito gravado vale para ESTE pedido da FASHN (a retomada depois de um envio que caiu não julga de novo). */
-const savedVerdictSchema = z.object({ vendorJobId: z.string(), garment: garmentJudgmentSchema, person: personJudgmentSchema });
+/** O modelo de visão RECUSOU estas fotos (segurança): definitivo, não é queda — repetir só reenviaria a foto dela. */
+function isRefusal(error: unknown): boolean {
+  return error instanceof AssistantUnavailableError && error.reason === "recusa";
+}
 
-function savedPassingVerdict(request: TryOnRequest): TryOnVerdict | null {
-  const saved = savedVerdictSchema.safeParse(request.verdict);
-  if (!saved.success || saved.data.vendorJobId !== request.vendorJobId) return null;
-  const verdict = { garment: saved.data.garment, person: saved.data.person };
-  return passesTryOnVerdict(verdict) ? verdict : null;
+/** A FASHN barrou o conteúdo (moderação) — só aí o texto pede outra foto, vestida. */
+function isModeration(error: StudioUnavailableError): boolean {
+  return /moderation|content|nsfw/i.test(error.message);
 }
 
 function mimeOf(contentType: string | null): Image["mimeType"] {
@@ -182,19 +182,7 @@ async function transition(
   return updated ?? null;
 }
 
-/** Texto curto à cliente (fala da Lia: dedupe `wa.bot_tryon:`). */
-async function tellCustomer(db: DbOrTx, deps: TryOnDeps, request: TryOnRequest, what: string, body: string): Promise<void> {
-  await sendTemplateMessage(db, deps.provider, {
-    bodyOverride: body,
-    phoneE164: request.phoneE164,
-    ...(request.customerId ? { customerId: request.customerId } : {}),
-    dedupeKey: tryOnMessageDedupeKey(request.id, what),
-    requireOptIn: false,
-    verifyPhone: false,
-  });
-}
-
-/** Crédito acabou ou chave sumiu: avisa a dona uma vez por dia (melhor esforço — a cliente já foi avisada). */
+/** Crédito acabou ou chave sumiu: avisa a dona uma vez por dia (melhor esforço — a cliente já foi avisada pela fila). */
 async function alertOwner(db: DbOrTx, deps: TryOnDeps, kind: "sem_creditos" | "sem_chave", now: Date): Promise<void> {
   const body =
     kind === "sem_creditos"
@@ -207,31 +195,76 @@ async function alertOwner(db: DbOrTx, deps: TryOnDeps, kind: "sem_creditos" | "s
   }
 }
 
-/** Encerra sem prévia: avisa a cliente (com dedupe) e só então grava o motivo e o gasto. */
+/**
+ * Encerra (falhou ou foto recusada): grava o estado final, o gasto e a
+ * auditoria E enfileira o aviso à cliente — tudo numa transação. Depois do
+ * commit, chama a fila para o aviso sair já.
+ */
+async function closeRequest(
+  db: DbOrTx,
+  request: TryOnRequest,
+  input: {
+    to: "failed" | "photo_rejected";
+    code: string;
+    notice: string;
+    patch: Partial<typeof tryonRequests.$inferInsert>;
+    auditAction: string;
+    auditAfter: Record<string, unknown>;
+    now: Date;
+  },
+): Promise<boolean> {
+  const from = request.status as TryOnStatus;
+  const noticeEventId = await db.transaction(async (tx) => {
+    const updated = await transition(tx, request, from, input.to, { ...input.patch, finishedAt: input.now }, input.now);
+    if (!updated) return undefined;
+    await audit(tx, request, input.auditAction, { from, ...input.auditAfter });
+    return enqueueTryOnNotice(tx, request, input.code, input.notice);
+  });
+  if (noticeEventId === undefined) return false;
+  if (noticeEventId) await kickOutbox(noticeEventId, { eventType: "wa.send" });
+  return true;
+}
+
 async function failRequest(
   db: DbOrTx,
   deps: TryOnDeps,
   request: TryOnRequest,
-  input: { reason: TryOnFailureReason; usdCents?: number; detail?: string; now: Date },
+  input: { reason: TryOnFailureReason; usdCents?: number; credits?: number; detail?: string; now: Date },
 ): Promise<TryOnResult> {
-  const from = request.status as TryOnStatus;
-  await tellCustomer(db, deps, request, `falhou:${input.reason}`, failureText(input.reason));
-  const updated = await transition(
-    db,
-    request,
-    from,
-    "failed",
-    {
+  await closeRequest(db, request, {
+    to: "failed",
+    code: `falhou:${input.reason}`,
+    notice: failureText(input.reason),
+    patch: {
       failureReason: input.reason,
+      credits: Math.max(request.credits, input.credits ?? request.credits),
       usdCents: Math.max(request.usdCents, input.usdCents ?? request.usdCents),
-      finishedAt: input.now,
       // O id nunca é apagado: é a prova do que a FASHN pode ter cobrado.
     },
-    input.now,
-  );
-  if (updated) await audit(db, request, "tryon.fail", { from, reason: input.reason, detail: input.detail?.slice(0, 300) ?? null, vendorJobId: request.vendorJobId, attempts: request.attempts });
+    auditAction: "tryon.fail",
+    auditAfter: { reason: input.reason, detail: input.detail?.slice(0, 300) ?? null, vendorJobId: request.vendorJobId, attempts: request.attempts },
+    now: input.now,
+  });
   if (input.reason === "sem_creditos") await alertOwner(db, deps, "sem_creditos", input.now);
   return { outcome: "failed", reason: input.reason };
+}
+
+async function rejectPhoto(
+  db: DbOrTx,
+  request: TryOnRequest,
+  input: { problem: TryOnPhotoProblem; productName: string; category: StudioGarmentCategory; now: Date },
+): Promise<TryOnResult> {
+  await closeRequest(db, request, {
+    to: "photo_rejected",
+    code: `foto:${input.problem}`,
+    notice: photoProblemText(input.problem, { productName: input.productName, framing: requiredFraming(input.category) }),
+    patch: { failureReason: input.problem },
+    // Só o problema: nada do que a visão viu na foto (idade, roupa) vai para a auditoria.
+    auditAction: "tryon.photo_rejected",
+    auditAfter: { problem: input.problem },
+    now: input.now,
+  });
+  return { outcome: "photo_rejected", problem: input.problem };
 }
 
 async function loadProduct(db: DbOrTx, request: TryOnRequest): Promise<ProductForStudio | null> {
@@ -243,13 +276,23 @@ async function loadProduct(db: DbOrTx, request: TryOnRequest): Promise<ProductFo
   }
 }
 
-/** A foto dela, baixada da Z-API na hora (a URL expira; nada é guardado). null = não há mais o que baixar. */
+/**
+ * A foto dela, baixada da Z-API na hora (a URL expira; nada é guardado). Só
+ * uma imagem que ELA mandou nesta conversa. null = não há o que baixar.
+ */
 async function loadCustomerPhoto(db: DbOrTx, deps: TryOnDeps, request: TryOnRequest, now: Date): Promise<Buffer | null> {
   if (!request.photoWaMessageId) return null;
   const [message] = await db
     .select({ mediaUrl: waMessages.mediaUrl, createdAt: waMessages.createdAt })
     .from(waMessages)
-    .where(eq(waMessages.id, request.photoWaMessageId))
+    .where(
+      and(
+        eq(waMessages.id, request.photoWaMessageId),
+        eq(waMessages.conversationId, request.conversationId),
+        eq(waMessages.direction, "inbound"),
+        eq(waMessages.kind, "image"),
+      ),
+    )
     .limit(1);
   if (!message?.mediaUrl) return null;
   if (now.getTime() - message.createdAt.getTime() > TRYON_TIMING.photoMaxAgeMs) return null;
@@ -276,49 +319,88 @@ async function forModel(data: Buffer) {
   return { mediaType: prepared.mediaType, base64: prepared.base64 };
 }
 
-/** A checagem da foto (visão). Relança se o modelo cair: a fila tenta de novo. */
-async function checkPhoto(deps: TryOnDeps, photo: Buffer, signal: AbortSignal | undefined) {
-  const result = await deps.assistant.extractFromPhotos({
-    system: PHOTO_CHECK_SYSTEM_PROMPT,
-    images: [await forModel(photo)],
-    userText: PHOTO_CHECK_USER_TEXT,
-    model: TRYON_JUDGE_MODEL,
-    jsonSchema: PHOTO_CHECK_JSON_SCHEMA,
-    maxTokens: 400,
-    signal,
-  });
-  return { check: photoCheckSchema.safeParse(result.json), usdCents: estimateUsageCostUsdCents(result.usage, TRYON_JUDGE_MODEL) };
+/**
+ * A checagem da foto (visão). Devolve o veredito JÁ derivado — é só isso que
+ * fica gravado (nada de "adulta"/"sem roupa"). Recusa do modelo = "não pode";
+ * queda ou JSON fora do formato relançam (a fila tenta de novo).
+ */
+async function checkPhoto(deps: TryOnDeps, photo: Buffer, category: StudioGarmentCategory, signal: AbortSignal): Promise<{ verdict: PhotoCheckVerdict; usdCents: number }> {
+  let result;
+  try {
+    result = await deps.assistant.extractFromPhotos({
+      system: PHOTO_CHECK_SYSTEM_PROMPT,
+      images: [await forModel(photo)],
+      userText: PHOTO_CHECK_USER_TEXT,
+      model: TRYON_JUDGE_MODEL,
+      jsonSchema: PHOTO_CHECK_JSON_SCHEMA,
+      maxTokens: 400,
+      signal,
+    });
+  } catch (error) {
+    if (isRefusal(error)) return { verdict: { ok: false, problem: "nao_pode" }, usdCents: 0 };
+    throw error;
+  }
+  const usdCents = estimateUsageCostUsdCents(result.usage, TRYON_JUDGE_MODEL);
+  const check = photoCheckSchema.safeParse(result.json);
+  if (!check.success) throw new Error("a checagem da foto voltou fora do formato");
+  return { verdict: photoCheckVerdict(check.data, category), usdCents };
 }
 
-/** Os dois portões em paralelo. Fora do formato = reprovado (nunca manda o que não foi julgado). */
-async function judge(deps: TryOnDeps, input: { photo: Buffer; garment: Image; preview: Buffer; signal: AbortSignal | undefined }) {
+/** O veredito da checagem gravado (photo_check): só "serve" ou o problema. */
+function savedPhotoVerdict(stored: unknown): PhotoCheckVerdict | null {
+  if (typeof stored !== "object" || stored === null) return null;
+  const value = stored as { ok?: unknown; problem?: unknown };
+  if (value.ok === true) return { ok: true };
+  if (value.ok === false && typeof value.problem === "string" && (TRYON_PHOTO_PROBLEMS as readonly string[]).includes(value.problem)) {
+    return { ok: false, problem: value.problem as TryOnPhotoProblem };
+  }
+  return null;
+}
+
+/**
+ * Os dois portões em paralelo. Recusa do modelo = "recusada" (sem relançar);
+ * queda ou JSON fora do formato relançam — a fila retoma pelo id e julga de
+ * novo de graça, nunca paga outra prévia por um julgamento que não houve.
+ */
+async function judge(
+  deps: TryOnDeps,
+  input: { photo: Buffer; garment: Image; preview: Buffer; signal: AbortSignal },
+): Promise<{ verdict: TryOnVerdict; usdCents: number } | { refused: true }> {
   const [photo, garment, preview] = await Promise.all([forModel(input.photo), forModel(input.garment.data), forModel(input.preview)]);
-  const [garmentResult, personResult] = await Promise.all([
-    deps.assistant.extractFromPhotos({
-      system: GARMENT_JUDGE_SYSTEM_PROMPT,
-      images: [garment, preview],
-      userText: GARMENT_JUDGE_USER_TEXT,
-      model: TRYON_JUDGE_MODEL,
-      jsonSchema: GARMENT_JUDGE_JSON_SCHEMA,
-      maxTokens: 700,
-      signal: input.signal,
-    }),
-    deps.assistant.extractFromPhotos({
-      system: PERSON_JUDGE_SYSTEM_PROMPT,
-      images: [photo, preview],
-      userText: PERSON_JUDGE_USER_TEXT,
-      model: TRYON_JUDGE_MODEL,
-      jsonSchema: PERSON_JUDGE_JSON_SCHEMA,
-      maxTokens: 400,
-      signal: input.signal,
-    }),
-  ]);
-  const usdCents = estimateUsageCostUsdCents(garmentResult.usage, TRYON_JUDGE_MODEL) + estimateUsageCostUsdCents(personResult.usage, TRYON_JUDGE_MODEL);
+  let results;
+  try {
+    results = await Promise.all([
+      deps.assistant.extractFromPhotos({
+        system: GARMENT_JUDGE_SYSTEM_PROMPT,
+        images: [garment, preview],
+        userText: GARMENT_JUDGE_USER_TEXT,
+        model: TRYON_JUDGE_MODEL,
+        jsonSchema: GARMENT_JUDGE_JSON_SCHEMA,
+        maxTokens: 700,
+        signal: input.signal,
+      }),
+      deps.assistant.extractFromPhotos({
+        system: PERSON_JUDGE_SYSTEM_PROMPT,
+        images: [photo, preview],
+        userText: PERSON_JUDGE_USER_TEXT,
+        model: TRYON_JUDGE_MODEL,
+        jsonSchema: PERSON_JUDGE_JSON_SCHEMA,
+        maxTokens: 400,
+        signal: input.signal,
+      }),
+    ]);
+  } catch (error) {
+    if (isRefusal(error)) return { refused: true };
+    throw error;
+  }
+  const [garmentResult, personResult] = results;
   const garmentJudgment = garmentJudgmentSchema.safeParse(garmentResult.json);
   const personJudgment = personJudgmentSchema.safeParse(personResult.json);
-  const verdict: TryOnVerdict | null =
-    garmentJudgment.success && personJudgment.success ? { garment: garmentJudgment.data, person: personJudgment.data } : null;
-  return { verdict, usdCents };
+  if (!garmentJudgment.success || !personJudgment.success) throw new Error("o julgamento da prévia voltou fora do formato");
+  return {
+    verdict: { garment: garmentJudgment.data, person: personJudgment.data },
+    usdCents: estimateUsageCostUsdCents(garmentResult.usage, TRYON_JUDGE_MODEL) + estimateUsageCostUsdCents(personResult.usage, TRYON_JUDGE_MODEL),
+  };
 }
 
 /** A FASHN aceitou: grava o id (é o que impede pagar duas vezes). */
@@ -339,7 +421,7 @@ async function submit(
   db: DbOrTx,
   deps: TryOnDeps,
   request: TryOnRequest,
-  input: { photo: Buffer; garment: Image; category: ReturnType<typeof tryOnCategoryFor>; clock: Clock },
+  input: { photo: Buffer; garment: Image; category: StudioGarmentCategory; clock: Clock },
 ): Promise<{ request: TryOnRequest; image: StudioImage | null } | TryOnResult> {
   const attempt = request.attempts + 1;
   const claimed = await transition(db, request, "queued", "submitting", { attempts: attempt }, input.clock());
@@ -353,7 +435,7 @@ async function submit(
       images: await deps.studio.generateOnModel({
         garment: input.garment,
         model: { data: input.photo, mimeType: "image/jpeg" },
-        category: input.category ?? "auto",
+        category: input.category,
         scenePrompt: buildCustomerTryOnPrompt(),
         count: 1,
         quality: "alta",
@@ -396,37 +478,38 @@ async function submit(
     await transition(db, claimed, "submitting", "queued", { attempts: request.attempts }, input.clock());
     throw error;
   }
-  const estimated = creditsToUsdCents(creditsFor("tryon", "alta", 1));
   switch (classifyVideoFailure({ reason: error.reason, status: error.status, jobId: null })) {
     case "retry_not_charged":
       await transition(db, claimed, "submitting", "queued", { attempts: request.attempts }, input.clock());
       throw error;
     case "closed_not_charged": {
-      const reason = error.reason === "no_credits" ? "sem_creditos" : error.reason === "no_key" ? "indisponivel" : "recusada_pela_ia";
+      const reason: TryOnFailureReason =
+        error.reason === "no_credits" ? "sem_creditos" : error.reason === "rejected" && isModeration(error) ? "recusada_pela_ia" : "indisponivel";
       const result = await failRequest(db, deps, claimed, { reason, detail: error.message, now: input.clock() });
       if (error.reason === "no_key") await alertOwner(db, deps, "sem_chave", input.clock());
       return result;
     }
     default:
-      return failRequest(db, deps, claimed, { reason: "envio_incerto", usdCents: request.usdCents + estimated, detail: error.message, now: input.clock() });
+      return failRequest(db, deps, claimed, {
+        reason: "envio_incerto",
+        usdCents: request.usdCents + creditsToUsdCents(ATTEMPT_CREDITS),
+        credits: request.credits + ATTEMPT_CREDITS,
+        detail: error.message,
+        now: input.clock(),
+      });
   }
 }
 
-/** Acompanha o pedido pelo id (sem pedir de novo). Encerrado = resultado; null + linha = segue esperando. */
-async function resume(
-  db: DbOrTx,
-  deps: TryOnDeps,
-  request: TryOnRequest,
-  input: { options: Options; clock: Clock },
-): Promise<StudioImage | TryOnResult> {
-  const estimated = request.usdCents + creditsToUsdCents(creditsFor("tryon", "alta", 1));
+/** Acompanha o pedido pelo id (sem pedir de novo). A imagem, ou o resultado de ter encerrado. */
+async function resume(db: DbOrTx, deps: TryOnDeps, request: TryOnRequest, input: { options: Options; clock: Clock }): Promise<StudioImage | TryOnResult> {
+  const estimate = { usdCents: request.usdCents + creditsToUsdCents(ATTEMPT_CREDITS), credits: request.credits + ATTEMPT_CREDITS };
   if (!request.vendorJobId) {
-    return failRequest(db, deps, request, { reason: "envio_incerto", usdCents: estimated, detail: "sem o id do pedido na FASHN", now: input.clock() });
+    return failRequest(db, deps, request, { reason: "envio_incerto", ...estimate, detail: "sem o id do pedido na FASHN", now: input.clock() });
   }
   if (request.submittedAt && input.clock().getTime() - request.submittedAt.getTime() > TRYON_TIMING.giveUpAfterMs) {
-    return failRequest(db, deps, request, { reason: "demorou_demais", usdCents: estimated, now: input.clock() });
+    return failRequest(db, deps, request, { reason: "demorou_demais", ...estimate, now: input.clock() });
   }
-  const signal = waitSignal(input.options, input.clock);
+  const signal = budgetSignal(input.options, input.clock, TRYON_TIMING.finishReserveMs);
   try {
     const [image] = await deps.studio.generateOnModel({
       // A retomada não envia foto nenhuma: só acompanha o pedido pelo id.
@@ -445,10 +528,10 @@ async function resume(
     if (!(error instanceof StudioUnavailableError)) throw error;
     switch (classifyVideoFailure({ reason: error.reason, status: error.status, jobId: request.vendorJobId })) {
       case "closed_not_charged":
-        // "failed" no status: a FASHN não cobra pedido que falhou (moderação, foto ruim).
-        return failRequest(db, deps, request, { reason: "recusada_pela_ia", detail: error.message, now: input.clock() });
+        // "failed" no status: a FASHN não cobra pedido que falhou (moderação, pose, foto ruim).
+        return failRequest(db, deps, request, { reason: isModeration(error) ? "recusada_pela_ia" : "indisponivel", detail: error.message, now: input.clock() });
       case "closed_job_gone":
-        return failRequest(db, deps, request, { reason: "indisponivel", usdCents: estimated, detail: error.message, now: input.clock() });
+        return failRequest(db, deps, request, { reason: "indisponivel", ...estimate, detail: error.message, now: input.clock() });
       default:
         // Ainda aberto. Nosso prazo acabou: devolve sem contar tentativa; outra falha: a fila espaça e tenta de novo.
         if (signal.aborted) throw new HandlerOutOfTimeError(remainingMs(input.options, input.clock));
@@ -457,12 +540,12 @@ async function resume(
   }
 }
 
-/** Passou nos portões: envia embutida (nada vai ao Storage) e só então grava "enviada". */
+/** Aprovada: envia embutida (nada vai ao Storage) e só então grava "enviada". */
 async function deliver(
   db: DbOrTx,
   deps: TryOnDeps,
   request: TryOnRequest,
-  input: { preview: Buffer; productName: string; credits: number; usdCents: number; verdict: TryOnVerdict; now: Date },
+  input: { preview: Buffer; productName: string; credits: number; usdCents: number; now: Date },
 ): Promise<TryOnResult> {
   const result = await sendMediaMessage(db, deps.provider, {
     kind: "image",
@@ -476,21 +559,14 @@ async function deliver(
   });
   if ("skipped" in result && result.skipped !== "ja_enviado") {
     // WhatsApp desligado (ou número sem WhatsApp) entre o pedido e a entrega: nada a fazer com a imagem.
-    return failRequest(db, deps, request, { reason: "indisponivel", usdCents: input.usdCents, detail: `envio pulado: ${result.skipped}`, now: input.now });
+    return failRequest(db, deps, request, { reason: "indisponivel", usdCents: input.usdCents, credits: input.credits, detail: `envio pulado: ${result.skipped}`, now: input.now });
   }
   const updated = await transition(
     db,
     request,
     "processing",
     "sent",
-    {
-      sentAt: input.now,
-      finishedAt: input.now,
-      credits: input.credits,
-      usdCents: input.usdCents,
-      verdict: { vendorJobId: request.vendorJobId, ...input.verdict },
-      failureReason: null,
-    },
+    { sentAt: input.now, finishedAt: input.now, credits: input.credits, usdCents: input.usdCents, failureReason: null },
     input.now,
   );
   if (updated) {
@@ -500,7 +576,6 @@ async function deliver(
       attempts: request.attempts,
       credits: input.credits,
       estimatedCostUsdCents: input.usdCents,
-      verdict: tryOnVerdictSummary(input.verdict),
     });
   }
   return { outcome: "sent", credits: input.credits, usdCents: input.usdCents };
@@ -529,7 +604,8 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
         // O envio caiu entre o pedido e a gravação do id: pode ter sido cobrado. Nunca pedir de novo.
         return failRequest(db, deps, request, {
           reason: "envio_incerto",
-          usdCents: request.usdCents + creditsToUsdCents(creditsFor("tryon", "alta", 1)),
+          usdCents: request.usdCents + creditsToUsdCents(ATTEMPT_CREDITS),
+          credits: request.credits + ATTEMPT_CREDITS,
           detail: "o envio foi interrompido antes de a resposta da FASHN ser gravada",
           now: clock(),
         });
@@ -546,51 +622,48 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
       const image = pendingImage ?? (await resume(db, deps, request, { options, clock }));
       pendingImage = null;
       if (!("data" in image)) return image;
-      if (!product) return failRequest(db, deps, request, { reason: "peca_indisponivel", usdCents: request.usdCents + image.usdCents, now: clock() });
+      const credits = request.credits + image.creditsUsed;
+      const paid = request.usdCents + image.usdCents;
+      if (!product) return failRequest(db, deps, request, { reason: "peca_indisponivel", usdCents: paid, credits, now: clock() });
+      // Já aprovada antes de um envio que caiu: manda sem julgar de novo (nem baixar a foto dela de novo).
+      if (storedVerdictApproves(request.verdict, request.vendorJobId)) {
+        ensureTime(options, clock, TRYON_TIMING.deliverReserveMs);
+        return deliver(db, deps, request, { preview: image.data, productName: product.name, credits, usdCents: paid, now: clock() });
+      }
       photo ??= await loadCustomerPhoto(db, deps, request, clock());
       garment ??= await loadGarment(db, deps, request);
-      const credits = request.credits + image.creditsUsed;
-      // Já aprovada antes de um envio que caiu: manda sem julgar de novo (outra opinião poderia pedir — e pagar — outra prévia).
-      const approved = savedPassingVerdict(request);
-      if (approved) {
-        return deliver(db, deps, request, { preview: image.data, productName: product.name, credits, usdCents: request.usdCents + image.usdCents, verdict: approved, now: clock() });
-      }
       if (!photo || !garment) {
         // Paga e sem como julgar: nunca manda o que não foi julgado.
-        return failRequest(db, deps, request, { reason: !photo ? "foto_indisponivel" : "peca_indisponivel", usdCents: request.usdCents + image.usdCents, now: clock() });
+        return failRequest(db, deps, request, { reason: !photo ? "foto_indisponivel" : "peca_indisponivel", usdCents: paid, credits, now: clock() });
       }
-      // Sem tempo para os portões nesta invocação: a próxima retoma pelo id (a saída fica 60 min na FASHN).
+      // Sem tempo para os portões e o envio nesta invocação: a próxima retoma pelo id (a saída fica 60 min na FASHN).
       ensureTime(options, clock, TRYON_TIMING.finishReserveMs);
-      const judged = await judge(deps, { photo, garment, preview: image.data, signal: budgetSignal(options, clock) });
-      const usdCents = request.usdCents + image.usdCents + judged.usdCents;
-      const passed = judged.verdict !== null && passesTryOnVerdict(judged.verdict);
-      console.info(`[${TRYON_EVENT}] ${request.id}: tentativa ${request.attempts} → ${judged.verdict ? tryOnVerdictSummary(judged.verdict) : "julgamento fora do formato"}`);
-      if (passed && judged.verdict) {
+      const judged = await judge(deps, { photo, garment, preview: image.data, signal: budgetSignal(options, clock, TRYON_TIMING.deliverReserveMs) });
+      if ("refused" in judged) {
+        return failRequest(db, deps, request, { reason: "recusada_pela_ia", usdCents: paid, credits, detail: "o modelo de visão recusou a prévia", now: clock() });
+      }
+      const usdCents = paid + judged.usdCents;
+      const stored = storedTryOnVerdict(judged.verdict, request.vendorJobId);
+      console.info(`[${TRYON_EVENT}] ${request.id}: tentativa ${request.attempts} → ${stored.summary}`);
+      if (stored.passed) {
         // Grava o "aprovada" deste pedido ANTES de enviar (só o gasto dos portões, não o da FASHN: esse entra no "enviada").
         await db
           .update(tryonRequests)
-          .set({ verdict: { vendorJobId: request.vendorJobId, ...judged.verdict }, usdCents: request.usdCents + judged.usdCents })
+          .set({ verdict: stored, usdCents: request.usdCents + judged.usdCents })
           .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, "processing")));
-        return deliver(db, deps, request, { preview: image.data, productName: product.name, credits, usdCents, verdict: judged.verdict, now: clock() });
+        ensureTime(options, clock, TRYON_TIMING.deliverReserveMs);
+        return deliver(db, deps, request, { preview: image.data, productName: product.name, credits, usdCents, now: clock() });
       }
       if (request.attempts < TRYON_MAX_ATTEMPTS) {
         // Infiel: o pedido foi usado (e pago); volta à fila para outra semente.
-        const requeued = await transition(
-          db,
-          request,
-          "processing",
-          "queued",
-          { vendorJobId: null, credits, usdCents, verdict: judged.verdict ?? { foraDoFormato: true } },
-          clock(),
-        );
+        const requeued = await transition(db, request, "processing", "queued", { vendorJobId: null, credits, usdCents, verdict: stored }, clock());
         if (!requeued) return { outcome: "skipped", reason: "pedido_fora_da_fila" };
-        await audit(db, request, "tryon.retry", { vendorJobId: request.vendorJobId, verdict: judged.verdict ? tryOnVerdictSummary(judged.verdict) : null });
+        await audit(db, request, "tryon.retry", { vendorJobId: request.vendorJobId, verdict: stored.summary });
         request = requeued;
         continue;
       }
-      const latest = { ...request, credits, usdCents, verdict: judged.verdict };
-      await db.update(tryonRequests).set({ credits, usdCents, verdict: judged.verdict }).where(eq(tryonRequests.id, request.id));
-      return failRequest(db, deps, latest, { reason: "nao_ficou_fiel", usdCents, now: clock() });
+      await db.update(tryonRequests).set({ verdict: stored }).where(eq(tryonRequests.id, request.id));
+      return failRequest(db, deps, { ...request, verdict: stored }, { reason: "nao_ficou_fiel", usdCents, credits, now: clock() });
     }
 
     // queued
@@ -604,30 +677,19 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
     garment ??= await loadGarment(db, deps, request);
     if (!garment) return failRequest(db, deps, request, { reason: "peca_indisponivel", now: clock() });
 
-    if (!request.photoCheck) {
-      const checked = await checkPhoto(deps, photo, budgetSignal(options, clock));
-      const usdCents = request.usdCents + checked.usdCents;
-      if (!checked.check.success) {
-        // Fora do formato: grava o gasto e relança (a fila tenta de novo; a última tentativa encerra com aviso).
-        await db.update(tryonRequests).set({ usdCents }).where(eq(tryonRequests.id, request.id));
-        throw new Error("a checagem da foto voltou fora do formato");
-      }
+    let photoVerdict = savedPhotoVerdict(request.photoCheck);
+    if (!photoVerdict) {
+      const checked = await checkPhoto(deps, photo, category, budgetSignal(options, clock, 3_000));
+      photoVerdict = checked.verdict;
       const [saved] = await db
         .update(tryonRequests)
-        .set({ photoCheck: checked.check.data, usdCents, updatedAt: clock() })
+        .set({ photoCheck: photoVerdict, usdCents: request.usdCents + checked.usdCents, updatedAt: clock() })
         .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, "queued")))
         .returning();
       if (!saved) return { outcome: "skipped", reason: "pedido_fora_da_fila" };
       request = saved;
     }
-    const check = photoCheckSchema.safeParse(request.photoCheck);
-    const verdict = check.success ? photoCheckVerdict(check.data, category) : ({ ok: false, problem: "nao_e_foto" } as const);
-    if (!verdict.ok) {
-      await tellCustomer(db, deps, request, `foto:${verdict.problem}`, photoProblemText(verdict.problem, { productName: product.name, framing: requiredFraming(category) }));
-      const rejected = await transition(db, request, "queued", "photo_rejected", { failureReason: verdict.problem, finishedAt: clock() }, clock());
-      if (rejected) await audit(db, request, "tryon.photo_rejected", { problem: verdict.problem, check: request.photoCheck });
-      return { outcome: "photo_rejected", problem: verdict.problem };
-    }
+    if (!photoVerdict.ok) return rejectPhoto(db, request, { problem: photoVerdict.problem, productName: product.name, category, now: clock() });
 
     ensureTime(options, clock, TRYON_TIMING.minSubmitMs);
     const submitted = await submit(db, deps, request, { photo, garment, category, clock });
@@ -641,16 +703,22 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
 
 /**
  * Última tentativa da fila falhou (a linha vai para "morta"): o pedido não
- * pode ficar "na fila" para sempre, e a cliente não pode ficar esperando.
+ * pode ficar "na fila" para sempre, e a cliente não pode ficar esperando. O
+ * aviso vai pela fila — não depende de o WhatsApp estar de pé agora.
  */
 export async function markTryOnGaveUp(db: DbOrTx, deps: TryOnDeps, input: { requestId: string; error: unknown }, now: Date): Promise<void> {
   const request = await loadRequest(db, input.requestId);
   if (!request) return;
   const detail = input.error instanceof Error ? input.error.message : String(input.error);
-  const estimated = request.usdCents + creditsToUsdCents(creditsFor("tryon", "alta", 1));
   if (request.status === "queued") {
     await failRequest(db, deps, request, { reason: "indisponivel", detail, now });
   } else if (request.status === "submitting" || request.status === "processing") {
-    await failRequest(db, deps, request, { reason: request.vendorJobId ? "demorou_demais" : "envio_incerto", usdCents: estimated, detail, now });
+    await failRequest(db, deps, request, {
+      reason: request.vendorJobId ? "demorou_demais" : "envio_incerto",
+      usdCents: request.usdCents + creditsToUsdCents(ATTEMPT_CREDITS),
+      credits: request.credits + ATTEMPT_CREDITS,
+      detail,
+      now,
+    });
   }
 }

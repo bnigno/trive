@@ -106,8 +106,10 @@ describe("regras da prévia", () => {
     expect(photoProblemText("enquadramento", { productName: "VESTIDO AMORA", framing: "ate_coxas" })).toContain("corpo inteiro");
     expect(photoProblemText("enquadramento", { productName: "BLUSA MAELLE", framing: "ate_cintura" })).toContain("cintura pra cima");
     expect(photoProblemText("parte_de_baixo", { productName: "BLUSA MAELLE", framing: "ate_cintura" })).toContain("vestida da cintura pra baixo");
-    // Menor de idade e nudez caem no MESMO texto neutro.
-    expect(photoProblemText("nao_pode", { productName: "X", framing: "ate_coxas" })).toBe(failureText("recusada_pela_ia"));
+    // Menor de idade e nudez caem no MESMO texto neutro — e ele não convida a mandar outra foto.
+    const naoPode = photoProblemText("nao_pode", { productName: "X", framing: "ate_coxas" });
+    expect(naoPode).toContain("não consigo usar");
+    expect(naoPode).not.toMatch(/manda|outra foto/i);
     expect(quotaText("limite_cliente", 2)).toContain("2 prévias");
     expect(quotaText("limite_loja", 2)).toContain("acabaram");
   });

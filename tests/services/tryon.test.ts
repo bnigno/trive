@@ -105,24 +105,75 @@ describe("queueTryOn", () => {
     });
   });
 
-  it("tetos do dia: o da cliente (2) e o da loja (3); foto recusada não conta", async () => {
+  it("tetos do dia: o da cliente (2) e o da loja (3) contam só o que chegou à FASHN (ou está a caminho)", async () => {
     const { productId, conversationId, photoId } = await seedConversation();
-    for (const status of ["sent", "failed", "photo_rejected"]) {
-      await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status, acceptedAt: NOW, queuedAt: NOW });
-    }
-    expect(await countTryOnsToday(sdb(), { phoneE164: PHONE, now: NOW })).toEqual({ customer: 2, total: 2 });
+    await db.insert(schema.tryonRequests).values([
+      { conversationId, phoneE164: PHONE, productId, status: "sent", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW },
+      { conversationId, phoneE164: PHONE, productId, status: "failed", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW },
+      // Falhou antes de pedir (a foto não abriu) e foto recusada: não gastam a cota.
+      { conversationId, phoneE164: PHONE, productId, status: "failed", acceptedAt: NOW, queuedAt: NOW },
+      { conversationId, phoneE164: PHONE, productId, status: "photo_rejected", acceptedAt: NOW, queuedAt: NOW },
+    ]);
+    expect(await countTryOnsToday(sdb(), { phoneE164: PHONE, now: NOW })).toEqual({ customer: 2, total: 2, rejected: 1 });
     const requestId = await offer({ conversationId, productId });
     expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "limite_cliente" });
 
     // Outra cliente: o da loja (3) chega primeiro.
     const other = await seedConversation("+5591977776666");
-    await db.insert(schema.tryonRequests).values({ conversationId: other.conversationId, phoneE164: "+5591977776666", productId, status: "sent", acceptedAt: NOW, queuedAt: NOW });
+    await db.insert(schema.tryonRequests).values({ conversationId: other.conversationId, phoneE164: "+5591977776666", productId, status: "sent", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW });
     const otherRequest = await offer({ conversationId: other.conversationId, productId, phone: "+5591977776666" });
     expect(await queueTryOn(sdb(), { requestId: otherRequest, photoWaMessageId: other.photoId, now: NOW })).toEqual({ ok: false, reason: "limite_loja" });
 
     // O dia vira (São Paulo): conta do zero.
     const tomorrow = new Date("2026-10-14T13:00:00Z");
-    expect(await countTryOnsToday(sdb(), { phoneE164: PHONE, now: tomorrow })).toEqual({ customer: 0, total: 0 });
+    expect(await countTryOnsToday(sdb(), { phoneE164: PHONE, now: tomorrow })).toEqual({ customer: 0, total: 0, rejected: 0 });
+  });
+
+  it("fotos recusadas têm teto próprio (cada uma passa pela visão): 3× o teto de prévias", async () => {
+    const { productId, conversationId, photoId } = await seedConversation();
+    for (let index = 0; index < 6; index += 1) {
+      await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", acceptedAt: NOW, queuedAt: NOW });
+    }
+    const requestId = await offer({ conversationId, productId });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "limite_cliente" });
+  });
+
+  it("a foto tem de ser uma imagem que ELA mandou nesta conversa", async () => {
+    const mine = await seedConversation();
+    const other = await seedConversation("+5591977776666");
+    const requestId = await offer({ conversationId: mine.conversationId, productId: mine.productId });
+    // Foto da outra conversa, ou uma imagem que a loja mandou: nunca.
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: other.photoId, now: NOW })).toEqual({ ok: false, reason: "foto_invalida" });
+    const [sentByStore] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId: mine.conversationId, direction: "outbound", kind: "image", body: "cartão", mediaUrl: "https://x.example/c.jpg", status: "sent" })
+      .returning({ id: schema.waMessages.id });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: sentByStore!.id, now: NOW })).toEqual({ ok: false, reason: "foto_invalida" });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: mine.photoId, now: NOW })).toMatchObject({ ok: true });
+  });
+
+  it("'Agora não' depois do 'Quero me ver' revoga o consentimento", async () => {
+    const { productId, conversationId, photoId } = await seedConversation();
+    const [row] = await db
+      .insert(schema.tryonRequests)
+      .values({ conversationId, phoneE164: PHONE, productId, status: "awaiting_photo", acceptedAt: new Date(NOW.getTime() - 60_000), declinedAt: new Date(NOW.getTime() - 30_000) })
+      .returning({ id: schema.tryonRequests.id });
+    expect(await queueTryOn(sdb(), { requestId: row!.id, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "sem_consentimento" });
+  });
+
+  it("pedido preso há mais de 15 min (a fila perdeu a linha) não trava a conversa: encerra, avisa pela fila e libera", async () => {
+    const { productId, conversationId, photoId } = await seedConversation();
+    const old = new Date(NOW.getTime() - 20 * 60_000);
+    const [stuck] = await db
+      .insert(schema.tryonRequests)
+      .values({ conversationId, phoneE164: PHONE, productId, status: "processing", acceptedAt: old, queuedAt: old, submittedAt: old, vendorJobId: "job-preso", updatedAt: old })
+      .returning({ id: schema.tryonRequests.id });
+    const requestId = await offer({ conversationId, productId });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW, kick: false })).toMatchObject({ ok: true });
+    const [healed] = await db.select().from(schema.tryonRequests).where(eq(schema.tryonRequests.id, stuck!.id));
+    expect(healed).toMatchObject({ status: "failed", failureReason: "demorou_demais", vendorJobId: "job-preso" });
+    const notice = (await db.select().from(schema.outboxEvents)).find((row) => row.dedupeKey === `wa.bot_tryon:${stuck!.id}:falhou:demorou_demais`);
+    expect(notice?.eventType).toBe("wa.send");
   });
 
   it("settings: desligado e padrões quando ausentes ou tortos", async () => {

@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AssistantUnavailableError } from "@/adapters/assistant";
 import { FakeSalesAssistant, FAKE_TRYON_GARMENT_JSON } from "@/adapters/assistant/fake";
 import { StudioUnavailableError } from "@/adapters/image-studio";
 import { FakeImageStudio } from "@/adapters/image-studio/fake";
@@ -115,6 +116,14 @@ async function outbound() {
   return db.select().from(schema.waMessages).where(eq(schema.waMessages.direction, "outbound"));
 }
 
+/** Os avisos à cliente saem PELA FILA (wa.send), na mesma transação do estado final. */
+async function notices(requestId: string): Promise<string[]> {
+  const events = await db.select().from(schema.outboxEvents).where(eq(schema.outboxEvents.eventType, "wa.send"));
+  return events
+    .filter((row) => row.dedupeKey?.startsWith(`wa.bot_tryon:${requestId}:`))
+    .map((row) => (row.payload as { body: string }).body);
+}
+
 describe("wa.tryon — o caminho feliz", () => {
   it("o evento está registrado na fila", () => {
     expect(outboxHandlers[TRYON_EVENT]).toBeTypeOf("function");
@@ -149,8 +158,10 @@ describe("wa.tryon — o caminho feliz", () => {
     expect(row).toMatchObject({ status: "sent", attempts: 1, credits: 3, sentAt: NOW, failureReason: null });
     expect(row.vendorJobId).toMatch(/^fake-tryon-/);
     expect(row.usdCents).toBeGreaterThanOrEqual(23);
-    expect(row.photoCheck).toMatchObject({ pessoas: 1, corpo_visivel: "cabeca_aos_pes" });
-    expect(row.verdict).toMatchObject({ garment: { mesma_peca: true }, person: { corpo_preservado: true } });
+    // Da checagem, só o veredito; do julgamento, a peça e os dois "sim" da pessoa (nada do corpo dela).
+    expect(row.photoCheck).toEqual({ ok: true });
+    expect(row.verdict).toMatchObject({ vendorJobId: row.vendorJobId, passed: true, garment: { mesma_peca: true }, person: { corpo_preservado: true } });
+    expect(JSON.stringify(row.verdict)).not.toContain("diferencas_no_corpo");
 
     // Rodar de novo (a fila repetiu) não faz nada.
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "skipped", reason: "pedido_fora_da_fila" });
@@ -210,16 +221,48 @@ describe("wa.tryon — a foto não serve: dica e fim, nada cobrado", () => {
     assistant.enqueueExtraction({ pessoas: 2, foto_de_pessoa_real: true, adulta: true, sem_roupa: false, corpo_visivel: "ate_joelhos", parte_de_baixo: "roupa" });
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "photo_rejected", problem: "mais_de_uma_pessoa" });
     expect(studio.generations).toHaveLength(0);
-    expect(provider.sentMessages).toHaveLength(1);
-    expect(provider.sentMessages[0]!.body).toContain("uma foto só sua");
-    expect(await requestRow(requestId)).toMatchObject({ status: "photo_rejected", failureReason: "mais_de_uma_pessoa", credits: 0 });
+    expect(await notices(requestId)).toEqual([expect.stringContaining("uma foto só sua")]);
+    expect(await requestRow(requestId)).toMatchObject({ status: "photo_rejected", failureReason: "mais_de_uma_pessoa", credits: 0, photoCheck: { ok: false, problem: "mais_de_uma_pessoa" } });
+    // Nada do que a visão viu (idade, roupa) vai para a auditoria — só o problema.
+    const [rejected] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "tryon.photo_rejected"));
+    expect(rejected!.after).toEqual({ from: "queued", problem: "mais_de_uma_pessoa" });
   });
 
   it("blusa sobre biquíni: pede foto vestida da cintura para baixo", async () => {
     const { requestId } = await seed({ pieceType: "blusa" });
     assistant.enqueueExtraction({ pessoas: 1, foto_de_pessoa_real: true, adulta: true, sem_roupa: false, corpo_visivel: "ate_joelhos", parte_de_baixo: "roupa_de_banho_ou_intima" });
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "photo_rejected", problem: "parte_de_baixo" });
-    expect(provider.sentMessages[0]!.body).toContain("vestida da cintura pra baixo");
+    expect((await notices(requestId))[0]).toContain("vestida da cintura pra baixo");
+  });
+});
+
+describe("wa.tryon — recusa do modelo e julgamento fora do formato", () => {
+  it("o modelo recusa ler a foto dela (segurança): foto recusada com o texto neutro, sem repetir nem chamar a FASHN", async () => {
+    const { requestId } = await seed();
+    assistant.enqueueExtraction(new AssistantUnavailableError("O modelo recusou ler estas fotos.", { reason: "recusa" }));
+    expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "photo_rejected", problem: "nao_pode" });
+    expect(studio.generations).toHaveLength(0);
+    expect((await notices(requestId))[0]).toContain("não consigo usar");
+  });
+
+  it("o modelo recusa julgar a prévia: encerra sem mandar e sem pagar outra", async () => {
+    const { requestId } = await seed();
+    assistant.enqueueExtraction(undefined);
+    assistant.enqueueExtraction(new AssistantUnavailableError("O modelo recusou ler estas fotos.", { reason: "recusa" }));
+    expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "recusada_pela_ia" });
+    expect(studio.generations).toHaveLength(1);
+    expect(provider.sentImages).toHaveLength(0);
+    expect(await requestRow(requestId)).toMatchObject({ credits: 3 });
+  });
+
+  it("julgamento fora do formato: NÃO paga outra prévia — relança, e a próxima rodada julga de novo pelo mesmo pedido", async () => {
+    const { requestId } = await seed();
+    assistant.enqueueExtraction(undefined);
+    assistant.enqueueExtraction({ ...FAKE_TRYON_GARMENT_JSON, artefatos: [""] });
+    await expect(runTryOn(deps(), event(requestId, 0))).rejects.toThrow(/fora do formato/);
+    expect(await requestRow(requestId)).toMatchObject({ status: "processing", attempts: 1 });
+    expect(await runTryOn(deps(), event(requestId, 1))).toMatchObject({ outcome: "sent", credits: 3 });
+    expect(studio.generations.filter((call) => call.resumeJobId === undefined)).toHaveLength(1);
   });
 });
 
@@ -244,7 +287,7 @@ describe("wa.tryon — os portões", () => {
     assistant.enqueueExtraction(bad);
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "nao_ficou_fiel" });
     expect(provider.sentImages).toHaveLength(0);
-    expect(provider.sentMessages.at(-1)!.body).toContain("não ficou fiel à peça");
+    expect(await notices(requestId)).toEqual([expect.stringContaining("não ficou fiel à peça")]);
     expect(await requestRow(requestId)).toMatchObject({ status: "failed", failureReason: "nao_ficou_fiel", attempts: 2, credits: 6 });
   });
 
@@ -263,8 +306,9 @@ describe("wa.tryon — a regra de ouro: o que a FASHN pode ter aceitado nunca é
     const { requestId } = await seed({ status: "submitting", attempts: 1 });
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "envio_incerto" });
     expect(studio.generations).toHaveLength(0);
+    expect(await requestRow(requestId)).toMatchObject({ credits: 3, failureReason: "envio_incerto" });
     expect((await requestRow(requestId)).usdCents).toBeGreaterThan(0);
-    expect(provider.sentMessages.at(-1)!.body).toContain("Não consegui fazer a sua prévia agora");
+    expect(await notices(requestId)).toEqual([expect.stringContaining("Não consegui fazer a sua prévia agora")]);
   });
 
   it("'fazendo' com um id que a FASHN não conhece mais: encerra sem pedir de novo", async () => {
@@ -286,9 +330,8 @@ describe("wa.tryon — a regra de ouro: o que a FASHN pode ter aceitado nunca é
     const { requestId } = await seed();
     studio.failNext(new StudioUnavailableError("sem crédito", "no_credits", 402));
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "sem_creditos" });
-    const bodies = provider.sentMessages.map((message) => ({ to: message.toE164, body: message.body }));
-    expect(bodies.find((message) => message.to === PHONE)?.body).toContain("Não consegui fazer a sua prévia agora");
-    expect(bodies.find((message) => message.to === OWNER)?.body).toContain("créditos da FASHN acabaram");
+    expect(await notices(requestId)).toEqual([expect.stringContaining("Não consegui fazer a sua prévia agora")]);
+    expect(provider.sentMessages.find((message) => message.toE164 === OWNER)?.body).toContain("créditos da FASHN acabaram");
     // Nenhum crédito da FASHN; o gasto registrado é só o da checagem da foto.
     const row = await requestRow(requestId);
     expect(row).toMatchObject({ status: "failed", failureReason: "sem_creditos", credits: 0 });
@@ -318,7 +361,16 @@ describe("wa.tryon — tempo, interruptor e desistência", () => {
     expect((await requestRow(requestId)).status).toBe("queued");
     await expect(runTryOn(deps(), event(requestId, 3))).rejects.toThrow(/sem fixture/);
     expect(await requestRow(requestId)).toMatchObject({ status: "failed", failureReason: "indisponivel" });
-    expect(provider.sentMessages.at(-1)!.body).toContain("Não consegui fazer a sua prévia agora");
+    expect(await notices(requestId)).toEqual([expect.stringContaining("Não consegui fazer a sua prévia agora")]);
     expect(studio.generations).toHaveLength(0);
+  });
+
+  it("o WhatsApp fora do ar na última tentativa não prende o pedido: o estado final grava e o aviso fica na fila", async () => {
+    const { requestId } = await seed();
+    vi.spyOn(provider, "sendImage").mockRejectedValue(new Error("Z-API fora do ar"));
+    for (const attempt of [0, 1, 2]) await expect(runTryOn(deps(), event(requestId, attempt))).rejects.toThrow(/Z-API/);
+    await expect(runTryOn(deps(), event(requestId, 3))).rejects.toThrow(/Z-API/);
+    expect(await requestRow(requestId)).toMatchObject({ status: "failed", failureReason: "demorou_demais", credits: 3 });
+    expect(await notices(requestId)).toEqual([expect.stringContaining("Não consegui fazer a sua prévia agora")]);
   });
 });

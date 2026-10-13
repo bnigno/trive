@@ -16,10 +16,14 @@ export const TRYON_TIMING = {
   minPrepareMs: 15_000,
   /** Menos que isto até o fim da invocação: não envia à FASHN (um envio cortado no meio seria "incerto"). */
   minSubmitMs: 20_000,
-  /** Guardado do prazo para o portão e o envio pelo WhatsApp depois que a imagem chega. */
-  finishReserveMs: 15_000,
-  /** A saída em base64 da FASHN some em 60 min: passou disso esperando, desiste. */
-  giveUpAfterMs: 50 * 60_000,
+  /** Guardado do prazo para os portões e o envio pelo WhatsApp depois que a imagem chega. */
+  finishReserveMs: 25_000,
+  /** Guardado do prazo para o envio pelo WhatsApp depois dos portões. */
+  deliverReserveMs: 10_000,
+  /** O tryon-max leva ~25 s: parado há mais que isto, desiste (ela está esperando na conversa). */
+  giveUpAfterMs: 8 * 60_000,
+  /** Pedido "em andamento" sem mudar há tanto tempo = a fila perdeu a linha (função morta no meio): encerra. */
+  staleAfterMs: 15 * 60_000,
   /** Foto mais velha que isto não vira prévia (a URL da Z-API expira e a conversa já andou). */
   photoMaxAgeMs: 24 * 3_600_000,
 } as const;
@@ -64,6 +68,9 @@ export function tryOnCaption(productName: string): string {
   return `✨ ${productName} em você — prévia feita com IA a partir da sua foto. Mostra a cor e o modelo; o tamanho certinho a gente confere com você 💛`;
 }
 
+/** Fotos recusadas na checagem por cliente por dia (cada uma passa pela visão): este múltiplo do teto de prévias. */
+export const TRYON_PHOTO_REJECTIONS_PER_PREVIEW = 3;
+
 /** Por que a foto não serve (checagem antes de gastar). */
 export const TRYON_PHOTO_PROBLEMS = [
   "sem_pessoa",
@@ -106,7 +113,8 @@ export function photoProblemText(problem: TryOnPhotoProblem, input: { productNam
     case "nao_e_foto":
       return "Pra prévia eu preciso de uma foto só sua, em pé e de frente 📸 Me manda outra?";
     case "nao_pode":
-      return "Essa foto eu não consigo usar pra prévia 💛 Se quiser, me manda outra só sua, vestida e de corpo inteiro.";
+      // Sem convite a outra foto: pode ser alguém que não deveria estar ali.
+      return "Essa foto eu não consigo usar pra prévia 💛 Posso te mostrar a peça na modelo e conferir seu tamanho?";
   }
 }
 

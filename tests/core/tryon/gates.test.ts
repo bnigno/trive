@@ -12,6 +12,8 @@ import {
   passesTryOnVerdict,
   PERSON_JUDGE_JSON_SCHEMA,
   PERSON_JUDGE_SYSTEM_PROMPT,
+  storedTryOnVerdict,
+  storedVerdictApproves,
   tryOnVerdictSummary,
   type GarmentJudgment,
   type PersonJudgment,
@@ -76,7 +78,15 @@ describe("portões depois da FASHN", () => {
   it("corpo afinado, pessoa trocada, defeito ou nota baixa reprovam", () => {
     const afinou = { ...pessoa, corpo_preservado: false, diferencas_no_corpo: ["cintura afinada"] };
     expect(passesPersonJudge(afinou)).toBe(false);
-    expect(tryOnVerdictSummary({ garment: peca, person: afinou })).toBe("9/10 — corpo mudou (cintura afinada)");
+    // Do corpo dela, só o veredito: o log e a auditoria não guardam o que o modelo disse que mudou.
+    expect(tryOnVerdictSummary({ garment: peca, person: afinou })).toBe("9/10 — corpo mudou");
+    const stored = storedTryOnVerdict({ garment: peca, person: afinou }, "job-1");
+    expect(stored).toEqual({ vendorJobId: "job-1", passed: false, summary: "9/10 — corpo mudou", garment: peca, person: { mesma_pessoa: true, corpo_preservado: false } });
+    expect(JSON.stringify(stored)).not.toContain("cintura");
+    expect(storedVerdictApproves(storedTryOnVerdict({ garment: peca, person: pessoa }, "job-1"), "job-1")).toBe(true);
+    expect(storedVerdictApproves(storedTryOnVerdict({ garment: peca, person: pessoa }, "job-1"), "job-2")).toBe(false);
+    expect(storedVerdictApproves(stored, "job-1")).toBe(false);
+    expect(storedVerdictApproves(null, "job-1")).toBe(false);
     expect(passesPersonJudge({ ...pessoa, mesma_pessoa: false })).toBe(false);
     expect(passesPersonJudge({ ...pessoa, artefatos: ["dedos a mais"] })).toBe(false);
     expect(passesGarmentJudge({ ...peca, nota: 6 })).toBe(false);

@@ -117,7 +117,11 @@ export function passesTryOnVerdict(verdict: TryOnVerdict): boolean {
   return passesGarmentJudge(verdict.garment) && passesPersonJudge(verdict.person);
 }
 
-/** Uma linha para o log e a auditoria: "8/10" ou "6/10 — decote diferente; corpo mudou (cintura afinada)". */
+/**
+ * Uma linha para o log e a auditoria: "8/10" ou "6/10 — corte diferente; corpo
+ * mudou". Do corpo dela, só o veredito — nunca o que o modelo disse que mudou
+ * (minimização: o log e a auditoria não guardam descrição do corpo).
+ */
 export function tryOnVerdictSummary(verdict: TryOnVerdict): string {
   const { garment, person } = verdict;
   const problems = [
@@ -127,8 +131,38 @@ export function tryOnVerdictSummary(verdict: TryOnVerdict): string {
     garment.corte_ok ? null : "corte diferente",
     ...garment.artefatos,
     person.mesma_pessoa ? null : "pessoa diferente",
-    person.corpo_preservado ? null : `corpo mudou${person.diferencas_no_corpo.length > 0 ? ` (${person.diferencas_no_corpo.join(", ")})` : ""}`,
-    ...person.artefatos,
+    person.corpo_preservado ? null : "corpo mudou",
+    person.artefatos.length > 0 ? `${person.artefatos.length} defeito(s) na pessoa` : null,
   ].filter((item): item is string => item !== null);
   return problems.length > 0 ? `${garment.nota}/10 — ${problems.join("; ")}` : `${garment.nota}/10`;
+}
+
+/**
+ * O que fica gravado do julgamento (tryon_requests.verdict): a peça inteira
+ * (é sobre a peça) e, da pessoa, só os dois "sim/não" — e o id do pedido da
+ * FASHN que foi julgado (a retomada de um envio que caiu não julga de novo).
+ */
+export type StoredTryOnVerdict = {
+  vendorJobId: string | null;
+  passed: boolean;
+  summary: string;
+  garment: GarmentJudgment;
+  person: { mesma_pessoa: boolean; corpo_preservado: boolean };
+};
+
+export function storedTryOnVerdict(verdict: TryOnVerdict, vendorJobId: string | null): StoredTryOnVerdict {
+  return {
+    vendorJobId,
+    passed: passesTryOnVerdict(verdict),
+    summary: tryOnVerdictSummary(verdict),
+    garment: verdict.garment,
+    person: { mesma_pessoa: verdict.person.mesma_pessoa, corpo_preservado: verdict.person.corpo_preservado },
+  };
+}
+
+/** O veredito gravado aprova ESTE pedido da FASHN? (jsonb torto = não.) */
+export function storedVerdictApproves(stored: unknown, vendorJobId: string | null): boolean {
+  if (!vendorJobId || typeof stored !== "object" || stored === null) return false;
+  const value = stored as { vendorJobId?: unknown; passed?: unknown };
+  return value.vendorJobId === vendorJobId && value.passed === true;
 }
