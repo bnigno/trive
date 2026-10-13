@@ -67,7 +67,15 @@ import { spDayKey } from "@/lib/sp-day";
 import { kickOutbox, type DbOrTx } from "@/queue/enqueue";
 import { mdPathFor } from "@/services/catalog";
 import { garmentImageFor, requireProductForStudio, ServiceError, type ProductForStudio } from "@/services/studio";
-import { enqueueTryOnNotice, TRYON_EVENT, tryOnMessageDedupeKey, tryOnPayloadSchema, type TryOnRequest } from "@/services/tryon";
+import {
+  enqueueTryOnNotice,
+  TRYON_EVENT,
+  tryOnConsentRevoked,
+  tryOnMessageDedupeKey,
+  tryOnNotRevokedSql,
+  tryOnPayloadSchema,
+  type TryOnRequest,
+} from "@/services/tryon";
 import { loadTryOnSettings } from "@/services/tryon-settings";
 import { INBOUND_IMAGE_MAX_BYTES, prepareImageForModel } from "@/services/wa-media";
 import { sendMediaMessage, sendToOwner } from "@/services/wa-messaging";
@@ -172,14 +180,26 @@ async function transition(
   to: TryOnStatus,
   patch: Partial<typeof tryonRequests.$inferInsert>,
   now: Date,
+  options: { onlyIfNotRevoked?: boolean } = {},
 ): Promise<TryOnRequest | null> {
   assertTryOnTransition(from, to);
   const [updated] = await db
     .update(tryonRequests)
     .set({ ...patch, status: to, updatedAt: now })
-    .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, from)))
+    .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, from), ...(options.onlyIfNotRevoked ? [tryOnNotRevokedSql] : [])))
     .returning();
   return updated ?? null;
+}
+
+/** O que está no BANCO agora (o "Agora não" chega pelo webhook enquanto a fila trabalha). */
+async function revokedNow(db: DbOrTx, request: TryOnRequest): Promise<boolean> {
+  const fresh = await loadRequest(db, request.id);
+  return fresh !== null && tryOnConsentRevoked(fresh);
+}
+
+/** "Agora não" (ou SAIR) chegou no meio: encerra sem pedir — nem pagar — mais nada. */
+function closeRevoked(db: DbOrTx, deps: TryOnDeps, request: TryOnRequest, input: { usdCents?: number; credits?: number; notice?: string; now: Date }): Promise<TryOnResult> {
+  return failRequest(db, deps, request, { reason: "cliente_desistiu", ...input });
 }
 
 /** Crédito acabou ou chave sumiu: avisa a dona uma vez por dia (melhor esforço — a cliente já foi avisada pela fila). */
@@ -445,7 +465,8 @@ async function submit(
   input: { photo: Buffer; garment: Image; category: StudioGarmentCategory; clock: Clock },
 ): Promise<{ request: TryOnRequest; image: StudioImage | null } | TryOnResult> {
   const attempt = request.attempts + 1;
-  const claimed = await transition(db, request, "queued", "submitting", { attempts: attempt }, input.clock());
+  // Só pede à FASHN se ela não revogou (a condição vai no próprio UPDATE: nada de corrida com o webhook).
+  const claimed = await transition(db, request, "queued", "submitting", { attempts: attempt }, input.clock(), { onlyIfNotRevoked: true });
   if (!claimed) return { outcome: "skipped", reason: "pedido_fora_da_fila" };
 
   let jobId: string | null = null;
@@ -681,22 +702,20 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
         ensureTime(options, clock, TRYON_TIMING.deliverReserveMs);
         return deliver(db, deps, request, { preview: image.data, productName: product.name, credits, usdCents, now: clock() });
       }
-      // Ela disse "Agora não" (ou SAIR) enquanto a 1ª era feita: nada de segunda tentativa paga.
-      const declinedMeanwhile = request.declinedAt !== null && request.acceptedAt !== null && request.declinedAt >= request.acceptedAt;
-      if (declinedMeanwhile) {
+      const notFaithful = "A prévia não ficou fiel à peça, então preferi não te mandar 💛";
+      // Ela disse "Agora não" (ou SAIR) enquanto a 1ª era feita — lido do BANCO, não da memória: nada de
+      // segunda tentativa paga.
+      if (await revokedNow(db, request)) {
         await db.update(tryonRequests).set({ verdict: stored }).where(eq(tryonRequests.id, request.id));
-        return failRequest(db, deps, { ...request, verdict: stored }, {
-          reason: "cliente_desistiu",
-          usdCents,
-          credits,
-          notice: "A prévia não ficou fiel à peça, então preferi não te mandar 💛",
-          now: clock(),
-        });
+        return closeRevoked(db, deps, { ...request, verdict: stored }, { usdCents, credits, notice: notFaithful, now: clock() });
       }
       if (request.attempts < TRYON_MAX_ATTEMPTS) {
-        // Infiel: o pedido foi usado (e pago); volta à fila para outra semente.
-        const requeued = await transition(db, request, "processing", "queued", { vendorJobId: null, credits, usdCents, verdict: stored }, clock());
-        if (!requeued) return { outcome: "skipped", reason: "pedido_fora_da_fila" };
+        // Infiel: o pedido foi usado (e pago); volta à fila para outra semente — só se ela não revogou nesse meio-tempo.
+        const requeued = await transition(db, request, "processing", "queued", { vendorJobId: null, credits, usdCents, verdict: stored }, clock(), { onlyIfNotRevoked: true });
+        if (!requeued) {
+          if (await revokedNow(db, request)) return closeRevoked(db, deps, { ...request, verdict: stored }, { usdCents, credits, notice: notFaithful, now: clock() });
+          return { outcome: "skipped", reason: "pedido_fora_da_fila" };
+        }
         await audit(db, request, "tryon.retry", { vendorJobId: request.vendorJobId, verdict: stored.summary });
         request = requeued;
         continue;
@@ -737,6 +756,8 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
     if (!photoVerdict.ok) return rejectPhoto(db, request, { problem: photoVerdict.problem, productName: product.name, category, now: clock() });
 
     ensureTime(options, clock, TRYON_TIMING.minSubmitMs);
+    // Revogada enquanto a foto era checada: encerra sem chamar a FASHN (a resposta ao toque já foi).
+    if (await revokedNow(db, request)) return closeRevoked(db, deps, request, { notice: failureText("cliente_desistiu"), now: clock() });
     const submitted = await submit(db, deps, request, { photo, garment, category, clock });
     if ("outcome" in submitted) return submitted;
     request = submitted.request;

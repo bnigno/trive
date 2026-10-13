@@ -16,12 +16,31 @@ import {
   type TryOnAnswer,
   type TryOnOfferVerdict,
 } from "@/core/tryon/offer";
-import { blocksTryOnToday, failureText, photoRetryWelcome, quotaText, requiredFraming, TRYON_TIMING, tryOnCategoryFor, tryOnQuotaVerdict } from "@/core/tryon/rules";
+import {
+  blocksTryOnToday,
+  failureText,
+  photoRetryWelcome,
+  quotaText,
+  requiredFraming,
+  TRYON_PHOTO_REJECTIONS_PER_PREVIEW,
+  TRYON_TIMING,
+  tryOnCategoryFor,
+  tryOnQuotaVerdict,
+} from "@/core/tryon/rules";
 import { assertTryOnTransition, isTryOnStatus, TRYON_IN_FLIGHT_STATUSES, type TryOnStatus } from "@/core/tryon/status";
 import { auditLog, customers, orders, products, tryonRequests, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { garmentImageFor } from "@/services/studio";
-import { countTryOnsToday, enqueueTryOnNotice, queueTryOn, TRYON_CONSENT_VERSION, type TryOnRequest } from "@/services/tryon";
+import {
+  countTryOnsToday,
+  enqueueTryOnNotice,
+  isTryOnBlockedToday,
+  queueTryOn,
+  TRYON_CONSENT_VERSION,
+  TRYON_PHOTO_BEFORE_TAP_MAX_MS,
+  tryOnConsentRevoked,
+  type TryOnRequest,
+} from "@/services/tryon";
 import { loadTryOnSettings } from "@/services/tryon-settings";
 import { isBotMediaEnabled } from "@/services/wa-media";
 
@@ -43,7 +62,7 @@ export async function evaluateTryOnOffer(
   if (!settings.enabled) return { verdict: { offer: false, reason: "desligado" }, category: null };
   const [product] = await db.select({ pieceType: products.pieceType }).from(products).where(eq(products.id, input.productId)).limit(1);
   const category = tryOnCategoryFor(parsePieceType(product?.pieceType ?? ""));
-  const [mediaEnabled, garment, [inFlight], [lastOffer], [lastDecline], today, closedToday] = await Promise.all([
+  const [mediaEnabled, garment, [inFlight], [lastOffer], [lastDecline], today, blockedToday] = await Promise.all([
     isBotMediaEnabled(db),
     category ? garmentImageFor(db, input.productId, input.color) : Promise.resolve(null),
     db
@@ -64,16 +83,7 @@ export async function evaluateTryOnOffer(
       .from(tryonRequests)
       .where(and(eq(tryonRequests.phoneE164, input.phoneE164), isNotNull(tryonRequests.declinedAt))),
     countTryOnsToday(db, { phoneE164: input.phoneE164, now: input.now }),
-    db
-      .select({ status: tryonRequests.status, failureReason: tryonRequests.failureReason })
-      .from(tryonRequests)
-      .where(
-        and(
-          eq(tryonRequests.conversationId, input.conversationId),
-          inArray(tryonRequests.status, ["photo_rejected", "failed"]),
-          gte(tryonRequests.createdAt, new Date(input.now.getTime() - TRYON_OFFER_TIMING.answerWindowMs)),
-        ),
-      ),
+    isTryOnBlockedToday(db, { phoneE164: input.phoneE164, now: input.now }),
   ]);
   const quota = tryOnQuotaVerdict({
     customerToday: today.customer,
@@ -81,6 +91,8 @@ export async function evaluateTryOnOffer(
     perCustomerDaily: settings.perCustomerDaily,
     dailyTotal: settings.dailyTotal,
   });
+  // O teto de fotos recusadas também conta: oferecer para, no toque, dizer que acabou não serve.
+  const photosOk = today.rejected < settings.perCustomerDaily * TRYON_PHOTO_REJECTIONS_PER_PREVIEW;
   const verdict = shouldOfferTryOn({
     enabled: settings.enabled,
     mediaEnabled,
@@ -89,8 +101,8 @@ export async function evaluateTryOnOffer(
     inStock: input.inStock,
     colorInStock: input.colorInStock,
     inFlight: inFlight !== undefined,
-    quotaOk: quota.ok,
-    blockedToday: closedToday.some((row) => blocksTryOnToday(row)),
+    quotaOk: quota.ok && photosOk,
+    blockedToday,
     lastOfferAt: lastOffer?.at ?? null,
     lastDeclinedAt: lastDecline?.at ?? null,
     ...(input.asked ? { asked: true } : {}),
@@ -153,34 +165,44 @@ async function move(tx: DbOrTx, request: TryOnRequest, to: TryOnStatus, patch: P
 
 /**
  * "Agora não" (o toque ou o SAIR): para o que ainda não foi à FASHN e
- * carimba a recusa em tudo o que poderia ser reaberto — nada desta oferta
- * volta sozinho. O que já está com a FASHN termina (foi pago).
+ * carimba a recusa no resto — nada desta oferta segue sozinho, e a fila lê o
+ * carimbo antes de qualquer passo pago (sem segunda tentativa). O que já está
+ * com a FASHN termina. Se a fila mudar o estado no meio, relê e tenta de novo.
  */
 async function declineRequest(tx: DbOrTx, request: TryOnRequest, now: Date): Promise<"declined" | "cancelled" | "in_flight" | "stamped" | "already" | "nothing"> {
-  // Já recusada (depois do último aceite): o toque repetido não muda nada.
-  const alreadyDeclined = request.status === "declined" || (request.declinedAt !== null && (!request.acceptedAt || request.declinedAt >= request.acceptedAt));
-  if (alreadyDeclined) return "already";
-  switch (request.status) {
-    case "offered":
-    case "awaiting_photo":
-      return (await move(tx, request, "declined", { declinedAt: now }, now)) ? "declined" : "nothing";
-    case "queued":
-      // Ainda não foi à FASHN: cancela (a fila encontra "falhou" e não pede nada).
-      return (await move(tx, request, "failed", { declinedAt: now, failureReason: "cliente_desistiu", finishedAt: now }, now)) ? "cancelled" : "nothing";
-    case "submitting":
-    case "processing":
-    case "photo_rejected":
-    case "failed":
-      // Carimbo sem mudar o estado: impede reabrir com outra foto.
-      await tx.update(tryonRequests).set({ declinedAt: now, updatedAt: now }).where(eq(tryonRequests.id, request.id));
-      return request.status === "submitting" || request.status === "processing" ? "in_flight" : "stamped";
-    default:
-      return "nothing";
+  let current = request;
+  for (let round = 0; round < 3; round += 1) {
+    switch (current.status) {
+      case "declined":
+        return "already";
+      case "offered":
+      case "awaiting_photo":
+        if (await move(tx, current, "declined", { declinedAt: now }, now)) return "declined";
+        break;
+      case "queued":
+        // Ainda não foi à FASHN: cancela (a fila encontra "falhou" e não pede nada) — mesmo já carimbado.
+        if (await move(tx, current, "failed", { declinedAt: now, failureReason: "cliente_desistiu", finishedAt: now }, now)) return "cancelled";
+        break;
+      case "submitting":
+      case "processing":
+      case "photo_rejected":
+      case "failed":
+      case "sent": {
+        // Carimbo sem mudar o estado (sem condição: a fila pode estar mudando o estado agora).
+        const already = tryOnConsentRevoked(current);
+        if (!already) await tx.update(tryonRequests).set({ declinedAt: now, updatedAt: now }).where(eq(tryonRequests.id, current.id));
+        if (already) return "already";
+        return current.status === "submitting" || current.status === "processing" ? "in_flight" : "stamped";
+      }
+      default:
+        return "nothing";
+    }
+    const [fresh] = await tx.select().from(tryonRequests).where(eq(tryonRequests.id, current.id)).limit(1);
+    if (!fresh) return "nothing";
+    current = fresh;
   }
+  return "nothing";
 }
-
-/** Quanto antes do toque a foto pode ter chegado para valer como "a foto para a prévia". */
-const PHOTO_BEFORE_TAP_MAX_MS = 10 * 60_000;
 
 /**
  * A foto que ela mandou LOGO antes do toque (o texto da oferta pede o toque
@@ -196,7 +218,7 @@ async function photoRightBeforeTap(tx: DbOrTx, request: TryOnRequest, input: { t
     .orderBy(desc(waMessages.createdAt))
     .limit(1);
   if (!last || last.kind !== "image") return null;
-  if (last.createdAt <= request.offeredAt || input.now.getTime() - last.createdAt.getTime() > PHOTO_BEFORE_TAP_MAX_MS) return null;
+  if (last.createdAt <= request.offeredAt || input.now.getTime() - last.createdAt.getTime() > TRYON_PHOTO_BEFORE_TAP_MAX_MS) return null;
   return last.id;
 }
 
@@ -226,12 +248,7 @@ export async function recordTryOnAnswer(
   const ackKey = `resposta:${input.tapMessageId}`;
 
   if (input.answer === "agora_nao") {
-    let outcome = await declineRequest(tx, request, input.now);
-    if (outcome === "nothing") {
-      // A fila mudou o estado no meio do caminho (ex.: foi para a FASHN): relê e tenta uma vez mais.
-      const [fresh] = await tx.select().from(tryonRequests).where(eq(tryonRequests.id, request.id)).limit(1);
-      if (fresh) outcome = await declineRequest(tx, fresh, input.now);
-    }
+    const outcome = await declineRequest(tx, request, input.now);
     // Toque repetido: nada muda, nenhuma resposta nova.
     if (outcome === "already") return { ...base, ackEventId: null, jobEventId: null };
     if (outcome === "nothing") return null;
@@ -252,6 +269,11 @@ export async function recordTryOnAnswer(
   if (!settings.enabled) {
     // Desligada depois da oferta: nada de consentimento para uma prévia que não vai sair.
     const ackEventId = await enqueueTryOnNotice(tx, request, ackKey, failureText("desligado"));
+    return { ...base, ackEventId, jobEventId: null };
+  }
+  if (await isTryOnBlockedToday(tx, { phoneE164: request.phoneE164, now: input.now })) {
+    // "Não pode" ou recusa da IA hoje: uma pergunta antiga não reabre a porta — e o texto não convida outra foto.
+    const ackEventId = await enqueueTryOnNotice(tx, request, ackKey, failureText("visao_recusou"));
     return { ...base, ackEventId, jobEventId: null };
   }
   const accepted = await move(tx, request, "awaiting_photo", { acceptedAt: input.now, consentVersion: TRYON_CONSENT_VERSION, declinedAt: null }, input.now);
@@ -286,7 +308,11 @@ export async function recordTryOnAnswer(
       ? quotaText(queued.reason, settings.perCustomerDaily)
       : queued.reason === "em_andamento"
         ? "Já tem uma prévia sua sendo feita — chega já já 🪄"
-        : failureText("indisponivel");
+        : queued.reason === "foto_usada" || queued.reason === "foto_antiga"
+          ? tryOnAnswerAckText({ answer: "quero", withPhoto: false, framing: category ? requiredFraming(category) : null })
+          : queued.reason === "bloqueada_hoje"
+            ? failureText("visao_recusou")
+            : failureText("indisponivel");
   const ackEventId = await enqueueTryOnNotice(tx, accepted, ackKey, body);
   return { ...base, ackEventId, jobEventId: null };
 }
@@ -324,8 +350,7 @@ export async function findTryOnForPhoto(db: DbOrTx, input: { conversationId: str
   if ((TRYON_IN_FLIGHT_STATUSES as readonly string[]).includes(request.status)) return { kind: "in_flight", productName };
   if (request.status === "offered") return { kind: "pending_tap", productName };
   if (request.status === "awaiting_photo") return consentAlive(request, input.now) ? { kind: "ready", request, productName } : { kind: "none" };
-  const declinedAfter = request.declinedAt !== null && (!request.acceptedAt || request.declinedAt >= request.acceptedAt);
-  if (photoRetryWelcome(request) && !declinedAfter) return { kind: "ask_again", productName };
+  if (photoRetryWelcome(request) && !tryOnConsentRevoked(request)) return { kind: "ask_again", productName };
   return { kind: "none" };
 }
 
@@ -365,7 +390,7 @@ export async function tryOnMemoryLines(db: DbOrTx, input: { conversationId: stri
     case "photo_rejected":
     case "failed":
       if (blocksTryOnToday(request)) return [`A prévia de ${peca} não pôde ser feita com a foto dela: hoje não ofereça a prévia de novo nem comente; siga mostrando a peça na modelo.`];
-      if (request.failureReason === "cliente_desistiu") return [`Ela desistiu da prévia (${peca}): não ofereça de novo; ela pode pedir.`];
+      if (request.failureReason === "cliente_desistiu" || tryOnConsentRevoked(request)) return [`Ela desistiu da prévia (${peca}): não ofereça de novo; ela pode pedir.`];
       if (photoRetryWelcome(request)) {
         return [`A foto não serviu para a prévia de ${peca} (ela já recebeu a dica): se ela mandar outra foto DELA, chame oferecer_previa com com_a_foto_dela e ela_pediu — cada foto tem o seu toque.`];
       }

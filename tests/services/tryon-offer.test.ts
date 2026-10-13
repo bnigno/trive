@@ -4,9 +4,9 @@
 // conta UMA vez por dia; o toque volta pelo webhook (consentimento desta
 // prévia, sem turno da Lia, só com a Lia atendendo a conversa);
 // vestir_em_mim só funciona depois do toque e com foto de DEPOIS da
-// pergunta; foto recusada por problema da foto reabre a MESMA prévia (nunca
-// o "não pode"); "Agora não" e SAIR valem até a foto ir à FASHN; o
-// caderninho conta em que pé está; o funil soma no painel.
+// pergunta; cada foto tem o seu toque (foto que não serviu = outra
+// pergunta); "não pode" bloqueia o dia; "Agora não" e SAIR valem até a foto
+// ir à FASHN; o caderninho conta em que pé está; o funil soma no painel.
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -321,7 +321,7 @@ describe("foto que não serviu, SAIR e o funil", () => {
     const at = new Date(Date.now() - 60_000);
     const [row] = await db
       .insert(schema.tryonRequests)
-      .values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", failureReason, offeredAt: at, acceptedAt: at, queuedAt: at, consentVersion: "previa-v1-2026-10", createdAt: at, ...extra })
+      .values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", failureReason, offeredAt: at, acceptedAt: at, queuedAt: at, finishedAt: at, consentVersion: "previa-v1-2026-10", createdAt: at, ...extra })
       .returning();
     return { conversationId, request: row! };
   }
@@ -356,7 +356,55 @@ describe("foto que não serviu, SAIR e o funil", () => {
     const first = await recordTryOnAnswer(sdb(), { requestId: request.id, answer: "agora_nao", conversationId, tapMessageId: "t-1", now: new Date() });
     expect(first?.ackEventId).toEqual(expect.any(String));
     expect((await findTryOnForPhoto(sdb(), { conversationId, now: new Date() })).kind).toBe("none");
+    expect((await tryOnMemoryLines(sdb(), { conversationId, now: new Date() }))[0]).toContain("Ela desistiu da prévia");
     expect(await recordTryOnAnswer(sdb(), { requestId: request.id, answer: "agora_nao", conversationId, tapMessageId: "t-2", now: new Date() })).toMatchObject({ ackEventId: null });
+  });
+
+  it("bloqueio do dia: tocar 'Quero me ver' numa pergunta ANTIGA não reabre a porta (e não convida outra foto)", async () => {
+    const productId = await seedProduct({ name: "VESTIDO AMORA", slug: "vestido-amora", pieceType: "vestido" });
+    const { conversationId } = await seedConversation();
+    await executor(conversationId, { attachments: [] })("oferecer_previa", { produto: "vestido-amora" });
+    const [offerA] = await requests();
+    await db.insert(schema.tryonRequests).values({
+      conversationId,
+      phoneE164: PHONE,
+      productId,
+      status: "photo_rejected",
+      failureReason: "nao_pode",
+      acceptedAt: new Date(),
+      queuedAt: new Date(),
+      finishedAt: new Date(),
+    });
+    expect((await tap("TAP-OLD-LIST", tryOnRowId("quero", offerA!.id), "Quero me ver")).action).toBe("tryon_answer");
+    const [reloaded] = await db.select().from(schema.tryonRequests).where(eq(schema.tryonRequests.id, offerA!.id));
+    expect(reloaded).toMatchObject({ status: "offered", acceptedAt: null });
+    const [ack] = await acksFor(offerA!.id);
+    expect(ack).toContain("Não consegui fazer a prévia");
+    expect(ack).not.toMatch(/manda|outra foto/i);
+  });
+
+  it("perguntar de novo com uma foto que já foi usada: a pergunta pede uma foto NOVA (a recusada não vai de novo)", async () => {
+    const productId = await seedProduct({ name: "VESTIDO AMORA", slug: "vestido-amora", pieceType: "vestido" });
+    const { conversationId } = await seedConversation();
+    const usedPhoto = await seedPhoto(conversationId, "IMG-USADA");
+    await db.insert(schema.tryonRequests).values({
+      conversationId,
+      phoneE164: PHONE,
+      productId,
+      status: "photo_rejected",
+      failureReason: "enquadramento",
+      photoWaMessageId: usedPhoto,
+      acceptedAt: new Date(),
+      queuedAt: new Date(),
+      finishedAt: new Date(),
+    });
+    const attachments: unknown[] = [];
+    const offer = await executor(conversationId, { photoIds: [usedPhoto], attachments })("oferecer_previa", { produto: "vestido-amora", com_a_foto_dela: true, ela_pediu: true });
+    expect(offer.ok).toBe(true);
+    expect(offer.text).toContain("foto NOVA");
+    expect(JSON.stringify(attachments[0])).toContain("corpo inteiro");
+    const newest = (await requests()).find((row) => row.status === "offered");
+    expect(newest!.photoWaMessageId).toBeNull();
   });
 
   it("'Agora não' com a equipe no comando também vale (revogar nunca depende de quem atende)", async () => {

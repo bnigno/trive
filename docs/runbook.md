@@ -1098,7 +1098,7 @@ from tryon_requests order by created_at desc limit 20;
 - `envio_incerto`: a FASHN pode ter cobrado; confira o saldo, mas a prévia não é pedida de novo.
 - `demorou_demais`: passou de 8 min, ou ficou parada mais de 15 min (curada sozinha).
 - `nao_ficou_fiel`: os dois portões reprovaram.
-- `cliente_desistiu`: "Agora não" ou SAIR antes da FASHN.
+- `cliente_desistiu`: "Agora não" ou SAIR antes da FASHN, ou durante a primeira tentativa (aí não há segunda, paga).
 - `foto_indisponivel`: a URL da Z-API expirou. Se ela mandar de novo, a Lia pergunta de novo, porque cada foto tem o seu toque.
 
 Na auditoria: `tryon.consent`, `tryon.decline`, `tryon.submit`, `tryon.retry`, `tryon.sent`, `tryon.fail`, `tryon.photo_rejected`.

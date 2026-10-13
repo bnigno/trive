@@ -8,7 +8,7 @@ import { offerRefusalText, TRYON_OFFER_BUTTON, TRYON_OFFER_TITLE, tryOnOfferBody
 import { failureText, quotaText, requiredFraming } from "@/core/tryon/rules";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
-import { queueTryOn } from "@/services/tryon";
+import { isPhotoUsedByAnotherTryOn, queueTryOn } from "@/services/tryon";
 import { createTryOnOffer, evaluateTryOnOffer, findTryOnForPhoto } from "@/services/tryon-offer";
 import { loadTryOnSettings } from "@/services/tryon-settings";
 
@@ -60,10 +60,13 @@ export async function execOferecerPrevia(db: DbOrTx, ctx: BotExecutorContext, in
   if (!verdict.offer) return { ok: false, text: offerRefusalText(verdict.reason) };
 
   let photoWaMessageId: string | null = null;
+  let usedPhoto = false;
   if (input.foto !== undefined || input.com_a_foto_dela === true) {
     const picked = pickPhoto(ctx, input.foto);
     if (picked && "error" in picked) return { ok: false, text: picked.error };
-    photoWaMessageId = picked?.waMessageId ?? null;
+    // A foto que já foi a outra prévia (e não serviu) não vai de novo: a pergunta pede uma foto nova.
+    usedPhoto = picked !== null && (await isPhotoUsedByAnotherTryOn(db, { conversationId: ctx.conversationId, photoWaMessageId: picked.waMessageId }));
+    photoWaMessageId = picked && !usedPhoto ? picked.waMessageId : null;
   }
   const customerId = await resolveConversationCustomerId(db, ctx);
   const requestId = await createTryOnOffer(db, {
@@ -84,7 +87,7 @@ export async function execOferecerPrevia(db: DbOrTx, ctx: BotExecutorContext, in
   });
   return {
     ok: true,
-    text: `A pergunta tocável "Quer se ver com ela?" foi enviada (Quero me ver / Agora não) — ela já explica que é prévia feita com IA e o que acontece com a foto. Escreva no máximo 1 frase curta antes; NÃO repita a oferta, não peça a foto agora (o toque dela pede) e não insista.`,
+    text: `A pergunta tocável "Quer se ver com ela?" foi enviada (Quero me ver / Agora não) — ela já explica que é prévia feita com IA e o que acontece com a foto.${usedPhoto ? " A foto recente dela já foi usada numa prévia que não serviu: a pergunta pede uma foto NOVA." : ""} Escreva no máximo 1 frase curta antes; NÃO repita a oferta, não peça a foto agora (o toque dela pede) e não insista.`,
   };
 }
 
@@ -128,7 +131,10 @@ export async function execVestirEmMim(db: DbOrTx, ctx: BotExecutorContext, input
       case "desligado":
         return { ok: false, text: "A prévia na foto está desligada na loja: não prometa a prévia; siga com a peça." };
       case "foto_antiga":
-        return { ok: false, text: "Essa foto é de antes da pergunta da prévia (ou já foi usada): espere a foto NOVA dela." };
+      case "foto_usada":
+        return { ok: false, text: "Essa foto é de antes da pergunta da prévia (ou já foi usada numa prévia): espere a foto NOVA dela." };
+      case "bloqueada_hoje":
+        return { ok: false, text: "Hoje não dá para fazer a prévia com ela: não comente; siga mostrando a peça na modelo e conferindo o tamanho." };
       default:
         return { ok: false, text: `Não deu para pôr a prévia na fila agora: diga algo como "${failureText("indisponivel")}"` };
     }

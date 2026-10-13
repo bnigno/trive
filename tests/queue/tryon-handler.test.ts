@@ -294,12 +294,25 @@ describe("wa.tryon — os portões", () => {
     expect(await requestRow(requestId)).toMatchObject({ status: "failed", failureReason: "nao_ficou_fiel", attempts: 2, credits: 6 });
   });
 
-  it("ela disse 'Agora não' (ou SAIR) enquanto a 1ª era feita: a prévia infiel NÃO ganha segunda tentativa paga", async () => {
+  it("ela disse 'Agora não' (ou SAIR) DURANTE a 1ª tentativa: lido do banco, a prévia infiel NÃO ganha segunda tentativa paga", async () => {
     const { requestId } = await seed();
-    // O "Agora não" com a FASHN já fazendo só carimba a recusa (o estado segue).
-    await db.update(schema.tryonRequests).set({ acceptedAt: new Date(NOW.getTime() - 60_000), declinedAt: new Date(NOW.getTime() - 30_000) }).where(eq(schema.tryonRequests.id, requestId));
+    await db.update(schema.tryonRequests).set({ acceptedAt: new Date(NOW.getTime() - 60_000) }).where(eq(schema.tryonRequests.id, requestId));
     assistant.enqueueExtraction(undefined);
     assistant.enqueueExtraction({ ...FAKE_TRYON_GARMENT_JSON, corte_ok: false, nota: 4 });
+    // O webhook carimba a recusa enquanto o portão julga (o estado segue "fazendo").
+    const original = assistant.extractFromPhotos.bind(assistant);
+    let calls = 0;
+    vi.spyOn(assistant, "extractFromPhotos").mockImplementation(async (input) => {
+      calls += 1;
+      const call = calls;
+      // Chama o fake na ordem (os roteiros são consumidos na ordem das chamadas) e só depois carimba.
+      const result = original(input);
+      if (call === 2) {
+        await result;
+        await db.update(schema.tryonRequests).set({ declinedAt: NOW }).where(eq(schema.tryonRequests.id, requestId));
+      }
+      return result;
+    });
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "cliente_desistiu" });
     expect(studio.generations).toHaveLength(1);
     expect(provider.sentImages).toHaveLength(0);
