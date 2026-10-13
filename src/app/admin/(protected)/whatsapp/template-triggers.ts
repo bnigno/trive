@@ -27,6 +27,7 @@ export const TEMPLATE_TRIGGERS: Record<string, string> = {
   owner_chargeback: "Para você, quando o Mercado Pago sinaliza um chargeback",
   owner_fee_divergent: "Para você, quando a taxa real do Mercado Pago é diferente da estimada",
   owner_amount_divergent: "Para você, quando o valor pago é diferente do total do pedido",
+  owner_payment_rejected: "Para você, quando um cartão é recusado — com o motivo e o que fazer",
   owner_queue_dead: "Para você, quando a fila de envios trava",
   owner_daily_digest: "Para você, todo dia às 8h, junto da imagem do resumo",
 };

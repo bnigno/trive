@@ -95,6 +95,7 @@ import { sendOrderEmail } from "@/services/notifications";
 import {
   notifyOwnerChargeback,
   notifyOwnerAmountDivergent,
+  notifyOwnerPaymentRejected,
   notifyOwnerFeeDivergent,
   sendOrderCanceledWa,
   sendOrderRefundedWa,
@@ -121,6 +122,10 @@ const mpPaymentEventPayloadSchema = z.object({
 // Avisos de pedido (cancelado/reembolsado/chargeback) só precisam do id.
 const orderNoticePayloadSchema = z.object({ orderId: z.uuid() });
 const itemReturnPayloadSchema = z.object({ returnId: z.uuid() });
+const paymentRejectedPayloadSchema = orderNoticePayloadSchema.extend({
+  statusDetail: z.string().nullable().optional(),
+});
+
 const amountDivergentPayloadSchema = orderNoticePayloadSchema.extend({
   expectedCents: z.number().int().min(0),
   paidCents: z.number().int().min(0),
@@ -874,6 +879,13 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
     const payload = amountDivergentPayloadSchema.parse(event.payload);
     const result = await notifyOwnerAmountDivergent(getDb(), getMessagingProvider(), payload);
     console.info(`[mp.amount_divergent] ${payload.orderId}:`, result);
+  },
+  // Cartão recusado: o dono recebe o motivo em português e o que fazer, para
+  // oferecer o Pix na hora. Um aviso por pedido.
+  "mp.payment_rejected": async (event) => {
+    const payload = paymentRejectedPayloadSchema.parse(event.payload);
+    const result = await notifyOwnerPaymentRejected(getDb(), getMessagingProvider(), payload);
+    console.info(`[mp.payment_rejected] ${payload.orderId}:`, result);
   },
   // Chargeback sinalizado: sem transição automática, mas o dono fica sabendo.
   "payment.chargeback": async (event) => {

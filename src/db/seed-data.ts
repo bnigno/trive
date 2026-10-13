@@ -370,6 +370,17 @@ export const initialWaTemplates: Array<{
     variables: ["pedido", "cliente", "esperado", "pago", "diferenca"],
   },
   {
+    // Cartão recusado: o dono precisa saber na hora para oferecer o Pix.
+    key: "owner_payment_rejected",
+    label: "[interno] Cartão recusado",
+    bodyTemplate:
+      "Cartão recusado no pedido #{{pedido}} ⚠️\n" +
+      "Cliente: {{cliente}} · {{total}}\n" +
+      "{{motivo}}\n" +
+      "{{acao}}",
+    variables: ["pedido", "cliente", "total", "motivo", "acao"],
+  },
+  {
     key: "owner_low_stock",
     label: "[interno] Estoque baixo",
     bodyTemplate:

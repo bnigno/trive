@@ -24,6 +24,7 @@ export class FakePaymentGateway implements PaymentGateway {
     this.payments.set(paymentId, {
       paymentId,
       status: "pending",
+      statusDetail: "pending_waiting_transfer",
       externalReference: input.externalReference,
       amountCents,
       feeCents: null,
@@ -83,6 +84,7 @@ export class FakePaymentGateway implements PaymentGateway {
       );
     }
     payment.status = "approved";
+    payment.statusDetail = "accredited";
     // Taxa fake de 5% arredondada, espelhando a taxa REAL que o adapter de
     // produção extrai de fee_details.
     payment.feeCents = Math.round(payment.amountCents * 0.05);
@@ -90,7 +92,7 @@ export class FakePaymentGateway implements PaymentGateway {
     if (options?.paymentMethod) payment.paymentMethod = options.paymentMethod;
   }
 
-  rejectPayment(paymentId: string): void {
+  rejectPayment(paymentId: string, options?: { statusDetail?: string }): void {
     const payment = this.requirePayment(paymentId);
     if (payment.status !== "pending") {
       throw new Error(
@@ -98,6 +100,9 @@ export class FakePaymentGateway implements PaymentGateway {
       );
     }
     payment.status = "rejected";
+    // O motivo que o MP realmente devolve nas recusas de cartão da loja —
+    // 7 de 9 tentativas em 09–10/2026 foram exatamente esta.
+    payment.statusDetail = options?.statusDetail ?? "cc_rejected_high_risk";
   }
 
   cancelPayment(paymentId: string): void {

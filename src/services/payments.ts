@@ -135,7 +135,12 @@ export async function processPaymentEvent(
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
     const syncField = (
-      field: "mpPaymentId" | "paymentMethod" | "installments" | "mpFeeCents",
+      field:
+        | "mpPaymentId"
+        | "paymentMethod"
+        | "installments"
+        | "mpFeeCents"
+        | "mpStatusDetail",
       value: string | number,
     ) => {
       if (order[field] === value) return;
@@ -144,9 +149,23 @@ export async function processPaymentEvent(
       updateSet[field] = value as never;
     };
     syncField("mpPaymentId", payment.paymentId);
-    if (method !== null) syncField("paymentMethod", method);
-    if (payment.installments !== null)
-      syncField("installments", payment.installments);
+    // O PORQUÊ do MP, sempre: é ele que transforma "recusado" em "recusado
+    // pelo antifraude — ofereça Pix" na tela do pedido e no aviso ao dono.
+    if (payment.statusDetail !== null)
+      syncField("mpStatusDetail", payment.statusDetail);
+    // Método e parcelas descrevem um pagamento que ACONTECEU. Numa recusa,
+    // gravá-los fazia o painel mostrar "Cartão · 2×" num pedido que ninguém
+    // pagou — e o dono lia isso como se a venda tivesse entrado.
+    const pagamentoVingou =
+      payment.status === "approved" ||
+      payment.status === "refunded" ||
+      payment.status === "charged_back" ||
+      payment.status === "in_mediation";
+    if (pagamentoVingou) {
+      if (method !== null) syncField("paymentMethod", method);
+      if (payment.installments !== null)
+        syncField("installments", payment.installments);
+    }
     // A taxa só EXISTE depois de aprovado. Num Pix pendente o MP não devolve
     // fee_details e o líquido é zero — gravar aqui grava o valor da transação
     // como se fosse taxa (e estraga a margem real na tela do pedido).
@@ -196,6 +215,17 @@ export async function processPaymentEvent(
         orderNumber: order.orderNumber,
         expectedCents: order.totalCents,
         paidCents: payment.amountCents,
+      });
+    }
+
+    // (2c) Recusa: o dono precisa saber NA HORA para oferecer o Pix — foi
+    // assim que sete cartões caíram sem ninguém perceber em 09-10/2026.
+    if (payment.status === "rejected") {
+      await notifyRejected(tx, {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        totalCents: order.totalCents,
+        statusDetail: payment.statusDetail,
       });
     }
 
@@ -510,6 +540,43 @@ async function checkFeeDivergence(
  * cliente paga uma preferência antiga (o link é reemitido a cada clique) ou
  * quando alguma cobrança saiu errada. Um aviso por pedido.
  */
+/**
+ * Cartão recusado: um aviso por pedido, com o motivo em português e o que
+ * fazer. Dedupe por pedido para a cliente que tenta 6 vezes não virar 6
+ * mensagens no WhatsApp do dono — foi exatamente o que aconteceu em 09/10.
+ */
+async function notifyRejected(
+  tx: DbOrTx,
+  input: {
+    orderId: string;
+    orderNumber: number;
+    totalCents: number;
+    statusDetail: string | null;
+  },
+): Promise<void> {
+  const enqueuedId = await enqueueOutboxEvent(tx, {
+    eventType: "mp.payment_rejected",
+    dedupeKey: `mp.payment_rejected:${input.orderId}`,
+    aggregateType: "order",
+    aggregateId: input.orderId,
+    payload: { orderId: input.orderId, statusDetail: input.statusDetail },
+  });
+  if (enqueuedId !== null) {
+    await tx.insert(auditLog).values({
+      actorType: "system",
+      actorId: null,
+      action: "payment.rejected",
+      entityType: "order",
+      entityId: input.orderId,
+      after: {
+        orderNumber: input.orderNumber,
+        totalCents: input.totalCents,
+        statusDetail: input.statusDetail,
+      },
+    });
+  }
+}
+
 async function checkAmountDivergence(
   tx: DbOrTx,
   input: {

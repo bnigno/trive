@@ -69,6 +69,12 @@ export const orders = pgTable(
     mpPreferenceId: text("mp_preference_id"),
     mpPaymentId: text("mp_payment_id"),
     mpFeeCents: bigint("mp_fee_cents", { mode: "number" }),
+    /**
+     * Por que o último pagamento não passou, cru do MP
+     * (`cc_rejected_high_risk`…). Era descartado antes de chegar aqui: sem
+     * ele, uma recusa de cartão era indistinguível de silêncio.
+     */
+    mpStatusDetail: text("mp_status_detail"),
     // O que se sabe do DINHEIRO do reembolso, que é outra coisa do status do
     // pedido: 'refunded' diz que a venda caiu, isto diz se o valor voltou.
     // Sem estes três campos um pedido podia ficar 'refunded' com o dinheiro
