@@ -477,6 +477,13 @@
       "when": 1791857459055,
       "tag": "0067_motivo_da_recusa",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791860872771,
+      "tag": "0068_previa_na_foto_dela",
+      "breakpoints": true
     }
   ]
 }

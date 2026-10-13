@@ -49,6 +49,8 @@ const runResponseSchema = z.looseObject({
 const statusResponseSchema = z.looseObject({
   status: z.string(),
   output: z.array(z.string()).nullable().optional(),
+  /** O que a FASHN cobrou de fato (só no "completed"); sem ele, vale a tabela. */
+  credits_used: z.number().int().min(0).optional().catch(undefined),
   error: z
     .union([z.string(), z.looseObject({ name: z.string().optional(), message: z.string().optional() })])
     .nullable()
@@ -149,6 +151,8 @@ export class FashnImageStudio implements ImageStudio {
         count,
         seed,
         signal: input.signal,
+        onSubmitted: input.onSubmitted,
+        resumeJobId: input.resumeJobId,
       });
     }
     return this.run({
@@ -171,6 +175,8 @@ export class FashnImageStudio implements ImageStudio {
       count,
       seed,
       signal: input.signal,
+      onSubmitted: input.onSubmitted,
+      resumeJobId: input.resumeJobId,
     });
   }
 
@@ -231,9 +237,19 @@ export class FashnImageStudio implements ImageStudio {
     count: number;
     seed: number;
     signal?: AbortSignal;
+    onSubmitted?: (jobId: string) => void;
+    resumeJobId?: string;
   }): Promise<StudioImage[]> {
-    const { outputs, elapsedMs } = await this.runJob({ modelName: job.modelName, inputs: job.inputs, maxWaitMs: MAX_WAIT_MS, signal: job.signal });
-    const credits = creditsFor(job.call, job.quality, 1);
+    const { outputs, elapsedMs, creditsUsed } = await this.runJob({
+      modelName: job.modelName,
+      inputs: job.inputs,
+      maxWaitMs: MAX_WAIT_MS,
+      signal: job.signal,
+      onSubmitted: job.onSubmitted,
+      resumeJobId: job.resumeJobId,
+    });
+    // Numa saída só, o que a FASHN diz que cobrou vale mais que a tabela (com várias, a tabela: crédito é inteiro).
+    const credits = creditsUsed !== undefined && job.count === 1 ? creditsUsed : creditsFor(job.call, job.quality, 1);
     const images: StudioImage[] = [];
     for (const output of outputs.slice(0, job.count)) {
       images.push({
@@ -261,7 +277,7 @@ export class FashnImageStudio implements ImageStudio {
     signal?: AbortSignal;
     onSubmitted?: (jobId: string) => void;
     resumeJobId?: string;
-  }): Promise<{ outputs: string[]; elapsedMs: number }> {
+  }): Promise<{ outputs: string[]; elapsedMs: number; creditsUsed?: number }> {
     const headers = this.headers();
     const startedAt = this.now();
 
@@ -314,7 +330,7 @@ export class FashnImageStudio implements ImageStudio {
       if (status.data.status !== "completed") continue;
       const outputs = status.data.output ?? [];
       if (outputs.length === 0) throw new StudioUnavailableError("A FASHN terminou sem saída.", "invalid_response");
-      return { outputs, elapsedMs: this.now() - startedAt };
+      return { outputs, elapsedMs: this.now() - startedAt, creditsUsed: status.data.credits_used };
     }
   }
 

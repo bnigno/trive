@@ -90,6 +90,31 @@ export const FAKE_FIDELITY_JSON = {
   nota: 8,
 };
 
+/** "Me vê com ela": a checagem da foto aprova (uma adulta, corpo inteiro, vestida). */
+export const FAKE_TRYON_PHOTO_CHECK_JSON = {
+  pessoas: 1,
+  foto_de_pessoa_real: true,
+  adulta: true,
+  sem_roupa: false,
+  corpo_visivel: "cabeca_aos_pes",
+  parte_de_baixo: "roupa",
+};
+
+/** "Me vê com ela": o portão da peça aprova. */
+export const FAKE_TRYON_GARMENT_JSON = {
+  peca_real: "vestido (fake)",
+  peca_na_previa: "vestido (fake)",
+  ...FAKE_FIDELITY_JSON,
+};
+
+/** "Me vê com ela": o portão da pessoa aprova. */
+export const FAKE_TRYON_PERSON_JSON = {
+  mesma_pessoa: true,
+  diferencas_no_corpo: [],
+  corpo_preservado: true,
+  artefatos: [],
+};
+
 export class FakeSalesAssistant implements SalesAssistant {
   /** Um Error na fila faz o próximo respondTurn lançar (modelo fora do ar). */
   private readonly scripts: Array<FakeTurnScript | Error> = [];
@@ -122,8 +147,14 @@ export class FakeSalesAssistant implements SalesAssistant {
         ? FAKE_ARRIVAL_JSON
         : "matches" in properties
           ? { matches: [] }
-          : "mesma_peca" in properties
-            ? FAKE_FIDELITY_JSON
+          : "corpo_visivel" in properties
+            ? FAKE_TRYON_PHOTO_CHECK_JSON
+            : "peca_real" in properties
+              ? FAKE_TRYON_GARMENT_JSON
+              : "mesma_pessoa" in properties
+                ? FAKE_TRYON_PERSON_JSON
+                : "mesma_peca" in properties
+                  ? FAKE_FIDELITY_JSON
             : "legenda_1" in properties
               ? fakeInterviewDraft(input.userText)
               : FAKE_PRODUCT_DRAFT_JSON;

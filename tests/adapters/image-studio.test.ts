@@ -264,6 +264,66 @@ function videoServer(options: { statuses?: unknown[]; cdnBody?: Uint8Array<Array
   return { calls, fetchImpl };
 }
 
+describe("FashnImageStudio.generateOnModel — enviar uma vez e retomar pelo id (a prévia na foto da cliente)", () => {
+  beforeEach(() => {
+    vi.stubEnv("FASHN_API_KEY", "fashn-teste");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("avisa o id assim que a FASHN aceita; com o crédito que ela informou, vale o informado", async () => {
+    const server = fashnServer({ statuses: [{ status: "completed", output: [`data:image/jpeg;base64,${JPEG_BYTES.toString("base64")}`], credits_used: 4 }] });
+    const ids: string[] = [];
+    const [image] = await client(server).generateOnModel({
+      garment: GARMENT,
+      model: MODEL,
+      category: "auto",
+      scenePrompt: "mesma pessoa",
+      count: 1,
+      quality: "alta",
+      onSubmitted: (id) => ids.push(id),
+    });
+    expect(ids).toEqual(["job-1"]);
+    expect(image).toMatchObject({ creditsUsed: 4, usdCents: 30 });
+  });
+
+  it("retomada: nenhum POST /run (nada pago de novo), só o status do mesmo pedido; id vazio é recusado", async () => {
+    const server = fashnServer();
+    const [image] = await client(server).generateOnModel({
+      garment: { data: Buffer.alloc(0), mimeType: "image/jpeg" },
+      model: { data: Buffer.alloc(0), mimeType: "image/jpeg" },
+      category: "auto",
+      scenePrompt: "",
+      count: 1,
+      quality: "alta",
+      resumeJobId: "job-antigo",
+    });
+    expect(image?.data.equals(JPEG_BYTES)).toBe(true);
+    expect(server.calls.some((call) => call.url.endsWith("/run"))).toBe(false);
+    expect(server.calls.every((call) => call.url.includes("/status/job-antigo"))).toBe(true);
+    // Sem crédito informado, vale a tabela (3 na alta).
+    expect(image?.creditsUsed).toBe(3);
+    const empty = await failureOf(
+      client(fashnServer()).generateOnModel({ garment: GARMENT, model: MODEL, category: "auto", scenePrompt: "", count: 1, quality: "alta", resumeJobId: " " }),
+    );
+    expect(empty.reason).toBe("rejected");
+  });
+});
+
+describe("FakeImageStudio.generateOnModel — retomada", () => {
+  it("devolve o que o pedido gerou pelo id; id desconhecido = 404", async () => {
+    const studio = new FakeImageStudio();
+    const garment = { data: await sharp({ create: { width: 30, height: 40, channels: 3, background: "#7a2432" } }).jpeg().toBuffer(), mimeType: "image/jpeg" as const };
+    let jobId = "";
+    const [first] = await studio.generateOnModel({ garment, model: garment, category: "auto", scenePrompt: "", count: 1, quality: "alta", onSubmitted: (id) => (jobId = id) });
+    const [again] = await studio.generateOnModel({ garment: { data: Buffer.alloc(0), mimeType: "image/jpeg" }, model: garment, category: "auto", scenePrompt: "", count: 1, quality: "alta", resumeJobId: jobId });
+    expect(again?.data.equals(first!.data)).toBe(true);
+    const gone = await failureOf(studio.generateOnModel({ garment, model: garment, category: "auto", scenePrompt: "", count: 1, quality: "alta", resumeJobId: "sumiu" }));
+    expect(gone.status).toBe(404);
+  });
+});
+
 describe("FashnImageStudio.animate (a peça se mexe)", () => {
   beforeEach(() => {
     vi.stubEnv("FASHN_API_KEY", "fashn-teste");

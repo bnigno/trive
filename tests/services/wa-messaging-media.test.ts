@@ -69,6 +69,29 @@ function optionListInput(over: Record<string, unknown> = {}): SendMediaMessageIn
   } as SendMediaMessageInput;
 }
 
+describe("sendMediaMessage — imagem embutida (a prévia na foto da cliente)", () => {
+  it("vai embutida à Z-API e a conversa guarda só a legenda: media_url fica vazio", async () => {
+    await enableWa();
+    const data = Buffer.from("jpeg de mentira").toString("base64");
+    const result = await sendMediaMessage(sdb, provider, imageInput({ imageUrl: undefined, imageBase64: { data, mimeType: "image/jpeg" } }));
+    expect(result).toMatchObject({ sent: true });
+    expect(provider.sentImages[0]).toMatchObject({ imageBase64: { data, mimeType: "image/jpeg" } });
+    expect(provider.sentImages[0]!.imageUrl).toBeUndefined();
+    const [message] = await getMessages();
+    expect(message).toMatchObject({ kind: "image", mediaUrl: null, body: "Olha o colar Lua que você pediu 😍" });
+  });
+
+  it("URL E embutida juntas, ou nenhuma das duas, é recusado antes de gravar", async () => {
+    await enableWa();
+    const data = Buffer.from("x").toString("base64");
+    await expect(sendMediaMessage(sdb, provider, imageInput({ imageBase64: { data, mimeType: "image/jpeg" } }))).rejects.toThrow(/exatamente um/);
+    await expect(sendMediaMessage(sdb, provider, imageInput({ imageUrl: undefined }))).rejects.toThrow(/exatamente um/);
+    await expect(sendMediaMessage(sdb, provider, imageInput({ imageUrl: undefined, imageBase64: { data: "não é base64!", mimeType: "image/jpeg" } }))).rejects.toThrow();
+    expect(await getMessages()).toHaveLength(0);
+    expect(provider.sentImages).toHaveLength(0);
+  });
+});
+
 describe("sendMediaMessage — imagem", () => {
   it("grava wa_messages com kind image + media_url + legenda e chama provider.sendImage", async () => {
     await enableWa();

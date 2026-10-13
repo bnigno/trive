@@ -335,12 +335,18 @@ export class ZapiMessagingProvider implements MessagingProvider {
   }
 
   async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
+    if ((message.imageUrl === undefined) === (message.imageBase64 === undefined)) {
+      throw new Error("sendImage precisa de imageUrl OU imageBase64 (exatamente um).");
+    }
     const raw = await this.request("/send-image", {
       method: "POST",
       body: {
         // Z-API espera o número SEM o '+' do E.164.
         phone: waAddressForZapi(message.toE164),
-        image: message.imageUrl,
+        // A doc da Z-API: "link da imagem ou Base64", o base64 com o prefixo data:.
+        image: message.imageBase64
+          ? `data:${message.imageBase64.mimeType};base64,${message.imageBase64.data}`
+          : message.imageUrl,
         ...(message.caption !== undefined ? { caption: message.caption } : {}),
       },
     });

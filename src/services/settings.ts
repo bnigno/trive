@@ -623,6 +623,18 @@ const SETTING_VALUE_SCHEMAS: Record<string, z.ZodType> = {
   curator_interview_weekends: z.boolean(),
   /** "Me ajuda a escolher?": a Lia pode abrir a votação das amigas. Ausente = desligado. */
   friends_vote_enabled: z.boolean(),
+  /** "Me vê com ela": a Lia oferece a prévia na foto da cliente. Ausente = desligado. */
+  tryon_enabled: z.boolean(),
+  tryon_per_customer_daily: z
+    .number()
+    .int()
+    .min(1, { error: "No mínimo 1 prévia por cliente." })
+    .max(5, { error: "No máximo 5 prévias por cliente por dia." }),
+  tryon_daily_total: z
+    .number()
+    .int()
+    .min(1, { error: "No mínimo 1 prévia por dia." })
+    .max(100, { error: "No máximo 100 prévias por dia." }),
   feedback_ask_enabled: z.boolean(),
   /** Cupom de desculpas quando o motoboy entrega depois da janela prometida + carência. */
   late_delivery_coupon_enabled: z.boolean(),

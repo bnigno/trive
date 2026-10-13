@@ -18,9 +18,12 @@ export type OutboundTextMessage = {
 };
 
 // Imagem é mensagem de MÍDIA da Z-API (endpoint /send-image, não /send-text).
+// Vai por URL pública OU embutida (base64): a embutida é para o que não pode
+// ficar num Storage público (a prévia na foto da cliente). Exatamente um dos dois.
 export type OutboundImageMessage = {
   toE164: string;
-  imageUrl: string;
+  imageUrl?: string;
+  imageBase64?: { data: string; mimeType: "image/jpeg" | "image/png" };
   caption?: string;
 };
 

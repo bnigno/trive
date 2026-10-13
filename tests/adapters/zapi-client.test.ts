@@ -140,6 +140,17 @@ describe("ZapiMessagingProvider (client real com fetch fake)", () => {
     });
   });
 
+  it("sendImage embutida: manda o base64 com o prefixo data: (a doc da Z-API) e nunca vaza o corpo no erro", async () => {
+    const { calls, fetchFn } = createFakeFetch({ messageId: "mid-2" });
+    const provider = new ZapiMessagingProvider(fetchFn);
+    await provider.sendImage({ toE164: "+5511999990000", imageBase64: { data: "QUJD", mimeType: "image/jpeg" }, caption: "Prévia" });
+    expect(calls[0]?.body).toEqual({ phone: "5511999990000", image: "data:image/jpeg;base64,QUJD", caption: "Prévia" });
+    await expect(provider.sendImage({ toE164: "+5511999990000" })).rejects.toThrow(/exatamente um/);
+    await expect(
+      provider.sendImage({ toE164: "+5511999990000", imageUrl: "https://x.example/a.jpg", imageBase64: { data: "QUJD", mimeType: "image/jpeg" } }),
+    ).rejects.toThrow(/exatamente um/);
+  });
+
   it("sendImage omite a chave caption quando ausente", async () => {
     const { calls, fetchFn } = createFakeFetch({ zaapId: "zid-1" });
     const provider = new ZapiMessagingProvider(fetchFn);

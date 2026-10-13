@@ -18,6 +18,7 @@ import { renderCardPng } from "@/cards/render";
 import { renderGiftNotePng } from "@/receipts/render-gift-note";
 import { runProductCardsPrerender } from "@/queue/handlers/product-cards";
 import { runStudioBasePhotos, runStudioOption, runStudioVideo } from "@/queue/handlers/studio";
+import { runTryOn } from "@/queue/handlers/tryon";
 import { runOrderEditionCards } from "@/queue/handlers/order-edition-cards";
 import { renderDebutLetterPng } from "@/receipts/render-debut-letter";
 import { renderVoucherPng } from "@/receipts/render-voucher";
@@ -483,6 +484,14 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
   // a FASHN pode ter aceitado — buscar de novo é sempre pelo id.
   "product.ai_video": async (event) => {
     await runStudioVideo({ db: getDb(), studio: getImageStudio(), storage: getFileStorage() }, event);
+  },
+  // "Me vê com ela": a prévia na foto da cliente. Mesma regra de ouro do
+  // vídeo (o pedido aceito pela FASHN só é buscado pelo id); nada é guardado.
+  "wa.tryon": async (event) => {
+    await runTryOn(
+      { db: getDb(), studio: getImageStudio(), assistant: getSalesAssistant(), provider: getMessagingProvider(), storage: getFileStorage() },
+      event,
+    );
   },
   // Cartão editorial fora do cache: desenha, publica e manda logo depois do
   // texto da vendedora (dedupe por mensagem recebida; retry nunca duplica).
