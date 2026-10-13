@@ -73,14 +73,20 @@ export function tryOnCaption(productName: string): string {
 }
 
 /**
- * Pode reabrir a MESMA prévia com uma foto nova (sem novo toque)? Só quando o
- * problema era da foto (enquadramento, blusa sobre biquíni, não abriu…) —
- * nunca o "não pode" (possível menor ou nudez) nem a moderação da FASHN.
+ * Depois de um destes, a prévia não é oferecida de novo na conversa no mesmo
+ * dia — nem se ela pedir: "não pode" (possível menor ou nudez), a visão ou a
+ * moderação da FASHN recusando a foto.
  */
-export function canReopenTryOn(input: { status: string; failureReason: string | null }): boolean {
-  if (input.status === "photo_rejected") return input.failureReason !== null && input.failureReason !== "nao_pode";
-  if (input.status === "failed") return input.failureReason === "foto_indisponivel";
+export function blocksTryOnToday(input: { status: string; failureReason: string | null }): boolean {
+  if (input.status === "photo_rejected") return input.failureReason === "nao_pode";
+  if (input.status === "failed") return input.failureReason === "visao_recusou" || input.failureReason === "recusada_pela_ia";
   return false;
+}
+
+/** Foto que não serviu por um problema DA FOTO: outra foto, com outra pergunta e outro toque, pode servir. */
+export function photoRetryWelcome(input: { status: string; failureReason: string | null }): boolean {
+  if (input.status === "photo_rejected") return input.failureReason !== null && input.failureReason !== "nao_pode";
+  return input.status === "failed" && input.failureReason === "foto_indisponivel";
 }
 
 /** Fotos recusadas na checagem por cliente por dia (cada uma passa pela visão): este múltiplo do teto de prévias. */

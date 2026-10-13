@@ -12,9 +12,8 @@
 // photo_rejected → a foto não serve (enquadramento, mais de uma pessoa…): nada foi cobrado;
 // failed → desistiu (o motivo fica em failure_reason).
 //
-// Reabrir (photo_rejected/failed → awaiting_photo): a MESMA prévia, com o
-// mesmo toque, esperando uma foto NOVA — só quando o problema era da foto
-// (enquadramento, não abriu) e ela não disse "Agora não" (services decide).
+// Encerrado não reabre: outra foto = outra pergunta e outro toque (cada foto
+// tem o seu consentimento).
 
 export const TRYON_STATUSES = [
   "offered",
@@ -34,7 +33,6 @@ export type TryOnStatus = (typeof TRYON_STATUSES)[number];
  * processing → queued: a prévia saiu infiel e ainda cabe outra tentativa (o pedido anterior já foi pago e usado).
  * declined → awaiting_photo: ela mudou de ideia e tocou "Quero me ver" na mesma lista (o toque grava o consentimento de novo).
  * queued → failed: também quando ela desiste ("Agora não", SAIR) antes de a foto ir à FASHN.
- * photo_rejected | failed → awaiting_photo: reabrir com uma foto nova (ver acima).
  */
 export const TRYON_TRANSITIONS: Record<TryOnStatus, readonly TryOnStatus[]> = {
   offered: ["declined", "awaiting_photo", "queued"],
@@ -44,8 +42,8 @@ export const TRYON_TRANSITIONS: Record<TryOnStatus, readonly TryOnStatus[]> = {
   submitting: ["processing", "queued", "failed"],
   processing: ["sent", "queued", "failed"],
   sent: [],
-  photo_rejected: ["awaiting_photo"],
-  failed: ["awaiting_photo"],
+  photo_rejected: [],
+  failed: [],
 };
 
 /** Na fila ou com a FASHN: ainda pode gastar e ainda vai mudar sozinho. */
@@ -74,7 +72,7 @@ export function isTryOnInFlight(status: string): boolean {
   return (TRYON_IN_FLIGHT_STATUSES as readonly string[]).includes(status);
 }
 
-/** Encerrado: nada mais acontece SOZINHO com este pedido (reabrir é decisão dela, com foto nova). */
+/** Encerrado: nada mais acontece com este pedido. */
 export function isTryOnClosed(status: string): boolean {
   return status === "sent" || status === "photo_rejected" || status === "failed";
 }

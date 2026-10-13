@@ -294,6 +294,18 @@ describe("wa.tryon — os portões", () => {
     expect(await requestRow(requestId)).toMatchObject({ status: "failed", failureReason: "nao_ficou_fiel", attempts: 2, credits: 6 });
   });
 
+  it("ela disse 'Agora não' (ou SAIR) enquanto a 1ª era feita: a prévia infiel NÃO ganha segunda tentativa paga", async () => {
+    const { requestId } = await seed();
+    // O "Agora não" com a FASHN já fazendo só carimba a recusa (o estado segue).
+    await db.update(schema.tryonRequests).set({ acceptedAt: new Date(NOW.getTime() - 60_000), declinedAt: new Date(NOW.getTime() - 30_000) }).where(eq(schema.tryonRequests.id, requestId));
+    assistant.enqueueExtraction(undefined);
+    assistant.enqueueExtraction({ ...FAKE_TRYON_GARMENT_JSON, corte_ok: false, nota: 4 });
+    expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "cliente_desistiu" });
+    expect(studio.generations).toHaveLength(1);
+    expect(provider.sentImages).toHaveLength(0);
+    expect(await notices(requestId)).toEqual([expect.stringContaining("preferi não te mandar")]);
+  });
+
   it("corpo mudou na prévia: reprova como peça infiel", async () => {
     const { requestId } = await seed({ attempts: 1 });
     assistant.enqueueExtraction(undefined);

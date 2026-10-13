@@ -39,6 +39,7 @@ import { lookConsentHistoryText, parseLookRowId } from "@/core/looks/consent";
 import { feedbackHandledBy, feedbackHistoryText, parseFeedbackRowId } from "@/core/orders/feedback";
 import { recordLookConsent } from "@/services/customer-looks";
 import { declinePendingTryOns, recordTryOnAnswer } from "@/services/tryon-offer";
+import { resolveConversationBotMode } from "@/services/wa-suggestions";
 import { parseTryOnRowId, tryOnAnswerHistoryText } from "@/core/tryon/offer";
 import { cancelBotFollowupsByPhone } from "@/services/wa-followups";
 import { recordDeliveryFeedback } from "@/services/delivery-feedback";
@@ -219,6 +220,12 @@ export type ProcessZapiInboundResult =
   | { action: "tryon_answer"; conversationId: string; waMessageId: string; outboxEventId: string | null; tryOnEventId: string | null };
 
 export type InboundRoute = "bot_queued" | "forwarded" | "atelier_queued" | "atelier_help" | "interview_answer";
+
+/** O modo da vendedora gravado nesta conversa (null = o da loja). */
+async function conversationBotMode(tx: DbOrTx, conversationId: string): Promise<{ botMode: string | null }> {
+  const [row] = await tx.select({ botMode: waConversations.botMode }).from(waConversations).where(eq(waConversations.id, conversationId)).limit(1);
+  return { botMode: row?.botMode ?? null };
+}
 
 /** trim + maiúsculas + sem acento, para comparar comandos como SAIR/PARAR. */
 function normalizeKeyword(text: string): string {
@@ -1095,14 +1102,17 @@ export async function processZapiInbound(
     // ver" é o consentimento desta prévia (com a foto já aqui, vai direto
     // para a fila). A resposta curta sai pela fila e a Lia não precisa de turno.
     const tryOnRow = parseTryOnRowId(parsed.listResponseMessage?.selectedRowId);
-    // Só com a Lia atendendo esta conversa (a mesma regra do encaminhamento): com a equipe no comando ou a
-    // Lia desligada, o toque vira texto — ninguém conseguiria fazer a prévia depois.
-    const tryOnBotEligible =
+    // "Agora não" vale sempre (é revogar). "Quero me ver" só com a Lia atendendo esta conversa sozinha (a
+    // mesma regra do encaminhamento, e fora do copiloto): com a equipe no comando, a Lia desligada ou em
+    // copiloto, o toque vira texto — ninguém faria a prévia depois, e no copiloto nada sai por conta própria.
+    const tryOnAnswerHandled =
       tryOnRow !== null &&
-      conversation.status === "open" &&
-      (conversation.botDisabledUntil === null || conversation.botDisabledUntil.getTime() <= now.getTime()) &&
-      (await isBotEnabled(tx));
-    if (tryOnRow && tryOnBotEligible) {
+      (tryOnRow.answer === "agora_nao" ||
+        (conversation.status === "open" &&
+          (conversation.botDisabledUntil === null || conversation.botDisabledUntil.getTime() <= now.getTime()) &&
+          (await isBotEnabled(tx)) &&
+          (await resolveConversationBotMode(tx, await conversationBotMode(tx, conversation.id))) !== "copilot"));
+    if (tryOnRow && tryOnAnswerHandled) {
       const answered = await recordTryOnAnswer(tx, {
         requestId: tryOnRow.requestId,
         answer: tryOnRow.answer,

@@ -229,12 +229,12 @@ async function failRequest(
   db: DbOrTx,
   deps: TryOnDeps,
   request: TryOnRequest,
-  input: { reason: TryOnFailureReason; usdCents?: number; credits?: number; detail?: string; now: Date },
+  input: { reason: TryOnFailureReason; usdCents?: number; credits?: number; detail?: string; notice?: string; now: Date },
 ): Promise<TryOnResult> {
   await closeRequest(db, request, {
     to: "failed",
     code: `falhou:${input.reason}`,
-    notice: failureText(input.reason),
+    notice: input.notice ?? failureText(input.reason),
     patch: {
       failureReason: input.reason,
       credits: Math.max(request.credits, input.credits ?? request.credits),
@@ -680,6 +680,18 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
           .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, "processing")));
         ensureTime(options, clock, TRYON_TIMING.deliverReserveMs);
         return deliver(db, deps, request, { preview: image.data, productName: product.name, credits, usdCents, now: clock() });
+      }
+      // Ela disse "Agora não" (ou SAIR) enquanto a 1ª era feita: nada de segunda tentativa paga.
+      const declinedMeanwhile = request.declinedAt !== null && request.acceptedAt !== null && request.declinedAt >= request.acceptedAt;
+      if (declinedMeanwhile) {
+        await db.update(tryonRequests).set({ verdict: stored }).where(eq(tryonRequests.id, request.id));
+        return failRequest(db, deps, { ...request, verdict: stored }, {
+          reason: "cliente_desistiu",
+          usdCents,
+          credits,
+          notice: "A prévia não ficou fiel à peça, então preferi não te mandar 💛",
+          now: clock(),
+        });
       }
       if (request.attempts < TRYON_MAX_ATTEMPTS) {
         // Infiel: o pedido foi usado (e pago); volta à fila para outra semente.

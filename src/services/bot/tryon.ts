@@ -2,17 +2,14 @@
 // pede o consentimento) e vestir_em_mim (a foto DELA, depois do toque, vai
 // para a fila). Dentro da transação do turno: nada de kick aqui — o
 // runBotTurn dá o kick depois do commit.
-import { eq } from "drizzle-orm";
-
 import type { BotToolInputs } from "@/core/bot/tools";
 import { colorOfVariant } from "@/core/bot/variants";
 import { offerRefusalText, TRYON_OFFER_BUTTON, TRYON_OFFER_TITLE, tryOnOfferBody, tryOnOfferOptions } from "@/core/tryon/offer";
 import { failureText, quotaText, requiredFraming } from "@/core/tryon/rules";
-import { waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
 import { queueTryOn } from "@/services/tryon";
-import { createTryOnOffer, evaluateTryOnOffer, findTryOnForPhoto, reopenTryOn } from "@/services/tryon-offer";
+import { createTryOnOffer, evaluateTryOnOffer, findTryOnForPhoto } from "@/services/tryon-offer";
 import { loadTryOnSettings } from "@/services/tryon-settings";
 
 import { DRY_RUN_TEXT, resolveConversationCustomerId, type BotExecutorContext, type ToolResult } from "./shared";
@@ -105,6 +102,11 @@ export async function execVestirEmMim(db: DbOrTx, ctx: BotExecutorContext, input
         ok: false,
         text: `Ela ainda não tocou em "Quero me ver" na pergunta da prévia de ${target.productName}: lembre-a, em 1 frase, de tocar no botão (a foto só vai para a IA com esse toque). Não chame oferecer_previa de novo.`,
       };
+    case "ask_again":
+      return {
+        ok: false,
+        text: `A foto anterior não serviu para a prévia de ${target.productName}: cada foto tem o seu toque — chame oferecer_previa com com_a_foto_dela e ela_pediu (ela toca de novo em "Quero me ver").`,
+      };
     case "none":
       return {
         ok: false,
@@ -114,16 +116,7 @@ export async function execVestirEmMim(db: DbOrTx, ctx: BotExecutorContext, input
   const picked = pickPhoto(ctx, input.foto);
   if (!picked) return { ok: false, text: "Não há foto recente dela que eu consiga ver: espere a foto dela chegar (ela já sabe que precisa mandar)." };
   if ("error" in picked) return { ok: false, text: picked.error };
-  // A foto tem de ser de DEPOIS da pergunta (ou da tentativa anterior): confere antes de reabrir qualquer coisa.
-  const [photo] = await db.select({ createdAt: waMessages.createdAt }).from(waMessages).where(eq(waMessages.id, picked.waMessageId)).limit(1);
-  const notBefore = Math.max(target.request.offeredAt.getTime(), target.request.queuedAt?.getTime() ?? 0);
-  const isOfferedPhoto = picked.waMessageId === target.request.photoWaMessageId && target.request.queuedAt === null;
-  if (!photo || (!isOfferedPhoto && photo.createdAt.getTime() <= notBefore)) {
-    return { ok: false, text: "Essa foto é de antes da pergunta da prévia (ou já foi usada): espere a foto NOVA dela — a que ela mandar agora." };
-  }
-  const request = target.kind === "reopen" ? await reopenTryOn(db, target.request, now) : target.request;
-  if (!request) return { ok: false, text: "Essa prévia não pode ser refeita agora: siga mostrando a peça na modelo." };
-  const queued = await queueTryOn(db, { requestId: request.id, photoWaMessageId: picked.waMessageId, now, kick: false });
+  const queued = await queueTryOn(db, { requestId: target.request.id, photoWaMessageId: picked.waMessageId, now, kick: false });
   if (!queued.ok) {
     switch (queued.reason) {
       case "limite_cliente":

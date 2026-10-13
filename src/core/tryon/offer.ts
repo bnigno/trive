@@ -99,6 +99,7 @@ export type TryOnOfferRefusal =
   | "cor_esgotada"
   | "em_andamento"
   | "limite"
+  | "bloqueada_hoje"
   | "ja_ofereceu"
   | "recusou";
 
@@ -107,9 +108,10 @@ export type TryOnOfferVerdict = { offer: true } | { offer: false; reason: TryOnO
 /**
  * Pode oferecer? Ordem: interruptor (e a Lia enxergando fotos), peça (roupa,
  * com estoque — na cor dita —, com foto real da cor), prévia em andamento,
- * teto do dia, oferta nesta conversa nas últimas 24 h, "Agora não" nos
- * últimos 30 dias. A cliente que PEDE (`asked`) passa por cima dos dois
- * últimos — nunca dos tetos.
+ * teto do dia, bloqueio do dia ("não pode"/recusa da IA), oferta nesta
+ * conversa nas últimas 24 h, "Agora não" nos últimos 30 dias. A cliente que
+ * PEDE (`asked`) passa por cima dos dois últimos — nunca dos tetos nem do
+ * bloqueio.
  */
 export function shouldOfferTryOn(input: {
   enabled: boolean;
@@ -121,6 +123,8 @@ export function shouldOfferTryOn(input: {
   colorInStock: boolean;
   inFlight: boolean;
   quotaOk: boolean;
+  /** "Não pode" ou recusa da IA nesta conversa hoje (blocksTryOnToday): nem a pedido dela. */
+  blockedToday?: boolean;
   lastOfferAt: Date | null;
   lastDeclinedAt: Date | null;
   asked?: boolean;
@@ -134,6 +138,7 @@ export function shouldOfferTryOn(input: {
   if (!input.hasGarmentPhoto) return { offer: false, reason: "sem_foto_da_peca" };
   if (input.inFlight) return { offer: false, reason: "em_andamento" };
   if (!input.quotaOk) return { offer: false, reason: "limite" };
+  if (input.blockedToday) return { offer: false, reason: "bloqueada_hoje" };
   if (input.asked) return { offer: true };
   const now = input.now.getTime();
   if (input.lastOfferAt && now - input.lastOfferAt.getTime() < TRYON_OFFER_TIMING.reofferAfterMs) return { offer: false, reason: "ja_ofereceu" };
@@ -160,6 +165,8 @@ export function offerRefusalText(reason: TryOnOfferRefusal): string {
       return "Já tem uma prévia dela sendo feita: ela chega sozinha. Não ofereça outra agora.";
     case "limite":
       return "As prévias de hoje acabaram (dela ou da loja): não ofereça; siga com cor e tamanho.";
+    case "bloqueada_hoje":
+      return "Hoje não dá para fazer a prévia nesta conversa: não ofereça nem comente; siga mostrando a peça na modelo e conferindo o tamanho.";
     case "ja_ofereceu":
       return "Você já ofereceu a prévia nesta conversa nas últimas 24 h: não ofereça de novo (se ELA pedir, chame com ela_pediu).";
     case "recusou":

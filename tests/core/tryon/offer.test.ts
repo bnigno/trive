@@ -109,7 +109,9 @@ describe("shouldOfferTryOn", () => {
     const recent = new Date(NOW.getTime() - 60_000);
     expect(shouldOfferTryOn({ ...base, lastOfferAt: recent, lastDeclinedAt: recent, asked: true })).toEqual({ offer: true });
     expect(shouldOfferTryOn({ ...base, quotaOk: false, asked: true })).toEqual({ offer: false, reason: "limite" });
-    for (const reason of ["desligado", "midia_desligada", "nao_veste", "sem_foto_da_peca", "esgotada", "cor_esgotada", "em_andamento", "limite", "ja_ofereceu", "recusou"] as const) {
+    // "Não pode" (possível menor ou nudez) ou recusa da IA hoje: nem a pedido dela.
+    expect(shouldOfferTryOn({ ...base, blockedToday: true, asked: true })).toEqual({ offer: false, reason: "bloqueada_hoje" });
+    for (const reason of ["desligado", "midia_desligada", "nao_veste", "sem_foto_da_peca", "esgotada", "cor_esgotada", "em_andamento", "limite", "bloqueada_hoje", "ja_ofereceu", "recusou"] as const) {
       expect(offerRefusalText(reason)).toMatch(/não ofereça|Não ofereça/);
     }
   });

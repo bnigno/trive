@@ -151,9 +151,9 @@ export default async function PrivacyPage() {
         <p>
           Prévia na sua foto: se você quiser se ver vestindo uma peça, a nossa
           atendente pergunta antes e só segue com o seu toque em &ldquo;Quero
-          me ver&rdquo; — que vale só para a prévia daquela peça (se a foto
-          não servir, você pode mandar outra em até 2 horas) e confirma que a
-          foto é sua e que você tem 18 anos ou mais. A foto é enviada, sem a
+          me ver&rdquo; — que vale só para aquela foto e aquela peça (se a
+          foto não servir, ela pergunta de novo antes de usar outra) e
+          confirma que a foto é sua e que você tem 18 anos ou mais. A foto é enviada, sem a
           localização gravada pelo celular, a serviços de inteligência
           artificial fora do Brasil, só para isso: a FASHN, que gera a prévia,
           e a Anthropic, que confere a foto e a prévia. Pelos contratos desses

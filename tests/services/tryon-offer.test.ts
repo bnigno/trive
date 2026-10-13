@@ -321,41 +321,69 @@ describe("foto que não serviu, SAIR e o funil", () => {
     const at = new Date(Date.now() - 60_000);
     const [row] = await db
       .insert(schema.tryonRequests)
-      .values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", failureReason, offeredAt: at, acceptedAt: at, queuedAt: at, consentVersion: "previa-v1-2026-10", ...extra })
+      .values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", failureReason, offeredAt: at, acceptedAt: at, queuedAt: at, consentVersion: "previa-v1-2026-10", createdAt: at, ...extra })
       .returning();
     return { conversationId, request: row! };
   }
 
-  it("foto recusada por enquadramento: a foto NOVA dela reabre a MESMA prévia (mesmo toque, uma linha só)", async () => {
-    const { conversationId, request } = await rejected("enquadramento");
-    expect((await findTryOnForPhoto(sdb(), { conversationId, now: new Date() })).kind).toBe("reopen");
+  it("foto recusada por enquadramento: a foto NOVA pede outra pergunta (cada foto tem o seu toque) — e a Lia pode perguntar", async () => {
+    const { conversationId } = await rejected("enquadramento");
+    expect((await findTryOnForPhoto(sdb(), { conversationId, now: new Date() })).kind).toBe("ask_again");
     const photoId = await seedPhoto(conversationId, "IMG-NOVA");
-    expect((await executor(conversationId, { photoIds: [photoId] })("vestir_em_mim", {})).ok).toBe(true);
-    const rows = await requests();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: request.id, status: "queued", photoWaMessageId: photoId, photoCheck: null, failureReason: null });
+    const tool = await executor(conversationId, { photoIds: [photoId] })("vestir_em_mim", {});
+    expect(tool.ok).toBe(false);
+    expect(tool.text).toContain("ela_pediu");
+    expect((await tryOnMemoryLines(sdb(), { conversationId, now: new Date() }))[0]).toContain("cada foto tem o seu toque");
+    // A Lia pergunta de novo (ela pediu, com a foto nova): nova linha, novo toque.
+    const attachments: unknown[] = [];
+    expect((await executor(conversationId, { photoIds: [photoId], attachments })("oferecer_previa", { produto: "vestido-amora", com_a_foto_dela: true, ela_pediu: true })).ok).toBe(true);
+    expect(await requests()).toHaveLength(2);
   });
 
-  it("'não pode' (possível menor ou nudez): nunca reabre — e o caderninho manda seguir sem prévia", async () => {
+  it("'não pode' (possível menor ou nudez): nem a pedido dela a Lia oferece de novo hoje", async () => {
     const { conversationId } = await rejected("nao_pode");
     expect((await findTryOnForPhoto(sdb(), { conversationId, now: new Date() })).kind).toBe("none");
     const photoId = await seedPhoto(conversationId, "IMG-NOVA");
     expect((await executor(conversationId, { photoIds: [photoId] })("vestir_em_mim", {})).ok).toBe(false);
-    expect((await tryOnMemoryLines(sdb(), { conversationId, now: new Date() }))[0]).toContain("não ofereça de novo hoje");
+    const offer = await executor(conversationId, { photoIds: [photoId], attachments: [] })("oferecer_previa", { produto: "vestido-amora", com_a_foto_dela: true, ela_pediu: true });
+    expect(offer.ok).toBe(false);
+    expect(offer.text).toContain("Hoje não dá");
+    expect((await tryOnMemoryLines(sdb(), { conversationId, now: new Date() }))[0]).toContain("hoje não ofereça");
   });
 
-  it("'Agora não' (ou SAIR) depois da foto recusada: não reabre", async () => {
+  it("'Agora não' depois da foto recusada: nada de pedir outra foto; o toque repetido fica em silêncio", async () => {
     const { conversationId, request } = await rejected("enquadramento");
-    await recordTryOnAnswer(sdb(), { requestId: request.id, answer: "agora_nao", conversationId, tapMessageId: "t-1", now: new Date() });
+    const first = await recordTryOnAnswer(sdb(), { requestId: request.id, answer: "agora_nao", conversationId, tapMessageId: "t-1", now: new Date() });
+    expect(first?.ackEventId).toEqual(expect.any(String));
     expect((await findTryOnForPhoto(sdb(), { conversationId, now: new Date() })).kind).toBe("none");
+    expect(await recordTryOnAnswer(sdb(), { requestId: request.id, answer: "agora_nao", conversationId, tapMessageId: "t-2", now: new Date() })).toMatchObject({ ackEventId: null });
   });
 
-  it("passadas 2 h do toque, a foto nova precisa de toque novo", async () => {
-    const { conversationId } = await rejected("enquadramento");
-    expect((await findTryOnForPhoto(sdb(), { conversationId, now: new Date(Date.now() + 3 * 3_600_000) })).kind).toBe("none");
+  it("'Agora não' com a equipe no comando também vale (revogar nunca depende de quem atende)", async () => {
+    await seedProduct({ name: "VESTIDO AMORA", slug: "vestido-amora", pieceType: "vestido" });
+    const { conversationId } = await seedConversation();
+    await executor(conversationId, { attachments: [] })("oferecer_previa", { produto: "vestido-amora" });
+    const [offer] = await requests();
+    await tap("TAP-QX", tryOnRowId("quero", offer!.id), "Quero me ver");
+    await db.update(schema.waConversations).set({ botDisabledUntil: new Date(Date.now() + 3_600_000) }).where(eq(schema.waConversations.id, conversationId));
+    expect((await tap("TAP-NX", tryOnRowId("agora_nao", offer!.id), "Agora não")).action).toBe("tryon_answer");
+    expect((await requests())[0]).toMatchObject({ status: "declined" });
   });
 
-  it("SAIR: oferta e aceite sem foto viram 'Agora não', o que está na fila é cancelado, o que está com a FASHN segue", async () => {
+  it("uma foto antiga (de mais de 10 min, ou que não é a última mensagem) não vira a foto do toque", async () => {
+    await seedProduct({ name: "VESTIDO AMORA", slug: "vestido-amora", pieceType: "vestido" });
+    const { conversationId } = await seedConversation();
+    await executor(conversationId, { attachments: [] })("oferecer_previa", { produto: "vestido-amora" });
+    const [offer] = await requests();
+    // Uma foto depois da pergunta, mas seguida de outra mensagem dela (um texto): não é "a foto para a prévia".
+    await seedPhoto(conversationId, "IMG-QUALQUER", new Date(Date.now() + 1_000));
+    await db.insert(schema.waMessages).values({ conversationId, direction: "inbound", kind: "text", body: "e o frete?", status: "delivered", zapiMessageId: "TXT-1", createdAt: new Date(Date.now() + 2_000) });
+    await tap("TAP-OLD", tryOnRowId("quero", offer!.id), "Quero me ver");
+    expect((await requests())[0]).toMatchObject({ status: "awaiting_photo" });
+    expect(await acksFor(offer!.id)).toEqual([expect.stringContaining("Me manda uma foto")]);
+  });
+
+  it("SAIR: oferta e aceite sem foto viram 'Agora não', o que está na fila é cancelado, o que está com a FASHN segue (carimbado)", async () => {
     const productId = await seedProduct({ name: "VESTIDO AMORA", slug: "vestido-amora", pieceType: "vestido" });
     const { conversationId } = await seedConversation();
     const other = await seedConversation({ phone: "+5511988887777" });
@@ -365,14 +393,14 @@ describe("foto que não serviu, SAIR e o funil", () => {
       { conversationId: other.conversationId, phoneE164: PHONE, productId, status: "queued", acceptedAt: NOW, queuedAt: NOW },
     ]);
     await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status: "processing", acceptedAt: NOW, vendorJobId: "job-1" });
-    expect(await declinePendingTryOns(sdb(), { conversationId, now: new Date() })).toBe(2);
+    // Oferta e aceite viram "Agora não"; o que está com a FASHN é carimbado (sem segunda tentativa paga).
+    expect(await declinePendingTryOns(sdb(), { conversationId, now: new Date() })).toBe(3);
     expect(await declinePendingTryOns(sdb(), { conversationId: other.conversationId, now: new Date() })).toBe(1);
-    expect((await requests()).map((row) => `${row.status}:${row.failureReason ?? ""}`).sort()).toEqual([
-      "declined:",
-      "declined:",
-      "failed:cliente_desistiu",
-      "processing:",
-    ]);
+    const rows = await requests();
+    expect(rows.map((row) => `${row.status}:${row.failureReason ?? ""}`).sort()).toEqual(["declined:", "declined:", "failed:cliente_desistiu", "processing:"]);
+    expect(rows.find((row) => row.status === "processing")!.declinedAt).not.toBeNull();
+    // SAIR de novo não muda nada.
+    expect(await declinePendingTryOns(sdb(), { conversationId, now: new Date() })).toBe(0);
   });
 
   it("o funil do mês: ofertas → toques → prévias → compraram em até 7 dias → gasto", async () => {

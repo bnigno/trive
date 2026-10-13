@@ -1059,6 +1059,63 @@ tabela); `scripts/setup-storage.ts` (o bucket passa a aceitar `video/mp4` até
 50MB — antes era 10MB e só imagem/áudio); `scripts/sync-seed.ts --settings
 ai_video_enabled,ai_video_daily_limit`; o dono liga o interruptor.
 
+## Prévia na foto da cliente ("Me vê com ela")
+
+A cliente escolhe uma roupa, ou pergunta se fica bem nela, e a Lia manda a pergunta tocável **"Quer se ver com ela?"** (Quero me ver / Agora não). Com o toque em "Quero me ver", que é o consentimento **daquela** prévia, a foto dela vai para a IA. Ela recebe a imagem dela vestindo a peça, com a legenda "prévia feita com IA… o tamanho a gente confere com você".
+
+**Interruptor e tetos:** Vendedora & WhatsApp → **Prévia na foto da cliente**.
+- Nasce desligado.
+- Tetos padrão: 2 prévias por cliente por dia e 20 por dia na loja.
+- O cartão mostra "Hoje: X de Y" e o funil do mês: ofertas → quiseram se ver → prévias enviadas → compraram em até 7 dias → gasto.
+
+**Custo:** cerca de R$ 1,40 por prévia (FASHN tryon-max 2K, 3 créditos, mais os portões da Anthropic). Uma segunda tentativa, quando a primeira sai infiel, dobra o custo. Recarregue os créditos em fashn.ai. Quando acabam, a cliente ouve "não consegui fazer a sua prévia agora" e a dona recebe um aviso, uma vez por dia.
+
+**O que a IA confere antes de mandar:**
+1. **Antes de gastar**, checa a foto. Precisa ser uma pessoa só, adulta, vestida e enquadrada para a peça: até as coxas para vestido, calça ou saia; da cintura para cima para blusa, e vestida da cintura para baixo. Se a foto não servir, ela recebe uma dica e nada é cobrado. "Não pode" (possível menor ou nudez) encerra sem convidar outra foto.
+2. **Depois da FASHN**, dois portões:
+   - a peça: mesma cor, estampa, decote, manga e comprimento;
+   - a pessoa: mesmo rosto e corpo, nunca afinado.
+
+   Se reprovar, faz **uma** tentativa a mais. Se reprovar de novo, ela ouve a verdade e não recebe imagem.
+
+**Nada fica guardado:**
+- a foto dela é baixada da Z-API na hora e sai sem GPS;
+- a prévia vai embutida para a Z-API e não passa pelo Storage;
+- na Central, aparece "🪄 Prévia feita com IA · imagem não guardada";
+- `tryon_requests` guarda só o estado, o custo e os vereditos (sim/não e nota), nunca imagem nem descrição do corpo.
+
+**"Agora não" e SAIR** valem até a foto ir para a FASHN: cancelam o que está na fila. Se ela já estava sendo feita, chega e depois não há mais oferta.
+
+**Diagnóstico** (no SQL do Supabase):
+
+```sql
+select created_at, status, failure_reason, attempts, credits, usd_cents, vendor_job_id
+from tryon_requests order by created_at desc limit 20;
+```
+
+**Motivos de falha (`failure_reason`):**
+- `sem_creditos`: comprar créditos.
+- `envio_incerto`: a FASHN pode ter cobrado; confira o saldo, mas a prévia não é pedida de novo.
+- `demorou_demais`: passou de 8 min, ou ficou parada mais de 15 min (curada sozinha).
+- `nao_ficou_fiel`: os dois portões reprovaram.
+- `cliente_desistiu`: "Agora não" ou SAIR antes da FASHN.
+- `foto_indisponivel`: a URL da Z-API expirou. Se ela mandar de novo, a Lia pergunta de novo, porque cada foto tem o seu toque.
+
+Na auditoria: `tryon.consent`, `tryon.decline`, `tryon.submit`, `tryon.retry`, `tryon.sent`, `tryon.fail`, `tryon.photo_rejected`.
+
+Depois de um "não pode" ou de uma recusa da IA, a Lia não oferece a prévia de novo naquela conversa no mesmo dia, nem a pedido.
+
+**Antes de ligar:**
+1. Teste no próprio WhatsApp: pergunte por uma roupa, toque em "Quero me ver" e mande uma foto de corpo inteiro.
+2. Para testar sem a Lia: `npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --cliente --peca peca.jpg --modelo-foto foto.jpg --tipo vestido --teto-centavos 200`.
+3. Para ver o comportamento da Lia sem tocar em produção, use um banco local restaurado do backup com `tryon_enabled = true`: `scripts/ensaio-vendedora.ts previa`.
+
+**Produção** (feita em 13/10/2026):
+1. Migração 0068 **antes** do deploy (o painel e a fila leem a tabela).
+2. `scripts/sync-seed.ts --settings tryon_enabled,tryon_per_customer_daily,tryon_daily_total`.
+3. Mesclar.
+4. A dona testa e liga.
+
 ## A Lia passou a conversa com "Assistente de IA indisponível"
 
 O motivo entre parênteses diz o que a API da Anthropic respondeu:
