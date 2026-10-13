@@ -35,9 +35,16 @@ function cepRangeCovered(start: string, end: string, rates: readonly CoverageRat
  * As faixas ativas que não aceitam uma sacola de `oneItemGrams` e cujos CEPs
  * nenhuma outra faixa ativa cobre com esse peso. Peso mínimo acima de zero é
  * legítimo quando outra faixa cuida das sacolas leves — aí não aparece aqui.
+ * Faixa de motoboy só é coberta por motoboy: uma de Correios por baixo faria
+ * a peça de quem é do motoboy sair pelos Correios.
  */
 export function oneItemCoverageGaps<T extends CoverageRate>(rates: readonly T[], oneItemGrams: number): T[] {
   const active = rates.filter((rate) => rate.isActive);
   const covering = active.filter((rate) => accepts(rate, oneItemGrams));
-  return active.filter((rate) => !accepts(rate, oneItemGrams) && !cepRangeCovered(rate.cepStart, rate.cepEnd, covering));
+  const motoboyCovering = covering.filter((rate) => rate.kind === "motoboy");
+  return active.filter(
+    (rate) =>
+      !accepts(rate, oneItemGrams) &&
+      !cepRangeCovered(rate.cepStart, rate.cepEnd, rate.kind === "motoboy" ? motoboyCovering : covering),
+  );
 }

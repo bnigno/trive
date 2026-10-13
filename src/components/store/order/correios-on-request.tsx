@@ -32,7 +32,7 @@ export function CorreiosOnRequestNotice({
       <p>
         {motoboyCoversCep ? (
           <>
-            Este CEP é atendido pelo nosso <strong>motoboy</strong>, mas o peso desta sacola passa do que a entrega automática aceita: o frete é confirmado pela nossa equipe.
+            Este CEP é atendido pelo nosso <strong>motoboy</strong>, mas o peso desta sacola está fora do que a entrega automática aceita: o frete é confirmado pela nossa equipe.
           </>
         ) : (
           <>

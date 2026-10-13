@@ -391,6 +391,21 @@ function focusAgeMinutes(at: string | undefined, now: Date): number | null {
   return Math.max(0, Math.floor((now.getTime() - lido) / 60_000));
 }
 
+/**
+ * Validade do veredito "cotado e vazio" (frete pela equipe). Curta de
+ * propósito: a faixa consertada no painel precisa valer na mesma conversa —
+ * vencido, a Lia cota de novo (Benevides, out/2026: o veredito errado de
+ * "Correios" ficava preso no caderninho).
+ */
+export const EMPTY_QUOTE_MAX_AGE_MS = 60 * 60 * 1000;
+
+/** A cotação foi feita, voltou vazia e ainda vale? Sem carimbo = vencida. */
+export function isEmptyQuoteVerdictCurrent(quotes: readonly unknown[] | undefined, quotedAt: string | undefined, now: Date): boolean {
+  if (!Array.isArray(quotes) || quotes.length > 0 || !quotedAt) return false;
+  const quotedAtMs = Date.parse(quotedAt);
+  return !Number.isNaN(quotedAtMs) && now.getTime() - quotedAtMs <= EMPTY_QUOTE_MAX_AGE_MS;
+}
+
 export function renderContextNote(
   state: BotState,
   extras: { lines?: readonly string[]; now?: Date } = {},
@@ -439,9 +454,10 @@ export function renderContextNote(
     const escolhido = state.lastQuotes?.find((quote) => quoteKey(quote) === chosenKey);
     // Sacola mudou depois da cotação (adicionar/remover zeram lastQuotes):
     // o CEP fica como pista, mas o frete tem de ser cotado de novo.
-    // Cotação feita e vazia (lista [], não ausente): fora da área do motoboy,
-    // ou dentro dela com a sacola fora do peso das faixas (lastCepMotoboy).
-    const foraDaArea = Array.isArray(state.lastQuotes) && state.lastQuotes.length === 0 && Boolean(state.lastQuotedAt);
+    // Cotação feita e vazia (lista [], não ausente) e recente: fora da área do
+    // motoboy, ou dentro dela com a sacola fora do peso das faixas
+    // (lastCepMotoboy). Vencida, vira "não cotado" e a Lia cota de novo.
+    const foraDaArea = isEmptyQuoteVerdictCurrent(state.lastQuotes, state.lastQuotedAt, extras.now ?? new Date());
     linhas.push(
       cotacoes
         ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.label ? `${escolhido.name} ${escolhido.label}` : escolhido.name}` : ""}`

@@ -15,7 +15,7 @@ import { Table, Td, Tr } from "@/components/ui/table";
 import { Button } from "@/components/ui/form";
 import { formatKg } from "@/lib/weight";
 import { toggleShippingRateAction } from "./actions";
-import { oneItemGapWarnings } from "./coverage-warning";
+import { correiosAutoActive, oneItemGapWarnings } from "./coverage-warning";
 import {
   CorreiosAutoForm,
   CorreiosProbeForm,
@@ -103,7 +103,7 @@ export default async function FretePage() {
   }
 
   const { rates, correios } = loaded;
-  const gapWarnings = oneItemGapWarnings(rates);
+  const gapWarnings = oneItemGapWarnings(rates, { correiosAuto: correiosAutoActive(correios) });
   const correiosTokenReady = isCorreiosQuotesConfigured();
   const correiosSimulated = correiosTokenReady && getAdapterMode() !== "real";
 

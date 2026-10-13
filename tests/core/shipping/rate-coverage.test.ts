@@ -28,13 +28,25 @@ describe("oneItemCoverageGaps", () => {
     expect(oneItemCoverageGaps([leve, pesada], ONE_ITEM)).toEqual([]);
   });
 
-  it("a cobertura pode vir de várias faixas emendadas, de qualquer tipo; um buraco no meio ainda aponta", () => {
+  it("a cobertura pode vir de várias faixas emendadas; um buraco no meio ainda aponta", () => {
     const pesada = rate({ name: "Pesado região", cepStart: "66000000", cepEnd: "68999999", weightMinGrams: 8000 });
     const a = rate({ name: "A", cepStart: "66000000", cepEnd: "67999999" });
-    const b = rate({ name: "B", kind: "correios", cepStart: "68000000", cepEnd: "68999999" });
+    const b = rate({ name: "B", cepStart: "68000000", cepEnd: "68999999" });
     expect(oneItemCoverageGaps([pesada, a, b], ONE_ITEM)).toEqual([]);
-    const comBuraco = rate({ name: "B", kind: "correios", cepStart: "68000001", cepEnd: "68999999" });
+    const comBuraco = rate({ name: "B", cepStart: "68000001", cepEnd: "68999999" });
     expect(oneItemCoverageGaps([pesada, a, comBuraco], ONE_ITEM)).toEqual([pesada]);
+  });
+
+  it("faixa de motoboy só é coberta por motoboy: uma de Correios por baixo levaria a peça pelos Correios", () => {
+    const benevides = rate({ name: "Motoboy Benevides", weightMinGrams: 8000 });
+    const correiosRegiao = rate({ name: "PAC região", kind: "correios", cepStart: "68000000", cepEnd: "68999999", weightMaxGrams: 30000 });
+    expect(oneItemCoverageGaps([benevides, correiosRegiao], ONE_ITEM)).toEqual([benevides]);
+  });
+
+  it("faixa de Correios pesada é coberta por qualquer faixa leve, inclusive de motoboy", () => {
+    const pesada = rate({ name: "PAC pesado", kind: "correios", weightMinGrams: 8000 });
+    const leve = rate({ name: "Motoboy Benevides" });
+    expect(oneItemCoverageGaps([pesada, leve], ONE_ITEM)).toEqual([]);
   });
 
   it("faixa inativa não é apontada nem cobre ninguém", () => {

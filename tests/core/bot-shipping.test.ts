@@ -81,13 +81,26 @@ describe("resolveApprovedQuote", () => {
   });
 
   it("cotação feita e vazia para o CEP: frete pela equipe, sem afirmar Correios (pode ser motoboy fora do peso)", () => {
-    const r = resolveApprovedQuote({ ...base, quotes: [], quotedCep: "68797000", orderCep: "68797000" });
+    const now = new Date("2026-10-13T10:00:00.000Z");
+    const r = resolveApprovedQuote({ ...base, quotes: [], quotedCep: "68797000", orderCep: "68797000", quotedAt: "2026-10-13T09:59:00.000Z", now });
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.text).toContain("não há frete automático");
       expect(r.text).toContain("transferir_para_atendente");
       expect(r.text).not.toContain("Correios");
     }
+  });
+
+  it("veredito vazio vencido (mais de 1 h) ou sem carimbo: manda cotar de novo — a faixa pode ter sido consertada", () => {
+    const vencido = resolveApprovedQuote({ ...base, quotes: [], quotedCep: "68797000", orderCep: "68797000", quotedAt: "2026-10-13T08:00:00.000Z", now: new Date("2026-10-13T10:00:00.000Z") });
+    expect(vencido.ok).toBe(false);
+    if (!vencido.ok) {
+      expect(vencido.text).toContain("Ainda não há cotação de frete");
+      expect(vencido.text).toContain("Chame cotar_frete com o CEP 68797-000");
+    }
+    const semCarimbo = resolveApprovedQuote({ ...base, quotes: [], quotedCep: "68797000", orderCep: "68797000" });
+    expect(semCarimbo.ok).toBe(false);
+    if (!semCarimbo.ok) expect(semCarimbo.text).toContain("Ainda não há cotação de frete");
   });
 
   it("cotação com mais de 24 h é recusada; recente (ou sem carimbo, estado antigo) passa", () => {

@@ -18,6 +18,7 @@ describe("CorreiosOnRequestNotice", () => {
   it("o motoboy cobre o CEP mas não o peso: motoboy com o frete pela equipe, sem Correios", () => {
     const html = renderToStaticMarkup(<CorreiosOnRequestNotice {...BASE} motoboyArea="" motoboyCoversCep />);
     expect(html).toContain("Este CEP é atendido pelo nosso <strong>motoboy</strong>");
+    expect(html).toContain("o peso desta sacola está fora do que a entrega automática aceita");
     expect(html).toContain("o frete é confirmado pela nossa equipe");
     expect(html).not.toContain("Correios");
   });

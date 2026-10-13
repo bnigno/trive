@@ -10,7 +10,7 @@
 
 import { formatCentsBRL } from "@/lib/money";
 
-import { formatCep, quoteKey, type BotQuote } from "./memory";
+import { formatCep, isEmptyQuoteVerdictCurrent, quoteKey, type BotQuote } from "./memory";
 
 /** Depois disso a cotação é velha demais para fechar: cote de novo. */
 export const QUOTE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -140,7 +140,12 @@ export function resolveApprovedQuote(input: ResolveApprovedQuoteInput): QuoteRes
   // Cotação feita e vazia (lista [], não ausente) para este CEP: o frete é pela
   // equipe. Não é "cote de novo". Sem afirmar Correios: o motoboy pode cobrir o
   // CEP e só o peso ter ficado de fora — quem diz qual é o caso é cotar_frete.
-  if (Array.isArray(input.quotes) && input.quotes.length === 0 && input.quotedCep && input.quotedCep.replace(/\D/g, "") === orderCep) {
+  // Veredito vencido cai no "cote de novo" abaixo (a faixa pode ter sido consertada).
+  if (
+    isEmptyQuoteVerdictCurrent(input.quotes, input.quotedAt, input.now ?? new Date()) &&
+    input.quotedCep &&
+    input.quotedCep.replace(/\D/g, "") === orderCep
+  ) {
     return {
       ok: false,
       text: `Para o CEP ${formatCep(orderCep)} não há frete automático para esta sacola: o frete é calculado pela equipe. NÃO crie o pedido — confirme a sacola e o endereço completo e chame transferir_para_atendente com o resumo (CEP, endereço, peças).`,

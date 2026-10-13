@@ -7,6 +7,7 @@ import { getDb } from "@/db/client";
 import { requireOwner } from "@/services/auth";
 import {
   describeCorreiosProbeFailure,
+  getCorreiosAutoSettings,
   probeCorreiosQuote,
   type CorreiosProbeQuote,
 } from "@/services/correios-quotes";
@@ -19,13 +20,15 @@ import {
 import { ServiceError as SettingsServiceError, updateSetting } from "@/services/settings";
 import { cepDigits } from "@/lib/cep";
 import { parseBRLToCents } from "@/lib/money";
-import { oneItemGapWarnings } from "./coverage-warning";
+import { correiosAutoActive, oneItemGapWarnings } from "./coverage-warning";
 
 export type FormState = { error?: string; success?: string; warning?: string };
 
 /** A faixa salva deixa uma peça sozinha sem frete? O aviso aparece junto do "salvo". */
 async function gapWarningFor(rateId: string): Promise<string | undefined> {
-  return oneItemGapWarnings(await listShippingRates(getDb())).find((gap) => gap.id === rateId)?.text;
+  const db = getDb();
+  const correiosAuto = correiosAutoActive(await getCorreiosAutoSettings(db));
+  return oneItemGapWarnings(await listShippingRates(db), { correiosAuto }).find((gap) => gap.id === rateId)?.text;
 }
 
 function toErrorMessage(error: unknown): string {
