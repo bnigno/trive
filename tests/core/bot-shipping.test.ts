@@ -80,6 +80,16 @@ describe("resolveApprovedQuote", () => {
     expect(resolveApprovedQuote({ ...base, quotes: [] }).ok).toBe(false);
   });
 
+  it("cotação feita e vazia para o CEP: frete pela equipe, sem afirmar Correios (pode ser motoboy fora do peso)", () => {
+    const r = resolveApprovedQuote({ ...base, quotes: [], quotedCep: "68797000", orderCep: "68797000" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.text).toContain("não há frete automático");
+      expect(r.text).toContain("transferir_para_atendente");
+      expect(r.text).not.toContain("Correios");
+    }
+  });
+
   it("cotação com mais de 24 h é recusada; recente (ou sem carimbo, estado antigo) passa", () => {
     const now = new Date("2026-09-11T15:00:00Z");
     const velha = new Date(now.getTime() - QUOTE_MAX_AGE_MS - 1).toISOString();
@@ -133,6 +143,7 @@ describe("confirmQuoteUnchanged", () => {
     if (!nenhuma.ok) {
       expect(nenhuma.text).toContain("Nenhuma faixa cobre mais o CEP 01310-100");
       expect(nenhuma.text).toContain("transferir_para_atendente");
+      expect(nenhuma.text).not.toContain("Correios");
     }
 
     const sumiu = confirmQuoteUnchanged(SEDEX, [PAC], "01310100");

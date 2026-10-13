@@ -5,6 +5,7 @@ import {
   Field,
   FormError,
   FormSuccess,
+  FormWarning,
   Input,
   Select,
   SubmitButton,
@@ -192,6 +193,7 @@ export function ShippingRateCreateForm() {
       <RateFields defaults={null} />
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
+      <FormWarning message={state.warning} />
       <div>
         <SubmitButton pendingLabel="Criando…">Criar faixa de frete</SubmitButton>
       </div>
@@ -235,6 +237,7 @@ export function ShippingRateEditForm({
 
       <FormError message={state.error} />
       <FormSuccess message={state.success} />
+      <FormWarning message={state.warning} />
       <div>
         <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
       </div>

@@ -318,6 +318,21 @@ describe("renderContextNote", () => {
     expect(note).not.toContain("frete ainda NÃO cotado");
   });
 
+  it("cotação vazia com o motoboy cobrindo o CEP (só o peso ficou de fora): transferir, sem falar em Correios", () => {
+    const note = renderContextNote({ lastCep: "68797000", lastQuotes: [], lastQuotedAt: "2026-10-13T09:59:00.000Z", lastCepMotoboy: true });
+    expect(note).toContain("• CEP informado: 68797-000 · O MOTOBOY COBRE ESTE CEP, MAS NÃO O PESO DESTA SACOLA");
+    expect(note).toContain("nunca diga Correios");
+    expect(note).toContain("transferir_para_atendente");
+    expect(note).not.toContain("FORA DA ÁREA DO MOTOBOY");
+    expect(note).not.toContain("entrega pelos Correios");
+  });
+
+  it("estado com lastCepMotoboy mas cotação de novo pendente (a sacola mudou): pede para cotar, sem a linha do motoboy", () => {
+    const note = renderContextNote({ lastCep: "68797000", lastCepMotoboy: true });
+    expect(note).toContain("frete ainda NÃO cotado");
+    expect(note).not.toContain("O MOTOBOY COBRE ESTE CEP");
+  });
+
   it("endereço do CEP entra no caderninho pedindo só número e complemento", () => {
     const note = renderContextNote({
       lastCep: "01310100",

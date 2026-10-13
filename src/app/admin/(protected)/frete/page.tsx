@@ -13,7 +13,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Money } from "@/components/ui/money";
 import { Table, Td, Tr } from "@/components/ui/table";
 import { Button } from "@/components/ui/form";
+import { formatKg } from "@/lib/weight";
 import { toggleShippingRateAction } from "./actions";
+import { oneItemGapWarnings } from "./coverage-warning";
 import {
   CorreiosAutoForm,
   CorreiosProbeForm,
@@ -31,10 +33,6 @@ export const metadata: Metadata = {
 /** '01310100' -> '01310-100'. */
 function formatCep(digits: string): string {
   return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-}
-
-function formatKg(grams: number): string {
-  return `${(grams / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} kg`;
 }
 
 function formatDeliveryDays(min: number, max: number): string {
@@ -105,6 +103,7 @@ export default async function FretePage() {
   }
 
   const { rates, correios } = loaded;
+  const gapWarnings = oneItemGapWarnings(rates);
   const correiosTokenReady = isCorreiosQuotesConfigured();
   const correiosSimulated = correiosTokenReady && getAdapterMode() !== "real";
 
@@ -117,6 +116,15 @@ export default async function FretePage() {
 
       <Card title="Faixas de frete">
         <div className="flex flex-col gap-5">
+          {gapWarnings.length > 0 ? (
+            <ul role="alert" className="flex flex-col gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+              {gapWarnings.map((gap) => (
+                <li key={gap.id}>
+                  <strong>Atenção:</strong> {gap.text}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <p className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300">
             Onde uma faixa de <strong>motoboy</strong> cobre o CEP, a cliente vê
             SÓ o motoboy (uma opção por janela, a de hoje primeiro) — as faixas
