@@ -1179,6 +1179,11 @@ describe("listar_produtos 2.0", () => {
     const porTecido = await executor("listar_produtos", { busca: "poliamida" });
     expect(porTecido.ok).toBe(true);
     expect(porTecido.text).toContain("Blusa Maelle");
+    // E diz POR QUE casaram: no ensaio com a API real a Lia via as peças mas
+    // não sabia que eram de poliamida, e se esquivava ("a composição exata
+    // não vem na nossa lista geral") em vez de afirmar.
+    expect(porTecido.text).toContain('casaram com "poliamida"');
+    expect(porTecido.text).toContain("pode afirmar à cliente");
 
     // Com um filtro que exclui a peça, o vazio AVISA que a palavra existe.
     const comFiltro = await executor("listar_produtos", { busca: "poliamida", categoria: "vestido" });

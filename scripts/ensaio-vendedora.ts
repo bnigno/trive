@@ -49,6 +49,13 @@ const ROTEIROS: Record<string, string[]> = {
   audio: ["[a cliente enviou um áudio]", "ah tá, quero um look pra jantar"],
   foto: [`${INBOUND_MEDIA_MARKERS.image} tem alguma parecida com essa?`, "e no M, tem?"],
   "audio-real": ["<audio>", "uso M"],
+  // O caso que derrubou a confiança da dona em 04/10/2026: ela negou poliamida
+  // às 08:58 e confirmou às 08:59. A busca não enxergava o tecido.
+  tecido: [
+    "oi, tem blusa de poliamida?",
+    "e de suplex, tem?",
+    "e de veludo?",
+  ],
 };
 
 function flagValue(name: string): string | undefined {

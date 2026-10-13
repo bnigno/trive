@@ -347,7 +347,15 @@ export async function execListarProdutos(
       description: formatPriceRange(item.priceFromCents, item.priceToCents),
     })),
   });
-  const contagem = `${items.length} ${items.length === 1 ? "peça encontrada" : "peças encontradas"}${descricaoFiltro}`;
+  // A busca olha a FICHA (composição, como veste, cuidados), não só o nome —
+  // mas a linha de cada peça não mostra o tecido. Sem esta frase a Lia via 9
+  // blusas sem saber POR QUE casaram e se esquivava: "a composição exata não
+  // vem na nossa lista geral" (ensaio real, 12/10/2026). Agora ela sabe que
+  // casaram pela palavra e pode afirmar.
+  const pelaFicha = busca
+    ? ` — todas casaram com "${busca}" no nome, na descrição ou na ficha (tecido, como veste, cuidados): pode afirmar à cliente que são dessas`
+    : "";
+  const contagem = `${items.length} ${items.length === 1 ? "peça encontrada" : "peças encontradas"}${descricaoFiltro}${pelaFicha}`;
 
   // Página explícita (a Lia pediu "as próximas"): uma lista só, como sempre.
   if ((input.pagina ?? 1) > 1) {
