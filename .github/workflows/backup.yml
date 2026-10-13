@@ -17,10 +17,57 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Instalar postgresql-client
+      # Por que descobrir a versão do servidor em vez de instalar "a mais
+      # recente"? Duas regras do PostgreSQL se cruzam aqui:
+      #
+      # 1. o pg_dump RECUSA servidor de major mais nova que a dele — era o que
+      #    deixava este job vermelho sem ninguém notar (cliente 16 do runner,
+      #    servidor 17.6: "aborting because of server version mismatch");
+      # 2. um arquivo gerado por major mais NOVA não pode ser lido por
+      #    ferramenta mais antiga. Dump feito com o 18 seria inútil para
+      #    restaurar no nosso Supabase 17.
+      #
+      # Então casamos a major com a do servidor, lendo dele mesmo. O psql, ao
+      # contrário do pg_dump, conversa com servidor mais novo sem reclamar.
+      - name: Descobrir a major do servidor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "ERRO: secret DATABASE_URL não cadastrado no repositório." >&2
+            exit 1
+          fi
+          NUM="$(psql "$DATABASE_URL" -tAXc "show server_version_num" | tr -d '[:space:]')"
+          MAJOR=$(( NUM / 10000 ))
+          case "$MAJOR" in
+            1[0-9]|2[0-9]) : ;;
+            *) echo "ERRO: major do servidor inesperada: '$MAJOR'" >&2; exit 1 ;;
+          esac
+          echo "Servidor PostgreSQL $MAJOR."
+          echo "PG_MAJOR=$MAJOR" >> "$GITHUB_ENV"
+
+      # PEGADINHA: instalar o pacote não basta. O /usr/bin/pg_dump do Ubuntu é
+      # um wrapper (pg_wrapper) que escolhe a versão pelo CLUSTER local, e o
+      # runner tem um PostgreSQL 16 instalado — ele continuava chamando o 16
+      # mesmo com a major certa no disco. Por isso o PATH aponta direto para o
+      # bin da versão que queremos.
+      - name: Instalar o postgresql-client da mesma major (PGDG)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y "postgresql-client-$PG_MAJOR"
+          echo "/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
+
+      # O nome do arquivo é calculado UMA vez: antes, cada passo chamava
+      # `date +%F` de novo e um job que virasse a meia-noite UTC procurava um
+      # arquivo com a data de ontem.
+      - name: Definir nome do arquivo
+        run: echo "DUMP_FILE=trive-backup-$(date +%F).dump" >> "$GITHUB_ENV"
 
       - name: Gerar dump do banco
         env:
@@ -30,13 +77,22 @@ jobs:
             echo "ERRO: secret DATABASE_URL não cadastrado no repositório." >&2
             exit 1
           fi
-          pg_dump "$DATABASE_URL" --no-owner --format=custom \
-            --file="trive-backup-$(date +%F).dump"
+          pg_dump --version
+          pg_dump "$DATABASE_URL" --no-owner --format=custom --file="$DUMP_FILE"
+          ls -lh "$DUMP_FILE"
 
-      - name: Verificar legibilidade do dump
-        # Backup ilegível = job vermelho: pg_restore --list falha se o arquivo
-        # estiver corrompido ou vazio.
-        run: pg_restore --list "trive-backup-$(date +%F).dump" > /dev/null
+      - name: Verificar que o dump é legível e tem o que importa
+        # Dump ilegível OU vazio de conteúdo = job vermelho. `pg_restore --list`
+        # falha em arquivo corrompido; o grep garante que as tabelas do negócio
+        # realmente entraram (backup que existe mas não tem os pedidos dentro
+        # é pior que backup nenhum, porque dá falsa segurança).
+        run: |
+          pg_restore --list "$DUMP_FILE" > /tmp/conteudo.txt
+          for tabela in orders order_items products customers stock_movements; do
+            grep -q "TABLE DATA public $tabela " /tmp/conteudo.txt \
+              || { echo "ERRO: tabela $tabela ausente do dump." >&2; exit 1; }
+          done
+          echo "Dump legível com $(grep -c 'TABLE DATA' /tmp/conteudo.txt) tabelas."
 
       - name: Publicar artifact
         uses: actions/upload-artifact@v4
