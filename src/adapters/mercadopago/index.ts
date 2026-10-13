@@ -8,13 +8,31 @@ export type CheckoutItem = {
   unitPriceCents: number;
 };
 
+/**
+ * Quem está comprando, como o antifraude do MP precisa ver.
+ *
+ * Mandar só o e-mail (ou nada) faz a compra parecer anônima e o MP recusa com
+ * `cc_rejected_high_risk`: em 09-10/2026, 7 de 9 tentativas de cartão pelo
+ * site foram recusadas assim, enquanto os links feitos à mão no app do MP —
+ * que levam e-mail e CPF — aprovaram 3 de 3. Todo campo que a loja tiver vai;
+ * o que faltar é OMITIDO (campo vazio o MP recusa, não ignora).
+ */
+export type CheckoutPayer = {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  document?: { type: "CPF" | "CNPJ"; number: string };
+  phone?: { areaCode: string; number: string };
+  address?: { zipCode: string; streetName: string; streetNumber: string };
+};
+
 export type CreateCheckoutPreferenceInput = {
   orderId: string;
   orderNumber: number;
   /** Referência externa enviada ao MP (= orderId); volta em getPayment. */
   externalReference: string;
   items: CheckoutItem[];
-  payerEmail?: string;
+  payer?: CheckoutPayer;
   /** Página do pedido para onde o comprador retorna após o checkout. */
   backUrl: string;
   notificationUrl?: string;

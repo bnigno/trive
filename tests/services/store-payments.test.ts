@@ -169,7 +169,15 @@ describe("ensurePaymentPreference", () => {
     expect(input.orderNumber).toBe(order.orderNumber);
     // Idempotência do pagamento: external_reference é SEMPRE o orderId.
     expect(input.externalReference).toBe(order.orderId);
-    expect(input.payerEmail).toBe("maria@example.com");
+    // O comprador INTEIRO vai ao antifraude: só o e-mail fazia a compra
+    // parecer anônima e o MP recusava com cc_rejected_high_risk.
+    expect(input.payer).toMatchObject({
+      firstName: "Maria",
+      lastName: "da Silva",
+      email: "maria@example.com",
+      document: { type: "CPF", number: "52998224725" },
+      phone: { areaCode: "11", number: "999998888" },
+    });
     expect(input.backUrl).toBe(
       `https://trivemaison.com.br/pedido/${order.publicToken}`,
     );

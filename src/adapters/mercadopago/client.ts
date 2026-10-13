@@ -139,7 +139,46 @@ export class MercadoPagoPaymentGateway implements PaymentGateway {
         unit_price: centsToReais(item.unitPriceCents),
         currency_id: "BRL",
       })),
-      ...(input.payerEmail ? { payer: { email: input.payerEmail } } : {}),
+      // O comprador INTEIRO. Mandar só o e-mail (ou nada) faz a compra parecer
+      // anônima e o antifraude recusa com cc_rejected_high_risk. Campo que a
+      // loja não tem é omitido: em branco o MP conta contra, não ignora.
+      ...(input.payer
+        ? {
+            payer: {
+              // Na PREFERÊNCIA o MP lê `name`/`surname`; `first_name`/
+              // `last_name` são da API de pagamentos e aqui são ignorados em
+              // silêncio — conferido contra a API real em 12/10/2026.
+              name: input.payer.firstName,
+              surname: input.payer.lastName,
+              ...(input.payer.email ? { email: input.payer.email } : {}),
+              ...(input.payer.document
+                ? {
+                    identification: {
+                      type: input.payer.document.type,
+                      number: input.payer.document.number,
+                    },
+                  }
+                : {}),
+              ...(input.payer.phone
+                ? {
+                    phone: {
+                      area_code: input.payer.phone.areaCode,
+                      number: input.payer.phone.number,
+                    },
+                  }
+                : {}),
+              ...(input.payer.address
+                ? {
+                    address: {
+                      zip_code: input.payer.address.zipCode,
+                      street_name: input.payer.address.streetName,
+                      street_number: input.payer.address.streetNumber,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       back_urls: {
         success: input.backUrl,
         pending: input.backUrl,

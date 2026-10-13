@@ -13,6 +13,7 @@ import { auditLog, customers, orderItems, orders } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { ServiceError } from "@/services/orders";
 import { getSettingsMap } from "@/services/settings";
+import { buildCheckoutPayer } from "@/core/orders/checkout-payer";
 
 export { ServiceError };
 
@@ -26,13 +27,24 @@ export interface CheckoutPreferenceItem {
   unitPriceCents: number;
 }
 
+/** Espelho de CheckoutPayer (adapters/mercadopago): quem está comprando. */
+export interface CheckoutPreferencePayer {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  document?: { type: "CPF" | "CNPJ"; number: string };
+  phone?: { areaCode: string; number: string };
+  address?: { zipCode: string; streetName: string; streetNumber: string };
+}
+
 export interface CreateCheckoutPreferenceInput {
   orderId: string;
   orderNumber: number;
   /** Sempre = orderId: é o elo pedido↔pagamento que o webhook usa. */
   externalReference: string;
   items: CheckoutPreferenceItem[];
-  payerEmail?: string;
+  /** O antifraude do MP recusa compra anônima: vai tudo o que a loja tem. */
+  payer?: CheckoutPreferencePayer;
   /** Página pública do pedido — o MP devolve o cliente para cá. */
   backUrl: string;
   notificationUrl?: string;
@@ -116,6 +128,7 @@ export async function ensurePaymentPreference(
       mpPreferenceId: orders.mpPreferenceId,
       customerId: orders.customerId,
       paymentMethod: orders.paymentMethod,
+      shippingAddress: orders.shippingAddress,
     })
     .from(orders)
     .where(eq(orders.id, parsed.orderId));
@@ -205,7 +218,13 @@ export async function ensurePaymentPreference(
   }
 
   const [customer] = await db
-    .select({ email: customers.email })
+    .select({
+      fullName: customers.fullName,
+      email: customers.email,
+      phoneE164: customers.phoneE164,
+      documentType: customers.documentType,
+      documentNumber: customers.documentNumber,
+    })
     .from(customers)
     .where(eq(customers.id, order.customerId));
 
@@ -215,7 +234,9 @@ export async function ensurePaymentPreference(
     orderNumber: order.orderNumber,
     externalReference: order.id,
     items,
-    ...(customer?.email ? { payerEmail: customer.email } : {}),
+    ...(customer
+      ? { payer: buildCheckoutPayer(customer, order.shippingAddress) }
+      : {}),
     backUrl: `${site}/pedido/${order.publicToken}`,
     notificationUrl: `${site}/api/webhooks/mercadopago`,
   });
