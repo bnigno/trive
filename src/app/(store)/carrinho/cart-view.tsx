@@ -56,6 +56,7 @@ type QuoteState =
       whatsappUrl: string | null;
       sellerName: string;
       motoboyArea: string;
+      motoboyCoversCep: boolean;
     };
 
 type CouponState =
@@ -199,6 +200,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
           whatsappUrl: result.whatsappUrl,
           sellerName: result.sellerName,
           motoboyArea: result.motoboyArea,
+          motoboyCoversCep: result.motoboyCoversCep,
         });
         // A página da peça usa este CEP para prometer "chega hoje".
         writeStoredCep(cepDigits);
@@ -427,6 +429,7 @@ export function CartView({ lia }: { lia?: { sellerName: string; fallbackUrl: str
                   className="mt-2"
                   cepDigits={quote.cepDigits}
                   motoboyArea={quote.motoboyArea}
+                  motoboyCoversCep={quote.motoboyCoversCep}
                   sellerName={quote.sellerName}
                   fallbackUrl={quote.whatsappUrl}
                   items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}

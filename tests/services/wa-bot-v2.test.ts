@@ -394,6 +394,45 @@ describe("cotar_frete fora da área do motoboy", () => {
     expect(soPergunta.text).toContain("NÃO transfira agora");
     expect(soPergunta.text).not.toContain("chame transferir_para_atendente");
   });
+
+  it("o motoboy cobre o CEP mas a faixa não aceita o peso (Benevides com 8 kg no peso mínimo): motoboy com frete pela equipe, nunca Correios", async () => {
+    await createSimpleProduct("CANECA-AZUL", "Caneca Azul", 4990);
+    await db.insert(schema.shippingRates).values({ name: "Motoboy Belém", kind: "motoboy", cepStart: "66000000", cepEnd: "66999999", priceCents: 1000, deliveryWindows: [{ start: "16:00", end: "19:00", cutoff: "13:00" }] });
+    await db.insert(schema.shippingRates).values({ name: "Motoboy Benevides", kind: "motoboy", cepStart: "68795000", cepEnd: "68797999", weightMinGrams: 8000, weightMaxGrams: 20000, priceCents: 500, deliveryWindows: [{ start: "16:00", end: "19:00", cutoff: "13:00" }] });
+    const conversationId = await createConversation();
+    const executor = executorFor(conversationId);
+    await executor("adicionar_a_sacola", { sku: "CANECA-AZUL" });
+
+    const cotacao = await executor("cotar_frete", { cep: "68797000" });
+    expect(cotacao.ok).toBe(true);
+    expect(cotacao.text).toContain("O CEP 68797-000 é atendido pelo MOTOBOY");
+    expect(cotacao.text).toContain("esta sacola (0,3 kg)");
+    expect(cotacao.text).toContain("FRETE É CONFIRMADO PELA EQUIPE");
+    expect(cotacao.text).toContain('motivo "frete motoboy a confirmar"');
+    expect(cotacao.text).toContain("NÃO chame criar_pedido");
+    expect(cotacao.text).not.toContain("pelos Correios");
+    expect(cotacao.text).not.toContain("Fora da área");
+    const state = await botState(conversationId);
+    expect(state.lastQuotes).toEqual([]);
+    expect(state.lastCepMotoboy).toBe(true);
+
+    // Cotação de verdade depois (outro CEP com motoboy): a marca some do caderninho.
+    const belem = await executor("cotar_frete", { cep: "66010000" });
+    expect(belem.text).toContain("Motoboy Belém");
+    expect((await botState(conversationId)).lastCepMotoboy).toBeUndefined();
+
+    // Fora de qualquer faixa: volta o texto dos Correios e a marca não vem.
+    const fora = await executor("cotar_frete", { cep: "01310100" });
+    expect(fora.text).toContain("Fora da área do motoboy (Belém e Benevides)");
+    expect((await botState(conversationId)).lastCepMotoboy).toBeUndefined();
+
+    // Só perguntou (sacola vazia): motoboy, sem transferir.
+    await executor("remover_da_sacola", { sku: "CANECA-AZUL" });
+    const soPergunta = await executor("cotar_frete", { cep: "68797000" });
+    expect(soPergunta.text).toContain("mas uma peça está fora do peso");
+    expect(soPergunta.text).toContain("NÃO transfira agora");
+    expect(soPergunta.text).not.toContain("pelos Correios");
+  });
 });
 
 describe("cotar_frete fora da área com Correios automático (SuperFrete)", () => {

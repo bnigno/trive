@@ -99,6 +99,8 @@ export const botStateSchema = z
     lastQuotes: z.array(quoteSchema).optional(),
     /** Quando a cotação foi feita (ISO); cotação velha não fecha pedido. */
     lastQuotedAt: z.string().optional(),
+    /** Cotação vazia com um motoboy cobrindo o CEP (só o peso ficou de fora): não é Correios. */
+    lastCepMotoboy: z.boolean().optional(),
     chosenRateId: z.string().optional(),
     /** Opção escolhida (janela do motoboy inclusa); prevalece sobre chosenRateId. */
     chosenOptionKey: z.string().optional(),
@@ -389,6 +391,21 @@ function focusAgeMinutes(at: string | undefined, now: Date): number | null {
   return Math.max(0, Math.floor((now.getTime() - lido) / 60_000));
 }
 
+/**
+ * Validade do veredito "cotado e vazio" (frete pela equipe). Curta de
+ * propósito: a faixa consertada no painel precisa valer na mesma conversa —
+ * vencido, a Lia cota de novo (Benevides, out/2026: o veredito errado de
+ * "Correios" ficava preso no caderninho).
+ */
+export const EMPTY_QUOTE_MAX_AGE_MS = 60 * 60 * 1000;
+
+/** A cotação foi feita, voltou vazia e ainda vale? Sem carimbo = vencida. */
+export function isEmptyQuoteVerdictCurrent(quotes: readonly unknown[] | undefined, quotedAt: string | undefined, now: Date): boolean {
+  if (!Array.isArray(quotes) || quotes.length > 0 || !quotedAt) return false;
+  const quotedAtMs = Date.parse(quotedAt);
+  return !Number.isNaN(quotedAtMs) && now.getTime() - quotedAtMs <= EMPTY_QUOTE_MAX_AGE_MS;
+}
+
 export function renderContextNote(
   state: BotState,
   extras: { lines?: readonly string[]; now?: Date } = {},
@@ -437,14 +454,18 @@ export function renderContextNote(
     const escolhido = state.lastQuotes?.find((quote) => quoteKey(quote) === chosenKey);
     // Sacola mudou depois da cotação (adicionar/remover zeram lastQuotes):
     // o CEP fica como pista, mas o frete tem de ser cotado de novo.
-    // Cotação feita e vazia (lista [], não ausente): fora da área do motoboy.
-    const foraDaArea = Array.isArray(state.lastQuotes) && state.lastQuotes.length === 0 && Boolean(state.lastQuotedAt);
+    // Cotação feita e vazia (lista [], não ausente) e recente: fora da área do
+    // motoboy, ou dentro dela com a sacola fora do peso das faixas
+    // (lastCepMotoboy). Vencida, vira "não cotado" e a Lia cota de novo.
+    const foraDaArea = isEmptyQuoteVerdictCurrent(state.lastQuotes, state.lastQuotedAt, extras.now ?? new Date());
     linhas.push(
       cotacoes
         ? `• CEP informado: ${formatCep(state.lastCep)} · frete cotado: ${cotacoes}${escolhido ? ` · escolhido: ${escolhido.label ? `${escolhido.name} ${escolhido.label}` : escolhido.name}` : ""}`
-        : foraDaArea
-          ? `• CEP informado: ${formatCep(state.lastCep)} · FORA DA ÁREA DO MOTOBOY: entrega pelos Correios com o frete calculado pela equipe — com a sacola pronta, confirme o endereço completo e chame transferir_para_atendente com o resumo; NÃO chame criar_pedido`
-          : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
+        : foraDaArea && state.lastCepMotoboy
+          ? `• CEP informado: ${formatCep(state.lastCep)} · O MOTOBOY COBRE ESTE CEP, MAS NÃO O PESO DESTA SACOLA: sem valor automático, o frete é confirmado pela equipe (nunca diga Correios) — com a sacola pronta, confirme o endereço completo e chame transferir_para_atendente com o resumo; NÃO chame criar_pedido`
+          : foraDaArea
+            ? `• CEP informado: ${formatCep(state.lastCep)} · FORA DA ÁREA DO MOTOBOY: entrega pelos Correios com o frete calculado pela equipe — com a sacola pronta, confirme o endereço completo e chame transferir_para_atendente com o resumo; NÃO chame criar_pedido`
+            : `• CEP informado: ${formatCep(state.lastCep)} · frete ainda NÃO cotado para a sacola atual — chame cotar_frete antes do resumo`,
     );
     if (state.lastCepAddress) {
       const endereco = state.lastCepAddress;

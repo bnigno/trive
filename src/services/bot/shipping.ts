@@ -11,6 +11,7 @@ import { formatLookedUpAddress, lookupAddressByCep } from "@/services/address-lo
 import { listShippingRates } from "@/services/shipping";
 import { DEFAULT_ITEM_WEIGHT_GRAMS, quoteDeliveryOptions } from "@/services/store-catalog";
 import { formatCep } from "@/lib/cep";
+import { formatKg } from "@/lib/weight";
 
 import { cartWeightGrams } from "./cart";
 import { readBotState, updateBotState } from "./shared";
@@ -52,30 +53,30 @@ export async function execCotarFrete(
   }
 
   if (quotes.length === 0) {
-    // Fora da área do motoboy: Correios com o frete calculado pela equipe.
-    // O caderninho guarda o CEP e ZERA a cotação antiga (de outro CEP), para
-    // criar_pedido não fechar com um frete que não é deste endereço.
+    // Sem opção: fora da área do motoboy (Correios com o frete pela equipe) ou
+    // dentro dela com a sacola fora do peso das faixas (motoboy, frete pela
+    // equipe — nunca "Correios"). O caderninho guarda o CEP e ZERA a cotação
+    // antiga (de outro CEP), para criar_pedido não fechar com um frete que não
+    // é deste endereço.
+    const rates = await listShippingRates(db);
+    const motoboyCep = motoboyCoversCep(rates, input.cep);
     await updateBotState(db, ctx, (current) => ({
       ...current,
       lastCep: input.cep,
       lastCepAddress: cepAddress,
       lastQuotes: [],
       lastQuotedAt: now.toISOString(),
+      lastCepMotoboy: motoboyCep ? true : undefined,
       chosenRateId: undefined,
       chosenOptionKey: undefined,
       neededBy,
       occasion: neededBy ? occasion : undefined,
     }));
-    const rates = await listShippingRates(db);
     return {
       ok: true,
-      text: outsideMotoboyAreaText({
-        cep: input.cep,
-        // Um motoboy cobre o CEP mas não o peso: não é "fora da área" — só não há valor automático.
-        area: motoboyCoversCep(rates, input.cep) ? "" : motoboyAreaLabel(rates),
-        cepAddress,
-        cartEmpty: isEstimate,
-      }),
+      text: motoboyCep
+        ? motoboyWeightGapText({ cep: input.cep, weightGrams: totalWeightGrams, cepAddress, cartEmpty: isEstimate })
+        : outsideMotoboyAreaText({ cep: input.cep, area: motoboyAreaLabel(rates), cepAddress, cartEmpty: isEstimate }),
     };
   }
 
@@ -85,6 +86,7 @@ export async function execCotarFrete(
     lastCepAddress: cepAddress,
     lastQuotes: quotes,
     lastQuotedAt: now.toISOString(),
+    lastCepMotoboy: undefined,
     // Uma opção só já é a escolha (as duas chaves: leitores antigos olham chosenRateId).
     chosenRateId: quotes.length === 1 ? quotes[0].rateId : undefined,
     chosenOptionKey: quotes.length === 1 ? quoteKey(quotes[0]) : undefined,
@@ -142,6 +144,33 @@ export function outsideMotoboyAreaText(input: {
     input.cartEmpty
       ? "[Diga em 1 frase que a entrega é pelos Correios e que a equipe calcula o frete quando a sacola estiver pronta. NÃO transfira agora: continue ajudando a escolher as peças; quando ela quiser fechar, cote de novo com o CEP e siga a instrução. Não invente prazo nem valor e NÃO chame criar_pedido.]"
       : "[Diga em 1 frase que a entrega é pelos Correios e que a equipe calcula o frete e manda o valor em seguida. Confirme a sacola e peça SÓ número e complemento do endereço (o CEP já deu rua/bairro/cidade; sem endereço do CEP, confira o CEP com ela). Depois chame transferir_para_atendente com motivo \"frete Correios a cotar\" e um resumo com CEP, endereço completo e as peças da sacola. Não invente prazo nem valor e NÃO chame criar_pedido.]",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * O que a Lia lê quando um motoboy cobre o CEP mas nenhuma faixa aceita o
+ * peso da sacola: a entrega continua sendo por motoboy — só não há valor
+ * automático. Mesmo caminho do "frete pela equipe", sem falar em Correios.
+ */
+export function motoboyWeightGapText(input: {
+  cep: string;
+  weightGrams: number;
+  cepAddress?: { street: string; district: string; city: string; state: string };
+  /** Sacola vazia: a cliente só perguntou o frete — não é hora de transferir. */
+  cartEmpty?: boolean;
+}): string {
+  const sacola = input.cartEmpty ? "uma peça" : `esta sacola (${formatKg(input.weightGrams)})`;
+  const lines = [
+    `O CEP ${formatCep(input.cep)} é atendido pelo MOTOBOY, mas ${sacola} está fora do peso que as faixas do motoboy aceitam: não existe valor automático, o FRETE É CONFIRMADO PELA EQUIPE e este pedido não fecha aqui. A entrega é por motoboy — NUNCA diga Correios para este CEP.`,
+  ];
+  if (input.cepAddress) {
+    lines.push(`Endereço do CEP: ${formatLookedUpAddress(input.cepAddress)}.`);
+  }
+  lines.push(
+    input.cartEmpty
+      ? "[Diga em 1 frase que a entrega é por motoboy e que a equipe confirma o valor do frete quando a sacola estiver pronta. NÃO transfira agora: continue ajudando a escolher as peças; quando ela quiser fechar, cote de novo com o CEP e siga a instrução. Não invente valor nem janela e NÃO chame criar_pedido.]"
+      : "[Diga em 1 frase que a entrega é por motoboy e que a equipe confirma o valor do frete e manda em seguida. Confirme a sacola e peça SÓ número e complemento do endereço (o CEP já deu rua/bairro/cidade; sem endereço do CEP, confira o CEP com ela). Depois chame transferir_para_atendente com motivo \"frete motoboy a confirmar\" e um resumo com CEP, endereço completo e as peças da sacola. Não invente valor nem janela e NÃO chame criar_pedido.]",
   );
   return lines.join("\n");
 }

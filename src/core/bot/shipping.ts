@@ -10,7 +10,7 @@
 
 import { formatCentsBRL } from "@/lib/money";
 
-import { formatCep, quoteKey, type BotQuote } from "./memory";
+import { formatCep, isEmptyQuoteVerdictCurrent, quoteKey, type BotQuote } from "./memory";
 
 /** Depois disso a cotação é velha demais para fechar: cote de novo. */
 export const QUOTE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -137,12 +137,18 @@ export function resolveApprovedQuote(input: ResolveApprovedQuoteInput): QuoteRes
   const orderCep = input.orderCep.replace(/\D/g, "");
   const quotes = input.quotes ?? [];
 
-  // Cotação feita e vazia (lista [], não ausente) para este CEP: fora da área
-  // do motoboy — Correios com o frete pela equipe. Não é "cote de novo".
-  if (Array.isArray(input.quotes) && input.quotes.length === 0 && input.quotedCep && input.quotedCep.replace(/\D/g, "") === orderCep) {
+  // Cotação feita e vazia (lista [], não ausente) para este CEP: o frete é pela
+  // equipe. Não é "cote de novo". Sem afirmar Correios: o motoboy pode cobrir o
+  // CEP e só o peso ter ficado de fora — quem diz qual é o caso é cotar_frete.
+  // Veredito vencido cai no "cote de novo" abaixo (a faixa pode ter sido consertada).
+  if (
+    isEmptyQuoteVerdictCurrent(input.quotes, input.quotedAt, input.now ?? new Date()) &&
+    input.quotedCep &&
+    input.quotedCep.replace(/\D/g, "") === orderCep
+  ) {
     return {
       ok: false,
-      text: `Para o CEP ${formatCep(orderCep)} não há frete automático: a entrega é pelos Correios com o frete calculado pela equipe. NÃO crie o pedido — confirme a sacola e o endereço completo e chame transferir_para_atendente com o resumo (CEP, endereço, peças).`,
+      text: `Para o CEP ${formatCep(orderCep)} não há frete automático para esta sacola: o frete é calculado pela equipe. NÃO crie o pedido — confirme a sacola e o endereço completo e chame transferir_para_atendente com o resumo (CEP, endereço, peças).`,
     };
   }
 
@@ -206,7 +212,7 @@ export function confirmQuoteUnchanged(
   if (fresh.length === 0) {
     return {
       ok: false,
-      text: `Nenhuma faixa cobre mais o CEP ${cep} para esta sacola: a entrega é pelos Correios com o frete calculado pela equipe. NÃO feche o pedido — chame cotar_frete de novo com este CEP e siga a instrução devolvida (confirmar sacola e endereço → transferir_para_atendente). Não invente valor nem repita o frete antigo.`,
+      text: `Nenhuma faixa cobre mais o CEP ${cep} para esta sacola: não há frete automático e o frete é calculado pela equipe. NÃO feche o pedido — chame cotar_frete de novo com este CEP e siga a instrução devolvida (confirmar sacola e endereço → transferir_para_atendente). Não invente valor nem repita o frete antigo.`,
     };
   }
   const current =

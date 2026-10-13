@@ -48,6 +48,8 @@ export type QuoteShippingActionResult =
       sellerName: string;
       /** Onde o motoboy chega ("Belém, Ananindeua e Castanhal"); vazio sem faixa de motoboy. */
       motoboyArea: string;
+      /** Sem opção, mas um motoboy cobre o CEP (só o peso ficou de fora): não é Correios. */
+      motoboyCoversCep: boolean;
     }
   | { ok: false; error: string };
 
@@ -82,13 +84,15 @@ export async function quoteShippingAction(
     const bridge = await loadBridgeSettings(db);
     const whatsappUrl = plainBridgeUrl(bridge);
     let motoboyArea = "";
+    let motoboyCep = false;
     if (options.length === 0) {
       const rates = await listShippingRates(db);
       // Um motoboy cobre o CEP mas não o peso da sacola: não é "fora da área".
-      motoboyArea = motoboyCoversCep(rates, parsed.cep) ? "" : motoboyAreaLabel(rates);
+      motoboyCep = motoboyCoversCep(rates, parsed.cep);
+      motoboyArea = motoboyCep ? "" : motoboyAreaLabel(rates);
     }
 
-    return { ok: true, options, whatsappUrl, sellerName: bridge.sellerName, motoboyArea };
+    return { ok: true, options, whatsappUrl, sellerName: bridge.sellerName, motoboyArea, motoboyCoversCep: motoboyCep };
   } catch (error) {
     if (error instanceof ServiceError) {
       return { ok: false, error: error.message };

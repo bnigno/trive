@@ -107,7 +107,7 @@ type QuoteState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "done"; options: DeliveryOption[]; whatsappUrl: string | null; sellerName: string; motoboyArea: string };
+  | { status: "done"; options: DeliveryOption[]; whatsappUrl: string | null; sellerName: string; motoboyArea: string; motoboyCoversCep: boolean };
 
 const PAYMENT_OPTIONS = [
   {
@@ -241,6 +241,7 @@ export function CheckoutClient({
         whatsappUrl: result.whatsappUrl,
         sellerName: result.sellerName,
         motoboyArea: result.motoboyArea,
+        motoboyCoversCep: result.motoboyCoversCep,
       });
       writeStoredCep(cepDigits);
       setShippingCentsOverride(null);
@@ -824,6 +825,7 @@ export function CheckoutClient({
                   <CorreiosOnRequestNotice
                     cepDigits={cepDigits}
                     motoboyArea={quote.motoboyArea}
+                    motoboyCoversCep={quote.motoboyCoversCep}
                     sellerName={quote.sellerName}
                     fallbackUrl={quote.whatsappUrl}
                     items={items.map((line) => ({ variantId: line.variantId, sku: line.sku, quantity: line.quantity }))}
