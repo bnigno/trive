@@ -17,19 +17,41 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      # O pg_dump que vem no runner está uma major ATRASADO (16.x) e se RECUSA
-      # a falar com servidor mais novo ("aborting because of server version
-      # mismatch") — foi o que deixou este backup vermelho sem ninguém notar.
-      # Instalamos o cliente do repositório oficial PGDG, sem fixar a major:
-      # cliente mais NOVO que o servidor é caso suportado pelo PostgreSQL,
-      # então quando o Supabase subir de 17 para 18 o job segue funcionando.
+      # Por que descobrir a versão do servidor em vez de instalar "a mais
+      # recente"? Duas regras do PostgreSQL se cruzam aqui:
       #
-      # PEGADINHA: instalar não basta. O /usr/bin/pg_dump do Ubuntu é um
-      # wrapper (pg_wrapper) que escolhe a versão pelo CLUSTER local, e o
-      # runner tem um PostgreSQL 16 instalado — ou seja, ele continuava
-      # chamando o 16 mesmo com o 18 no disco. Por isso o PATH aponta direto
-      # para o bin da major mais nova que existir.
-      - name: Instalar postgresql-client mais recente (PGDG)
+      # 1. o pg_dump RECUSA servidor de major mais nova que a dele — era o que
+      #    deixava este job vermelho sem ninguém notar (cliente 16 do runner,
+      #    servidor 17.6: "aborting because of server version mismatch");
+      # 2. um arquivo gerado por major mais NOVA não pode ser lido por
+      #    ferramenta mais antiga. Dump feito com o 18 seria inútil para
+      #    restaurar no nosso Supabase 17.
+      #
+      # Então casamos a major com a do servidor, lendo dele mesmo. O psql, ao
+      # contrário do pg_dump, conversa com servidor mais novo sem reclamar.
+      - name: Descobrir a major do servidor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "ERRO: secret DATABASE_URL não cadastrado no repositório." >&2
+            exit 1
+          fi
+          NUM="$(psql "$DATABASE_URL" -tAXc "show server_version_num" | tr -d '[:space:]')"
+          MAJOR=$(( NUM / 10000 ))
+          case "$MAJOR" in
+            1[0-9]|2[0-9]) : ;;
+            *) echo "ERRO: major do servidor inesperada: '$MAJOR'" >&2; exit 1 ;;
+          esac
+          echo "Servidor PostgreSQL $MAJOR."
+          echo "PG_MAJOR=$MAJOR" >> "$GITHUB_ENV"
+
+      # PEGADINHA: instalar o pacote não basta. O /usr/bin/pg_dump do Ubuntu é
+      # um wrapper (pg_wrapper) que escolhe a versão pelo CLUSTER local, e o
+      # runner tem um PostgreSQL 16 instalado — ele continuava chamando o 16
+      # mesmo com a major certa no disco. Por isso o PATH aponta direto para o
+      # bin da versão que queremos.
+      - name: Instalar o postgresql-client da mesma major (PGDG)
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
@@ -37,10 +59,9 @@ jobs:
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          PGBIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
-          echo "$PGBIN" >> "$GITHUB_PATH"
-          "$PGBIN/pg_dump" --version
+          sudo apt-get install -y "postgresql-client-$PG_MAJOR"
+          echo "/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
 
       # O nome do arquivo é calculado UMA vez: antes, cada passo chamava
       # `date +%F` de novo e um job que virasse a meia-noite UTC procurava um
