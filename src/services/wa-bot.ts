@@ -190,7 +190,9 @@ export function historyTextForOutbound(input: {
   // precisa saber que a cliente NÃO recebeu (senão insiste "ouve acima").
   const failed = input.status === "failed";
   const text =
-    input.kind === "audio"
+    failed && input.kind === "option_list" && isTryOnOfferBody(input.body)
+      ? '[pergunta tocável da prévia ("Quer se ver com ela?") que NÃO chegou à cliente (falhou)]'
+      : input.kind === "audio"
       ? `[mensagem de voz ${failed ? "que NÃO chegou à cliente (falhou)" : "enviada à cliente"}] ${input.body}`
       : failed && input.kind === "image"
         ? `[foto que NÃO chegou ao cliente (falhou)] ${input.body}`

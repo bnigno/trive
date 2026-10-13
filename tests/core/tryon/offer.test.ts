@@ -17,11 +17,23 @@ import {
   tryOnOfferOptions,
   tryOnRowId,
 } from "@/core/tryon/offer";
-import { historyTextFor } from "@/services/wa-bot";
+import { historyTextFor, historyTextForOutbound } from "@/services/wa-bot";
 
 const ID = "8b0f7f3e-6a1b-4c2d-9e8f-0123456789ab";
 const NOW = new Date("2026-10-13T15:00:00Z");
-const base = { enabled: true, wearable: true, inStock: true, inFlight: false, quotaOk: true, lastOfferAt: null, lastDeclinedAt: null, now: NOW };
+const base = {
+  enabled: true,
+  mediaEnabled: true,
+  wearable: true,
+  hasGarmentPhoto: true,
+  inStock: true,
+  colorInStock: true,
+  inFlight: false,
+  quotaOk: true,
+  lastOfferAt: null,
+  lastDeclinedAt: null,
+  now: NOW,
+};
 
 describe("a pergunta tocável", () => {
   it("ids e títulos cabem na Z-API (id ≤ 64, título ≤ 24) e voltam pelo parse", () => {
@@ -39,14 +51,17 @@ describe("a pergunta tocável", () => {
     expect(tryOnOfferOptions(ID)[0]!.description).toContain("18 anos");
   });
 
-  it("o texto diz que é IA e que a foto não fica guardada — antes do toque", () => {
+  it("o texto diz que é IA e que a foto não fica guardada — e pede o TOQUE antes da foto", () => {
     for (const withPhoto of [true, false]) {
       const body = tryOnOfferBody("VESTIDO AMORA", withPhoto);
       expect(body).toContain("VESTIDO AMORA");
       expect(body).toContain("prévia feita com IA");
       expect(body).toContain("não fica guardada");
     }
-    expect(tryOnOfferBody("VESTIDO AMORA", false)).toContain("corpo inteiro");
+    const noPhoto = tryOnOfferBody("VESTIDO AMORA", false, "ate_coxas");
+    expect(noPhoto.indexOf("Quero me ver")).toBeLessThan(noPhoto.indexOf("foto sua"));
+    expect(noPhoto).toContain("corpo inteiro");
+    expect(tryOnOfferBody("BLUSA MAELLE", false, "ate_cintura")).toContain("da cintura pra cima");
     expect(tryOnOfferBody("VESTIDO AMORA", true)).toContain("nessa sua foto");
   });
 
@@ -56,6 +71,8 @@ describe("a pergunta tocável", () => {
     expect(historyTextFor("option_list", persisted)).toContain("Quer se ver com ela?");
     expect(historyTextFor("option_list", persisted)).not.toContain("catálogo");
     expect(isTryOnOfferBody("Toque abaixo\n• VESTIDO AMORA — R$ 189,90")).toBe(false);
+    // A pergunta que NÃO chegou (falhou) não pode parecer enviada: senão a Lia acha que ela recebeu.
+    expect(historyTextForOutbound({ kind: "option_list", body: persisted, dedupeKey: "wa.bot_media:x:0", templateKey: null, status: "failed" })).toContain("NÃO chegou");
     expect(tryOnAnswerHistoryText("quero", "VESTIDO AMORA")).toBe('[resposta à pergunta "Quer se ver com ela?" (VESTIDO AMORA)]: Quero me ver');
   });
 
@@ -72,10 +89,13 @@ describe("shouldOfferTryOn", () => {
     expect(shouldOfferTryOn(base)).toEqual({ offer: true });
   });
 
-  it("cada 'nunca', na ordem: desligado, não veste, esgotada, em andamento, teto, oferta recente, 'Agora não'", () => {
+  it("cada 'nunca', na ordem: desligado, sem visão de foto, não veste, esgotada, cor esgotada, sem foto da peça, em andamento, teto, oferta recente, 'Agora não'", () => {
     expect(shouldOfferTryOn({ ...base, enabled: false, wearable: false })).toEqual({ offer: false, reason: "desligado" });
+    expect(shouldOfferTryOn({ ...base, mediaEnabled: false, wearable: false })).toEqual({ offer: false, reason: "midia_desligada" });
     expect(shouldOfferTryOn({ ...base, wearable: false, inStock: false })).toEqual({ offer: false, reason: "nao_veste" });
-    expect(shouldOfferTryOn({ ...base, inStock: false })).toEqual({ offer: false, reason: "esgotada" });
+    expect(shouldOfferTryOn({ ...base, inStock: false, colorInStock: false })).toEqual({ offer: false, reason: "esgotada" });
+    expect(shouldOfferTryOn({ ...base, colorInStock: false, hasGarmentPhoto: false })).toEqual({ offer: false, reason: "cor_esgotada" });
+    expect(shouldOfferTryOn({ ...base, hasGarmentPhoto: false })).toEqual({ offer: false, reason: "sem_foto_da_peca" });
     expect(shouldOfferTryOn({ ...base, inFlight: true })).toEqual({ offer: false, reason: "em_andamento" });
     expect(shouldOfferTryOn({ ...base, quotaOk: false })).toEqual({ offer: false, reason: "limite" });
     const recent = new Date(NOW.getTime() - 60_000);
@@ -89,7 +109,7 @@ describe("shouldOfferTryOn", () => {
     const recent = new Date(NOW.getTime() - 60_000);
     expect(shouldOfferTryOn({ ...base, lastOfferAt: recent, lastDeclinedAt: recent, asked: true })).toEqual({ offer: true });
     expect(shouldOfferTryOn({ ...base, quotaOk: false, asked: true })).toEqual({ offer: false, reason: "limite" });
-    for (const reason of ["desligado", "nao_veste", "esgotada", "em_andamento", "limite", "ja_ofereceu", "recusou"] as const) {
+    for (const reason of ["desligado", "midia_desligada", "nao_veste", "sem_foto_da_peca", "esgotada", "cor_esgotada", "em_andamento", "limite", "ja_ofereceu", "recusou"] as const) {
       expect(offerRefusalText(reason)).toMatch(/não ofereça|Não ofereça/);
     }
   });

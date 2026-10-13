@@ -827,8 +827,9 @@ export async function execDetalharProduto(
     );
   }
   if (chosenVariantLine) lines.push(chosenVariantLine);
-  // "Me vê com ela": só quando o código confere que pode oferecer (ligado, roupa com estoque, tetos, sem oferta recente).
-  const tryOnLine = await tryOnHintLine(db, {
+  // "Me vê com ela": só quando o código confere que pode oferecer (ligado, roupa com foto e estoque, tetos, sem
+  // oferta recente) — e só num turno que manda a pergunta tocável (não no grupo, no copiloto nem na retomada).
+  const tryOnLine = !ctx.onAttachment || ctx.copilot || ctx.proactive ? null : await tryOnHintLine(db, {
     conversationId: ctx.conversationId,
     phoneE164: ctx.phoneE164,
     productId: detail.id,

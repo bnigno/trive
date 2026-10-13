@@ -1095,11 +1095,19 @@ export async function processZapiInbound(
     // ver" é o consentimento desta prévia (com a foto já aqui, vai direto
     // para a fila). A resposta curta sai pela fila e a Lia não precisa de turno.
     const tryOnRow = parseTryOnRowId(parsed.listResponseMessage?.selectedRowId);
-    if (tryOnRow) {
+    // Só com a Lia atendendo esta conversa (a mesma regra do encaminhamento): com a equipe no comando ou a
+    // Lia desligada, o toque vira texto — ninguém conseguiria fazer a prévia depois.
+    const tryOnBotEligible =
+      tryOnRow !== null &&
+      conversation.status === "open" &&
+      (conversation.botDisabledUntil === null || conversation.botDisabledUntil.getTime() <= now.getTime()) &&
+      (await isBotEnabled(tx));
+    if (tryOnRow && tryOnBotEligible) {
       const answered = await recordTryOnAnswer(tx, {
         requestId: tryOnRow.requestId,
         answer: tryOnRow.answer,
         conversationId: conversation.id,
+        tapMessageId: message.id,
         now,
       });
       if (answered) {

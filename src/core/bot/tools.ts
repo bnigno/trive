@@ -791,7 +791,7 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
   {
     name: "oferecer_previa",
     description:
-      "\"Me vê com ela\": oferece à cliente se ver vestindo a peça na foto DELA (prévia feita com IA). Manda a pergunta tocável \"Quer se ver com ela?\" (Quero me ver / Agora não) — o toque é o consentimento; você não pede a foto nem explica de novo. Quando: depois de detalhar_produto dizer \"PRÉVIA NA FOTO DELA\", quando ela hesitar sobre como a peça fica nela, ou quando ela mandar uma foto DELA perguntando se combina (aí com_a_foto_dela: true). Uma vez por conversa; se ela recusar, não volte ao assunto (ela pode pedir: ela_pediu: true). Nunca na abertura, nunca para acessório. A ferramenta confere tudo (estoque, tetos do dia, oferta recente): ok: false = não ofereça.",
+      "\"Me vê com ela\": oferece à cliente se ver vestindo a peça na foto DELA (prévia feita com IA). Manda a pergunta tocável \"Quer se ver com ela?\" (Quero me ver / Agora não) — o toque é o consentimento; você não pede a foto nem explica de novo. Quando: depois de detalhar_produto dizer \"PRÉVIA NA FOTO DELA\", quando ela hesitar sobre como a peça fica nela, ou quando ela mandar uma foto DELA perguntando se combina (aí com_a_foto_dela: true). No máximo uma vez por dia na conversa; se ela recusar, não volte ao assunto (ela pode pedir: ela_pediu: true). Nunca na abertura, nunca para acessório. A ferramenta confere tudo (estoque, tetos do dia, oferta recente): ok: false = não ofereça.",
     input_schema: {
       type: "object",
       properties: {

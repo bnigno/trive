@@ -58,7 +58,8 @@ const ROTEIROS: Record<string, string[]> = {
   ],
   // "Me vê com ela": a Lia oferece a prévia quando ela escolhe uma roupa (ou
   // hesita sobre como fica nela) e, depois do "Agora não", não volta ao
-  // assunto. Precisa de tryon_enabled = true no banco do ensaio.
+  // assunto. Precisa de tryon_enabled = true no banco do ensaio e de uma
+  // peça "vestido amora" com foto e estoque (o catálogo de produção tem).
   previa: [
     "oi! vi o vestido amora no instagram, ainda tem?",
     "tem no M? será que fica bem em mim? sou baixinha",
@@ -74,7 +75,9 @@ const ROTEIROS: Record<string, string[]> = {
 const ESPERADO: Record<string, (toolsByTurn: string[][]) => string | null> = {
   previa: (toolsByTurn) => {
     const offeredAt = toolsByTurn.findIndex((tools) => tools.includes("oferecer_previa"));
-    if (offeredAt < 0 || offeredAt > 1) return "a Lia não ofereceu a prévia nos dois primeiros turnos";
+    // Nunca na abertura (turno 0); no "será que fica bem em mim?" (turno 1), sim.
+    if (offeredAt === 0) return "a Lia ofereceu a prévia na abertura da conversa";
+    if (offeredAt !== 1) return "a Lia não ofereceu a prévia quando ela perguntou se fica bem nela";
     if (toolsByTurn.slice(2).some((tools) => tools.includes("oferecer_previa"))) return "a Lia ofereceu a prévia de novo depois do 'agora não'";
     return null;
   },

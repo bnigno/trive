@@ -1,40 +1,50 @@
 // "Me vê com ela" — a oferta da Lia e o toque da cliente. A Lia oferece
 // (pedido "offered" + a pergunta tocável); o toque em "Quero me ver" é o
-// consentimento DESTA prévia; com a foto (já na conversa ou a próxima que
-// ela mandar), o pedido vai para a fila (services/tryon.queueTryOn). Aqui
-// também: a linha do caderninho, o "SAIR" e o funil do painel.
-import { and, desc, eq, gte, inArray, isNotNull, lt, max, sql } from "drizzle-orm";
+// consentimento DESTA prévia; com a foto (a da pergunta, uma que ela já
+// mandou depois dela, ou a próxima), o pedido vai para a fila
+// (services/tryon.queueTryOn). "Agora não" e SAIR valem a qualquer momento
+// antes de a foto ir à FASHN. Aqui também: a linha do caderninho e o funil.
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, max, or, sql } from "drizzle-orm";
 
 import { parsePieceType } from "@/core/catalog/piece-types";
 import {
   shouldOfferTryOn,
+  TRYON_DECLINED_IN_FLIGHT_TEXT,
   TRYON_OFFER_TIMING,
   tryOnAnswerAckText,
   type TryOnAnswer,
   type TryOnOfferVerdict,
 } from "@/core/tryon/offer";
-import { failureText, quotaText, requiredFraming, TRYON_TIMING, tryOnCategoryFor, tryOnQuotaVerdict } from "@/core/tryon/rules";
-import { assertTryOnTransition, isTryOnStatus, TRYON_IN_FLIGHT_STATUSES } from "@/core/tryon/status";
-import { auditLog, customers, orders, products, tryonRequests } from "@/db/schema";
+import { canReopenTryOn, failureText, quotaText, requiredFraming, TRYON_TIMING, tryOnCategoryFor, tryOnQuotaVerdict } from "@/core/tryon/rules";
+import { assertTryOnTransition, isTryOnStatus, TRYON_IN_FLIGHT_STATUSES, type TryOnStatus } from "@/core/tryon/status";
+import { auditLog, customers, orders, products, tryonRequests, waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
+import { garmentImageFor } from "@/services/studio";
 import { countTryOnsToday, enqueueTryOnNotice, queueTryOn, TRYON_CONSENT_VERSION, type TryOnRequest } from "@/services/tryon";
 import { loadTryOnSettings } from "@/services/tryon-settings";
+import { isBotMediaEnabled } from "@/services/wa-media";
 
 export type TryOnOfferEvaluation = {
   verdict: TryOnOfferVerdict;
   category: ReturnType<typeof tryOnCategoryFor>;
 };
 
-/** Pode oferecer a prévia desta peça nesta conversa agora? (o interruptor, a peça, os tetos, a última oferta e o último "Agora não") */
+/**
+ * Pode oferecer a prévia desta peça (nesta cor) nesta conversa agora? O
+ * interruptor, a Lia enxergando fotos, a peça (roupa com foto real da cor e
+ * estoque), os tetos, a última oferta e o último "Agora não".
+ */
 export async function evaluateTryOnOffer(
   db: DbOrTx,
-  input: { conversationId: string; phoneE164: string; productId: string; inStock: boolean; asked?: boolean; now: Date },
+  input: { conversationId: string; phoneE164: string; productId: string; color: string | null; inStock: boolean; colorInStock: boolean; asked?: boolean; now: Date },
 ): Promise<TryOnOfferEvaluation> {
   const settings = await loadTryOnSettings(db);
   if (!settings.enabled) return { verdict: { offer: false, reason: "desligado" }, category: null };
   const [product] = await db.select({ pieceType: products.pieceType }).from(products).where(eq(products.id, input.productId)).limit(1);
   const category = tryOnCategoryFor(parsePieceType(product?.pieceType ?? ""));
-  const [[inFlight], [lastOffer], [lastDecline], today] = await Promise.all([
+  const [mediaEnabled, garment, [inFlight], [lastOffer], [lastDecline], today] = await Promise.all([
+    isBotMediaEnabled(db),
+    category ? garmentImageFor(db, input.productId, input.color) : Promise.resolve(null),
     db
       .select({ id: tryonRequests.id })
       .from(tryonRequests)
@@ -62,8 +72,11 @@ export async function evaluateTryOnOffer(
   });
   const verdict = shouldOfferTryOn({
     enabled: settings.enabled,
+    mediaEnabled,
     wearable: category !== null,
+    hasGarmentPhoto: garment !== null,
     inStock: input.inStock,
+    colorInStock: input.colorInStock,
     inFlight: inFlight !== undefined,
     quotaOk: quota.ok,
     lastOfferAt: lastOffer?.at ?? null,
@@ -84,7 +97,7 @@ export async function tryOnHintLine(
   db: DbOrTx,
   input: { conversationId: string; phoneE164: string; productId: string; inStock: boolean; now: Date },
 ): Promise<string | null> {
-  const { verdict } = await evaluateTryOnOffer(db, input);
+  const { verdict } = await evaluateTryOnOffer(db, { ...input, color: null, colorInStock: true });
   if (!verdict.offer) return null;
   return "PRÉVIA NA FOTO DELA: ela pode se ver vestindo esta peça na foto dela. Se ela escolheu a peça ou perguntou como fica nela, chame oferecer_previa AGORA — a pergunta tocável é que pede o consentimento; nunca escreva a oferta com as suas palavras.";
 }
@@ -114,19 +127,72 @@ export async function createTryOnOffer(
 
 export type TryOnAnswerResult = { productName: string; answer: TryOnAnswer; ackEventId: string | null; jobEventId: string | null };
 
-/** Resposta curta ao toque: fala da Lia (dedupe `wa.bot_tryon:`), pela fila. */
-const enqueueAck = enqueueTryOnNotice;
+/** Muda o estado pela máquina (regra 3), só se a linha ainda estiver em `from`. */
+async function move(tx: DbOrTx, request: TryOnRequest, to: TryOnStatus, patch: Partial<typeof tryonRequests.$inferInsert>, now: Date): Promise<TryOnRequest | null> {
+  const from = request.status as TryOnStatus;
+  assertTryOnTransition(from, to);
+  const [updated] = await tx
+    .update(tryonRequests)
+    .set({ ...patch, status: to, updatedAt: now })
+    .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, from)))
+    .returning();
+  return updated ?? null;
+}
+
+/**
+ * "Agora não" (o toque ou o SAIR): para o que ainda não foi à FASHN e
+ * carimba a recusa em tudo o que poderia ser reaberto — nada desta oferta
+ * volta sozinho. O que já está com a FASHN termina (foi pago).
+ */
+async function declineRequest(tx: DbOrTx, request: TryOnRequest, now: Date): Promise<"declined" | "cancelled" | "in_flight" | "stamped" | "nothing"> {
+  switch (request.status) {
+    case "offered":
+    case "awaiting_photo":
+      return (await move(tx, request, "declined", { declinedAt: now }, now)) ? "declined" : "nothing";
+    case "queued":
+      // Ainda não foi à FASHN: cancela (a fila encontra "falhou" e não pede nada).
+      return (await move(tx, request, "failed", { declinedAt: now, failureReason: "cliente_desistiu", finishedAt: now }, now)) ? "cancelled" : "nothing";
+    case "submitting":
+    case "processing":
+    case "photo_rejected":
+    case "failed":
+      // Carimbo sem mudar o estado: impede reabrir com outra foto.
+      await tx.update(tryonRequests).set({ declinedAt: now, updatedAt: now }).where(eq(tryonRequests.id, request.id));
+      return request.status === "submitting" || request.status === "processing" ? "in_flight" : "stamped";
+    default:
+      return "nothing";
+  }
+}
+
+/** A foto que ela mandou nesta conversa DEPOIS da pergunta (a última), se houver — o toque pode vir depois da foto. */
+async function photoAfterOffer(tx: DbOrTx, request: TryOnRequest): Promise<string | null> {
+  const [photo] = await tx
+    .select({ id: waMessages.id })
+    .from(waMessages)
+    .where(
+      and(
+        eq(waMessages.conversationId, request.conversationId),
+        eq(waMessages.direction, "inbound"),
+        eq(waMessages.kind, "image"),
+        gt(waMessages.createdAt, request.offeredAt),
+      ),
+    )
+    .orderBy(desc(waMessages.createdAt))
+    .limit(1);
+  return photo?.id ?? null;
+}
 
 /**
  * O toque na pergunta (webhook). Só vale da conversa que recebeu a pergunta
  * e dentro de 24 h; null = não é com esta oferta (o toque vira texto para a
- * Lia, que oferece de novo se fizer sentido). "Quero me ver" grava o
- * consentimento DESTA prévia; com a foto já na conversa, vai direto para a
- * fila. Toque repetido não repete nada.
+ * Lia, que decide). "Quero me ver" grava o consentimento DESTA prévia; com a
+ * foto (a da pergunta ou uma que ela mandou depois dela), vai direto para a
+ * fila. "Agora não" vale a qualquer momento. Cada toque tem a sua resposta
+ * (dedupe pela mensagem do toque).
  */
 export async function recordTryOnAnswer(
   tx: DbOrTx,
-  input: { requestId: string; answer: TryOnAnswer; conversationId: string; now: Date },
+  input: { requestId: string; answer: TryOnAnswer; conversationId: string; tapMessageId: string; now: Date },
 ): Promise<TryOnAnswerResult | null> {
   const [found] = await tx
     .select({ request: tryonRequests, productName: products.name, pieceType: products.pieceType })
@@ -139,30 +205,33 @@ export async function recordTryOnAnswer(
   if (!isTryOnStatus(request.status)) return null;
   if (input.now.getTime() - request.offeredAt.getTime() > TRYON_OFFER_TIMING.answerWindowMs) return null;
   const base = { productName: found.productName, answer: input.answer };
+  const ackKey = `resposta:${input.tapMessageId}`;
 
   if (input.answer === "agora_nao") {
-    if (request.status !== "offered" && request.status !== "awaiting_photo") return { ...base, ackEventId: null, jobEventId: null };
-    assertTryOnTransition(request.status, "declined");
-    const [declined] = await tx
-      .update(tryonRequests)
-      .set({ status: "declined", declinedAt: input.now, updatedAt: input.now })
-      .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, request.status)))
-      .returning();
-    if (!declined) return { ...base, ackEventId: null, jobEventId: null };
-    await tx.insert(auditLog).values({ actorType: "customer", action: "tryon.decline", entityType: "tryon_request", entityId: request.id, after: { productId: request.productId } });
-    const ackEventId = await enqueueAck(tx, request, "resposta:agora_nao", tryOnAnswerAckText({ answer: "agora_nao", withPhoto: false, framing: null }));
+    const outcome = await declineRequest(tx, request, input.now);
+    // Toque repetido numa oferta já recusada: nada muda, nenhuma resposta nova.
+    if (outcome === "nothing") return request.status === "declined" ? { ...base, ackEventId: null, jobEventId: null } : null;
+    await tx.insert(auditLog).values({ actorType: "customer", action: "tryon.decline", entityType: "tryon_request", entityId: request.id, after: { from: request.status, outcome } });
+    const body =
+      outcome === "in_flight"
+        ? TRYON_DECLINED_IN_FLIGHT_TEXT
+        : outcome === "cancelled"
+          ? failureText("cliente_desistiu")
+          : tryOnAnswerAckText({ answer: "agora_nao", withPhoto: false, framing: null });
+    const ackEventId = await enqueueTryOnNotice(tx, request, ackKey, body);
     return { ...base, ackEventId, jobEventId: null };
   }
 
-  // "Quero me ver": vale da oferta ou de um "Agora não" que ela reconsiderou; repetido não faz nada.
-  if (request.status !== "offered" && request.status !== "declined") return { ...base, ackEventId: null, jobEventId: null };
-  assertTryOnTransition(request.status, "awaiting_photo");
-  const [accepted] = await tx
-    .update(tryonRequests)
-    .set({ status: "awaiting_photo", acceptedAt: input.now, consentVersion: TRYON_CONSENT_VERSION, declinedAt: null, updatedAt: input.now })
-    .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, request.status)))
-    .returning();
-  if (!accepted) return { ...base, ackEventId: null, jobEventId: null };
+  // "Quero me ver": só da oferta (ou de um "Agora não" que ela reconsiderou). Depois disso, vira texto para a Lia.
+  if (request.status !== "offered" && request.status !== "declined") return null;
+  const settings = await loadTryOnSettings(tx);
+  if (!settings.enabled) {
+    // Desligada depois da oferta: nada de consentimento para uma prévia que não vai sair.
+    const ackEventId = await enqueueTryOnNotice(tx, request, ackKey, failureText("desligado"));
+    return { ...base, ackEventId, jobEventId: null };
+  }
+  const accepted = await move(tx, request, "awaiting_photo", { acceptedAt: input.now, consentVersion: TRYON_CONSENT_VERSION, declinedAt: null }, input.now);
+  if (!accepted) return null;
   await tx.insert(auditLog).values({
     actorType: "customer",
     action: "tryon.consent",
@@ -172,86 +241,90 @@ export async function recordTryOnAnswer(
   });
 
   const category = tryOnCategoryFor(parsePieceType(found.pieceType ?? ""));
-  if (!accepted.photoWaMessageId) {
-    const ackEventId = await enqueueAck(
+  const photoId = accepted.photoWaMessageId ?? (await photoAfterOffer(tx, accepted));
+  if (!photoId) {
+    const ackEventId = await enqueueTryOnNotice(
       tx,
       accepted,
-      "resposta:quero",
+      ackKey,
       tryOnAnswerAckText({ answer: "quero", withPhoto: false, framing: category ? requiredFraming(category) : null }),
     );
     return { ...base, ackEventId, jobEventId: null };
   }
 
-  // A foto já estava na conversa (a oferta foi sobre ELA): direto para a fila.
-  const queued = await queueTryOn(tx, { requestId: accepted.id, photoWaMessageId: accepted.photoWaMessageId, now: input.now, kick: false });
+  const queued = await queueTryOn(tx, { requestId: accepted.id, photoWaMessageId: photoId, now: input.now, kick: false });
   if (queued.ok) {
-    const ackEventId = await enqueueAck(tx, accepted, "resposta:quero", tryOnAnswerAckText({ answer: "quero", withPhoto: true, framing: null }));
+    const ackEventId = await enqueueTryOnNotice(tx, accepted, ackKey, tryOnAnswerAckText({ answer: "quero", withPhoto: true, framing: null }));
     return { ...base, ackEventId, jobEventId: queued.eventId };
   }
-  const settings = await loadTryOnSettings(tx);
   const body =
     queued.reason === "limite_cliente" || queued.reason === "limite_loja" || queued.reason === "limite_fotos"
       ? quotaText(queued.reason, settings.perCustomerDaily)
       : queued.reason === "em_andamento"
         ? "Já tem uma prévia sua sendo feita — chega já já 🪄"
         : failureText("indisponivel");
-  const ackEventId = await enqueueAck(tx, accepted, `resposta:quero:${queued.reason}`, body);
+  const ackEventId = await enqueueTryOnNotice(tx, accepted, ackKey, body);
   return { ...base, ackEventId, jobEventId: null };
 }
 
 export type TryOnForPhoto =
   | { kind: "ready"; request: TryOnRequest; productName: string }
-  | { kind: "none" }
-  | { kind: "in_flight"; productName: string };
+  | { kind: "reopen"; request: TryOnRequest; productName: string }
+  | { kind: "pending_tap"; productName: string }
+  | { kind: "in_flight"; productName: string }
+  | { kind: "none" };
+
+/** O toque vale por 2 h para a foto — e um "Agora não" depois dele o revoga. */
+function consentAlive(request: TryOnRequest, now: Date): boolean {
+  if (!request.acceptedAt || now.getTime() - request.acceptedAt.getTime() > TRYON_OFFER_TIMING.photoWindowMs) return false;
+  return !request.declinedAt || request.declinedAt < request.acceptedAt;
+}
 
 /**
- * Para vestir_em_mim: o pedido aceito que espera a foto (até 2 h depois do
- * toque). Foto anterior recusada (enquadramento, não abriu, recusada pela
- * IA) vale como "manda outra": um pedido novo nasce com o MESMO
- * consentimento — a mesma peça, a mesma vontade.
+ * Para vestir_em_mim: em que pé está a prévia mais recente desta conversa.
+ * "ready" = aceita, esperando a foto; "reopen" = a foto anterior não serviu
+ * por um problema DA FOTO (nunca "não pode"), o toque ainda vale e ela não
+ * disse "Agora não" — a mesma prévia aceita uma foto NOVA; "pending_tap" = a
+ * pergunta foi, o toque não. Nada é gravado aqui.
  */
 export async function findTryOnForPhoto(db: DbOrTx, input: { conversationId: string; now: Date }): Promise<TryOnForPhoto> {
-  const since = new Date(input.now.getTime() - TRYON_OFFER_TIMING.photoWindowMs);
+  const since = new Date(input.now.getTime() - TRYON_OFFER_TIMING.answerWindowMs);
   const [latest] = await db
     .select({ request: tryonRequests, productName: products.name })
     .from(tryonRequests)
     .innerJoin(products, eq(products.id, tryonRequests.productId))
-    .where(and(eq(tryonRequests.conversationId, input.conversationId), isNotNull(tryonRequests.acceptedAt), gte(tryonRequests.acceptedAt, since)))
+    .where(and(eq(tryonRequests.conversationId, input.conversationId), gte(tryonRequests.offeredAt, since)))
     .orderBy(desc(tryonRequests.createdAt))
     .limit(1);
   if (!latest) return { kind: "none" };
   const { request, productName } = latest;
   if ((TRYON_IN_FLIGHT_STATUSES as readonly string[]).includes(request.status)) return { kind: "in_flight", productName };
+  if (request.status === "offered") return { kind: "pending_tap", productName };
+  if (!consentAlive(request, input.now)) return { kind: "none" };
   if (request.status === "awaiting_photo") return { kind: "ready", request, productName };
-  const retryable =
-    request.status === "photo_rejected" || (request.status === "failed" && (request.failureReason === "foto_indisponivel" || request.failureReason === "recusada_pela_ia"));
-  if (!retryable) return { kind: "none" };
-  const [clone] = await db
-    .insert(tryonRequests)
-    .values({
-      conversationId: request.conversationId,
-      customerId: request.customerId,
-      phoneE164: request.phoneE164,
-      productId: request.productId,
-      color: request.color,
-      status: "awaiting_photo",
-      offeredAt: request.offeredAt,
-      acceptedAt: request.acceptedAt,
-      consentVersion: request.consentVersion,
-      createdAt: input.now,
-      updatedAt: input.now,
-    })
-    .returning();
-  return { kind: "ready", request: clone!, productName };
+  if (canReopenTryOn(request)) return { kind: "reopen", request, productName };
+  return { kind: "none" };
+}
+
+/** Reabre a mesma prévia para uma foto nova (a anterior não serviu): o veredito da checagem antiga sai. */
+export async function reopenTryOn(db: DbOrTx, request: TryOnRequest, now: Date): Promise<TryOnRequest | null> {
+  if (!canReopenTryOn(request) || !consentAlive(request, now)) return null;
+  // queued_at fica: a foto nova tem de ser mais nova que a tentativa anterior (services/tryon.queueTryOn).
+  const reopened = await move(db, request, "awaiting_photo", { photoCheck: null, failureReason: null, finishedAt: null, vendorJobId: null }, now);
+  if (reopened) {
+    await db.insert(auditLog).values({ actorType: "system", action: "tryon.reopen", entityType: "tryon_request", entityId: request.id, after: { from: request.status } });
+  }
+  return reopened;
 }
 
 function hhmm(date: Date): string {
   return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 }
 
-/** A linha do caderninho: em que pé está a prévia desta conversa (a mais recente, nas últimas 24 h). */
+/** A linha do caderninho: em que pé está a prévia desta conversa (a mais recente, nas últimas 24 h). Desligada: nada. */
 export async function tryOnMemoryLines(db: DbOrTx, input: { conversationId: string; now: Date }): Promise<string[]> {
-  const since = new Date(input.now.getTime() - TRYON_OFFER_TIMING.reofferAfterMs);
+  if (!(await loadTryOnSettings(db)).enabled) return [];
+  const since = new Date(input.now.getTime() - TRYON_OFFER_TIMING.answerWindowMs);
   const [latest] = await db
     .select({ request: tryonRequests, productName: products.name })
     .from(tryonRequests)
@@ -262,13 +335,16 @@ export async function tryOnMemoryLines(db: DbOrTx, input: { conversationId: stri
   if (!latest) return [];
   const { request, productName } = latest;
   const peca = `${productName}${request.color ? ` (${request.color})` : ""}`;
+  const alive = consentAlive(request, input.now);
   switch (request.status) {
     case "offered":
-      return [`Prévia na foto oferecida às ${hhmm(request.offeredAt)} (${peca}): esperando o toque dela — não ofereça de novo.`];
+      return [`Prévia na foto oferecida às ${hhmm(request.offeredAt)} (${peca}): esperando o toque dela em "Quero me ver" — não ofereça de novo; se ela mandar foto antes, lembre de tocar.`];
     case "declined":
       return [`Ela respondeu "Agora não" à prévia (${peca}): não ofereça de novo; ela pode pedir.`];
     case "awaiting_photo":
-      return [`Ela tocou "Quero me ver" (${peca}): quando a foto DELA chegar, chame vestir_em_mim — não pergunte de novo.`];
+      return alive
+        ? [`Ela tocou "Quero me ver" (${peca}): quando a foto DELA chegar, chame vestir_em_mim — não pergunte de novo.`]
+        : [`O toque dela em "Quero me ver" (${peca}) expirou (mais de 2 h): se ela mandar foto, chame oferecer_previa com ela_pediu e com_a_foto_dela.`];
     case "queued":
     case "submitting":
     case "processing":
@@ -276,32 +352,48 @@ export async function tryOnMemoryLines(db: DbOrTx, input: { conversationId: stri
     case "sent":
       return [`Prévia de ${peca} enviada às ${hhmm(request.sentAt ?? request.updatedAt)}: pergunte o que ela achou e siga para cor e tamanho (sugerir_tamanho), reservar ou fechar.`];
     case "photo_rejected":
-      return [`A foto não serviu para a prévia de ${peca} (ela recebeu a dica): se ela mandar outra foto DELA, chame vestir_em_mim.`];
     case "failed":
-      return request.failureReason === "foto_indisponivel" || request.failureReason === "recusada_pela_ia"
-        ? [`A prévia de ${peca} não saiu com aquela foto (ela já foi avisada): se ela mandar outra foto DELA, chame vestir_em_mim.`]
-        : [`A prévia de ${peca} não saiu (ela já foi avisada): siga mostrando a peça na modelo e conferindo o tamanho.`];
+      if (canReopenTryOn(request) && alive) {
+        return [`A foto não serviu para a prévia de ${peca} (ela já recebeu a dica): se ela mandar outra foto DELA, chame vestir_em_mim.`];
+      }
+      if (request.failureReason === "cliente_desistiu") return [`Ela desistiu da prévia (${peca}): não ofereça de novo; ela pode pedir.`];
+      return [`A prévia de ${peca} não saiu (ela já foi avisada): não ofereça de novo hoje; siga mostrando a peça na modelo e conferindo o tamanho.`];
     default:
       return [];
   }
 }
 
-/** SAIR: oferta e pedido aceito sem foto param aqui (o que já está com a FASHN termina — já foi pago). */
+/**
+ * SAIR: nada desta conversa segue sozinho — oferta e aceite sem foto viram
+ * "Agora não", o que está na fila (ainda não foi à FASHN) é cancelado e o
+ * que poderia ser reaberto fica carimbado. O que já está com a FASHN termina.
+ */
 export async function declinePendingTryOns(tx: DbOrTx, input: { conversationId: string; now: Date }): Promise<number> {
+  const since = new Date(input.now.getTime() - TRYON_OFFER_TIMING.answerWindowMs);
   const rows = await tx
-    .update(tryonRequests)
-    .set({ status: "declined", declinedAt: input.now, updatedAt: input.now })
-    .where(and(eq(tryonRequests.conversationId, input.conversationId), inArray(tryonRequests.status, ["offered", "awaiting_photo"])))
-    .returning({ id: tryonRequests.id });
-  return rows.length;
+    .select()
+    .from(tryonRequests)
+    .where(
+      and(
+        eq(tryonRequests.conversationId, input.conversationId),
+        isNull(tryonRequests.declinedAt),
+        or(inArray(tryonRequests.status, ["offered", "awaiting_photo", "queued"]), and(inArray(tryonRequests.status, ["photo_rejected", "failed"]), gte(tryonRequests.offeredAt, since))),
+      ),
+    );
+  let changed = 0;
+  for (const request of rows) {
+    const outcome = await declineRequest(tx, request, input.now);
+    if (outcome !== "nothing") changed += 1;
+  }
+  return changed;
 }
 
 export type TryOnFunnel = { offered: number; accepted: number; sent: number; bought: number; usdCents: number };
 
 /**
  * O funil do painel no período: ofertas → "Quero me ver" → prévias enviadas
- * → compraram em até 7 dias depois da prévia (pedido pago do mesmo
- * telefone) → gasto (FASHN + portões, centavos de dólar).
+ * → prévias seguidas de compra em até 7 dias (pedido pago da mesma cliente,
+ * pelo cadastro ou pelo telefone) → gasto (FASHN + portões, centavos de dólar).
  */
 export async function tryOnFunnel(db: DbOrTx, input: { from: Date; to: Date }): Promise<TryOnFunnel> {
   const [row] = await db
@@ -315,7 +407,7 @@ export async function tryOnFunnel(db: DbOrTx, input: { from: Date; to: Date }): 
   const [bought] = await db
     .select({ count: sql<number>`count(distinct ${tryonRequests.id})::int` })
     .from(tryonRequests)
-    .innerJoin(customers, eq(customers.phoneE164, tryonRequests.phoneE164))
+    .innerJoin(customers, or(eq(customers.id, tryonRequests.customerId), eq(customers.phoneE164, tryonRequests.phoneE164)))
     .innerJoin(orders, eq(orders.customerId, customers.id))
     .where(
       and(

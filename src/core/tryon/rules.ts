@@ -72,6 +72,17 @@ export function tryOnCaption(productName: string): string {
   return `✨ ${productName} em você — prévia feita com IA a partir da sua foto. Mostra a cor e o modelo; o tamanho certinho a gente confere com você 💛`;
 }
 
+/**
+ * Pode reabrir a MESMA prévia com uma foto nova (sem novo toque)? Só quando o
+ * problema era da foto (enquadramento, blusa sobre biquíni, não abriu…) —
+ * nunca o "não pode" (possível menor ou nudez) nem a moderação da FASHN.
+ */
+export function canReopenTryOn(input: { status: string; failureReason: string | null }): boolean {
+  if (input.status === "photo_rejected") return input.failureReason !== null && input.failureReason !== "nao_pode";
+  if (input.status === "failed") return input.failureReason === "foto_indisponivel";
+  return false;
+}
+
 /** Fotos recusadas na checagem por cliente por dia (cada uma passa pela visão): este múltiplo do teto de prévias. */
 export const TRYON_PHOTO_REJECTIONS_PER_PREVIEW = 3;
 
@@ -98,6 +109,7 @@ export const TRYON_FAILURE_REASONS = [
   "indisponivel",
   "envio_incerto",
   "demorou_demais",
+  "cliente_desistiu",
 ] as const;
 export type TryOnFailureReason = (typeof TRYON_FAILURE_REASONS)[number];
 
@@ -137,6 +149,8 @@ export function failureText(reason: TryOnFailureReason): string {
       return "Não consegui abrir a sua foto 😕 Me manda de novo?";
     case "peca_indisponivel":
       return "Essa peça acabou de sair do catálogo 😕 Quer que eu te mostre outra parecida?";
+    case "cliente_desistiu":
+      return "Tudo bem! Não vou fazer a prévia 💛";
     case "desligado":
     case "sem_creditos":
     case "indisponivel":

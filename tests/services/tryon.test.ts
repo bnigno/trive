@@ -56,6 +56,8 @@ async function offer(input: { conversationId: string; productId: string; phone?:
       phoneE164: input.phone ?? PHONE,
       productId: input.productId,
       status: input.status ?? "awaiting_photo",
+      // A pergunta foi feita antes da foto (o toque vale para a foto que ela manda DEPOIS dela).
+      offeredAt: new Date("2026-01-01T00:00:00Z"),
       acceptedAt: input.accepted === false ? null : NOW,
     })
     .returning({ id: schema.tryonRequests.id });
@@ -72,7 +74,7 @@ describe("queueTryOn", () => {
     expect(row).toMatchObject({ status: "queued", photoWaMessageId: photoId, queuedAt: NOW });
     const events = await db.select().from(schema.outboxEvents);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ eventType: TRYON_EVENT, dedupeKey: `${TRYON_EVENT}:${requestId}`, payload: { requestId } });
+    expect(events[0]).toMatchObject({ eventType: TRYON_EVENT, dedupeKey: `${TRYON_EVENT}:${requestId}:${NOW.getTime()}`, payload: { requestId } });
   });
 
   it("sem o toque em 'Quero me ver' não há prévia; pedido já na fila ou encerrado não volta", async () => {

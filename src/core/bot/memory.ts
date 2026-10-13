@@ -375,10 +375,11 @@ function todayLine(now: Date): string {
 /**
  * Teto de linhas extras no caderninho — acima da soma dos máximos de cada
  * fonte (cartela 1 + reserva 1 + avisos 1 + feedback 3 + fotos 3 + compra 1 +
- * envio 1 + ponte 1 + retorno 2 + prévia 1 + destaques 2 = 17): nada legítimo
- * cai; é guarda contra uma fonte nova sem teto. Linhas vazias não contam.
+ * envio 1 + ponte 1 + retorno 2 + amigas 2 + prévia 1 + destaques 2 = 19):
+ * nada legítimo cai; é guarda contra uma fonte nova sem teto. Linhas vazias
+ * não contam.
  */
-export const EXTRA_LINES_MAX = 17;
+export const EXTRA_LINES_MAX = 19;
 
 /** Depois disto, a ficha em memória vira pista, não fato. */
 export const FOCUS_STALE_MINUTES = 10;

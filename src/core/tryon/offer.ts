@@ -53,14 +53,16 @@ export function tryOnOfferOptions(requestId: string): Array<{ id: string; title:
 
 /**
  * O texto da oferta: o que é, que é IA e o que acontece com a foto — antes
- * do toque (LGPD: consentimento informado, em destaque). Com a foto já na
- * conversa, a pergunta é sobre ELA.
+ * do toque (LGPD: consentimento informado, em destaque). O toque vem ANTES
+ * da foto (a foto só vai para a IA com ele). Com a foto já na conversa, a
+ * pergunta é sobre ELA.
  */
-export function tryOnOfferBody(productName: string, withPhoto: boolean): string {
+export function tryOnOfferBody(productName: string, withPhoto: boolean, framing: TryOnFraming | null = null): string {
+  const photo = framing === "ate_cintura" ? "uma foto sua da cintura pra cima" : "uma foto sua de corpo inteiro";
   const what = withPhoto
     ? `Quer que eu te mostre ${productName} nessa sua foto? 📸`
-    : `Quer ver como ${productName} fica em você? 📸 Me manda uma foto sua de corpo inteiro que eu te devolvo vestindo.`;
-  return `${what} É uma prévia feita com IA, só pra você: a sua foto vai só para a IA gerar a prévia e não fica guardada com a gente.`;
+    : `Quer ver como ${productName} fica em você? 📸 Toque em "Quero me ver" e depois me manda ${photo} — eu te devolvo vestindo.`;
+  return `${what} É uma prévia feita com IA, só pra você: a sua foto vai só para a IA gerar e conferir a prévia e não fica guardada com a gente.`;
 }
 
 /** Como o envio da oferta aparece no histórico do modelo e na Central (a lista do catálogo tem outro marcador). */
@@ -76,6 +78,9 @@ export function tryOnAnswerHistoryText(answer: TryOnAnswer, productName: string)
   return `[resposta à pergunta "Quer se ver com ela?" (${productName})]: ${TRYON_ANSWER_TITLES[answer]}`;
 }
 
+/** "Agora não" com a prévia já na FASHN: não dá para parar o que foi pedido — e ela fica sabendo. */
+export const TRYON_DECLINED_IN_FLIGHT_TEXT = "Tudo bem! A prévia que já estava sendo feita chega em instantes — depois disso não te ofereço mais 💛";
+
 /** A resposta curta ao toque — sai sem a Lia precisar de turno. */
 export function tryOnAnswerAckText(input: { answer: TryOnAnswer; withPhoto: boolean; framing: TryOnFraming | null }): string {
   if (input.answer === "agora_nao") return "Tudo bem! 💛 Se quiser se ver com alguma peça depois, é só me pedir.";
@@ -85,20 +90,35 @@ export function tryOnAnswerAckText(input: { answer: TryOnAnswer; withPhoto: bool
     : "Oba! Me manda uma foto sua de corpo inteiro — em pé, de frente e com boa luz (pode ser no espelho) 📸";
 }
 
-export type TryOnOfferVerdict =
-  | { offer: true }
-  | { offer: false; reason: "desligado" | "nao_veste" | "esgotada" | "em_andamento" | "limite" | "ja_ofereceu" | "recusou" };
+export type TryOnOfferRefusal =
+  | "desligado"
+  | "midia_desligada"
+  | "nao_veste"
+  | "sem_foto_da_peca"
+  | "esgotada"
+  | "cor_esgotada"
+  | "em_andamento"
+  | "limite"
+  | "ja_ofereceu"
+  | "recusou";
+
+export type TryOnOfferVerdict = { offer: true } | { offer: false; reason: TryOnOfferRefusal };
 
 /**
- * Pode oferecer? Ordem: interruptor, peça (roupa com estoque), prévia em
- * andamento, teto do dia, oferta recente nesta conversa, "Agora não" nos
+ * Pode oferecer? Ordem: interruptor (e a Lia enxergando fotos), peça (roupa,
+ * com estoque — na cor dita —, com foto real da cor), prévia em andamento,
+ * teto do dia, oferta nesta conversa nas últimas 24 h, "Agora não" nos
  * últimos 30 dias. A cliente que PEDE (`asked`) passa por cima dos dois
  * últimos — nunca dos tetos.
  */
 export function shouldOfferTryOn(input: {
   enabled: boolean;
+  mediaEnabled: boolean;
   wearable: boolean;
+  hasGarmentPhoto: boolean;
   inStock: boolean;
+  /** Com cor escolhida: aquela cor tem estoque (e existe na peça). Sem cor: true. */
+  colorInStock: boolean;
   inFlight: boolean;
   quotaOk: boolean;
   lastOfferAt: Date | null;
@@ -107,8 +127,11 @@ export function shouldOfferTryOn(input: {
   now: Date;
 }): TryOnOfferVerdict {
   if (!input.enabled) return { offer: false, reason: "desligado" };
+  if (!input.mediaEnabled) return { offer: false, reason: "midia_desligada" };
   if (!input.wearable) return { offer: false, reason: "nao_veste" };
   if (!input.inStock) return { offer: false, reason: "esgotada" };
+  if (!input.colorInStock) return { offer: false, reason: "cor_esgotada" };
+  if (!input.hasGarmentPhoto) return { offer: false, reason: "sem_foto_da_peca" };
   if (input.inFlight) return { offer: false, reason: "em_andamento" };
   if (!input.quotaOk) return { offer: false, reason: "limite" };
   if (input.asked) return { offer: true };
@@ -119,21 +142,27 @@ export function shouldOfferTryOn(input: {
 }
 
 /** O que a ferramenta diz ao modelo quando NÃO pode oferecer (nunca citar "tentei" à cliente). */
-export function offerRefusalText(reason: Exclude<TryOnOfferVerdict, { offer: true }>["reason"]): string {
+export function offerRefusalText(reason: TryOnOfferRefusal): string {
   switch (reason) {
     case "desligado":
       return "A prévia na foto está desligada na loja: não ofereça nem comente.";
+    case "midia_desligada":
+      return "Você não está enxergando fotos agora (desligado na loja): não ofereça a prévia.";
     case "nao_veste":
       return "Essa peça não tem prévia na foto (só roupa tem): não ofereça; siga com a peça.";
+    case "sem_foto_da_peca":
+      return "Essa peça (ou essa cor) ainda não tem foto real no catálogo para a prévia: não ofereça; siga com a peça.";
     case "esgotada":
       return "Essa peça está esgotada: não ofereça a prévia; ofereça outra parecida ou avisar_quando_voltar.";
+    case "cor_esgotada":
+      return "Essa cor não está disponível nesta peça: não ofereça a prévia nela; mostre as cores que têm (detalhar_produto).";
     case "em_andamento":
       return "Já tem uma prévia dela sendo feita: ela chega sozinha. Não ofereça outra agora.";
     case "limite":
       return "As prévias de hoje acabaram (dela ou da loja): não ofereça; siga com cor e tamanho.";
     case "ja_ofereceu":
-      return "Você já ofereceu a prévia nesta conversa nas últimas 24 h: não ofereça de novo (ela pode pedir).";
+      return "Você já ofereceu a prévia nesta conversa nas últimas 24 h: não ofereça de novo (se ELA pedir, chame com ela_pediu).";
     case "recusou":
-      return "Ela disse 'Agora não' para a prévia há pouco tempo: não ofereça de novo (ela pode pedir).";
+      return "Ela disse 'Agora não' para a prévia há pouco tempo: não ofereça de novo (se ELA pedir, chame com ela_pediu).";
   }
 }

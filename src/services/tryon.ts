@@ -140,6 +140,7 @@ export type QueueTryOnResult =
         | "sem_consentimento"
         | "estado_invalido"
         | "foto_invalida"
+        | "foto_antiga"
         | "desligado"
         | "limite_cliente"
         | "limite_loja"
@@ -172,7 +173,7 @@ export async function queueTryOn(
 
   // A foto tem de ser uma imagem que ELA mandou nesta conversa: nunca a de outra pessoa ou de outra conversa.
   const [photo] = await db
-    .select({ id: waMessages.id })
+    .select({ id: waMessages.id, createdAt: waMessages.createdAt })
     .from(waMessages)
     .where(
       and(
@@ -184,6 +185,12 @@ export async function queueTryOn(
     )
     .limit(1);
   if (!photo) return { ok: false, reason: "foto_invalida" };
+  // E a foto de AGORA: o toque vale para a foto que ela mandar depois da pergunta (um print de antes não
+  // é "a foto é minha") — a não ser a própria foto sobre a qual a pergunta foi feita, ainda não usada.
+  // Reaberta (a foto anterior não serviu), só uma foto mais nova que a tentativa anterior.
+  const isOfferedPhoto = photo.id === request.photoWaMessageId && request.queuedAt === null;
+  const notBefore = Math.max(request.offeredAt.getTime(), request.queuedAt?.getTime() ?? 0);
+  if (!isOfferedPhoto && photo.createdAt.getTime() <= notBefore) return { ok: false, reason: "foto_antiga" };
 
   const settings = await loadTryOnSettings(db);
   if (!settings.enabled) return { ok: false, reason: "desligado" };
@@ -213,7 +220,8 @@ export async function queueTryOn(
         tx,
         {
           eventType: TRYON_EVENT,
-          dedupeKey: `${TRYON_EVENT}:${request.id}`,
+          // Pela vez na fila: a prévia reaberta (foto nova) ganha um evento novo.
+          dedupeKey: `${TRYON_EVENT}:${request.id}:${input.now.getTime()}`,
           aggregateType: "tryon_request",
           aggregateId: request.id,
           payload: { requestId: request.id },

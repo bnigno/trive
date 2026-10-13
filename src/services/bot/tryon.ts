@@ -2,19 +2,25 @@
 // pede o consentimento) e vestir_em_mim (a foto DELA, depois do toque, vai
 // para a fila). Dentro da transação do turno: nada de kick aqui — o
 // runBotTurn dá o kick depois do commit.
+import { eq } from "drizzle-orm";
+
 import type { BotToolInputs } from "@/core/bot/tools";
+import { colorOfVariant } from "@/core/bot/variants";
 import { offerRefusalText, TRYON_OFFER_BUTTON, TRYON_OFFER_TITLE, tryOnOfferBody, tryOnOfferOptions } from "@/core/tryon/offer";
-import { failureText, quotaText } from "@/core/tryon/rules";
+import { failureText, quotaText, requiredFraming } from "@/core/tryon/rules";
+import { waMessages } from "@/db/schema";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
-import { colorOfVariant } from "@/core/bot/variants";
 import { queueTryOn } from "@/services/tryon";
-import { createTryOnOffer, evaluateTryOnOffer, findTryOnForPhoto } from "@/services/tryon-offer";
+import { createTryOnOffer, evaluateTryOnOffer, findTryOnForPhoto, reopenTryOn } from "@/services/tryon-offer";
 import { loadTryOnSettings } from "@/services/tryon-settings";
 
 import { DRY_RUN_TEXT, resolveConversationCustomerId, type BotExecutorContext, type ToolResult } from "./shared";
 
-function pickPhoto(ctx: BotExecutorContext, foto: number | undefined): { waMessageId: string } | { error: string } | null {
+type Picked = { waMessageId: string } | { error: string } | null;
+
+/** A foto recente pedida (foto = n) ou a última; null = não há foto recente que a Lia enxergue. */
+function pickPhoto(ctx: BotExecutorContext, foto: number | undefined): Picked {
   const photos = ctx.recentImages ?? [];
   if (photos.length === 0) return null;
   if (foto !== undefined && foto > photos.length) {
@@ -26,6 +32,9 @@ function pickPhoto(ctx: BotExecutorContext, foto: number | undefined): { waMessa
 
 export async function execOferecerPrevia(db: DbOrTx, ctx: BotExecutorContext, input: BotToolInputs["oferecer_previa"]): Promise<ToolResult> {
   if (ctx.dryRun) return { ok: true, text: DRY_RUN_TEXT };
+  // Turno por conta própria (retorno combinado, sacola parada): não é ela escolhendo a peça agora.
+  if (ctx.proactive && input.ela_pediu !== true) return { ok: false, text: "Na sua mensagem de retomada não ofereça a prévia: espere ela escolher a peça ou pedir." };
+  if (!ctx.onAttachment) return { ok: false, text: "Aqui não dá para mandar a pergunta tocável da prévia: não ofereça." };
   const resolved = await resolveProductDetail(db, input.produto, { customerId: ctx.customerId });
   if (resolved.kind !== "found") {
     return {
@@ -38,14 +47,16 @@ export async function execOferecerPrevia(db: DbOrTx, ctx: BotExecutorContext, in
   }
   const { detail } = resolved;
   const color = input.cor?.trim() || null;
-  const ofColor = color ? detail.variants.filter((variant) => colorOfVariant(variant.attributes, detail.attributesSchema)?.toLowerCase() === color.toLowerCase()) : detail.variants;
-  const inStock = (ofColor.length > 0 ? ofColor : detail.variants).some((variant) => variant.availableQty > 0);
+  const ofColor = color ? detail.variants.filter((variant) => colorOfVariant(variant.attributes, detail.attributesSchema)?.toLowerCase() === color.toLowerCase()) : [];
   const now = ctx.now ?? new Date();
-  const { verdict } = await evaluateTryOnOffer(db, {
+  const { verdict, category } = await evaluateTryOnOffer(db, {
     conversationId: ctx.conversationId,
     phoneE164: ctx.phoneE164,
     productId: detail.id,
-    inStock,
+    color,
+    inStock: detail.variants.some((variant) => variant.availableQty > 0),
+    // Cor que a peça não tem, ou sem estoque nela: a prévia não sai nessa cor.
+    colorInStock: color === null || ofColor.some((variant) => variant.availableQty > 0),
     asked: input.ela_pediu === true,
     now,
   });
@@ -67,9 +78,9 @@ export async function execOferecerPrevia(db: DbOrTx, ctx: BotExecutorContext, in
     photoWaMessageId,
     now,
   });
-  ctx.onAttachment?.({
+  ctx.onAttachment({
     kind: "option_list",
-    message: tryOnOfferBody(detail.name, photoWaMessageId !== null),
+    message: tryOnOfferBody(detail.name, photoWaMessageId !== null, category ? requiredFraming(category) : null),
     title: TRYON_OFFER_TITLE,
     buttonLabel: TRYON_OFFER_BUTTON,
     options: tryOnOfferOptions(requestId),
@@ -86,17 +97,33 @@ export async function execVestirEmMim(db: DbOrTx, ctx: BotExecutorContext, input
   if (!settings.enabled) return { ok: false, text: "A prévia na foto está desligada na loja: não prometa a prévia; siga com a peça." };
   const now = ctx.now ?? new Date();
   const target = await findTryOnForPhoto(db, { conversationId: ctx.conversationId, now });
-  if (target.kind === "in_flight") return { ok: false, text: `A prévia de ${target.productName} já está sendo feita e chega sozinha: não chame de novo.` };
-  if (target.kind === "none") {
-    return {
-      ok: false,
-      text: "Ela ainda não tocou em 'Quero me ver' (ou faz mais de 2 h): a foto dela só vai para a IA com esse toque. Se fizer sentido, chame oferecer_previa (com com_a_foto_dela, se a foto já está aqui).",
-    };
+  switch (target.kind) {
+    case "in_flight":
+      return { ok: false, text: `A prévia de ${target.productName} já está sendo feita e chega sozinha: não chame de novo.` };
+    case "pending_tap":
+      return {
+        ok: false,
+        text: `Ela ainda não tocou em "Quero me ver" na pergunta da prévia de ${target.productName}: lembre-a, em 1 frase, de tocar no botão (a foto só vai para a IA com esse toque). Não chame oferecer_previa de novo.`,
+      };
+    case "none":
+      return {
+        ok: false,
+        text: "Não há prévia aceita esperando foto (sem o toque dela em 'Quero me ver', ou faz mais de 2 h, ou ela disse 'Agora não'). Se ELA quer se ver com a peça, chame oferecer_previa com ela_pediu e com_a_foto_dela.",
+      };
   }
   const picked = pickPhoto(ctx, input.foto);
-  if (!picked) return { ok: false, text: "Não há foto recente dela que eu consiga ver: espere a foto dela chegar (ela já recebeu o pedido de foto)." };
+  if (!picked) return { ok: false, text: "Não há foto recente dela que eu consiga ver: espere a foto dela chegar (ela já sabe que precisa mandar)." };
   if ("error" in picked) return { ok: false, text: picked.error };
-  const queued = await queueTryOn(db, { requestId: target.request.id, photoWaMessageId: picked.waMessageId, now, kick: false });
+  // A foto tem de ser de DEPOIS da pergunta (ou da tentativa anterior): confere antes de reabrir qualquer coisa.
+  const [photo] = await db.select({ createdAt: waMessages.createdAt }).from(waMessages).where(eq(waMessages.id, picked.waMessageId)).limit(1);
+  const notBefore = Math.max(target.request.offeredAt.getTime(), target.request.queuedAt?.getTime() ?? 0);
+  const isOfferedPhoto = picked.waMessageId === target.request.photoWaMessageId && target.request.queuedAt === null;
+  if (!photo || (!isOfferedPhoto && photo.createdAt.getTime() <= notBefore)) {
+    return { ok: false, text: "Essa foto é de antes da pergunta da prévia (ou já foi usada): espere a foto NOVA dela — a que ela mandar agora." };
+  }
+  const request = target.kind === "reopen" ? await reopenTryOn(db, target.request, now) : target.request;
+  if (!request) return { ok: false, text: "Essa prévia não pode ser refeita agora: siga mostrando a peça na modelo." };
+  const queued = await queueTryOn(db, { requestId: request.id, photoWaMessageId: picked.waMessageId, now, kick: false });
   if (!queued.ok) {
     switch (queued.reason) {
       case "limite_cliente":
@@ -107,6 +134,8 @@ export async function execVestirEmMim(db: DbOrTx, ctx: BotExecutorContext, input
         return { ok: false, text: "Já tem uma prévia dela sendo feita: ela chega sozinha. Não chame de novo." };
       case "desligado":
         return { ok: false, text: "A prévia na foto está desligada na loja: não prometa a prévia; siga com a peça." };
+      case "foto_antiga":
+        return { ok: false, text: "Essa foto é de antes da pergunta da prévia (ou já foi usada): espere a foto NOVA dela." };
       default:
         return { ok: false, text: `Não deu para pôr a prévia na fila agora: diga algo como "${failureText("indisponivel")}"` };
     }

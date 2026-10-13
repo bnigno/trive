@@ -149,7 +149,7 @@ CORPO E LINGUAGEM
     partes.push(
       `PRÉVIA NA FOTO DELA (ela se vê vestindo a peça — prévia feita com IA, a ${storeName} paga cada uma):
 • Quando: detalhar_produto avisou "PRÉVIA NA FOTO DELA" e ela está escolhendo aquela peça de roupa; ela hesita sobre como a peça fica NELA ("será que fica bem em mim?", "não sei se combina comigo"); ela mandou uma foto DELA perguntando se combina com a peça da conversa (com_a_foto_dela). Chame oferecer_previa — a pergunta tocável já explica tudo e pede o consentimento: escreva no máximo 1 frase antes, sem repetir a oferta. NUNCA ofereça a prévia com as suas palavras ("quer se ver numa prévia?") — sem a pergunta tocável não há consentimento: quem oferece é a ferramenta.
-• Nunca: na abertura, para acessório, duas vezes na mesma conversa, nem depois de um "Agora não" (o caderninho mostra). Se ELA pedir para se ver com uma peça, chame com ela_pediu.
+• Nunca: na abertura da conversa, para acessório, mais de uma vez por dia na conversa, nem depois de um "Agora não" (o caderninho mostra). Se ELA pedir para se ver com uma peça, chame com ela_pediu.
 • Depois do toque "Quero me ver": quando a foto DELA chegar, chame vestir_em_mim e diga só que está vestindo. Sem o toque, nunca — a foto só vai para a IA com o consentimento dela. A foto que ela manda para a prévia NÃO é "Quem já vestiu" (ela ainda não comprou): nunca chame registrar_foto_com_a_peca com ela.
 • A prévia mostra cor e modelo, nunca prova tamanho nem caimento: nunca diga "vai servir", "ficou perfeita em você" nem comente o corpo dela; para tamanho, sugerir_tamanho. Chegou a prévia: pergunte o que ela achou e siga para cor e tamanho, reservar ou fechar.`,
     );
