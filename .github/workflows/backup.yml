@@ -17,10 +17,29 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Instalar postgresql-client
+      # O postgresql-client do Ubuntu está uma major ATRASADO (16.x) e o
+      # pg_dump se RECUSA a falar com servidor mais novo ("aborting because of
+      # server version mismatch") — foi o que deixou este backup vermelho sem
+      # ninguém notar. O repositório oficial PGDG traz o cliente mais recente,
+      # e cliente mais NOVO que o servidor é caso suportado pelo PostgreSQL.
+      # Por isso NÃO fixamos a major aqui: quando o Supabase subir de 17 para
+      # 18, este job continua funcionando sozinho.
+      - name: Instalar postgresql-client mais recente (PGDG)
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y postgresql-client
+          pg_dump --version
+
+      # O nome do arquivo é calculado UMA vez: antes, cada passo chamava
+      # `date +%F` de novo e um job que virasse a meia-noite UTC procurava um
+      # arquivo com a data de ontem.
+      - name: Definir nome do arquivo
+        run: echo "DUMP_FILE=trive-backup-$(date +%F).dump" >> "$GITHUB_ENV"
 
       - name: Gerar dump do banco
         env:
@@ -30,13 +49,21 @@ jobs:
             echo "ERRO: secret DATABASE_URL não cadastrado no repositório." >&2
             exit 1
           fi
-          pg_dump "$DATABASE_URL" --no-owner --format=custom \
-            --file="trive-backup-$(date +%F).dump"
+          pg_dump "$DATABASE_URL" --no-owner --format=custom --file="$DUMP_FILE"
+          ls -lh "$DUMP_FILE"
 
-      - name: Verificar legibilidade do dump
-        # Backup ilegível = job vermelho: pg_restore --list falha se o arquivo
-        # estiver corrompido ou vazio.
-        run: pg_restore --list "trive-backup-$(date +%F).dump" > /dev/null
+      - name: Verificar que o dump é legível e tem o que importa
+        # Dump ilegível OU vazio de conteúdo = job vermelho. `pg_restore --list`
+        # falha em arquivo corrompido; o grep garante que as tabelas do negócio
+        # realmente entraram (backup que existe mas não tem os pedidos dentro
+        # é pior que backup nenhum, porque dá falsa segurança).
+        run: |
+          pg_restore --list "$DUMP_FILE" > /tmp/conteudo.txt
+          for tabela in orders order_items products customers stock_movements; do
+            grep -q "TABLE DATA public $tabela " /tmp/conteudo.txt \
+              || { echo "ERRO: tabela $tabela ausente do dump." >&2; exit 1; }
+          done
+          echo "Dump legível com $(grep -c 'TABLE DATA' /tmp/conteudo.txt) tabelas."
 
       - name: Publicar artifact
         uses: actions/upload-artifact@v4
