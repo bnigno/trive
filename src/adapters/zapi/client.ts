@@ -158,6 +158,13 @@ function typingDelays(typingSeconds: number | undefined): Record<string, number>
   return { delayTyping: Math.min(15, Math.max(1, Math.round(typingSeconds))), delayMessage: 1 };
 }
 
+/**
+ * Prazo do /send-image: a imagem embutida pesa ~300 KB; sem prazo, uma Z-API
+ * lenta prende a fila até a função morrer no meio. Menor que a folga que a
+ * prévia guarda para o envio (core/tryon/rules: deliverReserveMs).
+ */
+const SEND_IMAGE_TIMEOUT_MS = 15_000;
+
 export class ZapiMessagingProvider implements MessagingProvider {
   private readonly fetchFn: typeof fetch;
 
@@ -335,14 +342,22 @@ export class ZapiMessagingProvider implements MessagingProvider {
   }
 
   async sendImage(message: OutboundImageMessage): Promise<SentMessage> {
+    if ((message.imageUrl === undefined) === (message.imageBase64 === undefined)) {
+      throw new Error("sendImage precisa de imageUrl OU imageBase64 (exatamente um).");
+    }
     const raw = await this.request("/send-image", {
       method: "POST",
       body: {
         // Z-API espera o número SEM o '+' do E.164.
         phone: waAddressForZapi(message.toE164),
-        image: message.imageUrl,
+        // A doc da Z-API: "link da imagem ou Base64", o base64 com o prefixo data:.
+        image: message.imageBase64
+          ? `data:${message.imageBase64.mimeType};base64,${message.imageBase64.data}`
+          : message.imageUrl,
         ...(message.caption !== undefined ? { caption: message.caption } : {}),
       },
+      // Sem prazo, uma Z-API lenta prende a invocação da fila até a função morrer no meio.
+      signal: AbortSignal.timeout(SEND_IMAGE_TIMEOUT_MS),
     });
 
     const parsed = zapiSendTextResponseSchema.parse(raw);

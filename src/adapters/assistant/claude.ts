@@ -181,7 +181,8 @@ export class ClaudeSalesAssistant implements SalesAssistant {
       cacheWriteTokens: response.usage.cache_creation_input_tokens ?? 0,
     };
     if (response.stop_reason === "refusal") {
-      throw new AssistantUnavailableError("O modelo recusou ler estas fotos.");
+      // Motivo próprio: quem chama distingue a recusa (definitiva para estas fotos) de uma queda (passageira).
+      throw new AssistantUnavailableError("O modelo recusou ler estas fotos.", { reason: "recusa" });
     }
     if (response.stop_reason === "max_tokens") {
       throw new AssistantUnavailableError(

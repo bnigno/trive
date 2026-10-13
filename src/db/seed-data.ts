@@ -118,6 +118,11 @@ export const initialSettings: Array<{ key: string; value: unknown }> = [
   { key: "curator_interview_weekends", value: false },
   // "Me ajuda a escolher?": nasce desligado; liga em WhatsApp › Vendedora.
   { key: "friends_vote_enabled", value: false },
+  // "Me vê com ela": a Lia oferece a prévia na foto da cliente (FASHN,
+  // ≈ R$ 1,40 cada). Nasce desligado; tetos por cliente e da loja por dia.
+  { key: "tryon_enabled", value: false },
+  { key: "tryon_per_customer_daily", value: 2 },
+  { key: "tryon_daily_total", value: 20 },
   { key: "edition_name", value: "" },
   // Datas da cidade (Círio, Natal…): a dona cadastra em Configurações.
   { key: "city_dates", value: [] },

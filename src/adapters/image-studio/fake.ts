@@ -60,6 +60,8 @@ export class FakeImageStudio implements ImageStudio {
   readonly animations: AnimateInput[] = [];
   private readonly failures: Error[] = [];
   private readonly afterSubmitFailures: Error[] = [];
+  /** O que cada pedido de try-on gerou, pelo id: a retomada devolve sem gerar de novo. */
+  private readonly tryOnJobs = new Map<string, StudioImage[]>();
   /** Saldo da conta de mentira: null = desconhecido (nunca bloqueia). */
   balance: number | null = null;
 
@@ -87,6 +89,14 @@ export class FakeImageStudio implements ImageStudio {
   async generateOnModel(input: GenerateOnModelInput): Promise<StudioImage[]> {
     this.generations.push(input);
     this.throwIfScripted();
+    if (input.resumeJobId !== undefined) {
+      // Retomada: devolve o que o pedido gerou, sem gerar (nem cobrar) de novo.
+      const stored = this.tryOnJobs.get(input.resumeJobId);
+      if (!stored) throw new StudioUnavailableError("A FASHN não conhece este pedido (fake).", "rejected", 404);
+      const afterResume = this.afterSubmitFailures.shift();
+      if (afterResume) throw afterResume;
+      return stored;
+    }
     let baseData: Buffer;
     let info: { width: number; height: number };
     try {
@@ -107,6 +117,14 @@ export class FakeImageStudio implements ImageStudio {
         .jpeg({ quality: 80 })
         .toBuffer();
       images.push({ data, mimeType: "image/jpeg", vendor: "fake", vendorModel: input.quality === "alta" ? "fake-tryon-max" : "fake-tryon", creditsUsed: credits, usdCents: creditsToUsdCents(credits), elapsedMs: 5, seed });
+    }
+    if (input.onSubmitted) {
+      // Id único por processo e entre reinícios: o banco exige um pedido = uma linha.
+      const jobId = `fake-tryon-${this.generations.length}-${randomUUID().slice(0, 8)}`;
+      this.tryOnJobs.set(jobId, images);
+      input.onSubmitted(jobId);
+      const afterSubmit = this.afterSubmitFailures.shift();
+      if (afterSubmit) throw afterSubmit;
     }
     return images;
   }
@@ -155,6 +173,7 @@ export class FakeImageStudio implements ImageStudio {
     this.generations.length = 0;
     this.animations.length = 0;
     this.afterSubmitFailures.length = 0;
+    this.tryOnJobs.clear();
     this.balance = null;
     this.failures.length = 0;
   }

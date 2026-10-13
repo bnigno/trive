@@ -102,6 +102,9 @@ export const RETRY_POLICIES: Record<string, RetryPolicy> = {
   // baixar a foto) ou o que já foi pago e só falta guardar — a retomada pelo
   // id do pedido nunca paga de novo. As rodadas de espera são eventos novos.
   "product.ai_video": { maxAttempts: 4, baseDelayMs: 60_000, maxDelayMs: 600_000 },
+  // Prévia na foto da cliente: ela está esperando na conversa — tentativas
+  // curtas (30 s dobrando, 4 em ~4 min); a retomada pelo id nunca paga de novo.
+  "wa.tryon": { maxAttempts: 4, baseDelayMs: 30_000, maxDelayMs: 120_000 },
   // Push: servidor da Apple/Google fora do ar volta em segundos; depois de
   // 3 tentativas o aviso perdeu o sentido (a próxima mensagem gera outro).
   "push.new_message": { maxAttempts: 3, baseDelayMs: 15_000, maxDelayMs: 60_000 },
@@ -158,6 +161,9 @@ export const HANDLER_RESERVE_MS: Record<string, number> = {
   "studio.base_photo": 30_000,
   // Uma rodada de espera + subir o MP4 (~16 MB): menos que isso, nem começa.
   "product.ai_video": 30_000,
+  // Baixar a foto + checar + pedir à FASHN: o resto (espera, portões, envio)
+  // segue pelo estado da linha na invocação seguinte, sem pagar de novo.
+  "wa.tryon": 30_000,
 };
 
 export function handlerReserveMs(eventType: string): number {

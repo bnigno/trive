@@ -74,6 +74,12 @@ export function MessageBubble({
             />
           </a>
         ) : null}
+        {/* Imagem que saiu embutida (a prévia na foto da cliente): por privacidade, não fica guardada. */}
+        {message.kind === "image" && !message.mediaUrl && outbound ? (
+          <p data-image-not-stored className="mb-1 text-[11px] font-medium text-ivory-300 dark:text-ink-500">
+            🪄 Prévia feita com IA · imagem não guardada (privacidade)
+          </p>
+        ) : null}
         {!outbound && message.recognized && message.recognized.length > 0 ? (
           <p data-recognized={message.recognizedLevel ?? "exato"} className="mb-1 text-[11px] font-medium text-ink-400">
             {message.recognizedLevel === "talvez" ? "🔎 Lia achou parecido (sem confirmar): " : "🔎 Lia reconheceu: "}

@@ -530,7 +530,16 @@ const sendMediaMessageCommonFields = {
 const sendMediaMessageSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("image"),
-    imageUrl: z.url(),
+    /** URL pública da imagem — gravada na conversa (a thread do painel mostra). */
+    imageUrl: z.url().optional(),
+    /**
+     * Ou a imagem embutida, para o que não pode ficar num Storage público (a
+     * prévia na foto da cliente): vai só para a Z-API; a conversa guarda a
+     * legenda e media_url fica vazio.
+     */
+    imageBase64: z
+      .object({ data: z.base64().min(1), mimeType: z.enum(["image/jpeg", "image/png"]) })
+      .optional(),
     ...sendMediaMessageCommonFields,
   }),
   z.object({
@@ -560,6 +569,14 @@ const sendMediaMessageSchema = z.discriminatedUnion("kind", [
 
 export type SendMediaMessageInput = z.input<typeof sendMediaMessageSchema>;
 
+/** Imagem por URL OU embutida — exatamente uma das duas. */
+function assertOneImageSource(parsed: z.output<typeof sendMediaMessageSchema>): void {
+  if (parsed.kind !== "image") return;
+  if ((parsed.imageUrl === undefined) === (parsed.imageBase64 === undefined)) {
+    throw new Error("Imagem precisa de imageUrl OU imageBase64 (exatamente um).");
+  }
+}
+
 /**
  * Envia mensagem de MÍDIA (imagem ou lista de opções) com as MESMAS regras de
  * sendTemplateMessage (wa_enabled, opt-in quando requireOptIn, phoneExists,
@@ -576,6 +593,7 @@ export async function sendMediaMessage(
   input: SendMediaMessageInput,
 ): Promise<SendWaMessageResult> {
   const parsed = sendMediaMessageSchema.parse(input);
+  assertOneImageSource(parsed);
 
   if (!(await isWaEnabled(db))) return { skipped: "desabilitado" };
 
@@ -596,7 +614,8 @@ export async function sendMediaMessage(
           ),
         ].join("\n")
       : parsed.body;
-  const mediaUrl = parsed.kind === "image" ? parsed.imageUrl : parsed.kind === "audio" ? parsed.audioUrl : null;
+  // A imagem embutida nunca é gravada (megabytes por linha, e é o que não pode ficar guardado).
+  const mediaUrl = parsed.kind === "image" ? (parsed.imageUrl ?? null) : parsed.kind === "audio" ? parsed.audioUrl : null;
 
   const conversationId = await upsertConversation(
     db,
@@ -633,7 +652,7 @@ export async function sendMediaMessage(
       parsed.kind === "image"
         ? provider.sendImage({
             toE164: parsed.phoneE164,
-            imageUrl: parsed.imageUrl,
+            ...(parsed.imageBase64 ? { imageBase64: parsed.imageBase64 } : { imageUrl: parsed.imageUrl }),
             caption: parsed.body,
           })
         : parsed.kind === "audio"
