@@ -367,6 +367,8 @@ describe("ClaudeSalesAssistant.extractFromPhotos", () => {
       messages: { create: async () => textMessage("", "refusal") },
     } as unknown as MessagesClient);
     await expect(refusal.extractFromPhotos(input)).rejects.toBeInstanceOf(AssistantUnavailableError);
+    // A prévia na foto distingue a recusa (definitiva: nunca reenviar a foto) pelo motivo "recusa".
+    await expect(refusal.extractFromPhotos(input)).rejects.toMatchObject({ reason: "recusa" });
 
     const torto = new ClaudeSalesAssistant({
       messages: { create: async () => textMessage("não é json") },

@@ -342,8 +342,29 @@ async function checkPhoto(deps: TryOnDeps, photo: Buffer, category: StudioGarmen
   }
   const usdCents = estimateUsageCostUsdCents(result.usage, TRYON_JUDGE_MODEL);
   const check = photoCheckSchema.safeParse(result.json);
-  if (!check.success) throw new Error("a checagem da foto voltou fora do formato");
+  if (!check.success) throw new VisionOutOfFormatError("a checagem da foto voltou fora do formato", usdCents);
   return { verdict: photoCheckVerdict(check.data, category), usdCents };
+}
+
+/** A visão respondeu fora do formato: relança (a fila tenta de novo) levando o gasto, para ele ficar registrado. */
+class VisionOutOfFormatError extends Error {
+  constructor(
+    message: string,
+    readonly usdCents: number,
+  ) {
+    super(message);
+    this.name = "VisionOutOfFormatError";
+  }
+}
+
+/** Grava o gasto da visão que não serviu (fora do formato) e relança. */
+async function recordVisionSpendAndThrow(db: DbOrTx, request: TryOnRequest, error: VisionOutOfFormatError): Promise<never> {
+  await db
+    .update(tryonRequests)
+    .set({ usdCents: request.usdCents + error.usdCents })
+    .where(eq(tryonRequests.id, request.id))
+    .catch(() => undefined);
+  throw error;
 }
 
 /** O veredito da checagem gravado (photo_check): só "serve" ou o problema. */
@@ -391,16 +412,16 @@ async function judge(
     ]);
   } catch (error) {
     if (isRefusal(error)) return { refused: true };
+    // Cortado pelo NOSSO prazo: não é falha da visão — a fila devolve a linha sem contar tentativa.
+    if (input.signal.aborted) throw new HandlerOutOfTimeError(0);
     throw error;
   }
   const [garmentResult, personResult] = results;
+  const usdCents = estimateUsageCostUsdCents(garmentResult.usage, TRYON_JUDGE_MODEL) + estimateUsageCostUsdCents(personResult.usage, TRYON_JUDGE_MODEL);
   const garmentJudgment = garmentJudgmentSchema.safeParse(garmentResult.json);
   const personJudgment = personJudgmentSchema.safeParse(personResult.json);
-  if (!garmentJudgment.success || !personJudgment.success) throw new Error("o julgamento da prévia voltou fora do formato");
-  return {
-    verdict: { garment: garmentJudgment.data, person: personJudgment.data },
-    usdCents: estimateUsageCostUsdCents(garmentResult.usage, TRYON_JUDGE_MODEL) + estimateUsageCostUsdCents(personResult.usage, TRYON_JUDGE_MODEL),
-  };
+  if (!garmentJudgment.success || !personJudgment.success) throw new VisionOutOfFormatError("o julgamento da prévia voltou fora do formato", usdCents);
+  return { verdict: { garment: garmentJudgment.data, person: personJudgment.data }, usdCents };
 }
 
 /** A FASHN aceitou: grava o id (é o que impede pagar duas vezes). */
@@ -638,9 +659,15 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
       }
       // Sem tempo para os portões e o envio nesta invocação: a próxima retoma pelo id (a saída fica 60 min na FASHN).
       ensureTime(options, clock, TRYON_TIMING.finishReserveMs);
-      const judged = await judge(deps, { photo, garment, preview: image.data, signal: budgetSignal(options, clock, TRYON_TIMING.deliverReserveMs) });
+      let judged: Awaited<ReturnType<typeof judge>>;
+      try {
+        judged = await judge(deps, { photo, garment, preview: image.data, signal: budgetSignal(options, clock, TRYON_TIMING.deliverReserveMs) });
+      } catch (error) {
+        if (error instanceof VisionOutOfFormatError) return recordVisionSpendAndThrow(db, request, error);
+        throw error;
+      }
       if ("refused" in judged) {
-        return failRequest(db, deps, request, { reason: "recusada_pela_ia", usdCents: paid, credits, detail: "o modelo de visão recusou a prévia", now: clock() });
+        return failRequest(db, deps, request, { reason: "visao_recusou", usdCents: paid, credits, detail: "o modelo de visão recusou a prévia", now: clock() });
       }
       const usdCents = paid + judged.usdCents;
       const stored = storedTryOnVerdict(judged.verdict, request.vendorJobId);
@@ -679,7 +706,13 @@ export async function generateTryOn(db: DbOrTx, deps: TryOnDeps, rawPayload: unk
 
     let photoVerdict = savedPhotoVerdict(request.photoCheck);
     if (!photoVerdict) {
-      const checked = await checkPhoto(deps, photo, category, budgetSignal(options, clock, 3_000));
+      let checked: Awaited<ReturnType<typeof checkPhoto>>;
+      try {
+        checked = await checkPhoto(deps, photo, category, budgetSignal(options, clock, 3_000));
+      } catch (error) {
+        if (error instanceof VisionOutOfFormatError) return recordVisionSpendAndThrow(db, request, error);
+        throw error;
+      }
       photoVerdict = checked.verdict;
       const [saved] = await db
         .update(tryonRequests)

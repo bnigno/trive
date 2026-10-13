@@ -80,9 +80,16 @@ describe("portões depois da FASHN", () => {
     expect(passesPersonJudge(afinou)).toBe(false);
     // Do corpo dela, só o veredito: o log e a auditoria não guardam o que o modelo disse que mudou.
     expect(tryOnVerdictSummary({ garment: peca, person: afinou })).toBe("9/10 — corpo mudou");
-    const stored = storedTryOnVerdict({ garment: peca, person: afinou }, "job-1");
-    expect(stored).toEqual({ vendorJobId: "job-1", passed: false, summary: "9/10 — corpo mudou", garment: peca, person: { mesma_pessoa: true, corpo_preservado: false } });
-    expect(JSON.stringify(stored)).not.toContain("cintura");
+    const stored = storedTryOnVerdict({ garment: { ...peca, artefatos: ["dedos a mais na mão dela"] }, person: afinou }, "job-1");
+    expect(stored).toEqual({
+      vendorJobId: "job-1",
+      passed: false,
+      summary: "9/10 — 1 defeito(s) na prévia; corpo mudou",
+      garment: { mesma_peca: true, cor_ok: true, estampa_ok: true, corte_ok: true, defeitos: 1, nota: 9 },
+      person: { mesma_pessoa: true, corpo_preservado: false, defeitos: 0 },
+    });
+    // Nenhum texto livre sobre a prévia dela fica gravado (nem do corpo, nem dos defeitos, nem a descrição da peça nela).
+    expect(JSON.stringify(stored)).not.toMatch(/cintura|dedos|decote quadrado/);
     expect(storedVerdictApproves(storedTryOnVerdict({ garment: peca, person: pessoa }, "job-1"), "job-1")).toBe(true);
     expect(storedVerdictApproves(storedTryOnVerdict({ garment: peca, person: pessoa }, "job-1"), "job-2")).toBe(false);
     expect(storedVerdictApproves(stored, "job-1")).toBe(false);

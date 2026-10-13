@@ -161,7 +161,7 @@ describe("wa.tryon — o caminho feliz", () => {
     // Da checagem, só o veredito; do julgamento, a peça e os dois "sim" da pessoa (nada do corpo dela).
     expect(row.photoCheck).toEqual({ ok: true });
     expect(row.verdict).toMatchObject({ vendorJobId: row.vendorJobId, passed: true, garment: { mesma_peca: true }, person: { corpo_preservado: true } });
-    expect(JSON.stringify(row.verdict)).not.toContain("diferencas_no_corpo");
+    expect(JSON.stringify(row.verdict)).not.toMatch(/diferencas_no_corpo|peca_na_previa|artefatos/);
 
     // Rodar de novo (a fila repetiu) não faz nada.
     expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "skipped", reason: "pedido_fora_da_fila" });
@@ -249,7 +249,8 @@ describe("wa.tryon — recusa do modelo e julgamento fora do formato", () => {
     const { requestId } = await seed();
     assistant.enqueueExtraction(undefined);
     assistant.enqueueExtraction(new AssistantUnavailableError("O modelo recusou ler estas fotos.", { reason: "recusa" }));
-    expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "recusada_pela_ia" });
+    expect(await runTryOn(deps(), event(requestId))).toEqual({ outcome: "failed", reason: "visao_recusou" });
+    expect((await notices(requestId))[0]).not.toMatch(/manda|outra foto/i);
     expect(studio.generations).toHaveLength(1);
     expect(provider.sentImages).toHaveLength(0);
     expect(await requestRow(requestId)).toMatchObject({ credits: 3 });
@@ -261,6 +262,8 @@ describe("wa.tryon — recusa do modelo e julgamento fora do formato", () => {
     assistant.enqueueExtraction({ ...FAKE_TRYON_GARMENT_JSON, artefatos: [""] });
     await expect(runTryOn(deps(), event(requestId, 0))).rejects.toThrow(/fora do formato/);
     expect(await requestRow(requestId)).toMatchObject({ status: "processing", attempts: 1 });
+    // O gasto da visão que não serviu fica registrado.
+    expect((await requestRow(requestId)).usdCents).toBeGreaterThan(0);
     expect(await runTryOn(deps(), event(requestId, 1))).toMatchObject({ outcome: "sent", credits: 3 });
     expect(studio.generations.filter((call) => call.resumeJobId === undefined)).toHaveLength(1);
   });

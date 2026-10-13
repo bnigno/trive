@@ -28,11 +28,11 @@ export type TryOnStatus = (typeof TRYON_STATUSES)[number];
 /**
  * submitting → queued: a FASHN recusou por excesso de chamadas (429) — nada foi cobrado.
  * processing → queued: a prévia saiu infiel e ainda cabe outra tentativa (o pedido anterior já foi pago e usado).
- * declined → awaiting_photo | queued: ela mudou de ideia e tocou "Quero me ver" na mesma lista.
+ * declined → awaiting_photo: ela mudou de ideia e tocou "Quero me ver" na mesma lista (o toque grava o consentimento de novo).
  */
 export const TRYON_TRANSITIONS: Record<TryOnStatus, readonly TryOnStatus[]> = {
   offered: ["declined", "awaiting_photo", "queued"],
-  declined: ["awaiting_photo", "queued"],
+  declined: ["awaiting_photo"],
   awaiting_photo: ["queued", "declined"],
   queued: ["submitting", "photo_rejected", "failed"],
   submitting: ["processing", "queued", "failed"],

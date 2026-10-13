@@ -105,22 +105,25 @@ describe("queueTryOn", () => {
     });
   });
 
-  it("tetos do dia: o da cliente (2) e o da loja (3) contam só o que chegou à FASHN (ou está a caminho)", async () => {
+  it("tetos do dia: o da cliente (2) e o da loja contam o que foi (ou pode ter sido) pedido à FASHN", async () => {
     const { productId, conversationId, photoId } = await seedConversation();
     await db.insert(schema.tryonRequests).values([
       { conversationId, phoneE164: PHONE, productId, status: "sent", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW },
       { conversationId, phoneE164: PHONE, productId, status: "failed", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW },
+      // "Envio incerto": a resposta da FASHN se perdeu (sem submittedAt), mas pode ter cobrado — conta.
+      { conversationId, phoneE164: PHONE, productId, status: "failed", acceptedAt: NOW, queuedAt: NOW, attempts: 1, credits: 3, failureReason: "envio_incerto" },
       // Falhou antes de pedir (a foto não abriu) e foto recusada: não gastam a cota.
       { conversationId, phoneE164: PHONE, productId, status: "failed", acceptedAt: NOW, queuedAt: NOW },
       { conversationId, phoneE164: PHONE, productId, status: "photo_rejected", acceptedAt: NOW, queuedAt: NOW },
     ]);
-    expect(await countTryOnsToday(sdb(), { phoneE164: PHONE, now: NOW })).toEqual({ customer: 2, total: 2, rejected: 1 });
+    expect(await countTryOnsToday(sdb(), { phoneE164: PHONE, now: NOW })).toEqual({ customer: 3, total: 3, rejected: 1 });
+    await db.update(schema.settings).set({ value: 4 }).where(eq(schema.settings.key, "tryon_daily_total"));
     const requestId = await offer({ conversationId, productId });
     expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "limite_cliente" });
 
-    // Outra cliente: o da loja (3) chega primeiro.
+    // Outra cliente: com mais uma prévia de alguém, o da loja (4) chega.
+    await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status: "sent", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW });
     const other = await seedConversation("+5591977776666");
-    await db.insert(schema.tryonRequests).values({ conversationId: other.conversationId, phoneE164: "+5591977776666", productId, status: "sent", acceptedAt: NOW, queuedAt: NOW, submittedAt: NOW });
     const otherRequest = await offer({ conversationId: other.conversationId, productId, phone: "+5591977776666" });
     expect(await queueTryOn(sdb(), { requestId: otherRequest, photoWaMessageId: other.photoId, now: NOW })).toEqual({ ok: false, reason: "limite_loja" });
 
@@ -135,7 +138,7 @@ describe("queueTryOn", () => {
       await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", acceptedAt: NOW, queuedAt: NOW });
     }
     const requestId = await offer({ conversationId, productId });
-    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "limite_cliente" });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "limite_fotos" });
   });
 
   it("a foto tem de ser uma imagem que ELA mandou nesta conversa", async () => {
@@ -171,9 +174,12 @@ describe("queueTryOn", () => {
     const requestId = await offer({ conversationId, productId });
     expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW, kick: false })).toMatchObject({ ok: true });
     const [healed] = await db.select().from(schema.tryonRequests).where(eq(schema.tryonRequests.id, stuck!.id));
-    expect(healed).toMatchObject({ status: "failed", failureReason: "demorou_demais", vendorJobId: "job-preso" });
+    // Fazendo = a FASHN pode ter cobrado: o crédito estimado fica registrado.
+    expect(healed).toMatchObject({ status: "failed", failureReason: "demorou_demais", vendorJobId: "job-preso", credits: 3 });
     const notice = (await db.select().from(schema.outboxEvents)).find((row) => row.dedupeKey === `wa.bot_tryon:${stuck!.id}:falhou:demorou_demais`);
     expect(notice?.eventType).toBe("wa.send");
+    // O aviso diz QUAL peça (não parece falar do pedido novo) e não consulta a Z-API de novo.
+    expect(notice?.payload).toMatchObject({ body: expect.stringContaining("VESTIDO AMORA"), verifyPhone: false });
   });
 
   it("settings: desligado e padrões quando ausentes ou tortos", async () => {

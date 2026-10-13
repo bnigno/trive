@@ -158,8 +158,12 @@ function typingDelays(typingSeconds: number | undefined): Record<string, number>
   return { delayTyping: Math.min(15, Math.max(1, Math.round(typingSeconds))), delayMessage: 1 };
 }
 
-/** Prazo do /send-image: a imagem embutida pesa ~300 KB; sem prazo, uma Z-API lenta prende a fila. */
-const SEND_IMAGE_TIMEOUT_MS = 25_000;
+/**
+ * Prazo do /send-image: a imagem embutida pesa ~300 KB; sem prazo, uma Z-API
+ * lenta prende a fila até a função morrer no meio. Menor que a folga que a
+ * prévia guarda para o envio (core/tryon/rules: deliverReserveMs).
+ */
+const SEND_IMAGE_TIMEOUT_MS = 15_000;
 
 export class ZapiMessagingProvider implements MessagingProvider {
   private readonly fetchFn: typeof fetch;

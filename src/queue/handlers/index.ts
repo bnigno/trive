@@ -239,6 +239,8 @@ const waSendPayloadSchema = z.object({
   dedupeKey: z.string().min(1).optional(),
   /** Resposta manual: a hora do clique da dona (vira o created_at da linha). */
   repliedAt: z.iso.datetime().optional(),
+  /** false: resposta a quem acabou de escrever (o número obviamente existe) — sem consultar a Z-API. */
+  verifyPhone: z.boolean().optional(),
 });
 
 // "Saiu" do motoboy (dispatchOrder): `againAt` = a hora da segunda saída de quem voltou.
@@ -704,6 +706,7 @@ export const outboxHandlers: Record<string, OutboxHandler> = {
       dedupeKey: parsed.dedupeKey ?? `wa.send:${event.id}`,
       requireOptIn: false,
       ...(parsed.repliedAt ? { createdAt: new Date(parsed.repliedAt) } : {}),
+      ...(parsed.verifyPhone !== undefined ? { verifyPhone: parsed.verifyPhone } : {}),
     });
   },
   // Resposta do dono pela caixa de entrada de e-mail. Idempotente pelo

@@ -129,7 +129,7 @@ export function tryOnVerdictSummary(verdict: TryOnVerdict): string {
     garment.cor_ok ? null : "cor diferente",
     garment.estampa_ok ? null : "detalhes diferentes",
     garment.corte_ok ? null : "corte diferente",
-    ...garment.artefatos,
+    garment.artefatos.length > 0 ? `${garment.artefatos.length} defeito(s) na prévia` : null,
     person.mesma_pessoa ? null : "pessoa diferente",
     person.corpo_preservado ? null : "corpo mudou",
     person.artefatos.length > 0 ? `${person.artefatos.length} defeito(s) na pessoa` : null,
@@ -138,25 +138,27 @@ export function tryOnVerdictSummary(verdict: TryOnVerdict): string {
 }
 
 /**
- * O que fica gravado do julgamento (tryon_requests.verdict): a peça inteira
- * (é sobre a peça) e, da pessoa, só os dois "sim/não" — e o id do pedido da
+ * O que fica gravado do julgamento (tryon_requests.verdict): só os "sim/não",
+ * a nota e as contagens — nenhum texto livre sobre a prévia dela (a descrição
+ * da peça na prévia, os defeitos que o modelo viu) — e o id do pedido da
  * FASHN que foi julgado (a retomada de um envio que caiu não julga de novo).
  */
 export type StoredTryOnVerdict = {
   vendorJobId: string | null;
   passed: boolean;
   summary: string;
-  garment: GarmentJudgment;
-  person: { mesma_pessoa: boolean; corpo_preservado: boolean };
+  garment: { mesma_peca: boolean; cor_ok: boolean; estampa_ok: boolean; corte_ok: boolean; defeitos: number; nota: number };
+  person: { mesma_pessoa: boolean; corpo_preservado: boolean; defeitos: number };
 };
 
 export function storedTryOnVerdict(verdict: TryOnVerdict, vendorJobId: string | null): StoredTryOnVerdict {
+  const { garment, person } = verdict;
   return {
     vendorJobId,
     passed: passesTryOnVerdict(verdict),
     summary: tryOnVerdictSummary(verdict),
-    garment: verdict.garment,
-    person: { mesma_pessoa: verdict.person.mesma_pessoa, corpo_preservado: verdict.person.corpo_preservado },
+    garment: { mesma_peca: garment.mesma_peca, cor_ok: garment.cor_ok, estampa_ok: garment.estampa_ok, corte_ok: garment.corte_ok, defeitos: garment.artefatos.length, nota: garment.nota },
+    person: { mesma_pessoa: person.mesma_pessoa, corpo_preservado: person.corpo_preservado, defeitos: person.artefatos.length },
   };
 }
 

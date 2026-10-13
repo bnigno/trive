@@ -17,9 +17,13 @@ export const TRYON_TIMING = {
   /** Menos que isto até o fim da invocação: não envia à FASHN (um envio cortado no meio seria "incerto"). */
   minSubmitMs: 20_000,
   /** Guardado do prazo para os portões e o envio pelo WhatsApp depois que a imagem chega. */
-  finishReserveMs: 25_000,
-  /** Guardado do prazo para o envio pelo WhatsApp depois dos portões. */
-  deliverReserveMs: 10_000,
+  finishReserveMs: 30_000,
+  /**
+   * Guardado do prazo para o envio pelo WhatsApp depois dos portões: maior que
+   * o prazo do /send-image (15 s, adapters/zapi) — a função nunca morre no
+   * meio de um envio que a Z-API pode ter aceitado (seria prévia em dobro).
+   */
+  deliverReserveMs: 20_000,
   /** O tryon-max leva ~25 s: parado há mais que isto, desiste (ela está esperando na conversa). */
   giveUpAfterMs: 8 * 60_000,
   /** Pedido "em andamento" sem mudar há tanto tempo = a fila perdeu a linha (função morta no meio): encerra. */
@@ -85,6 +89,7 @@ export type TryOnPhotoProblem = (typeof TRYON_PHOTO_PROBLEMS)[number];
 /** Por que o pedido foi encerrado sem prévia (failure_reason). */
 export const TRYON_FAILURE_REASONS = [
   "desligado",
+  "visao_recusou",
   "foto_indisponivel",
   "peca_indisponivel",
   "recusada_pela_ia",
@@ -125,6 +130,9 @@ export function failureText(reason: TryOnFailureReason): string {
       return "Tentei duas vezes e a prévia não ficou fiel à peça — prefiro não te mandar algo diferente do real 💛 Posso te mostrar a peça na modelo e conferir seu tamanho?";
     case "recusada_pela_ia":
       return "Essa foto eu não consigo usar pra prévia 💛 Se quiser, me manda outra só sua, vestida e de corpo inteiro.";
+    case "visao_recusou":
+      // Sem convite a outra foto (como no nao_pode): a recusa pode ser de quem não deveria estar ali.
+      return "Não consegui fazer a prévia com essa foto 💛 Posso te mostrar a peça na modelo e conferir seu tamanho?";
     case "foto_indisponivel":
       return "Não consegui abrir a sua foto 😕 Me manda de novo?";
     case "peca_indisponivel":
@@ -139,8 +147,18 @@ export function failureText(reason: TryOnFailureReason): string {
 }
 
 /** Limite do dia (a ferramenta da Lia usa antes de enfileirar). */
-export function quotaText(reason: "limite_cliente" | "limite_loja", perCustomerDaily: number): string {
-  return reason === "limite_cliente"
-    ? `Hoje já fizemos as suas ${perCustomerDaily} prévias 💛 Amanhã tem mais! Enquanto isso, posso conferir seu tamanho?`
-    : "As prévias de hoje acabaram 😕 Amanhã tem mais! Enquanto isso, posso te mostrar a peça na modelo e conferir seu tamanho?";
+export function quotaText(reason: "limite_cliente" | "limite_loja" | "limite_fotos", perCustomerDaily: number): string {
+  switch (reason) {
+    case "limite_cliente":
+      return `Hoje já fizemos as suas ${perCustomerDaily} prévias 💛 Amanhã tem mais! Enquanto isso, posso conferir seu tamanho?`;
+    case "limite_fotos":
+      return "Hoje já tentei com várias fotos suas 💛 Amanhã a gente tenta de novo! Enquanto isso, posso te mostrar a peça na modelo e conferir seu tamanho?";
+    case "limite_loja":
+      return "As prévias de hoje acabaram 😕 Amanhã tem mais! Enquanto isso, posso te mostrar a peça na modelo e conferir seu tamanho?";
+  }
+}
+
+/** Aviso do pedido curado (parado: a fila perdeu a linha) — diz QUAL peça, para não parecer o pedido novo. */
+export function staleNoticeText(productName: string): string {
+  return `A prévia de ${productName} não ficou pronta a tempo 😕 Se quiser, me manda a foto de novo que eu tento outra vez.`;
 }

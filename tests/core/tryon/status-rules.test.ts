@@ -11,6 +11,7 @@ import {
   photoProblemText,
   quotaText,
   requiredFraming,
+  staleNoticeText,
   TRYON_FAILURE_REASONS,
   TRYON_PHOTO_PROBLEMS,
   tryOnCaption,
@@ -45,8 +46,9 @@ describe("estados da prévia", () => {
     // 429 na entrada (nada cobrado) e prévia infiel com tentativa sobrando.
     expect(canTransitionTryOn("submitting", "queued")).toBe(true);
     expect(canTransitionTryOn("processing", "queued")).toBe(true);
-    // Mudou de ideia na mesma lista.
+    // Mudou de ideia na mesma lista: volta pelo toque (que grava o consentimento de novo), nunca direto para a fila.
     expect(canTransitionTryOn("declined", "awaiting_photo")).toBe(true);
+    expect(canTransitionTryOn("declined", "queued")).toBe(false);
     for (const closed of ["sent", "photo_rejected", "failed"] as const) {
       expect(TRYON_TRANSITIONS[closed]).toEqual([]);
       expect(isTryOnClosed(closed)).toBe(true);
@@ -112,5 +114,9 @@ describe("regras da prévia", () => {
     expect(naoPode).not.toMatch(/manda|outra foto/i);
     expect(quotaText("limite_cliente", 2)).toContain("2 prévias");
     expect(quotaText("limite_loja", 2)).toContain("acabaram");
+    // Teto de fotos recusadas: nunca diz "já fizemos as suas prévias" a quem não recebeu nenhuma.
+    expect(quotaText("limite_fotos", 2)).not.toContain("prévias");
+    expect(staleNoticeText("VESTIDO AMORA")).toContain("VESTIDO AMORA");
+    expect(failureText("visao_recusou")).not.toMatch(/manda|outra foto/i);
   });
 });
