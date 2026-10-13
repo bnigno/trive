@@ -34,6 +34,8 @@ export const BOT_TOOL_NAMES = [
   "registrar_foto_com_a_peca",
   "identificar_peca_na_foto",
   "retirar_minha_foto",
+  "oferecer_previa",
+  "vestir_em_mim",
   "agendar_retorno",
   "entrar_no_provador",
   "transferir_para_atendente",
@@ -134,6 +136,10 @@ export type BotToolInputs = {
   /** Qual peça do catálogo aparece na foto que ela mandou (foto da loja repassada); categoria/cor/busca afunilam a comparação visual. */
   identificar_peca_na_foto: { foto?: number; categoria?: string; cor?: string; busca?: string };
   retirar_minha_foto: Record<string, never>;
+  /** "Me vê com ela": a pergunta tocável (o toque é o consentimento desta prévia). */
+  oferecer_previa: { produto: string; cor?: string; com_a_foto_dela?: boolean; foto?: number; ela_pediu?: boolean };
+  /** Depois do "Quero me ver": a foto DELA vai para a fila da prévia. */
+  vestir_em_mim: { foto?: number };
   /** Só depois do SIM dela à pergunta "posso te chamar …?". Data/hora no relógio de São Paulo. */
   agendar_retorno: { data: string; hora: string; motivo: string; cliente_autorizou: true };
   entrar_no_provador: { cliente_autorizou: true; nome?: string };
@@ -783,6 +789,36 @@ export const BOT_TOOLS: readonly BotToolDefinition[] = [
     },
   },
   {
+    name: "oferecer_previa",
+    description:
+      "\"Me vê com ela\": oferece à cliente se ver vestindo a peça na foto DELA (prévia feita com IA). Manda a pergunta tocável \"Quer se ver com ela?\" (Quero me ver / Agora não) — o toque é o consentimento; você não pede a foto nem explica de novo. Quando: depois de detalhar_produto dizer \"PRÉVIA NA FOTO DELA\", quando ela hesitar sobre como a peça fica nela, ou quando ela mandar uma foto DELA perguntando se combina (aí com_a_foto_dela: true). Uma vez por conversa; se ela recusar, não volte ao assunto (ela pode pedir: ela_pediu: true). Nunca na abertura, nunca para acessório. A ferramenta confere tudo (estoque, tetos do dia, oferta recente): ok: false = não ofereça.",
+    input_schema: {
+      type: "object",
+      properties: {
+        produto: { type: "string", description: "Slug ou nome exato da peça (o mesmo de detalhar_produto)." },
+        cor: { type: "string", description: "A cor que ela escolheu, se já escolheu." },
+        com_a_foto_dela: { type: "boolean", description: "true quando a foto DELA já está na conversa (a pergunta é sobre essa foto)." },
+        foto: { type: "integer", minimum: 1, description: "Com com_a_foto_dela: qual das fotos recentes dela (1 = a primeira). Omita para a última." },
+        ela_pediu: { type: "boolean", description: "true só quando ELA pediu para se ver com a peça (\"queria ver em mim\")." },
+      },
+      required: ["produto"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "vestir_em_mim",
+    description:
+      "Depois de ela tocar \"Quero me ver\" (o caderninho diz), a foto DELA chegou: põe a prévia na fila. Ela recebe a imagem sozinha em 1–2 min, com a legenda de prévia feita com IA. Diga só que está vestindo; nunca comente o corpo dela nem prometa caimento ou tamanho. Sem o toque dela, a ferramenta recusa — a foto só vai para a IA com o consentimento.",
+    input_schema: {
+      type: "object",
+      properties: {
+        foto: { type: "integer", minimum: 1, description: "Qual das fotos recentes dela: 1 = a primeira, 2 = a segunda… Omita para a última." },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "agendar_retorno",
     description:
       "Combina de VOCÊ chamar a cliente depois (ela adiou: 'me chama amanhã às 10', 'vou pensar'). SÓ chame depois de ela responder SIM à sua pergunta 'posso te chamar <quando>?' — nunca sem o sim explícito e nunca inventando a data. Horário entre 9h e 21h de São Paulo, de 30 minutos a 7 dias à frente. No horário a loja manda a mensagem por você.",
@@ -1064,6 +1100,14 @@ export const BOT_TOOL_INPUT_SCHEMAS: Record<BotToolName, z.ZodType> = {
     busca: z.string().trim().max(80).optional(),
   }),
   retirar_minha_foto: z.strictObject({}),
+  oferecer_previa: z.strictObject({
+    produto: z.string().trim().min(1).max(120),
+    cor: z.string().trim().min(1).max(40).optional(),
+    com_a_foto_dela: z.boolean().optional(),
+    foto: z.number().int().min(1).max(10).optional(),
+    ela_pediu: z.boolean().optional(),
+  }),
+  vestir_em_mim: z.strictObject({ foto: z.number().int().min(1).max(10).optional() }),
   agendar_retorno: z.strictObject({
     data: z.string().trim().min(8).max(10),
     hora: z.string().trim().min(4).max(5),

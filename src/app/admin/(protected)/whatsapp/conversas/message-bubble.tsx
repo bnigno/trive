@@ -4,6 +4,7 @@ import { cx } from "@/components/ui/cx";
 import { formatTimeSP } from "./chat-format";
 import { MessageTicks } from "./ticks";
 import type { ChatMessage } from "./use-chat-poll";
+import { isTryOnOfferBody } from "@/core/tryon/offer";
 
 export function MessageBubble({
   message,
@@ -112,7 +113,7 @@ export function MessageBubble({
               outbound ? "text-ivory-300 dark:text-ink-500" : "text-ink-400",
             )}
           >
-            📋 Catálogo com botões
+            {isTryOnOfferBody(message.body) ? "📸 Pergunta da prévia na foto (Quero me ver / Agora não)" : "📋 Catálogo com botões"}
           </p>
         ) : null}
         <p className="whitespace-pre-wrap break-words">{message.body}</p>

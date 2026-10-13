@@ -19,6 +19,7 @@ import {
   askInterviewNowAction,
   saveInterviewScheduleAction,
   saveLiaGiftSettingsAction,
+  saveTryOnSettingsAction,
   saveBotSettingsAction,
   saveWaSettingsAction,
   sendDigestNowAction,
@@ -62,7 +63,8 @@ export function ToggleSwitch({
     | "ai_photos_in_store"
     | "ai_video_enabled"
     | "curator_interview_enabled"
-    | "friends_vote_enabled";
+    | "friends_vote_enabled"
+    | "tryon_enabled";
   checked: boolean;
   label: string;
   hint: string;
@@ -568,6 +570,29 @@ export type LiaGiftFormDefaults = {
   validDays: number;
   cooldownDays: number;
 };
+
+/** "Me vê com ela": os tetos do dia — cada prévia custa ≈ R$ 1,40 na FASHN. */
+export function TryOnSettingsForm({ defaults }: { defaults: { perCustomerDaily: number; dailyTotal: number } }) {
+  const [state, formAction] = useActionState(saveTryOnSettingsAction, INITIAL_STATE);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Prévias por cliente por dia" hint="A mesma cliente, somando as peças. Ex.: 2.">
+          <Input name="perCustomerDaily" type="number" min={1} max={5} step={1} defaultValue={String(defaults.perCustomerDaily)} />
+        </Field>
+        <Field label="Prévias por dia na loja" hint="Todas as clientes juntas: é o teto do gasto do dia.">
+          <Input name="dailyTotal" type="number" min={1} max={100} step={1} defaultValue={String(defaults.dailyTotal)} />
+        </Field>
+      </div>
+      <FormError message={state.error} />
+      <FormSuccess message={state.success} />
+      <div>
+        <SubmitButton pendingLabel="Salvando…">Salvar tetos</SubmitButton>
+      </div>
+    </form>
+  );
+}
 
 export function LiaGiftSettingsForm({ defaults }: { defaults: LiaGiftFormDefaults }) {
   const [state, formAction] = useActionState(saveLiaGiftSettingsAction, INITIAL_STATE);

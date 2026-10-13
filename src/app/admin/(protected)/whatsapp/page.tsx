@@ -43,6 +43,11 @@ import {
 } from "@/services/wa-templates";
 import type { LiaGiftPolicy } from "@/core/coupons/lia-gift";
 import { countLiaGiftsToday, loadLiaGiftPolicy } from "@/services/lia-gifts";
+import { usdCentsToBrlCents } from "@/core/studio/cost";
+import { spDayKey, spDayStart } from "@/lib/sp-day";
+import { countTryOnsToday } from "@/services/tryon";
+import { tryOnFunnel, type TryOnFunnel } from "@/services/tryon-offer";
+import { loadTryOnSettings, type TryOnSettings } from "@/services/tryon-settings";
 import { INTERVIEW_STATUS_LABELS } from "@/core/atelier/interview";
 import { studioSpendLabel } from "@/core/studio/labels";
 import {
@@ -60,6 +65,7 @@ import {
   BotSettingsForm,
   InterviewScheduleForm,
   LiaGiftSettingsForm,
+  TryOnSettingsForm,
   SendDigestNowForm,
   SendTestMessageForm,
   TemplateEditForm,
@@ -121,6 +127,8 @@ interface PageData {
   campaignLinks: { total: number; taps: number; conversations: number; orders: number };
   /** Gentilezas da Lia: a política e quantas saíram hoje. */
   liaGift: { enabled: boolean; policy: LiaGiftPolicy; today: number };
+  /** "Me vê com ela": null = a tabela nova não respondeu (a página não cai por ela). */
+  tryOn: { settings: TryOnSettings; today: number; funnel: TryOnFunnel } | null;
 }
 
 async function loadPageData(): Promise<PageData | null> {
@@ -180,6 +188,23 @@ async function loadPageData(): Promise<PageData | null> {
     [liaGiftPolicy, liaGiftsToday] = await Promise.all([loadLiaGiftPolicy(db), countLiaGiftsToday(db, new Date())]);
   } catch {
     return null;
+  }
+
+  // "Me vê com ela" à parte: a tabela nova não pode derrubar a página.
+  let tryOn: PageData["tryOn"] = null;
+  try {
+    const now = new Date();
+    const [year, month] = spDayKey(now).split("-");
+    const monthStart = spDayStart(`${year}-${month}-01`);
+    const nextMonth = Number(month) === 12 ? `${Number(year) + 1}-01-01` : `${year}-${String(Number(month) + 1).padStart(2, "0")}-01`;
+    const [settings, funnel, today] = await Promise.all([
+      loadTryOnSettings(db),
+      tryOnFunnel(db, { from: monthStart, to: spDayStart(nextMonth) }),
+      countTryOnsToday(db, { phoneE164: "", now }),
+    ]);
+    tryOn = { settings, funnel, today: today.total };
+  } catch {
+    tryOn = null;
   }
 
   // Entrevista da curadora à parte: a tabela nova não pode derrubar a página.
@@ -258,6 +283,7 @@ async function loadPageData(): Promise<PageData | null> {
         }
       : null,
     liaGift: { enabled: settingsMap["lia_gift_enabled"] === true, policy: liaGiftPolicy, today: liaGiftsToday },
+    tryOn,
   };
 }
 
@@ -319,6 +345,7 @@ export default async function WhatsappPage() {
     cardsEnabled,
     lastDigest,
     liaGift,
+    tryOn,
   } = data;
   const studioSpend = studioSpendLabel({ images: summary.studioImages, videos: summary.studioVideos });
 
@@ -616,6 +643,33 @@ export default async function WhatsappPage() {
             }}
           />
         </div>
+      </Card>
+
+      <Card title="Prévia na foto da cliente">
+        {tryOn ? (
+          <div className="flex flex-col gap-5">
+            <ToggleSwitch
+              settingKey="tryon_enabled"
+              checked={tryOn.settings.enabled}
+              label={`A ${sellerName} oferece a prévia na foto dela`}
+              hint={`Quando a cliente escolhe uma roupa, a ${sellerName} pergunta "Quer se ver com ela?". Com o toque em "Quero me ver" (o consentimento dela), a foto dela vai para a IA e ela recebe a prévia vestindo a peça, com a legenda de prévia feita com IA. Nada fica guardado: nem a foto dela, nem a prévia. Cada prévia custa ≈ R$ 1,40 (FASHN).`}
+            />
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              Hoje: <span className="font-medium">{tryOn.today} de {tryOn.settings.dailyTotal}</span>
+              {tryOn.settings.enabled ? "" : " · desligado"}
+            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300" data-tryon-funnel>
+              Este mês: <span className="font-medium">{tryOn.funnel.offered}</span> ofertas →{" "}
+              <span className="font-medium">{tryOn.funnel.accepted}</span> quiseram se ver →{" "}
+              <span className="font-medium">{tryOn.funnel.sent}</span> prévias enviadas →{" "}
+              <span className="font-medium">{tryOn.funnel.bought}</span> compraram em até 7 dias · gasto ≈{" "}
+              <span className="font-medium">{formatCentsBRL(usdCentsToBrlCents(tryOn.funnel.usdCents))}</span>
+            </p>
+            <TryOnSettingsForm defaults={{ perCustomerDaily: tryOn.settings.perCustomerDaily, dailyTotal: tryOn.settings.dailyTotal }} />
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Não foi possível carregar a prévia agora. Tente recarregar a página.</p>
+        )}
       </Card>
 
       {/* A vendedora */}

@@ -101,6 +101,8 @@ export const TOOL_LABELS: Record<BotToolName, string> = {
   registrar_foto_com_a_peca: "guardou a foto dela com a peça",
   identificar_peca_na_foto: "conferiu a foto contra o catálogo",
   retirar_minha_foto: "retirou a foto dela da página",
+  oferecer_previa: "ofereceu a prévia na foto dela",
+  vestir_em_mim: "pôs a prévia na foto dela na fila",
   agendar_retorno: "combinou de chamar depois",
   entrar_no_provador: "convidou para o Provador",
   transferir_para_atendente: "passou para você",

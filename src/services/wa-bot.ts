@@ -58,6 +58,8 @@ import {
 import { execDetalharProduto, execListarProdutos, execMontarLook } from "./bot/catalog";
 import { execPedirOpiniaoDasAmigas, turnToolsFor } from "./bot/friends";
 import { friendRoundMemoryLines } from "@/services/friend-rounds";
+import { tryOnMemoryLines } from "@/services/tryon-offer";
+import { isTryOnOfferBody, TRYON_OFFER_HISTORY_TEXT } from "@/core/tryon/offer";
 import { execEnviarNotaDaCuradora } from "./bot/curator-audio";
 import { execBuscarCadastro } from "./bot/customer";
 import { execAvisarQuandoVoltar, execLiberarReserva, execReservarPeca } from "./bot/holds";
@@ -91,6 +93,7 @@ import { execCotarFrete } from "./bot/shipping";
 import { execAgendarRetorno } from "./bot/followups";
 import { execEntrarNoProvador } from "./bot/provador";
 import { execRegistrarFotoComAPeca, execRetirarMinhaFoto } from "./bot/looks";
+import { execOferecerPrevia, execVestirEmMim } from "./bot/tryon";
 import { execIdentificarPecaNaFoto } from "./bot/photo-match";
 import { LOOK_PHOTO_WINDOW_MS } from "./customer-looks";
 import { followupMemoryLines } from "./wa-followups";
@@ -153,6 +156,8 @@ export async function isBotEnabled(db: DbOrTx): Promise<boolean> {
  * para mostrar produtos, o modelo é OBRIGADO a chamar a ferramenta.
  */
 export function historyTextFor(kind: string, body: string): string {
+  // A pergunta da prévia não é catálogo: com o marcador do catálogo, a Lia acharia que já mandou as peças.
+  if (kind === "option_list" && isTryOnOfferBody(body)) return TRYON_OFFER_HISTORY_TEXT;
   if (kind === "option_list") {
     // A faixa ("11–20 de 25") diz ao modelo que o catálogo inteiro já está na conversa.
     const faixa = body.match(/\((\d+–\d+ de \d+)\)/);
@@ -336,6 +341,10 @@ export function buildToolExecutor(
         return execIdentificarPecaNaFoto(db, ctx, parsed.data as BotToolInputs["identificar_peca_na_foto"]);
       case "retirar_minha_foto":
         return execRetirarMinhaFoto(db, ctx);
+      case "oferecer_previa":
+        return execOferecerPrevia(db, ctx, parsed.data as BotToolInputs["oferecer_previa"]);
+      case "vestir_em_mim":
+        return execVestirEmMim(db, ctx, parsed.data as BotToolInputs["vestir_em_mim"]);
       case "agendar_retorno":
         return execAgendarRetorno(db, ctx, parsed.data as BotToolInputs["agendar_retorno"]);
       case "entrar_no_provador":
@@ -375,7 +384,7 @@ export type BotPromptBundle = {
 };
 
 export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle> {
-  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name", "lia_gift_enabled", "groups_enabled"]);
+  const map = await getSettingsMap(db, ["store_name", "bot_extra_instructions", "bot_model", "bot_seller_name", "lia_gift_enabled", "groups_enabled", "tryon_enabled"]);
   const text = (key: string): string =>
     typeof map[key] === "string" ? (map[key] as string).trim() : "";
   const storeName = text("store_name") || DEFAULT_STORE_NAME;
@@ -393,6 +402,7 @@ export async function buildBotPromptBundle(db: DbOrTx): Promise<BotPromptBundle>
     storeFacts,
     liaGiftEnabled: map["lia_gift_enabled"] === true,
     provadorEnabled: map["groups_enabled"] === true,
+    tryOnEnabled: map["tryon_enabled"] === true,
   });
   return { system, model, sellerName };
 }
@@ -531,7 +541,7 @@ export async function loadTurnHistory(
     };
   });
   const state = parseBotState(conversation.botState);
-  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines, friendLines, highlightLines] = await Promise.all([
+  const [memoryLines, purchaseLine, shipmentLine, bridgeLine, followupLines, friendLines, tryOnLines, highlightLines] = await Promise.all([
     loadMemoryLines(tx, conversation.phoneE164),
     purchaseMemoryLineFor(tx, {
       customerId: conversation.customerId,
@@ -549,6 +559,8 @@ export async function loadTurnHistory(
     followupMemoryLines(tx, conversationId),
     // "Me ajuda a escolher?": a votação aberta ou o resultado, com o slug da vencedora.
     friendRoundMemoryLines(tx, { conversationId, now }),
+    // "Me vê com ela": em que pé está a prévia desta conversa (oferecida, aceita, sendo feita, enviada).
+    tryOnMemoryLines(tx, { conversationId, now }),
     // Novidades e mais vendidas por último: são as primeiras a cair no teto do caderninho.
     catalogHighlightLines(tx, now),
   ]);
@@ -560,6 +572,7 @@ export async function loadTurnHistory(
       ...(bridgeLine ? [bridgeLine] : []),
       ...followupLines,
       ...friendLines,
+      ...tryOnLines,
       ...highlightLines,
     ],
     now,
