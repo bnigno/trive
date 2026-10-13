@@ -100,3 +100,34 @@ export function typingSecondsFor(text: string, position: "first" | "next"): numb
   const seconds = Math.ceil(text.trim().length / TYPING_CHARS_PER_SECOND);
   return Math.min(max, Math.max(1, seconds));
 }
+
+// ---------------------------------------------------------------------------
+// Afirmação perecível sem ferramenta
+// ---------------------------------------------------------------------------
+
+/**
+ * Preço, estoque, tamanho disponível e prazo mudam sozinhos: afirmá-los é
+ * papel da ferramenta, nunca da memória (regra dura nº 1 do prompt). Isto NÃO
+ * bloqueia a resposta — marca o turno para o boletim, porque em 24 dias de
+ * produção 46 dos 291 turnos afirmaram um desses sem consultar nada.
+ *
+ * Deliberadamente tolerante: perguntar ("qual tamanho?") não é afirmar, e a
+ * medida só vale somada a "nenhuma ferramenta rodou neste turno".
+ */
+const PERISHABLE_PATTERNS: readonly RegExp[] = [
+  /R\$\s*\d/u,
+  /\bdispon[íi]ve/iu,
+  /\besgotad/iu,
+  /\bem estoque\b/iu,
+  /\b(sobrou|sobraram|resta|restam)\b/iu,
+  // Sem \b antes do acento: a fronteira de palavra do JS é ASCII e "ú" não
+  // conta como letra para ela — /\búltima/ nunca casaria.
+  /[úu]ltimas? unidades?/iu,
+  /\bchega\s+(hoje|amanh[ãa]|em|at[ée])\b/iu,
+  /\bentrega\s+(hoje|amanh[ãa])\b/iu,
+];
+
+/** A resposta afirma preço, estoque ou prazo? (texto já pronto para a cliente) */
+export function assertsPerishableFact(text: string): boolean {
+  return PERISHABLE_PATTERNS.some((padrao) => padrao.test(text));
+}

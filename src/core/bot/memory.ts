@@ -77,6 +77,12 @@ export const botStateSchema = z
         slug: z.string(),
         nome: z.string(),
         cor: z.string().nullable().optional(),
+        /**
+         * Quando a ficha foi lida (ISO). Preço e estoque envelhecem: sem a
+         * idade, a Lia repetia "tem 1 disponível por R$ 44,99" meia hora
+         * depois, de memória. Ausente nas conversas antigas.
+         */
+        at: z.string().optional(),
       })
       .optional(),
     /** CEP da última cotação (cotar_frete) — o pedido só fecha com este CEP. */
@@ -372,6 +378,17 @@ function todayLine(now: Date): string {
  */
 export const EXTRA_LINES_MAX = 16;
 
+/** Depois disto, a ficha em memória vira pista, não fato. */
+export const FOCUS_STALE_MINUTES = 10;
+
+/** Minutos desde a leitura da ficha; null sem carimbo (conversa antiga) ou com data torta. */
+function focusAgeMinutes(at: string | undefined, now: Date): number | null {
+  if (!at) return null;
+  const lido = new Date(at).getTime();
+  if (Number.isNaN(lido)) return null;
+  return Math.max(0, Math.floor((now.getTime() - lido) / 60_000));
+}
+
 export function renderContextNote(
   state: BotState,
   extras: { lines?: readonly string[]; now?: Date } = {},
@@ -397,8 +414,15 @@ export function renderContextNote(
     );
   }
   if (state.focus) {
+    // A ficha vista há pouco ainda vale; passado o prazo, preço e estoque
+    // precisam de uma nova leitura antes de virarem afirmação para a cliente.
+    const vistaHa = focusAgeMinutes(state.focus.at, extras.now ?? new Date());
+    const validade =
+      vistaHa !== null && vistaHa >= FOCUS_STALE_MINUTES
+        ? ` — ficha lida há ${vistaHa} min: NÃO afirme preço, estoque nem tamanho sem chamar detalhar_produto de novo`
+        : "";
     linhas.push(
-      `• Peça em vista: ${state.focus.nome}${state.focus.cor ? ` (cor ${state.focus.cor})` : ""}`,
+      `• Peça em vista: ${state.focus.nome}${state.focus.cor ? ` (cor ${state.focus.cor})` : ""}${validade}`,
     );
   }
   if (state.neededBy) {
