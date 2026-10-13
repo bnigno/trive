@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CURATOR_AUDIO_RECORDING_SECONDS, fixVocabulary, polishBotReply, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
+import { assertsPerishableFact, CURATOR_AUDIO_RECORDING_SECONDS, fixVocabulary, polishBotReply, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
 
 describe("fixVocabulary", () => {
   it("troca menu e cardápio por catálogo, preservando a caixa e o plural", () => {
@@ -115,5 +115,25 @@ describe("typingSecondsFor (\"digitando…\" antes do balão)", () => {
   it("a nota da curadora mostra 'gravando áudio…' por alguns segundos", () => {
     expect(CURATOR_AUDIO_RECORDING_SECONDS).toBeGreaterThanOrEqual(1);
     expect(CURATOR_AUDIO_RECORDING_SECONDS).toBeLessThanOrEqual(15);
+  });
+});
+
+describe("assertsPerishableFact", () => {
+  it("reconhece preço, estoque e prazo — as falas que envelhecem", () => {
+    // Frases reais de produção, de turnos que não chamaram ferramenta nenhuma.
+    expect(assertsPerishableFact("tem 1 disponível, tamanho único, por R$ 44,99")).toBe(true);
+    expect(assertsPerishableFact("seu Vestido Ibiza tá a caminho, chega hoje entre 19h e 21h!")).toBe(true);
+    expect(assertsPerishableFact("essa ficou esgotada no tamanho M 🤎")).toBe(true);
+    expect(assertsPerishableFact("é a última unidade, viu")).toBe(true);
+  });
+
+  it("perguntar não é afirmar, e elogio não é fato", () => {
+    expect(assertsPerishableFact("Qual cor e tamanho eu já separo pra você?")).toBe(false);
+    expect(assertsPerishableFact("Que bom que curtiu 🤎 ficou linda mesmo")).toBe(false);
+    expect(assertsPerishableFact("Oii, musaa! Eu sou a Lia, vendedora da TRIVÉ ✨")).toBe(false);
+    // Recusar prometer é o comportamento CERTO: não pode ser marcado.
+    expect(
+      assertsPerishableFact("Não tenho nenhum brinde cadastrado aqui no sistema, prefiro não te prometer"),
+    ).toBe(false);
   });
 });

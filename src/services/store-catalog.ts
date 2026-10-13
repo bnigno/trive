@@ -129,8 +129,14 @@ const listPublicProductsSchema = z.object({
   nameAny: z.array(z.string().trim().min(1)).min(1).optional(),
   /** Com pieceType: também as peças SEM tipo marcado cujo nome bate em nameAny (a dona ainda não tipou tudo). */
   untypedByName: z.boolean().default(false),
-  /** Busca também na descrição (a vendedora do WhatsApp procura por "linho"). */
-  includeDescription: z.boolean().default(false),
+  /**
+   * Busca também na FICHA da peça, não só no nome: descrição, composição,
+   * "como veste" e cuidados. É por aqui que a cliente procura — "poliamida",
+   * "linho", "suplex", "soltinho" moram na ficha, não no nome. Sem isto a Lia
+   * respondia "não achei nenhuma blusa de poliamida" e, um minuto depois, ao
+   * abrir a peça, dizia "é de poliamida premium sim" (caso real, 04/10/2026).
+   */
+  includeFicha: z.boolean().default(false),
   /** Deixa um produto de fora (ex.: o próprio, na lista de relacionados). */
   excludeProductId: z.uuid().optional(),
   /** Só as peças de uma Edição de Belém (slug). */
@@ -232,7 +238,14 @@ export async function listPublicProducts(
       or(
         ilike(products.name, pattern),
         ilike(products.brand, pattern),
-        ...(parsed.includeDescription ? [ilike(products.description, pattern)] : []),
+        ...(parsed.includeFicha
+          ? [
+              ilike(products.description, pattern),
+              ilike(products.composition, pattern),
+              ilike(products.fitNotes, pattern),
+              ilike(products.careNotes, pattern),
+            ]
+          : []),
       )!,
     );
   }

@@ -26,7 +26,7 @@ import { parseBotState, renderContextNote, type BotState } from "@/core/bot/memo
 import { copilotBlockedText, isToolBlockedInCopilot } from "@/core/bot/copilot";
 import { BOT_TOOL_INPUT_SCHEMAS, type BotToolInputs, type BotToolName, type ToolExecutor } from "@/core/bot/tools";
 import { buildBotSystemPrompt, DEFAULT_SELLER_NAME, truncateForWhatsApp } from "@/core/bot/prompt";
-import { CURATOR_AUDIO_RECORDING_SECONDS, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
+import { assertsPerishableFact, CURATOR_AUDIO_RECORDING_SECONDS, splitBotReply, typingSecondsFor } from "@/core/bot/reply";
 import { isBridgeFresh } from "@/core/bot/site-bridge";
 import { renderStoreMap } from "@/core/bot/store-map";
 import {
@@ -1103,6 +1103,10 @@ export async function runBotTurn(
           handedOff: turn.handedOff,
           attachments: attachments.map((attachment) => attachment.kind),
           bubbles: bubbles.length,
+          // Afirmou preço/estoque/prazo sem consultar nada: é o que o boletim
+          // mostra e o que diz se a regra "fonte única de verdade" pegou.
+          assertedWithoutTool:
+            turn.toolCalls.length === 0 && bubbles.some((bolha) => assertsPerishableFact(bolha)),
           durationMs: modelMs,
           // Só contagens: a foto nunca é guardada.
           media,
