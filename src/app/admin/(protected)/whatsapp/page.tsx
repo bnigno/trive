@@ -11,6 +11,7 @@ import { Card, StatCard } from "@/components/ui/card";
 import { CopyField } from "@/components/ui/copy-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { LiaBulletinCard, MutedBanner } from "./bulletin";
 import { DEFAULT_SELLER_NAME } from "@/core/bot/prompt";
 import { getDb } from "@/db/client";
 import { formatDateTimeSP } from "@/emails/templates";
@@ -23,6 +24,8 @@ import { countUnseenConversations } from "@/services/wa-conversations";
 import {
   getBotActivitySummary,
   getBotResponseTimes,
+  getLiaBulletin,
+  type LiaBulletin,
   listRecentBotActivity,
   type BotActivityEvent,
   type BotActivitySummary,
@@ -106,6 +109,7 @@ interface PageData {
   templates: WaTemplate[];
   summary: BotActivitySummary;
   responseTimes: BotResponseTimes;
+  bulletin: LiaBulletin;
   activity: BotActivityEvent[];
   awaitingOwner: number;
   digestEnabled: boolean;
@@ -127,13 +131,14 @@ async function loadPageData(): Promise<PageData | null> {
   let summary: BotActivitySummary;
   let responseTimes: BotResponseTimes;
   let activity: BotActivityEvent[];
+  let bulletin: Awaited<ReturnType<typeof getLiaBulletin>>;
   let awaitingOwner: number;
   let lastDigestRow: Awaited<ReturnType<typeof getLastDigest>>;
   let campaignLinks: CampaignLink[];
   let liaGiftPolicy: LiaGiftPolicy;
   let liaGiftsToday: number;
   try {
-    [settingsMap, templates, summary, responseTimes, activity, awaitingOwner, lastDigestRow, campaignLinks] = await Promise.all([
+    [settingsMap, templates, summary, responseTimes, bulletin, activity, awaitingOwner, lastDigestRow, campaignLinks] = await Promise.all([
       getSettingsMap(db, [
         "wa_enabled",
         "owner_whatsapp_phone",
@@ -166,6 +171,7 @@ async function loadPageData(): Promise<PageData | null> {
       listWaTemplates(db),
       getBotActivitySummary(db),
       getBotResponseTimes(db),
+      getLiaBulletin(db),
       listRecentBotActivity(db, { limit: 8 }),
       countUnseenConversations(db).then((counts) => counts.awaitingOwner),
       getLastDigest(db),
@@ -231,6 +237,7 @@ async function loadPageData(): Promise<PageData | null> {
     templates,
     summary,
     responseTimes,
+    bulletin,
     activity,
     awaitingOwner,
     digestEnabled: settingsMap["owner_digest_enabled"] !== false,
@@ -304,6 +311,7 @@ export default async function WhatsappPage() {
     templates,
     summary,
     responseTimes,
+    bulletin,
     activity,
     awaitingOwner,
     digestEnabled,
@@ -346,6 +354,8 @@ export default async function WhatsappPage() {
           </Link>
         }
       />
+
+      <MutedBanner bulletin={bulletin} sellerName={sellerName} />
 
       {/* Faixa de status */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -628,7 +638,8 @@ export default async function WhatsappPage() {
           <Card title={`Testar a ${sellerName}`}>
             <Rehearsal sellerName={sellerName} />
           </Card>
-          <Card title={`Tempo de resposta da ${sellerName} (${responseTimes.windowDays} dias)`}>
+          <LiaBulletinCard bulletin={bulletin} sellerName={sellerName} />
+        <Card title={`Tempo de resposta da ${sellerName} (${responseTimes.windowDays} dias)`}>
             <ResponseTimes times={responseTimes} sellerName={sellerName} />
           </Card>
           <Card title={`O que a ${sellerName} fez em ${summary.windowDays} dias`}>
