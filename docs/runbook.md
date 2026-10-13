@@ -1110,7 +1110,7 @@ Depois de um "não pode" ou de uma recusa da IA, a Lia não oferece a prévia de
 2. Para testar sem a Lia: `npx tsx --env-file=.env.prod.local scripts/preview-ensaio.ts --real --cliente --peca peca.jpg --modelo-foto foto.jpg --tipo vestido --teto-centavos 200`.
 3. Para ver o comportamento da Lia sem tocar em produção, use um banco local restaurado do backup com `tryon_enabled = true`: `scripts/ensaio-vendedora.ts previa`.
 
-**Produção** (feita em 13/10/2026):
+**Produção, nesta ordem:**
 1. Migração 0068 **antes** do deploy (o painel e a fila leem a tabela).
 2. `scripts/sync-seed.ts --settings tryon_enabled,tryon_per_customer_daily,tryon_daily_total`.
 3. Mesclar.
