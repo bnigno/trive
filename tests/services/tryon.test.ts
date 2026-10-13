@@ -43,7 +43,8 @@ async function seedConversation(phone = PHONE) {
   const [conversation] = await db.insert(schema.waConversations).values({ phoneE164: phone }).returning({ id: schema.waConversations.id });
   const [photo] = await db
     .insert(schema.waMessages)
-    .values({ conversationId: conversation!.id, direction: "inbound", kind: "image", body: "", mediaUrl: "https://zapi.example/f.jpg", status: "delivered" })
+    // A foto chega junto do toque (NOW): o toque vale para a foto de perto dele.
+    .values({ conversationId: conversation!.id, direction: "inbound", kind: "image", body: "", mediaUrl: "https://zapi.example/f.jpg", status: "delivered", createdAt: NOW })
     .returning({ id: schema.waMessages.id });
   return { productId: product!.id, conversationId: conversation!.id, photoId: photo!.id };
 }
@@ -56,6 +57,8 @@ async function offer(input: { conversationId: string; productId: string; phone?:
       phoneE164: input.phone ?? PHONE,
       productId: input.productId,
       status: input.status ?? "awaiting_photo",
+      // A pergunta foi feita antes da foto (o toque vale para a foto que ela manda DEPOIS dela).
+      offeredAt: new Date("2026-01-01T00:00:00Z"),
       acceptedAt: input.accepted === false ? null : NOW,
     })
     .returning({ id: schema.tryonRequests.id });
@@ -72,7 +75,7 @@ describe("queueTryOn", () => {
     expect(row).toMatchObject({ status: "queued", photoWaMessageId: photoId, queuedAt: NOW });
     const events = await db.select().from(schema.outboxEvents);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ eventType: TRYON_EVENT, dedupeKey: `${TRYON_EVENT}:${requestId}`, payload: { requestId } });
+    expect(events[0]).toMatchObject({ eventType: TRYON_EVENT, dedupeKey: `${TRYON_EVENT}:${requestId}:${NOW.getTime()}`, payload: { requestId } });
   });
 
   it("sem o toque em 'Quero me ver' não há prévia; pedido já na fila ou encerrado não volta", async () => {
@@ -97,8 +100,12 @@ describe("queueTryOn", () => {
     const first = await offer({ conversationId, productId });
     const second = await offer({ conversationId, productId });
     expect(await queueTryOn(sdb(), { requestId: first, photoWaMessageId: photoId, now: NOW, kick: false })).toMatchObject({ ok: true });
+    const [otherPhoto] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: "https://zapi.example/g.jpg", status: "delivered", createdAt: NOW })
+      .returning({ id: schema.waMessages.id });
     await db.transaction(async (tx) => {
-      const result = await queueTryOn(tx as unknown as DbOrTx, { requestId: second, photoWaMessageId: photoId, now: NOW, kick: false });
+      const result = await queueTryOn(tx as unknown as DbOrTx, { requestId: second, photoWaMessageId: otherPhoto!.id, now: NOW, kick: false });
       expect(result).toEqual({ ok: false, reason: "em_andamento" });
       // O savepoint segurou o conflito: a transação do turno continua usável.
       await tx.select().from(schema.tryonRequests);
@@ -153,6 +160,27 @@ describe("queueTryOn", () => {
       .returning({ id: schema.waMessages.id });
     expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: sentByStore!.id, now: NOW })).toEqual({ ok: false, reason: "foto_invalida" });
     expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: mine.photoId, now: NOW })).toMatchObject({ ok: true });
+  });
+
+  it("bloqueio do dia (\"não pode\" ou recusa da IA no telefone): não enfileira; foto já usada também não; foto de muito antes do toque também não", async () => {
+    const { productId, conversationId, photoId } = await seedConversation();
+    const requestId = await offer({ conversationId, productId });
+    // Foto usada por outra prévia desta conversa.
+    await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", failureReason: "enquadramento", photoWaMessageId: photoId, acceptedAt: NOW, queuedAt: NOW, finishedAt: NOW });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: photoId, now: NOW })).toEqual({ ok: false, reason: "foto_usada" });
+    // Foto de mais de 10 min antes do toque (e não é a foto da pergunta).
+    const [old] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: "https://zapi.example/velha.jpg", status: "delivered", createdAt: new Date(NOW.getTime() - 30 * 60_000) })
+      .returning({ id: schema.waMessages.id });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: old!.id, now: NOW })).toEqual({ ok: false, reason: "foto_antiga" });
+    // "Não pode" hoje no telefone: bloqueado.
+    await db.insert(schema.tryonRequests).values({ conversationId, phoneE164: PHONE, productId, status: "photo_rejected", failureReason: "nao_pode", acceptedAt: NOW, queuedAt: NOW, finishedAt: NOW });
+    const [fresh] = await db
+      .insert(schema.waMessages)
+      .values({ conversationId, direction: "inbound", kind: "image", body: "", mediaUrl: "https://zapi.example/nova.jpg", status: "delivered", createdAt: NOW })
+      .returning({ id: schema.waMessages.id });
+    expect(await queueTryOn(sdb(), { requestId, photoWaMessageId: fresh!.id, now: NOW })).toEqual({ ok: false, reason: "bloqueada_hoje" });
   });
 
   it("'Agora não' depois do 'Quero me ver' revoga o consentimento", async () => {

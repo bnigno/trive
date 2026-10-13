@@ -148,6 +148,22 @@ export default async function PrivacyPage() {
           só o texto da conversa permanece no histórico do atendimento, como
           qualquer mensagem.
         </p>
+        <p>
+          Prévia na sua foto: se você quiser se ver vestindo uma peça, a nossa
+          atendente pergunta antes e só segue com o seu toque em &ldquo;Quero
+          me ver&rdquo; — que vale só para aquela foto e aquela peça (se a
+          foto não servir, ela pergunta de novo antes de usar outra) e
+          confirma que a foto é sua e que você tem 18 anos ou mais. A foto é enviada, sem a
+          localização gravada pelo celular, a serviços de inteligência
+          artificial fora do Brasil, só para isso: a FASHN, que gera a prévia,
+          e a Anthropic, que confere a foto e a prévia. Pelos contratos desses
+          serviços, a foto não é usada para treinar os modelos deles. Nem a
+          sua foto nem a prévia ficam guardadas por nós: a prévia chega a você
+          pelo WhatsApp com o aviso de que foi feita com IA e mostra a cor e o
+          modelo da peça — não o tamanho nem o caimento exatos. Você pode
+          dizer &ldquo;Agora não&rdquo; ou mandar SAIR a qualquer momento
+          antes de a prévia começar a ser feita.
+        </p>
       </LegalSection>
 
       <LegalSection id="prazo" number="04" title="Por quanto tempo guardamos">

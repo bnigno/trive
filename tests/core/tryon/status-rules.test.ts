@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 
 import { PIECE_TYPES } from "@/core/catalog/piece-types";
 import {
+  blocksTryOnToday,
   failureText,
   isTryOnWearable,
+  photoRetryWelcome,
   photoProblemText,
   quotaText,
   requiredFraming,
@@ -49,10 +51,22 @@ describe("estados da prévia", () => {
     // Mudou de ideia na mesma lista: volta pelo toque (que grava o consentimento de novo), nunca direto para a fila.
     expect(canTransitionTryOn("declined", "awaiting_photo")).toBe(true);
     expect(canTransitionTryOn("declined", "queued")).toBe(false);
+    // Encerrado não reabre: outra foto = outra pergunta e outro toque.
     for (const closed of ["sent", "photo_rejected", "failed"] as const) {
       expect(TRYON_TRANSITIONS[closed]).toEqual([]);
       expect(isTryOnClosed(closed)).toBe(true);
     }
+    // Foto com problema DA FOTO: outra foto é bem-vinda (com outro toque); "não pode" e recusa da IA bloqueiam o dia.
+    expect(photoRetryWelcome({ status: "photo_rejected", failureReason: "enquadramento" })).toBe(true);
+    expect(photoRetryWelcome({ status: "failed", failureReason: "foto_indisponivel" })).toBe(true);
+    expect(photoRetryWelcome({ status: "photo_rejected", failureReason: "nao_pode" })).toBe(false);
+    expect(blocksTryOnToday({ status: "photo_rejected", failureReason: "nao_pode" })).toBe(true);
+    expect(blocksTryOnToday({ status: "failed", failureReason: "visao_recusou" })).toBe(true);
+    expect(blocksTryOnToday({ status: "failed", failureReason: "recusada_pela_ia" })).toBe(true);
+    for (const reason of ["nao_ficou_fiel", "cliente_desistiu", "sem_creditos", "foto_indisponivel"]) {
+      expect(blocksTryOnToday({ status: "failed", failureReason: reason })).toBe(false);
+    }
+    expect(blocksTryOnToday({ status: "photo_rejected", failureReason: "enquadramento" })).toBe(false);
     // Nunca pula a fila nem volta a pedir à FASHN sem passar por "enviando".
     expect(canTransitionTryOn("offered", "submitting")).toBe(false);
     expect(canTransitionTryOn("queued", "processing")).toBe(false);

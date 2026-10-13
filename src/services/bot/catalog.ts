@@ -9,6 +9,7 @@ import {
   pickImagePath,
 } from "@/core/bot/variants";
 import { pickLookComplements } from "@/core/bot/look";
+import { tryOnHintLine } from "@/services/tryon-offer";
 import { getStyleProfileByPhone } from "@/services/style-profiles";
 import {
   CARD_MAX_ITEMS,
@@ -826,6 +827,16 @@ export async function execDetalharProduto(
     );
   }
   if (chosenVariantLine) lines.push(chosenVariantLine);
+  // "Me vê com ela": só quando o código confere que pode oferecer (ligado, roupa com foto e estoque, tetos, sem
+  // oferta recente) — e só num turno que manda a pergunta tocável (não no grupo, no copiloto nem na retomada).
+  const tryOnLine = !ctx.onAttachment || ctx.copilot || ctx.proactive ? null : await tryOnHintLine(db, {
+    conversationId: ctx.conversationId,
+    phoneE164: ctx.phoneE164,
+    productId: detail.id,
+    inStock: detail.variants.some((variant) => variant.availableQty > 0),
+    now: ctx.now ?? new Date(),
+  });
+  if (tryOnLine) lines.push(tryOnLine);
   return { ok: true, text: lines.join("\n") };
 }
 

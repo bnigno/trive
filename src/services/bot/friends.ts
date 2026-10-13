@@ -9,19 +9,24 @@ import { normalizeDisplayName, optionLabel } from "@/core/friends/decision";
 import type { DbOrTx } from "@/queue/enqueue";
 import { resolveProductDetail } from "@/services/bot/catalog";
 import { createDecisionRound, FriendRoundError, isFriendsVoteEnabled, roundCreateKey } from "@/services/friend-rounds";
+import { isTryOnEnabled } from "@/services/tryon-settings";
 
 import { DRY_RUN_TEXT, formatPriceRange, type ExecutorCtx, type ToolResult } from "./shared";
 
-const TOOLS_WITHOUT_FRIENDS: readonly BotToolName[] = BOT_TOOL_NAMES.filter((name) => name !== "pedir_opiniao_das_amigas");
+const FRIENDS_TOOLS: readonly BotToolName[] = ["pedir_opiniao_das_amigas"];
+const TRYON_TOOLS: readonly BotToolName[] = ["oferecer_previa", "vestir_em_mim"];
 
 /**
- * As ferramentas do turno: com "Me ajuda a escolher?" desligado, a
- * ferramenta nem vai ao modelo (a descrição dela manda oferecer — ligada ou
- * não, a Lia ofereceria). A lista é a mesma em todos os turnos enquanto o
- * interruptor não muda, então o cache do prefixo continua valendo.
+ * As ferramentas do turno: com "Me ajuda a escolher?" ou "Me vê com ela"
+ * desligado, as ferramentas dele nem vão ao modelo (a descrição manda
+ * oferecer — ligado ou não, a Lia ofereceria). A lista é a mesma em todos os
+ * turnos enquanto os interruptores não mudam, então o cache do prefixo
+ * continua valendo.
  */
 export async function turnToolsFor(db: DbOrTx): Promise<readonly BotToolName[] | undefined> {
-  return (await isFriendsVoteEnabled(db)) ? undefined : TOOLS_WITHOUT_FRIENDS;
+  const [friends, tryOn] = await Promise.all([isFriendsVoteEnabled(db), isTryOnEnabled(db)]);
+  const hidden = new Set<BotToolName>([...(friends ? [] : FRIENDS_TOOLS), ...(tryOn ? [] : TRYON_TOOLS)]);
+  return hidden.size === 0 ? undefined : BOT_TOOL_NAMES.filter((name) => !hidden.has(name));
 }
 
 export async function execPedirOpiniaoDasAmigas(

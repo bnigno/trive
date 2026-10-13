@@ -11,6 +11,9 @@
 // sent → a prévia chegou à cliente;
 // photo_rejected → a foto não serve (enquadramento, mais de uma pessoa…): nada foi cobrado;
 // failed → desistiu (o motivo fica em failure_reason).
+//
+// Encerrado não reabre: outra foto = outra pergunta e outro toque (cada foto
+// tem o seu consentimento).
 
 export const TRYON_STATUSES = [
   "offered",
@@ -29,6 +32,7 @@ export type TryOnStatus = (typeof TRYON_STATUSES)[number];
  * submitting → queued: a FASHN recusou por excesso de chamadas (429) — nada foi cobrado.
  * processing → queued: a prévia saiu infiel e ainda cabe outra tentativa (o pedido anterior já foi pago e usado).
  * declined → awaiting_photo: ela mudou de ideia e tocou "Quero me ver" na mesma lista (o toque grava o consentimento de novo).
+ * queued → failed: também quando ela desiste ("Agora não", SAIR) antes de a foto ir à FASHN.
  */
 export const TRYON_TRANSITIONS: Record<TryOnStatus, readonly TryOnStatus[]> = {
   offered: ["declined", "awaiting_photo", "queued"],
@@ -68,7 +72,7 @@ export function isTryOnInFlight(status: string): boolean {
   return (TRYON_IN_FLIGHT_STATUSES as readonly string[]).includes(status);
 }
 
-/** Encerrado: nada mais acontece sozinho com este pedido. */
+/** Encerrado: nada mais acontece com este pedido. */
 export function isTryOnClosed(status: string): boolean {
   return status === "sent" || status === "photo_rejected" || status === "failed";
 }

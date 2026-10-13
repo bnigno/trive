@@ -8,7 +8,7 @@
 //   ANTHROPIC_API_KEY=... DATABASE_URL=postgres://... npx tsx scripts/ensaio-vendedora.ts [roteiro]
 //   … ensaio-vendedora.ts foto --foto ./print.jpg      (a Lia vê a foto no 1º turno)
 //   … ensaio-vendedora.ts audio-real --audio ./x.ogg   (transcreve com OPENAI_API_KEY e usa como fala)
-// Roteiros: casamento (padrão), direto, troca, audio, foto, audio-real
+// Roteiros: casamento (padrão), direto, troca, audio, foto, audio-real, tecido, previa (tryon_enabled = true no banco)
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
@@ -56,6 +56,31 @@ const ROTEIROS: Record<string, string[]> = {
     "e de suplex, tem?",
     "e de veludo?",
   ],
+  // "Me vê com ela": a Lia oferece a prévia quando ela escolhe uma roupa (ou
+  // hesita sobre como fica nela) e, depois do "Agora não", não volta ao
+  // assunto. Precisa de tryon_enabled = true no banco do ensaio e de uma
+  // peça "vestido amora" com foto e estoque (o catálogo de produção tem).
+  previa: [
+    "oi! vi o vestido amora no instagram, ainda tem?",
+    "tem no M? será que fica bem em mim? sou baixinha",
+    "agora não, obrigada",
+    "e quanto fica a entrega pra belém?",
+  ],
+};
+
+/**
+ * O que o roteiro TEM de mostrar (ferramentas chamadas por turno). Devolve
+ * o problema em pt-BR, ou null quando passou.
+ */
+const ESPERADO: Record<string, (toolsByTurn: string[][]) => string | null> = {
+  previa: (toolsByTurn) => {
+    const offeredAt = toolsByTurn.findIndex((tools) => tools.includes("oferecer_previa"));
+    // Nunca na abertura (turno 0); no "será que fica bem em mim?" (turno 1), sim.
+    if (offeredAt === 0) return "a Lia ofereceu a prévia na abertura da conversa";
+    if (offeredAt !== 1) return "a Lia não ofereceu a prévia quando ela perguntou se fica bem nela";
+    if (toolsByTurn.slice(2).some((tools) => tools.includes("oferecer_previa"))) return "a Lia ofereceu a prévia de novo depois do 'agora não'";
+    return null;
+  },
 };
 
 function flagValue(name: string): string | undefined {
@@ -107,6 +132,7 @@ async function main() {
   let cacheRead = 0;
   let cacheWrite = 0;
   let vocabularioFalhou = false;
+  const toolsByTurn: string[][] = [];
 
   for (const fala of roteiro) {
     console.log(`\n👩 cliente: ${fala}`);
@@ -165,6 +191,7 @@ async function main() {
     console.log(
       `   ⚙️ ${turn.toolCalls.map((call) => `${call.name}${call.ok ? "" : "✗"}`).join(", ") || "sem ferramenta"} · ${ms} ms · ${turn.usage.inputTokens}/${turn.usage.outputTokens} tokens${turn.handedOff ? " · TRANSFERIU" : ""}`,
     );
+    toolsByTurn.push(turn.toolCalls.map((call) => call.name));
     if (turn.reply) messages.push({ role: "assistant", text: turn.reply });
     if (turn.handedOff) break;
   }
@@ -179,6 +206,9 @@ async function main() {
   if (vocabularioFalhou) {
     throw new Error("A vendedora falou 'menu' ou 'cardápio' — o polimento pegaria, mas releia o prompt.");
   }
+  const problema = ESPERADO[roteiroNome]?.(toolsByTurn) ?? null;
+  if (problema) throw new Error(`Roteiro ${roteiroNome}: ${problema}.`);
+  if (ESPERADO[roteiroNome]) console.log(`✅ roteiro ${roteiroNome}: passou`);
   process.exit(0);
 }
 

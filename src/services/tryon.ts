@@ -2,11 +2,11 @@
 // o passo que põe um pedido aceito na fila, o aviso à cliente pela fila e a
 // cura dos pedidos presos. O trabalho pesado (FASHN, portões, envio) fica em
 // services/tryon-generate.ts, que só a fila importa.
-import { and, eq, gt, gte, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { creditsFor, creditsToUsdCents } from "@/core/studio/cost";
-import { staleNoticeText, TRYON_PHOTO_REJECTIONS_PER_PREVIEW, TRYON_TIMING, tryOnQuotaVerdict } from "@/core/tryon/rules";
+import { blocksTryOnToday, staleNoticeText, TRYON_PHOTO_REJECTIONS_PER_PREVIEW, TRYON_TIMING, tryOnQuotaVerdict } from "@/core/tryon/rules";
 import { assertTryOnTransition, isTryOnStatus, TRYON_IN_FLIGHT_STATUSES, type TryOnStatus } from "@/core/tryon/status";
 import { auditLog, products, tryonRequests, waMessages } from "@/db/schema";
 import { spDayKey, spDayStart } from "@/lib/sp-day";
@@ -131,6 +131,53 @@ export async function healStaleTryOns(db: DbOrTx, input: { conversationId: strin
   return healed;
 }
 
+/** "Agora não" (ou SAIR) depois do último "Quero me ver": o consentimento desta prévia foi revogado. */
+export function tryOnConsentRevoked(request: Pick<TryOnRequest, "acceptedAt" | "declinedAt">): boolean {
+  return request.declinedAt !== null && (request.acceptedAt === null || request.declinedAt >= request.acceptedAt);
+}
+
+/** Condição SQL "não revogado" — vai junto de toda mudança de estado que leva a gastar ou a mandar. */
+export const tryOnNotRevokedSql = or(isNull(tryonRequests.declinedAt), lt(tryonRequests.declinedAt, tryonRequests.acceptedAt));
+
+/**
+ * O dia está bloqueado para este telefone? Depois de um "não pode"
+ * (possível menor ou nudez) ou de a IA recusar a foto, nada de prévia por
+ * 24 h — nem a pedido dela, nem tocando numa pergunta antiga.
+ */
+export async function isTryOnBlockedToday(db: DbOrTx, input: { phoneE164: string; now: Date }): Promise<boolean> {
+  const rows = await db
+    .select({ status: tryonRequests.status, failureReason: tryonRequests.failureReason })
+    .from(tryonRequests)
+    .where(
+      and(
+        eq(tryonRequests.phoneE164, input.phoneE164),
+        inArray(tryonRequests.status, ["photo_rejected", "failed"]),
+        gte(tryonRequests.finishedAt, new Date(input.now.getTime() - 24 * 3_600_000)),
+      ),
+    );
+  return rows.some((row) => blocksTryOnToday(row));
+}
+
+/** Esta foto já foi usada por OUTRA prévia (que chegou à fila)? Foto que não serviu não serve de novo. */
+export async function isPhotoUsedByAnotherTryOn(db: DbOrTx, input: { conversationId: string; photoWaMessageId: string; exceptRequestId?: string }): Promise<boolean> {
+  const [row] = await db
+    .select({ id: tryonRequests.id })
+    .from(tryonRequests)
+    .where(
+      and(
+        eq(tryonRequests.conversationId, input.conversationId),
+        eq(tryonRequests.photoWaMessageId, input.photoWaMessageId),
+        isNotNull(tryonRequests.queuedAt),
+        ...(input.exceptRequestId ? [ne(tryonRequests.id, input.exceptRequestId)] : []),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
+/** Até quanto antes do toque a foto pode ter chegado para valer como "a foto para a prévia". */
+export const TRYON_PHOTO_BEFORE_TAP_MAX_MS = 10 * 60_000;
+
 export type QueueTryOnResult =
   | { ok: true; eventId: string | null }
   | {
@@ -140,6 +187,9 @@ export type QueueTryOnResult =
         | "sem_consentimento"
         | "estado_invalido"
         | "foto_invalida"
+        | "foto_antiga"
+        | "foto_usada"
+        | "bloqueada_hoje"
         | "desligado"
         | "limite_cliente"
         | "limite_loja"
@@ -166,13 +216,13 @@ export async function queueTryOn(
   const [request] = await db.select().from(tryonRequests).where(eq(tryonRequests.id, input.requestId)).limit(1);
   if (!request || !isTryOnStatus(request.status)) return { ok: false, reason: "nao_encontrado" };
   // O consentimento é o toque — e um "Agora não" depois dele o revoga.
-  if (!request.acceptedAt || (request.declinedAt && request.declinedAt >= request.acceptedAt)) return { ok: false, reason: "sem_consentimento" };
+  if (!request.acceptedAt || tryOnConsentRevoked(request)) return { ok: false, reason: "sem_consentimento" };
   const from: TryOnStatus = request.status;
   if (from !== "offered" && from !== "awaiting_photo") return { ok: false, reason: "estado_invalido" };
 
   // A foto tem de ser uma imagem que ELA mandou nesta conversa: nunca a de outra pessoa ou de outra conversa.
   const [photo] = await db
-    .select({ id: waMessages.id })
+    .select({ id: waMessages.id, createdAt: waMessages.createdAt })
     .from(waMessages)
     .where(
       and(
@@ -184,9 +234,19 @@ export async function queueTryOn(
     )
     .limit(1);
   if (!photo) return { ok: false, reason: "foto_invalida" };
+  // E a foto de AGORA: o toque vale para a foto que ela mandar depois da pergunta, perto do toque (um print
+  // ou a foto de uma amiga de antes não é "a foto é minha") — a não ser a própria foto da pergunta.
+  const isOfferedPhoto = photo.id === request.photoWaMessageId && request.queuedAt === null;
+  const notBefore = Math.max(request.offeredAt.getTime(), request.queuedAt?.getTime() ?? 0, request.acceptedAt.getTime() - TRYON_PHOTO_BEFORE_TAP_MAX_MS);
+  if (!isOfferedPhoto && photo.createdAt.getTime() <= notBefore) return { ok: false, reason: "foto_antiga" };
+  // Foto que já foi a outra prévia (e não serviu, ou já virou prévia) não vai de novo.
+  if (await isPhotoUsedByAnotherTryOn(db, { conversationId: request.conversationId, photoWaMessageId: photo.id, exceptRequestId: request.id })) {
+    return { ok: false, reason: "foto_usada" };
+  }
 
   const settings = await loadTryOnSettings(db);
   if (!settings.enabled) return { ok: false, reason: "desligado" };
+  if (await isTryOnBlockedToday(db, { phoneE164: request.phoneE164, now: input.now })) return { ok: false, reason: "bloqueada_hoje" };
   await healStaleTryOns(db, { conversationId: request.conversationId, now: input.now });
   const today = await countTryOnsToday(db, { phoneE164: request.phoneE164, now: input.now });
   if (today.rejected >= settings.perCustomerDaily * TRYON_PHOTO_REJECTIONS_PER_PREVIEW) return { ok: false, reason: "limite_fotos" };
@@ -206,14 +266,15 @@ export async function queueTryOn(
       const [updated] = await tx
         .update(tryonRequests)
         .set({ status: "queued", photoWaMessageId: photo.id, queuedAt: input.now, updatedAt: input.now })
-        .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, from)))
+        .where(and(eq(tryonRequests.id, request.id), eq(tryonRequests.status, from), tryOnNotRevokedSql))
         .returning({ id: tryonRequests.id });
       if (!updated) return { ok: false as const, reason: "estado_invalido" as const };
       const eventId = await enqueueOutboxEvent(
         tx,
         {
           eventType: TRYON_EVENT,
-          dedupeKey: `${TRYON_EVENT}:${request.id}`,
+          // Pela vez na fila (o pedido só entra na fila uma vez; a hora é folga contra dedupe velho).
+          dedupeKey: `${TRYON_EVENT}:${request.id}:${input.now.getTime()}`,
           aggregateType: "tryon_request",
           aggregateId: request.id,
           payload: { requestId: request.id },

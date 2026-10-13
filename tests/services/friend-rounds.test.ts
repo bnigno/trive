@@ -309,6 +309,10 @@ describe("a ferramenta da Lia", () => {
     const result = await execPedirOpiniaoDasAmigas(sdb, ctxFor(conversation.id, []), { pecas: ["kimono-m", "dunas-m"], nome: "Ana", cliente_pediu: true });
     expect(result).toMatchObject({ ok: false });
     await db.insert(schema.settings).values({ key: "friends_vote_enabled", value: true });
+    // Ligada, a votação volta ao cardápio; a prévia na foto (desligada aqui) continua de fora.
+    expect(await turnToolsFor(sdb)).toContain("pedir_opiniao_das_amigas");
+    expect(await turnToolsFor(sdb)).not.toContain("oferecer_previa");
+    await db.insert(schema.settings).values({ key: "tryon_enabled", value: true });
     expect(await turnToolsFor(sdb)).toBeUndefined();
   });
 

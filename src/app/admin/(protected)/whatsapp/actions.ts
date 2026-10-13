@@ -57,6 +57,7 @@ const toggleKeySchema = z.enum([
   "ai_video_enabled",
   "curator_interview_enabled",
   "friends_vote_enabled",
+  "tryon_enabled",
 ]);
 
 export async function setToggleAction(
@@ -365,6 +366,29 @@ export async function saveLiaGiftSettingsAction(
     }
     revalidatePath("/admin/whatsapp");
     return { success: "Gentilezas salvas." };
+  } catch (error) {
+    return { error: toErrorMessage(error) };
+  }
+}
+
+/** "Me vê com ela": os tetos do dia (por cliente e da loja). */
+export async function saveTryOnSettingsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await requireOwner("whatsapp");
+  try {
+    const db = getDb();
+    const text = (name: string) => String(formData.get(name) ?? "");
+    const values: Array<{ key: string; value: unknown }> = [
+      { key: "tryon_per_customer_daily", value: parseGiftIntField(text("perCustomerDaily"), "Prévias por cliente por dia", 1, 5) },
+      { key: "tryon_daily_total", value: parseGiftIntField(text("dailyTotal"), "Prévias por dia na loja", 1, 100) },
+    ];
+    for (const { key, value } of values) {
+      await updateSetting(db, { key, value, userId: user.id });
+    }
+    revalidatePath("/admin/whatsapp");
+    return { success: "Tetos da prévia salvos." };
   } catch (error) {
     return { error: toErrorMessage(error) };
   }
